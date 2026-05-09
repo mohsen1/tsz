@@ -1,6 +1,6 @@
-use crate::context::TypingRequest;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -8,10 +8,63 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn report_excess_function_like_implicit_any(&mut self, func_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::METHOD_DECLARATION
+            && node.kind != syntax_kind_ext::GET_ACCESSOR
+            && node.kind != syntax_kind_ext::SET_ACCESSOR
+        {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.type_annotation.is_some() {
+                continue;
+            }
+            let param_name = self.parameter_name_for_error(param.name);
+            if param_name.is_empty() {
+                continue;
+            }
+            let Some((start, end)) = self.get_node_span(param.name) else {
+                continue;
+            };
+            let template = tsz_common::diagnostics::get_message_template(
+                crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+            )
+            .unwrap_or("");
+            let message = crate::diagnostics::format_message(template, &[&param_name, "any"]);
+            self.ctx
+                .deferred_excess_property_implicit_any_diagnostics
+                .push(tsz_common::diagnostics::Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                ));
+        }
+        if func.body.is_some() {
+            self.check_for_nested_function_ts7006(func.body);
+        }
+        true
+    }
+
     fn check_excess_property_initializer_implicit_any(
         &mut self,
         elem_idx: NodeIndex,
-        target: TypeId,
+        _target: TypeId,
     ) {
         let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
             return;
@@ -20,75 +73,23 @@ impl<'a> CheckerState<'a> {
         match elem_node.kind {
             syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                 if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                    let contextual_type = self
-                        .get_property_name_resolved(prop.name)
-                        .and_then(|name| {
-                            self.contextual_object_literal_property_type(target, &name)
-                        })
-                        .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
-
-                    if let Some(contextual_type) = contextual_type {
-                        let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.invalidate_initializer_for_context_change(prop.initializer);
-                        self.get_type_of_node_with_request(prop.initializer, &request);
-                    } else {
+                    self.invalidate_initializer_for_context_change(prop.initializer);
+                    if !self.report_excess_function_like_implicit_any(prop.initializer) {
                         self.check_for_nested_function_ts7006(prop.initializer);
                     }
                 }
             }
-            syntax_kind_ext::METHOD_DECLARATION => {
-                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                    let contextual_type = self
-                        .get_property_name_resolved(method.name)
-                        .and_then(|name| {
-                            self.contextual_object_literal_property_type(target, &name)
-                        })
-                        .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
-
-                    if let Some(contextual_type) = contextual_type {
-                        let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.invalidate_function_like_for_contextual_retry(elem_idx);
-                        self.get_type_of_function_with_request(elem_idx, &request);
-                    } else {
-                        for (pi, &param_idx) in method.parameters.nodes.iter().enumerate() {
-                            if let Some(param_node) = self.ctx.arena.get(param_idx)
-                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            {
-                                self.maybe_report_implicit_any_parameter(param, false, pi);
-                            }
-                        }
-                        if method.body.is_some() {
-                            self.check_for_nested_function_ts7006(method.body);
-                        }
-                    }
-                }
+            syntax_kind_ext::METHOD_DECLARATION
+                if self.ctx.arena.get_method_decl(elem_node).is_some() =>
+            {
+                self.invalidate_function_like_for_contextual_retry(elem_idx);
+                self.report_excess_function_like_implicit_any(elem_idx);
             }
-            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
-                    let contextual_type = self
-                        .get_property_name_resolved(accessor.name)
-                        .and_then(|name| {
-                            self.contextual_object_literal_property_type(target, &name)
-                        })
-                        .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
-
-                    if let Some(contextual_type) = contextual_type {
-                        let request = TypingRequest::with_contextual_type(contextual_type);
-                        self.invalidate_function_like_for_contextual_retry(elem_idx);
-                        self.get_type_of_function_with_request(elem_idx, &request);
-                    } else {
-                        for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
-                            if let Some(param_node) = self.ctx.arena.get(param_idx)
-                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            {
-                                self.maybe_report_implicit_any_parameter(param, false, pi);
-                            }
-                        }
-                        if accessor.body.is_some() {
-                            self.check_for_nested_function_ts7006(accessor.body);
-                        }
-                    }
-                }
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
+                if self.ctx.arena.get_accessor(elem_node).is_some() =>
+            {
+                self.invalidate_function_like_for_contextual_retry(elem_idx);
+                self.report_excess_function_like_implicit_any(elem_idx);
             }
             _ => {}
         }
@@ -121,6 +122,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn track_earliest_excess_with_target(
+        &self,
+        current: &mut Option<(Atom, NodeIndex, u32, TypeId)>,
+        name: Atom,
+        report_idx: NodeIndex,
+        target: TypeId,
+    ) {
+        let pos = self.ctx.arena.get(report_idx).map_or(u32::MAX, |n| n.pos);
+        if current.is_none_or(|(_, _, best, _)| pos < best) {
+            *current = Some((name, report_idx, pos, target));
+        }
+    }
+
+    fn emit_tracked_excess_property_with_target(
+        &mut self,
+        tracked: Option<(Atom, NodeIndex, u32, TypeId)>,
+    ) {
+        if let Some((prop_atom, report_idx, _, target)) = tracked {
+            let prop_name = self.object_literal_property_display_name(
+                report_idx,
+                self.ctx.types.resolve_atom(prop_atom).as_ref(),
+            );
+            self.error_excess_property_at(&prop_name, target, report_idx);
+            self.check_excess_property_initializer_implicit_any(report_idx, target);
+        }
+    }
+
+    fn union_member_has_type_parameter_for_excess_display(&self, member: TypeId) -> bool {
+        query::is_type_parameter_like(self.ctx.types, member)
+            || crate::query_boundaries::common::contains_generic_type_parameters(
+                self.ctx.types,
+                member,
+            )
+    }
+
     pub(crate) fn check_object_literal_excess_properties(
         &mut self,
         source: TypeId,
@@ -133,11 +169,15 @@ impl<'a> CheckerState<'a> {
 
         let evaluated_target = self.evaluate_type_with_env(target);
 
-        // Run named-property value checks for the side effect of emitting
-        // diagnostics on mapped/string-index targets. The returned flag is
-        // unused after the dead-conditional cleanup below; keeping the call
-        // (vs. let `_ = …`) makes the side-effect intent explicit.
-        let _ = self.check_object_literal_named_property_values_against_target(idx, target);
+        // Run named-property value checks before excess-property reporting. When
+        // a known property is already invalid, tsc reports that assignability
+        // error instead of additionally reporting an excess property from the
+        // same object literal.
+        let emitted_named_property_value_error =
+            self.check_object_literal_named_property_values_against_target(idx, target);
+        if emitted_named_property_value_error {
+            return;
+        }
 
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter_like(self.ctx.types, target) {
@@ -153,12 +193,6 @@ impl<'a> CheckerState<'a> {
         };
         // Non-fresh object literals should be exempt from excess-property checks
         // unless they use spread, in which case we still check explicit properties.
-        // (The previous `if emitted_named_property_value_error { return; }` inner
-        //  guard was dead code — both branches returned — so collapse to a single
-        //  unconditional return here. If a future change wants non-fresh sources
-        //  with no spread to fall through, drop the surrounding return entirely
-        //  rather than gating on the named-property-error flag, which is unset by
-        //  the time we arrive here.)
         if !is_fresh_source && explicit_property_names.is_none() {
             return;
         }
@@ -170,6 +204,7 @@ impl<'a> CheckerState<'a> {
         let source_props = source_shape.properties.as_slice();
         let effective_target = self.normalized_target_for_excess_properties(target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
+        let union_check_target = self.excess_property_union_target(target, resolved_target);
 
         if [target, effective_target, resolved_target, evaluated_target]
             .into_iter()
@@ -221,9 +256,90 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Handle union targets first using type_queries
-        if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
-            let mut target_shapes = Vec::new();
+        if let Some(members) = query::intersection_members(self.ctx.types, union_check_target) {
+            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
+            for source_prop in source_props {
+                if explicit_property_names.is_some()
+                    && !explicit_property_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&source_prop.name))
+                {
+                    continue;
+                }
+
+                let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                let mut accepted = false;
+                let mut checked_any_member = false;
+                let mut uncertain = false;
+
+                for &member in &members {
+                    let resolved_member = self.resolve_type_for_property_access(member);
+                    if self
+                        .generic_mapped_receiver_lacks_explicit_property(member, prop_name.as_ref())
+                        || self.generic_mapped_receiver_lacks_explicit_property(
+                            resolved_member,
+                            prop_name.as_ref(),
+                        )
+                    {
+                        checked_any_member = true;
+                        continue;
+                    }
+
+                    match self.resolve_property_access_with_env(resolved_member, prop_name.as_ref())
+                    {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        }
+                        | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: Some(type_id),
+                            ..
+                        } if type_id != TypeId::ERROR => {
+                            accepted = true;
+                            break;
+                        }
+                        tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                            ..
+                        } => {
+                            checked_any_member = true;
+                        }
+                        _ => {
+                            if let Some(shape) = query::object_shape(self.ctx.types, resolved_member)
+                            {
+                                if shape.string_index.is_some() {
+                                    accepted = true;
+                                    break;
+                                }
+                                checked_any_member = true;
+                            } else if resolved_member == TypeId::OBJECT
+                                || query::is_type_parameter_like(self.ctx.types, resolved_member)
+                            {
+                                uncertain = true;
+                            } else {
+                                checked_any_member = true;
+                            }
+                        }
+                    }
+                }
+
+                if !accepted && checked_any_member && !uncertain {
+                    let report_idx = self
+                        .find_object_literal_property_element(idx, source_prop.name)
+                        .unwrap_or(idx);
+                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+                }
+            }
+            if first_excess.is_some() {
+                self.emit_tracked_excess_property(first_excess, target);
+                return;
+            }
+        }
+
+        // Handle union targets first using type_queries. For named type aliases,
+        // EPC needs the alias body before property-access resolution collapses
+        // redundant union members (for example `Common | Common & A`).
+        if let Some(members) = query::union_members(self.ctx.types, union_check_target) {
+            let mut target_members = Vec::new();
             let mut any_member_has_string_index = false;
             let mut any_member_has_number_index = false;
             let mut has_unresolved_member = false;
@@ -242,9 +358,20 @@ impl<'a> CheckerState<'a> {
                     if resolved_member == TypeId::OBJECT {
                         return;
                     }
+                    // Unresolved generic union arms can collapse to `any` during
+                    // property-access resolution; keep checking concrete arms, but
+                    // let the diagnostic display use the concrete arm if it is the
+                    // only EPC-relevant member.
+                    if resolved_member == TypeId::ANY
+                        && !self.format_type_diagnostic(target).contains("any")
+                    {
+                        has_unresolved_member = true;
+                        continue;
+                    }
                     // TypeScript still applies excess property checking to the
                     // concrete members of unions like `T | { prop: boolean }`.
-                    if query::is_type_parameter_like(self.ctx.types, resolved_member) {
+                    if self.union_member_has_type_parameter_for_excess_display(resolved_member) {
+                        has_unresolved_member = true;
                         continue;
                     }
                     continue;
@@ -286,12 +413,17 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                target_shapes.push(shape.clone());
+                target_members.push((resolved_member, shape.clone()));
             }
 
-            if target_shapes.is_empty() {
+            if target_members.is_empty() {
                 return;
             }
+
+            let target_shapes = target_members
+                .iter()
+                .map(|(_, shape)| shape.clone())
+                .collect::<Vec<_>>();
 
             if self.try_union_index_signature_value_check(
                 source_props,
@@ -309,7 +441,7 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            if self.try_discriminated_union_excess_check(source, target, idx) {
+            if self.try_discriminated_union_excess_check(source, union_check_target, idx) {
                 return;
             }
 
@@ -334,14 +466,14 @@ impl<'a> CheckerState<'a> {
                 )
                 .unwrap_or_default()
                 .into_iter()
-                .map(|i| target_shapes[i].clone())
+                .map(|i| target_members[i].clone())
                 .collect::<Vec<_>>();
             let had_discriminant_narrowing = !discriminant_shapes.is_empty();
-            let effective_shapes = if !had_discriminant_narrowing {
+            let effective_members = if !had_discriminant_narrowing {
                 if has_unresolved_member {
-                    let matching_shapes = target_shapes
+                    let matching_members = target_members
                         .iter()
-                        .filter(|shape| {
+                        .filter(|(_, shape)| {
                             shape.properties.iter().all(|target_prop| {
                                 if target_prop.optional {
                                     return true;
@@ -357,19 +489,24 @@ impl<'a> CheckerState<'a> {
                         })
                         .cloned()
                         .collect::<Vec<_>>();
-                    if matching_shapes.is_empty() {
+                    if matching_members.is_empty() {
                         return;
                     }
-                    matching_shapes
+                    matching_members
                 } else {
-                    target_shapes
+                    target_members
                 }
             } else {
                 discriminant_shapes
             };
 
+            let effective_shapes = effective_members
+                .iter()
+                .map(|(_, shape)| shape.clone())
+                .collect::<Vec<_>>();
+
             // First excess by source order (see `track_earliest_excess`).
-            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
+            let mut first_excess: Option<(Atom, NodeIndex, u32, TypeId)> = None;
             for source_prop in source_props {
                 if explicit_property_names.is_some()
                     && !explicit_property_names
@@ -402,7 +539,29 @@ impl<'a> CheckerState<'a> {
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
-                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+                    let concrete_diagnostic_members = effective_members
+                        .iter()
+                        .filter(|(member, _)| {
+                            !self.union_member_has_type_parameter_for_excess_display(*member)
+                        })
+                        .collect::<Vec<_>>();
+                    let diagnostic_target = if concrete_diagnostic_members.len() == 1
+                        && (has_unresolved_member
+                            || concrete_diagnostic_members.len() != effective_members.len()
+                            || crate::query_boundaries::common::contains_generic_type_parameters(
+                                self.ctx.types,
+                                target,
+                            )) {
+                        concrete_diagnostic_members[0].0
+                    } else {
+                        target
+                    };
+                    self.track_earliest_excess_with_target(
+                        &mut first_excess,
+                        source_prop.name,
+                        report_idx,
+                        diagnostic_target,
+                    );
                 } else {
                     // =============================================================
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
@@ -442,14 +601,16 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
 
-                    self.check_nested_object_literal_excess_properties(
+                    if self.check_nested_object_literal_excess_properties(
                         source_prop.name,
                         Some(nested_target),
                         idx,
-                    );
+                    ) {
+                        return;
+                    }
                 }
             }
-            self.emit_tracked_excess_property(first_excess, target);
+            self.emit_tracked_excess_property_with_target(first_excess);
             return;
         }
 
@@ -584,11 +745,13 @@ impl<'a> CheckerState<'a> {
                             source_prop.name,
                             nested_target,
                         );
-                        self.check_nested_object_literal_excess_properties(
+                        if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
                             idx,
-                        );
+                        ) {
+                            return;
+                        }
                     }
                 }
             }
@@ -628,20 +791,23 @@ impl<'a> CheckerState<'a> {
                             idx,
                             source_prop.name,
                             source_prop.type_id,
+                            effective_target,
                             type_id,
                         ) {
-                            continue;
+                            return;
                         }
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
                             type_id,
                         );
-                        self.check_nested_object_literal_excess_properties(
+                        if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
                             idx,
-                        );
+                        ) {
+                            return;
+                        }
                     }
                     tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                         ..
@@ -667,7 +833,10 @@ impl<'a> CheckerState<'a> {
             let target_props = target_shape.properties.as_slice();
             let should_check_named_values = [target, effective_target, resolved_target]
                 .into_iter()
-                .any(|candidate| self.target_is_mapped_or_mapped_application(candidate));
+                .any(|candidate| {
+                    self.target_is_mapped_or_mapped_application(candidate)
+                        || self.target_is_or_displays_type_application(candidate)
+                });
 
             // When the target has a string index signature, outer property names are
             // all valid (any string key is accepted). But we still need to check
@@ -702,9 +871,10 @@ impl<'a> CheckerState<'a> {
                             idx,
                             source_prop.name,
                             source_prop.type_id,
+                            effective_target,
                             target_prop.type_id,
                         ) {
-                            continue;
+                            return;
                         }
                         nested_types.push(target_prop.type_id);
                     }
@@ -715,11 +885,13 @@ impl<'a> CheckerState<'a> {
                         source_prop.name,
                         nested_target,
                     );
-                    self.check_nested_object_literal_excess_properties(
+                    if self.check_nested_object_literal_excess_properties(
                         source_prop.name,
                         Some(nested_target),
                         idx,
-                    );
+                    ) {
+                        return;
+                    }
                 }
                 return;
             }
@@ -813,21 +985,24 @@ impl<'a> CheckerState<'a> {
                                 idx,
                                 source_prop.name,
                                 source_prop.type_id,
+                                effective_target,
                                 target_prop_type,
                             )
                         {
-                            continue;
+                            return;
                         }
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
                             target_prop_type,
                         );
-                        self.check_nested_object_literal_excess_properties(
+                        if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
                             idx,
-                        );
+                        ) {
+                            return;
+                        }
                     }
                 }
             }
@@ -841,6 +1016,198 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Note: Missing property checks are handled by solver's explain_failure
+    }
+
+    fn excess_property_union_target(&self, target: TypeId, resolved_target: TypeId) -> TypeId {
+        if query::union_members(self.ctx.types, resolved_target).is_some() {
+            return resolved_target;
+        }
+
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target)
+        else {
+            return resolved_target;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return resolved_target;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
+            return resolved_target;
+        }
+        let Some(body) = def.body else {
+            return resolved_target;
+        };
+        if query::union_members(self.ctx.types, body).is_some() {
+            body
+        } else {
+            resolved_target
+        }
+    }
+
+    pub(crate) fn excess_property_target_from_type_annotation(
+        &mut self,
+        type_node: NodeIndex,
+    ) -> Option<TypeId> {
+        let mut visited = HashSet::new();
+        self.excess_property_annotation_union_type(type_node, &mut visited)
+            .filter(|&ty| query::union_members(self.ctx.types, ty).is_some())
+    }
+
+    fn excess_property_annotation_union_type(
+        &mut self,
+        type_node: NodeIndex,
+        visited: &mut HashSet<NodeIndex>,
+    ) -> Option<TypeId> {
+        if !visited.insert(type_node) {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(type_node)?;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            let wrapped = self.ctx.arena.get_wrapped_type(node)?;
+            return self.excess_property_annotation_union_type(wrapped.type_node, visited);
+        }
+
+        if node.kind == syntax_kind_ext::UNION_TYPE {
+            let composite = self.ctx.arena.get_composite_type(node)?;
+            let contains_intersection_member = composite
+                .types
+                .nodes
+                .iter()
+                .any(|&member| self.annotation_node_contains_intersection(member));
+            if !contains_intersection_member {
+                return None;
+            }
+            let member_types = composite
+                .types
+                .nodes
+                .iter()
+                .map(|&member| self.excess_property_annotation_component_type(member, visited))
+                .collect::<Vec<_>>();
+            return Some(tsz_solver::utils::union_or_single_literal_reduce(
+                self.ctx.types,
+                member_types,
+            ));
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let alias_body = self.local_non_generic_type_alias_body_for_reference(type_node)?;
+            return self.excess_property_annotation_union_type(alias_body, visited);
+        }
+
+        None
+    }
+
+    fn excess_property_annotation_component_type(
+        &mut self,
+        type_node: NodeIndex,
+        visited: &mut HashSet<NodeIndex>,
+    ) -> TypeId {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return TypeId::ERROR;
+        };
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.excess_property_annotation_component_type(wrapped.type_node, visited);
+        }
+
+        if node.kind == syntax_kind_ext::INTERSECTION_TYPE
+            && let Some(composite) = self.ctx.arena.get_composite_type(node)
+        {
+            let member_types = composite
+                .types
+                .nodes
+                .iter()
+                .map(|&member| self.excess_property_annotation_component_type(member, visited))
+                .collect::<Vec<_>>();
+            return self.raw_intersection_or_single(member_types);
+        }
+
+        if let Some(union_type) = self.excess_property_annotation_union_type(type_node, visited) {
+            return union_type;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(lazy_type) = self.named_type_reference_lazy_type(type_node)
+        {
+            return lazy_type;
+        }
+
+        self.get_type_from_type_node(type_node)
+    }
+
+    fn annotation_node_contains_intersection(&self, type_node: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.annotation_node_contains_intersection(wrapped.type_node);
+        }
+        false
+    }
+
+    fn raw_intersection_or_single(&self, members: Vec<TypeId>) -> TypeId {
+        let mut iter = members.into_iter();
+        let Some(mut result) = iter.next() else {
+            return TypeId::UNKNOWN;
+        };
+        for member in iter {
+            result = self.ctx.types.intersect_types_raw2(result, member);
+        }
+        result
+    }
+
+    fn named_type_reference_lazy_type(&mut self, type_node: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(type_node)?;
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        let _ = self.get_type_from_type_node(type_node);
+        Some(self.ctx.types.lazy(def_id))
+    }
+
+    fn local_non_generic_type_alias_body_for_reference(
+        &self,
+        type_node: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(type_node)?;
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        symbol.declarations.iter().copied().find_map(|decl_idx| {
+            let decl_node = self.ctx.arena.get(decl_idx)?;
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return None;
+            }
+            let type_alias = self.ctx.arena.get_type_alias(decl_node)?;
+            if type_alias.type_parameters.is_some() {
+                return None;
+            }
+            Some(type_alias.type_node)
+        })
     }
 
     /// Boolean query: does a fresh source have any excess properties relative to
@@ -879,6 +1246,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let resolved_target = self.resolve_type_for_property_access(target);
+        let resolved_target = self.excess_property_union_target(target, resolved_target);
         let Some(members) = query::union_members(self.ctx.types, resolved_target) else {
             return false;
         };
@@ -944,7 +1312,10 @@ impl<'a> CheckerState<'a> {
         let display_target = if narrowed_member_types.len() == 1 {
             narrowed_member_types[0]
         } else {
-            tsz_solver::utils::union_or_single(self.ctx.types, narrowed_member_types.clone())
+            tsz_solver::utils::union_or_single_literal_reduce(
+                self.ctx.types,
+                narrowed_member_types.clone(),
+            )
         };
         let narrowed_shapes: Vec<&std::sync::Arc<tsz_solver::ObjectShape>> = matching_indices
             .iter()
@@ -1245,6 +1616,74 @@ impl<'a> CheckerState<'a> {
             let report_idx = self
                 .find_object_literal_property_element(obj_literal_idx, source_prop.name)
                 .unwrap_or(obj_literal_idx);
+            if let Some(nested_idx) = self.object_literal_property_initializer(report_idx) {
+                let nested_idx = self.ctx.arena.skip_parenthesized(nested_idx);
+                if self
+                    .ctx
+                    .arena
+                    .get(nested_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                {
+                    let nested_request =
+                        crate::context::TypingRequest::with_contextual_type(target_value_type);
+                    let nested_source =
+                        self.get_type_of_node_with_request(nested_idx, &nested_request);
+                    let before_nested = self.ctx.diagnostics.len();
+                    self.check_object_literal_excess_properties(
+                        nested_source,
+                        target_value_type,
+                        nested_idx,
+                    );
+                    if self.ctx.diagnostics.len() > before_nested {
+                        continue;
+                    }
+                }
+            }
+            let computed_property = self
+                .ctx
+                .arena
+                .get(report_idx)
+                .and_then(|node| self.ctx.arena.get_property_assignment(node))
+                .map(|prop| (prop.name, prop.initializer))
+                .or_else(|| {
+                    self.object_literal_property_name_and_value(obj_literal_idx, source_prop.name)
+                })
+                .or_else(|| {
+                    let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+                    let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+                    obj_lit.elements.nodes.iter().rev().find_map(|&elem_idx| {
+                        let elem_node = self.ctx.arena.get(elem_idx)?;
+                        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                        let resolved = self.get_property_name_resolved(prop.name)?;
+                        (self.ctx.types.intern_string(&resolved) == source_prop.name)
+                            .then_some((prop.name, prop.initializer))
+                    })
+                });
+            if let Some((prop_name_idx, prop_value_idx)) = computed_property
+                && self
+                    .ctx
+                    .arena
+                    .get(prop_name_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+                let source_type = self
+                    .literal_type_from_initializer(prop_value_idx)
+                    .unwrap_or(source_prop.type_id);
+                let source_str = self.format_type_for_assignability_message(source_type);
+                let target_str = self.format_type_for_assignability_message(target_value_type);
+                let message = format_message(
+                    diagnostic_messages::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                self.error_at_node(
+                    prop_name_idx,
+                    &message,
+                    diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+                continue;
+            }
             self.error_type_not_assignable_at_with_anchor(
                 source_prop.type_id,
                 target_value_type,
@@ -1611,14 +2050,15 @@ impl<'a> CheckerState<'a> {
         prop_name: tsz_common::interner::Atom,
         target_prop_type: Option<TypeId>,
         obj_literal_idx: NodeIndex,
-    ) {
+    ) -> bool {
+        let diagnostics_before = self.ctx.diagnostics.len();
         // Get the AST node for the object literal
         let Some(obj_node) = self.ctx.arena.get(obj_literal_idx) else {
-            return;
+            return false;
         };
 
         let Some(obj_lit) = self.ctx.arena.get_literal_expr(obj_node) else {
-            return;
+            return false;
         };
 
         // =============================================================
@@ -1708,9 +2148,10 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                return; // Found the property, stop searching
+                return self.ctx.diagnostics.len() > diagnostics_before;
             }
         }
+        false
     }
 
     /// Find the property element node in an object literal by interned property name.
@@ -1743,6 +2184,23 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    fn object_literal_property_initializer(&self, prop_idx: NodeIndex) -> Option<NodeIndex> {
+        let prop_node = self.ctx.arena.get(prop_idx)?;
+        match prop_node.kind {
+            syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .ctx
+                .arena
+                .get_property_assignment(prop_node)
+                .map(|prop| prop.initializer),
+            syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .ctx
+                .arena
+                .get_shorthand_property(prop_node)
+                .map(|prop| prop.name),
+            _ => None,
+        }
     }
 
     pub(crate) fn object_literal_property_display_name(
@@ -2003,6 +2461,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: props.len() as u32,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }

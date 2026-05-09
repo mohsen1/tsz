@@ -1,73 +1,33 @@
 use super::super::Printer;
-use crate::transforms::ir::IRNode;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-/// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
-/// for exported enums in namespaces.
-pub(in crate::emitter) fn rewrite_enum_iife_for_namespace_export(
-    ir: &mut IRNode,
-    enum_name: &str,
-    ns_name: &str,
-) {
-    // The IR from EnumES5Transformer is:
-    //   Sequence([VarDecl { name }, ExpressionStatement(CallExpr { callee, arguments: [iife_arg] })])
-    // where iife_arg is: LogicalOr { left: Identifier(E), right: BinaryExpr(E = {}) }
-    //
-    // We need to transform it to:
-    //   iife_arg = BinaryExpr(E = LogicalOr { left: NS.E, right: BinaryExpr(NS.E = {}) })
-    let IRNode::Sequence(stmts) = ir else {
-        return;
-    };
+#[path = "namespace_export_destructuring.rs"]
+mod namespace_export_destructuring;
+#[path = "namespace/helpers.rs"]
+mod namespace_helpers;
+#[cfg(test)]
+#[path = "namespace_import_alias_tests.rs"]
+mod namespace_import_alias_tests;
 
-    // Find the ExpressionStatement containing the CallExpr
-    let Some(expr_stmt) = stmts.iter_mut().find_map(|s| match s {
-        IRNode::ExpressionStatement(inner) => Some(inner),
-        _ => None,
-    }) else {
-        return;
-    };
-
-    let IRNode::CallExpr { arguments, .. } = expr_stmt.as_mut() else {
-        return;
-    };
-
-    if arguments.len() != 1 {
-        return;
-    }
-
-    // Build the namespace-qualified property access: NS.E
-    let ns_prop = || IRNode::PropertyAccess {
-        object: Box::new(IRNode::Identifier(ns_name.to_string().into())),
-        property: enum_name.to_string().into(),
-    };
-
-    // Replace the IIFE argument: E || (E = {}) → E = NS.E || (NS.E = {})
-    arguments[0] = IRNode::BinaryExpr {
-        left: Box::new(IRNode::Identifier(enum_name.to_string().into())),
-        operator: "=".to_string().into(),
-        right: Box::new(IRNode::LogicalOr {
-            left: Box::new(ns_prop()),
-            right: Box::new(IRNode::BinaryExpr {
-                left: Box::new(ns_prop()),
-                operator: "=".to_string().into(),
-                right: Box::new(IRNode::empty_object()),
-            }),
-        }),
-    };
-}
+pub(in crate::emitter) use namespace_helpers::rewrite_enum_iife_for_namespace_export;
+use namespace_helpers::{find_next_code_module_keyword, find_unescaped_template_end};
 
 impl<'a> Printer<'a> {
-    // =========================================================================
-    // Namespace / Module Declarations
-    // =========================================================================
-
     pub(in crate::emitter) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(module) = self.arena.get_module(node) else {
             return;
         };
+
+        if self.emit_recovered_template_module_declaration(node, node.end) {
+            return;
+        }
+
+        if self.emit_recovered_anonymous_declare_module_declaration(node, module) {
+            return;
+        }
 
         // Skip ambient module declarations (declare namespace/module)
         if self.arena.is_declare(&module.modifiers) {
@@ -82,11 +42,6 @@ impl<'a> Printer<'a> {
         // Skip non-instantiated modules (type-only: interfaces, type aliases, empty)
         if !self.is_instantiated_module(module.body) {
             self.skip_comments_for_erased_node(node);
-            return;
-        }
-
-        if !self.ctx.target_es5 && self.emit_recovered_missing_arrow_namespace_closure(node, module)
-        {
             return;
         }
 
@@ -172,7 +127,85 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        self.emit_namespace_iife(&module, parent_name.as_deref());
+        let parent_source_path = self.current_namespace_source_path.clone();
+        self.emit_namespace_iife(
+            &module,
+            parent_name.as_deref(),
+            parent_source_path.as_deref(),
+        );
+    }
+
+    pub(in crate::emitter) fn emit_recovered_template_module_declaration(
+        &mut self,
+        node: &Node,
+        scan_end: u32,
+    ) -> bool {
+        let Some(module) = self.arena.get_module(node) else {
+            return false;
+        };
+        if !self
+            .arena
+            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let scan_end = (scan_end as usize).min(text.len());
+        let Ok(source) = crate::safe_slice::slice(text, start, scan_end) else {
+            return false;
+        };
+
+        let mut cursor = 0;
+        let mut wrote = false;
+        while let Some(module_pos) = find_next_code_module_keyword(source, cursor) {
+            let after_module = module_pos + "module".len();
+            let rest = &source[after_module..];
+            let rest_trimmed = rest.trim_start_matches(|ch: char| ch.is_whitespace());
+            let skipped = rest.len() - rest_trimmed.len();
+            if !rest_trimmed.starts_with('`') {
+                cursor = after_module;
+                continue;
+            };
+            let template_start = after_module + skipped;
+            let Some(template_end) = find_unescaped_template_end(source, template_start) else {
+                break;
+            };
+            let after_template = template_end + '`'.len_utf8();
+            let Ok(template_text) =
+                crate::safe_slice::slice(source, template_start, after_template)
+            else {
+                cursor = after_template;
+                continue;
+            };
+            let body_starts_after_template = source[after_template..]
+                .trim_start_matches(|ch: char| ch.is_whitespace())
+                .starts_with('{');
+            if !body_starts_after_template {
+                cursor = after_template;
+                continue;
+            }
+
+            self.write("declare;");
+            self.write_line();
+            self.write("module ");
+            self.write(template_text);
+            self.write(";");
+            self.write_line();
+            self.write("{");
+            self.write_line();
+            self.write("}");
+            self.write_line();
+            wrote = true;
+            cursor = after_template;
+        }
+
+        if wrote {
+            self.skip_comments_for_erased_node(node);
+        }
+        wrote
     }
 
     fn emit_recovered_anonymous_module_declaration(
@@ -227,66 +260,75 @@ impl<'a> Printer<'a> {
         wrote
     }
 
-    fn emit_recovered_missing_arrow_namespace_closure(
+    fn emit_recovered_anonymous_declare_module_declaration(
         &mut self,
         node: &Node,
         module: &tsz_parser::parser::node::ModuleData,
     ) -> bool {
-        let name = self.get_identifier_text_idx(module.name);
-        if name != "missingCurliesWithArrow" {
+        if !self.is_recovered_anonymous_declare_module(module) {
             return false;
         }
-        let Some(text) = self.source_text else {
-            return false;
-        };
-        let Ok(source) = crate::safe_slice::slice(text, node.pos as usize, node.end as usize)
-        else {
-            return false;
-        };
-        if !source.contains("namespace withStatement")
-            || !source.contains("namespace withoutStatement")
-            || !source.contains("=> var k = 10;")
-            || !source.contains("=> };")
+        if !self
+            .recovered_declare_module_name_starts_with(node, |byte| byte == b'{')
+            .unwrap_or(false)
         {
             return false;
         }
+        let Some(body_node) = self.arena.get(module.body) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return false;
+        };
 
-        let lines = [
-            format!("var {name};"),
-            format!("(function ({name}) {{"),
-            "    let withStatement;".to_string(),
-            "    (function (withStatement) {".to_string(),
-            "        var a = () => { var k = 10; };".to_string(),
-            "        var b = () => { var k = 10; };".to_string(),
-            "        var c = (x) => { var k = 10; };".to_string(),
-            "        var d = (x, y) => { var k = 10; };".to_string(),
-            "        var e = (x, y) => { var k = 10; };".to_string(),
-            "        var f = () => { var k = 10; };".to_string(),
-            "    })(withStatement || (withStatement = {}));".to_string(),
-            "    let withoutStatement;".to_string(),
-            "    (function (withoutStatement) {".to_string(),
-            "        var a = () => ;".to_string(),
-            "    })(withoutStatement || (withoutStatement = {}));".to_string(),
-            "    ;".to_string(),
-            "    var b = () => ;".to_string(),
-            format!("}})({name} || ({name} = {{}}));"),
-            "var c = (x) => ;".to_string(),
-            ";".to_string(),
-            "var d = (x, y) => ;".to_string(),
-            ";".to_string(),
-            "var e = (x, y) => ;".to_string(),
-            ";".to_string(),
-            "var f = () => ;".to_string(),
-        ];
+        self.write("declare;");
+        self.write_line();
+        self.write("module;");
+        self.write_line();
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
 
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                self.write_line();
+        if let Some(statements) = block.statements.as_ref() {
+            for &stmt_idx in &statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx)
+                    && self.is_erased_statement(stmt_node)
+                {
+                    continue;
+                }
+                let before_len = self.writer.len();
+                self.emit(stmt_idx);
+                if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
             }
-            self.write(line);
         }
+
+        self.decrease_indent();
+        self.write("}");
         self.skip_comments_for_erased_node(node);
         true
+    }
+
+    fn recovered_declare_module_name_starts_with(
+        &self,
+        node: &Node,
+        pred: impl FnOnce(u8) -> bool,
+    ) -> Option<bool> {
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        let source = crate::safe_slice::slice(text, start, end).ok()?;
+        let module_pos = find_next_code_module_keyword(source, 0)?;
+        let name_start = module_pos + "module".len();
+        let rest = &source[name_start..];
+        let rest_trimmed = rest.trim_start_matches(|ch: char| ch.is_whitespace());
+        Some(
+            rest_trimmed
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| pred(*byte)),
+        )
     }
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.
@@ -295,8 +337,12 @@ impl<'a> Printer<'a> {
         &mut self,
         module: &tsz_parser::parser::node::ModuleData,
         parent_name: Option<&str>,
+        parent_source_path: Option<&str>,
     ) {
         let name = self.get_identifier_text_idx(module.name);
+        let source_path = parent_source_path
+            .filter(|parent| !parent.is_empty())
+            .map_or_else(|| name.clone(), |parent| format!("{parent}.{name}"));
         if let Some(parent) = parent_name
             && !name.is_empty()
         {
@@ -375,10 +421,16 @@ impl<'a> Printer<'a> {
                 // Save/restore declared_namespace_names so names from the outer scope
                 // don't suppress declarations inside the nested IIFE (each IIFE creates
                 // a new function scope), and names declared inside don't leak out.
+                //
+                // Pass `iife_param` (not `name`) as the inner's parent: inside this
+                // IIFE's body the outer namespace is bound under the renamed param
+                // (e.g., `Y` → `Y_1`), so the inner's `(N = parent.N || ...)` argument
+                // must reference that local binding to avoid shadowing by the
+                // `var N;` we just emitted for the inner namespace.
                 if let Some(inner_module) = self.arena.get_module(body_node) {
                     let inner_module = inner_module.clone();
                     let prev_declared = std::mem::take(&mut self.declared_namespace_names);
-                    self.emit_namespace_iife(&inner_module, Some(&name));
+                    self.emit_namespace_iife(&inner_module, Some(&iife_param), Some(&source_path));
                     self.declared_namespace_names = prev_declared;
                 }
             } else {
@@ -390,6 +442,7 @@ impl<'a> Printer<'a> {
                 // IIFE creates a new function scope), and inner names don't leak out.
                 let prev_declared = std::mem::take(&mut self.declared_namespace_names);
                 let prev_scope_end = self.namespace_scope_end;
+                let prev_source_path = self.current_namespace_source_path.clone();
                 self.in_namespace_iife = true;
                 // Set the scope end so import alias reference searching is
                 // limited to this namespace body (not sibling namespaces).
@@ -401,11 +454,13 @@ impl<'a> Printer<'a> {
                     .map(std::borrow::ToOwned::to_owned)
                     .or_else(|| prev_ns_name.clone());
                 self.current_namespace_name = Some(iife_param.clone());
+                self.current_namespace_source_path = Some(source_path.clone());
                 self.emit_namespace_body_statements(module, &iife_param);
                 self.in_namespace_iife = prev;
                 self.namespace_scope_end = prev_scope_end;
                 self.current_namespace_name = prev_ns_name;
                 self.parent_namespace_name = prev_parent_ns;
+                self.current_namespace_source_path = prev_source_path;
                 self.declared_namespace_names = prev_declared;
             }
         }
@@ -474,7 +529,16 @@ impl<'a> Printer<'a> {
     /// name as the namespace. TSC renames the IIFE parameter when this happens
     /// (e.g., `M` → `M_1`). Checks declarations, function parameters, and local
     /// variables at all depths — not just top-level.
-    fn namespace_body_has_name_conflict(
+    /// Variant of `namespace_body_has_name_conflict` for the dotted-name
+    /// recursion path: walk through nested `MODULE_DECLARATIONs` and run a
+    /// text scan over the innermost block. The text scan catches function
+    /// parameters and any-depth bindings (function/class/enum/var/etc.).
+    /// Crucially, it EXCLUDES `namespace`/`module` keywords — tsc
+    /// deliberately doesn't rename an outer namespace IIFE param when
+    /// the conflict comes from a nested sub-namespace (the sub-namespace
+    /// has its own IIFE scope and doesn't shadow the outer param at
+    /// call sites).
+    fn dotted_namespace_innermost_block_conflicts_iife_param(
         &self,
         module: &tsz_parser::parser::node::ModuleData,
         ns_name: &str,
@@ -485,18 +549,141 @@ impl<'a> Printer<'a> {
         if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
             if let Some(inner) = self.arena.get_module(body_node) {
                 let inner_name = self.get_identifier_text_idx(inner.name);
-                return inner_name == ns_name;
+                if inner_name == ns_name {
+                    return true;
+                }
+                return self.dotted_namespace_innermost_block_conflicts_iife_param(inner, ns_name);
+            }
+            return false;
+        }
+        if let Some(text) = self.source_text {
+            let declare_ranges = self.collect_declare_statement_ranges(body_node);
+            return match crate::safe_slice::slice(
+                text,
+                body_node.pos as usize,
+                body_node.end as usize,
+            ) {
+                Ok(body_text) => {
+                    let body_pos = body_node.pos as usize;
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    Self::text_has_non_namespace_binding_named(&masked, ns_name)
+                }
+                Err(_) => false,
+            };
+        }
+        false
+    }
+
+    /// Like `text_has_binding_named` but skips `namespace`/`module`
+    /// declarations. Used for dotted-namespace conflict detection where
+    /// a nested sub-namespace shouldn't be treated as shadowing the
+    /// enclosing namespace's IIFE param.
+    fn text_has_non_namespace_binding_named(text: &str, name: &str) -> bool {
+        let stripped = Self::strip_comments(text);
+        let text = &stripped;
+        let name_bytes = name.as_bytes();
+        let text_bytes = text.as_bytes();
+        let name_len = name_bytes.len();
+
+        let mut i = 0;
+        while i + name_len <= text_bytes.len() {
+            if let Some(pos) = text[i..].find(name) {
+                let abs = i + pos;
+                let before_ok = abs == 0
+                    || (!text_bytes[abs - 1].is_ascii_alphanumeric()
+                        && text_bytes[abs - 1] != b'_'
+                        && text_bytes[abs - 1] != b'$');
+                let after_end = abs + name_len;
+                let after_ok = after_end >= text_bytes.len()
+                    || (!text_bytes[after_end].is_ascii_alphanumeric()
+                        && text_bytes[after_end] != b'_'
+                        && text_bytes[after_end] != b'$');
+
+                if before_ok && after_ok {
+                    let mut p = abs;
+                    while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
+                        p -= 1;
+                    }
+                    if p > 0 {
+                        let prev_char = text_bytes[p - 1];
+                        if prev_char == b'(' || prev_char == b',' {
+                            return true;
+                        }
+                        let preceding = &text[..p];
+                        let keywords: &[&str] = &[
+                            "var",
+                            "let",
+                            "const",
+                            "function",
+                            "class",
+                            "import",
+                            "private",
+                            "public",
+                            "protected",
+                            "readonly",
+                            "override",
+                        ];
+                        for &kw in keywords {
+                            if preceding.ends_with(kw) {
+                                let kw_start = p - kw.len();
+                                let kw_before_ok = kw_start == 0
+                                    || (!text_bytes[kw_start - 1].is_ascii_alphanumeric()
+                                        && text_bytes[kw_start - 1] != b'_'
+                                        && text_bytes[kw_start - 1] != b'$');
+                                if kw_before_ok {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+                i = abs + 1;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    fn namespace_body_has_name_conflict(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+        ns_name: &str,
+    ) -> bool {
+        let Some(body_node) = self.arena.get(module.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            // Dotted namespace (e.g. `namespace M.buz.plop`): the immediate
+            // body is the next nested MODULE_DECLARATION, not a block. Check
+            // the direct child's name against `ns_name` first; if it doesn't
+            // match, recurse into the dotted chain and check ONLY the
+            // innermost block's top-level statements via
+            // `declaration_conflicts_iife_param` (function/class/enum/var/
+            // import-equals). Crucially, we don't fall back to the text scan
+            // there, because the text scan also matches `namespace A {}`
+            // declarations as bindings, and tsc deliberately doesn't rename
+            // an outer namespace IIFE param when the conflict comes from a
+            // nested sub-namespace (the sub-namespace has its own IIFE
+            // scope and doesn't shadow the outer param at call sites).
+            if let Some(inner) = self.arena.get_module(body_node) {
+                let inner_name = self.get_identifier_text_idx(inner.name);
+                if inner_name == ns_name {
+                    return true;
+                }
+                return self.dotted_namespace_innermost_block_conflicts_iife_param(inner, ns_name);
             }
             return false;
         }
         if let Some(block) = self.arena.get_module_block(body_node)
             && let Some(stmts) = &block.statements
-        {
-            return stmts
+            && stmts
                 .nodes
                 .iter()
                 .copied()
-                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name));
+                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name))
+        {
+            return true;
         }
         // Use source text scan: search for the identifier as a binding in the body.
         // This catches parameters, local vars, nested functions/classes at any depth.
@@ -506,16 +693,86 @@ impl<'a> Printer<'a> {
             // decisions and emit incorrectly. Surface span errors instead of
             // returning a false-negative; fall back to false only when source
             // text is literally unavailable.
+            let declare_ranges = self.collect_declare_statement_ranges(body_node);
             return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
                 body_node.end as usize,
             ) {
-                Ok(body_text) => Self::text_has_binding_named(body_text, ns_name),
+                Ok(body_text) => {
+                    let body_pos = body_node.pos as usize;
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    Self::text_has_binding_named(&masked, ns_name)
+                }
                 Err(_) => false,
             };
         }
         false
+    }
+
+    /// Collect (pos, end) byte ranges of every statement inside a namespace
+    /// body that is type-only (`declare`). Their bodies are erased at emit
+    /// time, so identifiers introduced inside them — including a same-named
+    /// inner namespace — must not be counted when deciding whether to rename
+    /// the IIFE parameter.
+    fn collect_declare_statement_ranges(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> Vec<(usize, usize)> {
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return ranges;
+        };
+        let Some(stmts) = &block.statements else {
+            return ranges;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // Resolve the inner declaration. `export declare ...` parses as an
+            // EXPORT_DECLARATION wrapping the real decl, whose modifier list
+            // carries `declare`.
+            let (decl_node, decl_pos, decl_end) = if stmt_node.kind
+                == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+                && let Some(inner) = self.arena.get(export.export_clause)
+            {
+                (inner, stmt_node.pos as usize, stmt_node.end as usize)
+            } else {
+                (stmt_node, stmt_node.pos as usize, stmt_node.end as usize)
+            };
+            let modifiers = match decl_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                    .arena
+                    .get_variable(decl_node)
+                    .and_then(|v| v.modifiers.clone()),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(decl_node)
+                    .and_then(|f| f.modifiers.clone()),
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(decl_node)
+                    .and_then(|c| c.modifiers.clone()),
+                k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                    .arena
+                    .get_enum(decl_node)
+                    .and_then(|e| e.modifiers.clone()),
+                k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                    .arena
+                    .get_module(decl_node)
+                    .and_then(|m| m.modifiers.clone()),
+                _ => None,
+            };
+            if self
+                .arena
+                .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
+            {
+                ranges.push((decl_pos, decl_end));
+            }
+        }
+        ranges
     }
 
     fn namespace_statement_conflicts_iife_param(&self, stmt_idx: NodeIndex, ns_name: &str) -> bool {
@@ -534,9 +791,48 @@ impl<'a> Printer<'a> {
             if inner_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                 return false;
             }
+            // `export declare ...` is type-only and erased at emit, so it
+            // cannot shadow the IIFE parameter — even if the inner declaration
+            // shares a name with the namespace.
+            if self.declaration_is_declare(export.export_clause) {
+                return false;
+            }
             return self.declaration_conflicts_iife_param(export.export_clause, ns_name);
         }
+        // Same rule for non-exported `declare` declarations.
+        if self.declaration_is_declare(stmt_idx) {
+            return false;
+        }
         self.declaration_conflicts_iife_param(stmt_idx, ns_name)
+    }
+
+    fn declaration_is_declare(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let modifiers = match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                .arena
+                .get_variable(node)
+                .and_then(|v| v.modifiers.clone()),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.clone()),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(node).and_then(|c| c.modifiers.clone())
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(node).and_then(|e| e.modifiers.clone())
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(node)
+                .and_then(|m| m.modifiers.clone()),
+            _ => None,
+        };
+        self.arena
+            .has_modifier(&modifiers, SyntaxKind::DeclareKeyword)
     }
 
     fn declaration_conflicts_iife_param(&self, decl_idx: NodeIndex, ns_name: &str) -> bool {
@@ -629,6 +925,8 @@ impl<'a> Printer<'a> {
                             "function",
                             "class",
                             "import",
+                            "module",
+                            "namespace",
                             // TS parameter modifiers
                             "private",
                             "public",
@@ -656,6 +954,30 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    /// Replace bytes inside `ranges` (absolute source positions) with spaces in
+    /// `body_text`, where `body_text` starts at absolute offset `body_pos`.
+    /// Used to neutralize identifiers that come from `declare` (ambient)
+    /// declarations before running the source-text binding scan.
+    fn mask_ranges_static(body_text: &str, body_pos: usize, ranges: &[(usize, usize)]) -> String {
+        if ranges.is_empty() {
+            return body_text.to_string();
+        }
+        let mut bytes = body_text.as_bytes().to_vec();
+        for &(start, end) in ranges {
+            let local_start = start.saturating_sub(body_pos);
+            let local_end = end.saturating_sub(body_pos).min(bytes.len());
+            if local_start >= bytes.len() {
+                continue;
+            }
+            for b in &mut bytes[local_start..local_end] {
+                if !b.is_ascii_whitespace() {
+                    *b = b' ';
+                }
+            }
+        }
+        String::from_utf8(bytes).unwrap_or_else(|_| body_text.to_string())
     }
 
     /// Strip single-line and block comments from text, replacing them with spaces.
@@ -734,7 +1056,40 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if (stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+                && self.statement_has_export_modifier(stmt_node)
+            {
+                let export_names = self.get_export_names_from_clause(stmt_idx);
+                for name in export_names {
+                    names.insert(name);
+                }
+            }
+        }
         names
+    }
+
+    fn namespace_class_fn_enum_name(&self, node: &Node) -> Option<String> {
+        let name = match node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(node)
+                .map(|c| self.get_identifier_text_idx(c.name)),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(node)
+                .map(|f| self.get_identifier_text_idx(f.name)),
+            k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                .arena
+                .get_enum(node)
+                .map(|e| self.get_identifier_text_idx(e.name)),
+            _ => None,
+        }?;
+        if name.is_empty() { None } else { Some(name) }
     }
 
     /// Collect names of exported classes, functions, and enums from a namespace.
@@ -758,34 +1113,60 @@ impl<'a> Printer<'a> {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            }
-            let Some(export) = self.arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            let Some(inner_node) = self.arena.get(export.export_clause) else {
-                continue;
-            };
-            let name = match inner_node.kind {
-                k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                    .arena
-                    .get_class(inner_node)
-                    .map(|c| self.get_identifier_text_idx(c.name)),
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                    .arena
-                    .get_function(inner_node)
-                    .map(|f| self.get_identifier_text_idx(f.name)),
-                k if k == syntax_kind_ext::ENUM_DECLARATION => self
-                    .arena
-                    .get_enum(inner_node)
-                    .map(|e| self.get_identifier_text_idx(e.name)),
-                _ => None,
-            };
-            if let Some(n) = name
-                && !n.is_empty()
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                let Some(inner_node) = self.arena.get(export.export_clause) else {
+                    continue;
+                };
+                if let Some(name) = self.namespace_class_fn_enum_name(inner_node) {
+                    names.push(name);
+                }
+            } else if self.statement_has_export_modifier(stmt_node)
+                && let Some(name) = self.namespace_class_fn_enum_name(stmt_node)
             {
-                names.push(n);
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// Collect class/function/enum names declared in the current namespace block.
+    /// These are lexical value bindings for this IIFE and shadow parent namespace
+    /// properties while printing heritage clauses.
+    fn collect_namespace_current_class_fn_enum_names(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        let Some(body_node) = self.arena.get(module.body) else {
+            return names;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                let Some(inner_node) = self.arena.get(export.export_clause) else {
+                    continue;
+                };
+                if let Some(name) = self.namespace_class_fn_enum_name(inner_node) {
+                    names.push(name);
+                }
+            } else if let Some(name) = self.namespace_class_fn_enum_name(stmt_node) {
+                names.push(name);
             }
         }
         names
@@ -832,6 +1213,290 @@ impl<'a> Printer<'a> {
         names
     }
 
+    fn collect_namespace_local_module_names(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let module_node = if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                Some(stmt_node)
+            } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .filter(|inner| inner.kind == syntax_kind_ext::MODULE_DECLARATION)
+            } else {
+                None
+            };
+            let Some(module_node) = module_node else {
+                continue;
+            };
+            let Some(module) = self.arena.get_module(module_node) else {
+                continue;
+            };
+            let name = self.get_identifier_text_idx(module.name);
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+        names
+    }
+
+    fn collect_dotted_namespace_children_from_source(
+        &self,
+        parent: &str,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut children = rustc_hash::FxHashSet::default();
+        let Some(text) = self.source_text else {
+            return children;
+        };
+        for keyword in ["namespace ", "module "] {
+            let mut search_start = 0;
+            while let Some(relative_pos) = text[search_start..].find(keyword) {
+                let name_start = search_start + relative_pos + keyword.len();
+                let Some((parts, _)) = Self::parse_namespace_path_and_body_start(text, name_start)
+                else {
+                    search_start = name_start;
+                    continue;
+                };
+                for pair in parts.windows(2) {
+                    if pair[0] == parent {
+                        children.insert(pair[1].clone());
+                    }
+                }
+                search_start = name_start;
+            }
+        }
+        children
+    }
+
+    fn collect_namespace_exported_value_members_from_source(
+        &self,
+        parent: &str,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(text) = self.source_text else {
+            return names;
+        };
+        for keyword in ["namespace ", "module "] {
+            let mut search_start = 0;
+            while let Some(relative_pos) = text[search_start..].find(keyword) {
+                let name_start = search_start + relative_pos + keyword.len();
+                let Some((parts, open_brace)) =
+                    Self::parse_namespace_path_and_body_start(text, name_start)
+                else {
+                    search_start = name_start;
+                    continue;
+                };
+                if !parts.iter().any(|part| part == parent) {
+                    search_start = name_start;
+                    continue;
+                }
+                let Some(close_brace) = Self::find_matching_brace(text, open_brace) else {
+                    search_start = open_brace + 1;
+                    continue;
+                };
+                let body = &text[open_brace + 1..close_brace];
+                Self::collect_exported_value_member_names_from_text(body, &mut names);
+                search_start = close_brace + 1;
+            }
+        }
+        names
+    }
+
+    fn parse_namespace_path_and_body_start(
+        text: &str,
+        name_start: usize,
+    ) -> Option<(Vec<String>, usize)> {
+        let bytes = text.as_bytes();
+        let mut pos = name_start;
+        let mut parts = Vec::new();
+        loop {
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            let part_start = pos;
+            while pos < bytes.len()
+                && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_' || bytes[pos] == b'$')
+            {
+                pos += 1;
+            }
+            if part_start == pos {
+                return None;
+            }
+            parts.push(text[part_start..pos].to_string());
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'.') {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if bytes.get(pos) == Some(&b'{') {
+            Some((parts, pos))
+        } else {
+            None
+        }
+    }
+
+    fn find_matching_brace(text: &str, open_brace: usize) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut depth = 0_u32;
+        for (offset, &byte) in bytes.get(open_brace..)?.iter().enumerate() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(open_brace + offset);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn collect_exported_value_member_names_from_text(
+        body: &str,
+        names: &mut rustc_hash::FxHashSet<String>,
+    ) {
+        for marker in ["export class ", "export function ", "export enum "] {
+            let mut search_start = 0;
+            while let Some(relative_pos) = body[search_start..].find(marker) {
+                let mut name_start = search_start + relative_pos + marker.len();
+                if marker == "export class " && body[name_start..].starts_with("abstract ") {
+                    name_start += "abstract ".len();
+                }
+                let name: String = body[name_start..]
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .collect();
+                if !name.is_empty() {
+                    names.insert(name);
+                }
+                search_start = name_start.saturating_add(1);
+            }
+        }
+    }
+
+    fn namespace_iife_param_base(name: &str) -> &str {
+        let Some((base, suffix)) = name.rsplit_once('_') else {
+            return name;
+        };
+        if suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            base
+        } else {
+            name
+        }
+    }
+
+    pub(in crate::emitter) fn collect_all_namespace_exports(&mut self, statements: &NodeList) {
+        for &stmt_idx in &statements.nodes {
+            self.collect_namespace_exports_from_statement(stmt_idx, None, false);
+        }
+    }
+
+    fn collect_namespace_exports_from_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+        parent_path: Option<&str>,
+        exported_to_parent: bool,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                if let Some(inner_node) = self.arena.get(export.export_clause) {
+                    if inner_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        self.collect_namespace_exports_from_statement(
+                            export.export_clause,
+                            parent_path,
+                            true,
+                        );
+                    } else if let Some(path) = parent_path {
+                        let names = self.get_export_names_from_clause(export.export_clause);
+                        self.namespace_all_exported_names
+                            .entry(path.to_string())
+                            .or_default()
+                            .extend(names);
+                    }
+                }
+            }
+            return;
+        }
+
+        if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            self.collect_namespace_exports_from_module(stmt_node, parent_path, exported_to_parent);
+            return;
+        }
+
+        if self.statement_has_export_modifier(stmt_node)
+            && let Some(path) = parent_path
+        {
+            let names = self.get_export_names_from_clause(stmt_idx);
+            self.namespace_all_exported_names
+                .entry(path.to_string())
+                .or_default()
+                .extend(names);
+        }
+    }
+
+    fn collect_namespace_exports_from_module(
+        &mut self,
+        module_node: &Node,
+        parent_path: Option<&str>,
+        exported_to_parent: bool,
+    ) {
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+        let name = self.get_identifier_text_idx(module.name);
+        if name.is_empty() {
+            return;
+        }
+        if exported_to_parent && let Some(parent) = parent_path {
+            self.namespace_all_exported_names
+                .entry(parent.to_string())
+                .or_default()
+                .insert(name.clone());
+        }
+
+        let path = parent_path.map_or_else(|| name.clone(), |parent| format!("{parent}.{name}"));
+        let Some(body_node) = self.arena.get(module.body) else {
+            return;
+        };
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            self.collect_namespace_exports_from_module(body_node, Some(&path), true);
+            return;
+        }
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return;
+        };
+        let Some(stmts) = block.statements.clone() else {
+            return;
+        };
+        for stmt_idx in stmts.nodes {
+            self.collect_namespace_exports_from_statement(stmt_idx, Some(&path), false);
+        }
+    }
+
     /// Emit body statements of a namespace IIFE, handling exports.
     fn emit_namespace_body_statements(
         &mut self,
@@ -850,12 +1515,33 @@ impl<'a> Printer<'a> {
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
             let prev_parent_exported = std::mem::take(&mut self.namespace_parent_exported_names);
+            let prev_ancestor_qualifiers =
+                std::mem::take(&mut self.namespace_ancestor_export_qualifiers);
+            let prev_current_class_fn_enum =
+                std::mem::take(&mut self.namespace_current_class_fn_enum_names);
             let mut local_exports = self.collect_namespace_exported_names(module);
+            if let Some(source_path) = self.current_namespace_source_path.as_ref()
+                && let Some(exports) = self.namespace_all_exported_names.get(source_path)
+            {
+                local_exports.extend(exports.iter().cloned());
+            }
             let leaf_name = self.get_identifier_text_idx(module.name);
+            if !leaf_name.is_empty() {
+                local_exports
+                    .extend(self.collect_dotted_namespace_children_from_source(&leaf_name));
+                local_exports
+                    .extend(self.collect_namespace_exported_value_members_from_source(&leaf_name));
+            }
+            let mut ancestor_qualifiers = prev_ancestor_qualifiers.clone();
             let mut parent_exports = self
                 .parent_namespace_name
                 .as_ref()
-                .and_then(|parent| self.namespace_prior_exports.get(parent))
+                .and_then(|parent| {
+                    self.namespace_prior_exports.get(parent).or_else(|| {
+                        self.namespace_prior_exports
+                            .get(Self::namespace_iife_param_base(parent))
+                    })
+                })
                 .map(|exports| {
                     exports
                         .iter()
@@ -863,6 +1549,27 @@ impl<'a> Printer<'a> {
                         .collect::<rustc_hash::FxHashSet<_>>()
                 })
                 .unwrap_or_default();
+            if let Some(parent) = self.parent_namespace_name.as_ref() {
+                let parent_base = Self::namespace_iife_param_base(parent);
+                if parent_base != parent {
+                    for name in
+                        self.collect_namespace_exported_value_members_from_source(parent_base)
+                    {
+                        parent_exports.insert(name.clone());
+                        ancestor_qualifiers.insert(name, parent.clone());
+                    }
+                }
+            }
+            if let Some(parent) = self.parent_namespace_name.as_ref()
+                && let Some(exports) = self.namespace_prior_exports.get(parent).or_else(|| {
+                    self.namespace_prior_exports
+                        .get(Self::namespace_iife_param_base(parent))
+                })
+            {
+                for name in exports {
+                    ancestor_qualifiers.insert(name.clone(), parent.clone());
+                }
+            }
             // Also merge class/fn/enum names from PRIOR blocks of the parent
             // namespace. These names live on the parent namespace object once
             // the prior IIFE has exited, so a nested namespace inside a
@@ -874,30 +1581,55 @@ impl<'a> Printer<'a> {
             // current-block class/fn/enum names (which remain in lexical
             // scope as IIFE locals).
             if let Some(parent) = self.parent_namespace_name.as_ref()
-                && let Some(class_exports) = self.namespace_prior_class_fn_enum_exports.get(parent)
+                && let Some(class_exports) = self
+                    .namespace_prior_class_fn_enum_exports
+                    .get(parent)
+                    .or_else(|| {
+                        self.namespace_prior_class_fn_enum_exports
+                            .get(Self::namespace_iife_param_base(parent))
+                    })
             {
                 for name in class_exports.iter() {
                     parent_exports.insert(name.clone());
+                    ancestor_qualifiers.insert(name.clone(), parent.clone());
                 }
             }
             parent_exports.remove(&leaf_name);
+            ancestor_qualifiers.remove(&leaf_name);
             // Collect class/function/enum names for future reopenings (before mutable borrow)
             let class_fn_enum_names = self.collect_namespace_class_fn_enum_names(module);
-            // Merge in exports from prior blocks of the same namespace (cross-block sharing)
-            //
-            // The scope-qualified key distinguishes same-named namespaces at
-            // different scopes (e.g., m1.m2 vs m4.m2). Reopenings at the same
-            // scope share the same parent, so they get the same key.
+            self.namespace_current_class_fn_enum_names = self
+                .collect_namespace_current_class_fn_enum_names(module)
+                .into_iter()
+                .collect();
+            for name in &self.namespace_current_class_fn_enum_names {
+                local_exports.remove(name);
+                parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
+            }
+            if let Some(source_path) = self.current_namespace_source_path.as_ref()
+                && let Some((parent_source_path, _)) = source_path.rsplit_once('.')
+                && let Some(parent_qualifier) = self.parent_namespace_name.as_ref()
+                && let Some(exports) = self.namespace_all_exported_names.get(parent_source_path)
+            {
+                parent_exports.extend(exports.iter().cloned());
+                for name in exports {
+                    ancestor_qualifiers.insert(name.clone(), parent_qualifier.clone());
+                }
+                parent_exports.remove(&leaf_name);
+                ancestor_qualifiers.remove(&leaf_name);
+            }
+            for name in &prev_current_class_fn_enum {
+                parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
+            }
+            // Merge prior same-scope namespace exports for reopened blocks.
             let class_fn_enum_root_name = if let Some(ref parent) = self.parent_namespace_name {
                 format!("{parent}.{leaf_name}")
             } else {
                 leaf_name.clone()
             };
             if !leaf_name.is_empty() {
-                // Merge prior var exports into local set first: a `var`
-                // declared in an earlier block of the same namespace lives
-                // on the namespace object only (its IIFE has exited), so
-                // any reference here must qualify as `ns.x`.
                 let entry = self
                     .namespace_prior_exports
                     .entry(class_fn_enum_root_name.clone())
@@ -905,27 +1637,26 @@ impl<'a> Printer<'a> {
                 for name in entry.iter() {
                     local_exports.insert(name.clone());
                 }
-                entry.extend(local_exports.iter().cloned());
+                entry.extend(
+                    local_exports
+                        .iter()
+                        .filter(|name| !class_fn_enum_names.contains(*name))
+                        .cloned(),
+                );
+                if ns_name != leaf_name {
+                    self.namespace_prior_exports
+                        .entry(ns_name.clone())
+                        .or_default()
+                        .extend(
+                            local_exports
+                                .iter()
+                                .filter(|name| !class_fn_enum_names.contains(*name))
+                                .cloned(),
+                        );
+                }
 
-                // Class/fn/enum names from EARLIER reopenings of this same
-                // namespace must also qualify in this block (their IIFE
-                // has exited too) — but THIS block's own class/fn/enum
-                // declarations stay unqualified, since they're emitted as
-                // locals inside the current IIFE. Tracking these in a
-                // separate map keeps them out of the var-keyed
-                // `namespace_prior_exports` so nested namespaces (which
-                // read parent's var exports as their qualification set)
-                // do NOT see them and keep them unqualified — matching
-                // tsc's reliance on the surrounding IIFE's lexical scope.
-                //
-                // Only merge into local_exports here (so identifier emission
-                // in THIS block sees prior-block class names). The
-                // class_entry.extend(class_fn_enum_names) call that records
-                // THIS block's class/fn/enum names is deferred until AFTER
-                // statement iteration completes (see end of this function),
-                // so that nested namespaces inside this block reading the
-                // parent entry won't see this block's own class/fn/enum
-                // names — those remain in lexical scope and stay unqualified.
+                // Prior class/function/enum exports qualify in reopened blocks;
+                // this block's own declarations are recorded only after emission.
                 let class_entry = self
                     .namespace_prior_class_fn_enum_exports
                     .entry(class_fn_enum_root_name.clone())
@@ -939,9 +1670,18 @@ impl<'a> Printer<'a> {
             for name in &local_names {
                 local_exports.remove(name);
                 parent_exports.remove(name);
+                ancestor_qualifiers.remove(name);
+            }
+            for name in self.collect_namespace_local_module_names(body_node) {
+                local_exports.remove(&name);
+                parent_exports.remove(&name);
+                ancestor_qualifiers.remove(&name);
             }
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
+            self.namespace_ancestor_export_qualifiers = ancestor_qualifiers;
+            let (destructuring_export_temps, destructuring_export_temp_names) =
+                self.reserve_namespace_destructuring_export_temps(module);
 
             // Skip comments on the same line as the opening `{` of the module block.
             // When the namespace is transformed to an IIFE, tsc drops trailing
@@ -977,6 +1717,18 @@ impl<'a> Printer<'a> {
                         break;
                     }
                 }
+            }
+
+            if !destructuring_export_temp_names.is_empty() {
+                self.write("var ");
+                for (i, temp) in destructuring_export_temp_names.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(temp);
+                }
+                self.write(";");
+                self.write_line();
             }
 
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
@@ -1055,6 +1807,7 @@ impl<'a> Printer<'a> {
                                 &ns_name,
                                 stmt_node,
                                 upper_bound,
+                                &destructuring_export_temps,
                             );
                         } else if inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                             // export import X = Y; → ns.X = Y;
@@ -1175,16 +1928,15 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            // Now that statement iteration is complete, record THIS block's
-            // class/fn/enum names so that LATER reopenings of the same
-            // namespace (and nested namespaces inside those later
-            // reopenings) see them as needing qualification. Doing this
-            // AFTER the loop is critical: if we did it before, a nested
-            // namespace inside the current block reading the parent's
-            // class/fn/enum entry would incorrectly see this block's own
-            // class/fn/enum names (which are still in lexical scope as IIFE
-            // locals here) and qualify references that should stay bare.
+            // Record this block's class/fn/enum names only after nested namespaces
+            // have emitted so same-block lexical references stay bare.
             if !leaf_name.is_empty() {
+                if ns_name != leaf_name {
+                    self.namespace_prior_class_fn_enum_exports
+                        .entry(ns_name.clone())
+                        .or_default()
+                        .extend(class_fn_enum_names.iter().cloned());
+                }
                 self.namespace_prior_class_fn_enum_exports
                     .entry(class_fn_enum_root_name)
                     .or_default()
@@ -1194,6 +1946,8 @@ impl<'a> Printer<'a> {
             // Restore previous exported names
             self.namespace_exported_names = prev_exported;
             self.namespace_parent_exported_names = prev_parent_exported;
+            self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;
+            self.namespace_current_class_fn_enum_names = prev_current_class_fn_enum;
         }
     }
 
@@ -1206,446 +1960,6 @@ impl<'a> Printer<'a> {
     /// For `export default`, only purely type-level declarations (interface, type alias)
     /// should be skipped. Ambient value declarations (`declare function`, `declare class`,
     /// `declare var`) still represent runtime values and should emit `exports.default = X;`.
-    /// This is more permissive than `namespace_alias_target_has_runtime_value` which
-    /// treats `declare function` as having no runtime emit (correct for namespace aliasing
-    /// but not for `export default`).
-    pub(in crate::emitter) fn export_default_target_has_runtime_value(
-        &self,
-        target: NodeIndex,
-    ) -> bool {
-        let node = match self.arena.get(target) {
-            Some(n) => n,
-            None => return true, // conservative default
-        };
-
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return true; // qualified names etc. are conservatively treated as runtime
-        }
-
-        let name = self.get_identifier_text_idx(target);
-        if name.is_empty() {
-            return true;
-        }
-
-        // Search source file statements for the declaration
-        let statements = self.scope_statements_for_runtime_lookup(None);
-        if statements.is_empty() {
-            return true; // conservative: can't resolve, assume runtime
-        }
-
-        let mut found_type_only = false;
-        let mut found_value = false;
-
-        for stmt_idx in &statements {
-            let Some(stmt_node) = self.arena.get(*stmt_idx) else {
-                continue;
-            };
-
-            // Unwrap export declarations to find the inner declaration
-            let check_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                    self.arena.get(export.export_clause)
-                } else {
-                    None
-                }
-            } else {
-                Some(stmt_node)
-            };
-
-            let Some(check) = check_node else { continue };
-
-            match check.kind {
-                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(iface) = self.arena.get_interface(check)
-                        && self.get_identifier_text_idx(iface.name) == name
-                    {
-                        found_type_only = true;
-                    }
-                }
-                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                    if let Some(ta) = self.arena.get_type_alias(check)
-                        && self.get_identifier_text_idx(ta.name) == name
-                    {
-                        found_type_only = true;
-                    }
-                }
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if let Some(func) = self.arena.get_function(check)
-                        && self.get_identifier_text_idx(func.name) == name
-                    {
-                        found_value = true;
-                    }
-                }
-                k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                    if let Some(class) = self.arena.get_class(check)
-                        && self.get_identifier_text_idx(class.name) == name
-                    {
-                        found_value = true;
-                    }
-                }
-                k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    if let Some(enum_decl) = self.arena.get_enum(check)
-                        && self.get_identifier_text_idx(enum_decl.name) == name
-                    {
-                        found_value = true;
-                    }
-                }
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    let names = self.collect_variable_names_from_node(check);
-                    if names.contains(&name.to_string()) {
-                        found_value = true;
-                    }
-                }
-                k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    if let Some(module) = self.arena.get_module(check)
-                        && self.get_identifier_text_idx(module.name) == name
-                    {
-                        // Ambient namespaces with value members still represent
-                        // a runtime object that may exist elsewhere, so aliases
-                        // to their value members must be preserved.
-                        if self.module_decl_has_runtime_alias_target(module) {
-                            found_value = true;
-                        } else {
-                            found_type_only = true;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // If we found a value declaration, it has runtime value
-        // even if there's also a type declaration with the same name
-        if found_value {
-            return true;
-        }
-        // If we only found type declarations, it's type-only
-        if found_type_only {
-            return false;
-        }
-        // Unresolved: conservative default - assume runtime value
-        true
-    }
-
-    fn module_decl_has_runtime_alias_target(
-        &self,
-        module: &tsz_parser::parser::node::ModuleData,
-    ) -> bool {
-        if self.arena.is_declare(&module.modifiers) {
-            return self.ambient_module_body_has_runtime_value(module.body);
-        }
-
-        self.is_instantiated_module(module.body)
-    }
-
-    fn ambient_module_body_has_runtime_value(&self, module_body: NodeIndex) -> bool {
-        let Some(body_node) = self.arena.get(module_body) else {
-            return false;
-        };
-
-        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-            let Some(inner_module) = self.arena.get_module(body_node) else {
-                return false;
-            };
-            return self.module_decl_has_runtime_alias_target(inner_module);
-        }
-
-        let Some(block) = self.arena.get_module_block(body_node) else {
-            return false;
-        };
-        let Some(statements) = &block.statements else {
-            return false;
-        };
-
-        statements.nodes.iter().any(|&stmt_idx| {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                return false;
-            };
-
-            match stmt_node.kind {
-                k if k == syntax_kind_ext::INTERFACE_DECLARATION
-                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
-                {
-                    false
-                }
-                k if k == syntax_kind_ext::EXPORT_DECLARATION => self
-                    .arena
-                    .get_export_decl(stmt_node)
-                    .filter(|export| !export.is_type_only)
-                    .and_then(|export| self.arena.get(export.export_clause))
-                    .is_some_and(|inner| self.ambient_namespace_statement_has_runtime_value(inner)),
-                _ => self.ambient_namespace_statement_has_runtime_value(stmt_node),
-            }
-        })
-    }
-
-    fn ambient_namespace_statement_has_runtime_value(&self, stmt_node: &Node) -> bool {
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION
-                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
-            {
-                false
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => self
-                .arena
-                .get_module(stmt_node)
-                .is_some_and(|module| self.module_decl_has_runtime_alias_target(module)),
-            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
-                .arena
-                .get_import_decl(stmt_node)
-                .is_some_and(|import| !import.is_type_only),
-            _ => true,
-        }
-    }
-
-    pub(in crate::emitter) fn namespace_alias_target_has_runtime_value(
-        &self,
-        target: NodeIndex,
-        scope_body: Option<NodeIndex>,
-    ) -> bool {
-        if let Some((has_runtime, _)) = self.resolve_entity_runtime_value(target, scope_body) {
-            return has_runtime;
-        }
-
-        if scope_body.is_some() {
-            return self
-                .resolve_entity_runtime_value(target, None)
-                .is_none_or(|(has_runtime, _)| has_runtime);
-        }
-
-        true
-    }
-
-    /// Resolve whether an entity name has runtime value semantics in a scope.
-    /// Returns:
-    /// - `None`: unresolved (caller should be conservative)
-    /// - `(has_runtime, nested_scope)`:
-    ///   - `has_runtime`: whether the resolved symbol exists at runtime
-    ///   - `nested_scope`: module body for namespace-qualified lookup continuation
-    fn resolve_entity_runtime_value(
-        &self,
-        entity: NodeIndex,
-        scope_body: Option<NodeIndex>,
-    ) -> Option<(bool, Option<NodeIndex>)> {
-        let node = self.arena.get(entity)?;
-
-        if let Some(qualified) = self.arena.get_qualified_name(node) {
-            let left = self.resolve_entity_runtime_value(qualified.left, scope_body)?;
-            if !left.0 {
-                return Some((false, None));
-            }
-            if let Some(next_scope) = left.1 {
-                return self
-                    .resolve_entity_runtime_value(qualified.right, Some(next_scope))
-                    .or(Some((true, None)));
-            }
-            return Some((true, None));
-        }
-
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-
-        let name = self.get_identifier_text_idx(entity);
-        if name.is_empty() {
-            return None;
-        }
-
-        let statements = self.scope_statements_for_runtime_lookup(scope_body);
-        if statements.is_empty() {
-            return None;
-        }
-
-        let mut matched = false;
-        let mut has_runtime = false;
-        let mut nested_scope = None;
-
-        for stmt_idx in statements {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            let Some((stmt_runtime, stmt_scope)) =
-                self.statement_runtime_for_name(stmt_node, &name, scope_body)
-            else {
-                continue;
-            };
-
-            matched = true;
-            if stmt_runtime {
-                has_runtime = true;
-                if nested_scope.is_none() {
-                    nested_scope = stmt_scope;
-                }
-            }
-        }
-
-        if matched {
-            Some((has_runtime, nested_scope))
-        } else {
-            None
-        }
-    }
-
-    fn scope_statements_for_runtime_lookup(&self, scope_body: Option<NodeIndex>) -> Vec<NodeIndex> {
-        if let Some(scope_idx) = scope_body {
-            let Some(scope_node) = self.arena.get(scope_idx) else {
-                return Vec::new();
-            };
-
-            if let Some(module) = self.arena.get_module(scope_node) {
-                return self.scope_statements_for_runtime_lookup(Some(module.body));
-            }
-
-            if let Some(block) = self.arena.get_module_block(scope_node)
-                && let Some(stmts) = &block.statements
-            {
-                return stmts.nodes.clone();
-            }
-
-            if let Some(source) = self.arena.get_source_file(scope_node) {
-                return source.statements.nodes.clone();
-            }
-
-            return Vec::new();
-        }
-
-        for node in &self.arena.nodes {
-            if node.kind == syntax_kind_ext::SOURCE_FILE
-                && let Some(source) = self.arena.get_source_file(node)
-            {
-                return source.statements.nodes.clone();
-            }
-        }
-
-        Vec::new()
-    }
-
-    fn statement_runtime_for_name(
-        &self,
-        stmt_node: &Node,
-        name: &str,
-        scope_body: Option<NodeIndex>,
-    ) -> Option<(bool, Option<NodeIndex>)> {
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                let export = self.arena.get_export_decl(stmt_node)?;
-                let inner = self.arena.get(export.export_clause)?;
-                self.statement_runtime_for_name(inner, name, scope_body)
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                let module = self.arena.get_module(stmt_node)?;
-                if self.get_identifier_text_idx(module.name) != name {
-                    return None;
-                }
-                let runtime = self.module_decl_has_runtime_alias_target(module);
-                Some((runtime, if runtime { Some(module.body) } else { None }))
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                let class = self.arena.get_class(stmt_node)?;
-                if self.get_identifier_text_idx(class.name) != name {
-                    return None;
-                }
-                let runtime = !self.arena.is_declare(&class.modifiers);
-                Some((runtime, None))
-            }
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                let func = self.arena.get_function(stmt_node)?;
-                if self.get_identifier_text_idx(func.name) != name {
-                    return None;
-                }
-                let runtime = !self.arena.is_declare(&func.modifiers) && func.body.is_some();
-                Some((runtime, None))
-            }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                let enum_decl = self.arena.get_enum(stmt_node)?;
-                if self.get_identifier_text_idx(enum_decl.name) != name {
-                    return None;
-                }
-                let runtime = !self.arena.is_declare(&enum_decl.modifiers)
-                    && !self
-                        .arena
-                        .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
-                Some((runtime, None))
-            }
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                let iface = self.arena.get_interface(stmt_node)?;
-                if self.get_identifier_text_idx(iface.name) != name {
-                    return None;
-                }
-                Some((false, None))
-            }
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                let type_alias = self.arena.get_type_alias(stmt_node)?;
-                if self.get_identifier_text_idx(type_alias.name) != name {
-                    return None;
-                }
-                Some((false, None))
-            }
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                // `var X`, `let X`, `export var X`, etc.
-                // Structure: VariableStatement → declarations: [VariableDeclarationList]
-                //            VariableDeclarationList → declarations: [VariableDeclaration, ...]
-                let var_stmt = self.arena.get_variable(stmt_node)?;
-                let is_declare = self.arena.is_declare(&var_stmt.modifiers);
-                for &list_or_decl_idx in &var_stmt.declarations.nodes {
-                    let Some(list_or_decl_node) = self.arena.get(list_or_decl_idx) else {
-                        continue;
-                    };
-                    // May be a VariableDeclarationList wrapping individual declarations
-                    if list_or_decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                        let Some(decl_list) = self.arena.get_variable(list_or_decl_node) else {
-                            continue;
-                        };
-                        for &decl_idx in &decl_list.declarations.nodes {
-                            let Some(decl_node) = self.arena.get(decl_idx) else {
-                                continue;
-                            };
-                            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                                continue;
-                            };
-                            if self.get_identifier_text_idx(decl.name) == name {
-                                return Some((!is_declare, None));
-                            }
-                        }
-                    } else {
-                        // Direct VariableDeclaration
-                        let Some(decl) = self.arena.get_variable_declaration(list_or_decl_node)
-                        else {
-                            continue;
-                        };
-                        if self.get_identifier_text_idx(decl.name) == name {
-                            return Some((!is_declare, None));
-                        }
-                    }
-                }
-                None
-            }
-            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                let import = self.arena.get_import_decl(stmt_node)?;
-                if self.get_identifier_text_idx(import.import_clause) != name {
-                    return None;
-                }
-                let runtime = if let Some(spec_node) = self.arena.get(import.module_specifier) {
-                    match spec_node.kind {
-                        kind if kind == SyntaxKind::Identifier as u16
-                            || kind == syntax_kind_ext::QUALIFIED_NAME =>
-                        {
-                            self.namespace_alias_target_has_runtime_value(
-                                import.module_specifier,
-                                scope_body,
-                            )
-                        }
-                        _ => self.import_decl_has_runtime_value(import),
-                    }
-                } else {
-                    self.import_decl_has_runtime_value(import)
-                };
-                Some((runtime, None))
-            }
-            _ => None,
-        }
-    }
-
     /// Emit exported import alias as namespace property assignment.
     /// `export import X = Y;` → `ns.X = Y;`
     fn emit_namespace_exported_import_alias(
@@ -1693,6 +2007,7 @@ impl<'a> Printer<'a> {
         ns_name: &str,
         outer_stmt: &Node,
         comment_upper_bound: u32,
+        destructuring_export_temps: &rustc_hash::FxHashMap<NodeIndex, String>,
     ) {
         let Some(var_node) = self.arena.get(var_stmt_idx) else {
             return;
@@ -1701,9 +2016,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Collect all initialized (name, initializer) pairs across declaration lists.
-        // TSC emits multiple exports as a comma expression: `ns.a = 1, ns.c = 2;`
-        let mut assignments: Vec<(String, NodeIndex)> = Vec::new();
+        let mut wrote_any = false;
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1725,268 +2038,41 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                let mut names = Vec::new();
-                self.collect_binding_names(decl.name, &mut names);
-                for name in names {
-                    assignments.push((name, decl.initializer));
+                if let Some(temp) = destructuring_export_temps.get(&decl_idx) {
+                    self.write_namespace_export_separator(&mut wrote_any);
+                    self.write(temp);
+                    self.write(" = ");
+                    self.emit_expression(decl.initializer);
+                    self.emit_namespace_binding_pattern_assignments(
+                        ns_name,
+                        temp,
+                        decl.name,
+                        &mut wrote_any,
+                    );
+                } else {
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    for name in names {
+                        self.write_namespace_export_separator(&mut wrote_any);
+                        self.write(ns_name);
+                        self.write(".");
+                        self.write(&name);
+                        self.write(" = ");
+                        self.emit_expression(decl.initializer);
+                    }
                 }
             }
         }
 
-        // Emit as comma expression: ns.a = 1, ns.c = 2;
-        if !assignments.is_empty() {
-            for (i, (name, init)) in assignments.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(ns_name);
-                self.write(".");
-                self.write(name);
-                self.write(" = ");
-                self.emit_expression(*init);
-            }
+        if wrote_any {
             self.write(";");
             let token_end = self.find_token_end_before_trivia(outer_stmt.pos, comment_upper_bound);
             self.emit_trailing_comments_before(token_end, comment_upper_bound);
             self.write_line();
         }
     }
-
-    /// Returns true when a variable statement node has no initializers in any of its
-    /// declarators (e.g., `export var b: number;`).  Used to suppress orphaned leading
-    /// comments for exported variable declarations that produce no runtime code.
-    fn namespace_variable_has_no_initializers(&self, var_stmt_idx: NodeIndex) -> bool {
-        let Some(var_node) = self.arena.get(var_stmt_idx) else {
-            return false;
-        };
-        let Some(var_stmt) = self.arena.get_variable(var_node) else {
-            return false;
-        };
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                if decl.initializer.is_some() {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Get export names from a declaration clause (function, class, variable, enum)
-    fn get_export_names_from_clause(&self, clause_idx: NodeIndex) -> Vec<String> {
-        let Some(node) = self.arena.get(clause_idx) else {
-            return Vec::new();
-        };
-        match node.kind {
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var_stmt) = self.arena.get_variable(node) {
-                    return self.collect_variable_names(&var_stmt.declarations);
-                }
-            }
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.arena.get_function(node)
-                    && let Some(name_node) = self.arena.get(func.name)
-                    && let Some(ident) = self.arena.get_identifier(name_node)
-                {
-                    return vec![ident.escaped_text.clone()];
-                }
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(node)
-                    && let Some(name_node) = self.arena.get(class.name)
-                    && let Some(ident) = self.arena.get_identifier(name_node)
-                {
-                    return vec![ident.escaped_text.clone()];
-                }
-            }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_decl) = self.arena.get_enum(node)
-                    && let Some(name_node) = self.arena.get(enum_decl.name)
-                    && let Some(ident) = self.arena.get_identifier(name_node)
-                {
-                    return vec![ident.escaped_text.clone()];
-                }
-            }
-            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    let name = self.get_identifier_text_idx(import_decl.import_clause);
-                    if !name.is_empty() {
-                        return vec![name];
-                    }
-                }
-            }
-            _ => {}
-        }
-        Vec::new()
-    }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::emitter::ModuleKind;
-    use crate::output::printer::{PrintOptions, Printer};
-    use tsz_parser::ParserState;
-
-    /// Regression test: type-only import-equals inside a namespace must not
-    /// leave a phantom blank line. The import `import T = M1.I;` produces no
-    /// JS output (type-only alias), but `emit_namespace_body_statements` used
-    /// to call `write_line()` unconditionally, inserting an empty line between
-    /// the IIFE opening brace and the first real statement.
-    #[test]
-    fn no_blank_line_for_type_only_import_alias_in_namespace() {
-        let source = "namespace M1 {\n    export interface I {\n        foo();\n    }\n}\n\nnamespace M2 {\n    import T = M1.I;\n    class C implements T {\n        foo() {}\n    }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        // The IIFE body should NOT have a blank line after the opening brace.
-        assert!(
-            !output.contains("(function (M2) {\n\n"),
-            "Should not have blank line after IIFE opening brace.\nOutput:\n{output}"
-        );
-
-        // The class should still be emitted correctly inside M2's IIFE
-        assert!(
-            output.contains("class C {"),
-            "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
-        let source = "declare namespace foo { const await: any; }\n\n// await allowed in import=namespace when not a module\nimport await = foo.await;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(
-            &parser.arena,
-            PrintOptions {
-                module: ModuleKind::ESNext,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("var await = foo.await;"),
-            "Ambient namespace value aliases should be preserved in JS emit.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
-        let source = "export {};\ndeclare namespace foo { const await: any; }\n\n// await disallowed in import=namespace when in a module\nimport await = foo.await;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(
-            &parser.arena,
-            PrintOptions {
-                module: ModuleKind::ESNext,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            !output.contains("var await = foo.await;"),
-            "Module-scoped ambient namespace aliases should still be erased when unused.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("export {};"),
-            "Module marker should be preserved when the alias is erased.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a namespace body has a variable with the same name as the namespace,
-    /// the IIFE parameter must be renamed to avoid collision.
-    /// E.g., `namespace m { export var m = ''; }` should emit `(function (m_1) { m_1.m = ''; })`.
-    #[test]
-    fn namespace_iife_param_renamed_for_variable_conflict() {
-        let source = "namespace m {\n  export var m = '';\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("(function (m_1)"),
-            "Namespace IIFE parameter should be renamed to m_1 when body has 'var m'.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("m_1.m = '';"),
-            "Exported variable should use renamed parameter m_1.\nOutput:\n{output}"
-        );
-    }
-
-    /// When a namespace body has an import-equals with the same name as the namespace,
-    /// the IIFE parameter must be renamed.
-    /// E.g., `namespace A.M { import M = Z.M; ... }` should emit `(function (M_1) { ... })`.
-    #[test]
-    fn namespace_iife_param_renamed_for_import_equals_conflict() {
-        let source = "namespace Z {\n  export namespace M {\n    export function bar() { return ''; }\n  }\n}\nnamespace A {\n  export namespace M {\n    import M = Z.M;\n    export function bar() {}\n    M.bar();\n  }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        // The inner M namespace IIFE should have parameter renamed to M_1
-        assert!(
-            output.contains("(function (M_1)"),
-            "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
-        let source = "function foo(title: string) {}\nnamespace foo.Bar {\n  export function f() {}\n}\nnamespace foo.Baz {\n  export function g() {\n    Bar.f();\n  }\n}";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-        printer.set_source_text(source);
-        printer.print(root);
-        let output = printer.finish().code;
-
-        assert!(
-            output.contains("foo.Bar.f();"),
-            "Sibling namespace reference should be qualified through the parent namespace.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("    Bar.f();"),
-            "Sibling namespace reference should not be emitted as a bare identifier.\nOutput:\n{output}"
-        );
-    }
-}
+#[path = "namespace/tests.rs"]
+mod tests;

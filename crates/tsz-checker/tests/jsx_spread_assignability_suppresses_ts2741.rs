@@ -15,99 +15,38 @@
 //! These tests load the standard lib so `{}` carries Object's inherited
 //! members, matching the conformance harness and the `tsz` CLI.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
-use tsz_checker::CheckerState;
+use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_common::diagnostics::Diagnostic;
 
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
-        "es5.d.ts",
-        "es2015.d.ts",
-        "es2015.core.d.ts",
-        "es2015.collection.d.ts",
-        "es2015.iterable.d.ts",
-        "es2015.generator.d.ts",
-        "es2015.promise.d.ts",
-        "es2015.proxy.d.ts",
-        "es2015.reflect.d.ts",
-        "es2015.symbol.d.ts",
-        "es2015.symbol.wellknown.d.ts",
-    ];
+const LIB_NAMES: &[&str] = &[
+    "es5.d.ts",
+    "es2015.d.ts",
+    "es2015.core.d.ts",
+    "es2015.collection.d.ts",
+    "es2015.iterable.d.ts",
+    "es2015.generator.d.ts",
+    "es2015.promise.d.ts",
+    "es2015.proxy.d.ts",
+    "es2015.reflect.d.ts",
+    "es2015.symbol.d.ts",
+    "es2015.symbol.wellknown.d.ts",
+];
 
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                let lib_file = LibFile::from_source(file_name.to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-                break;
-            }
-        }
-    }
-
-    lib_files
-}
-
-fn check_jsx_with_libs(source: &str) -> Vec<u32> {
-    let file_name = "test.tsx";
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let lib_files = load_lib_files_for_test();
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
+fn check_jsx_with_libs_diagnostics(source: &str) -> Vec<Diagnostic> {
     let options = CheckerOptions {
         jsx_mode: JsxMode::Preserve,
         ..CheckerOptions::default()
     };
+    let libs = load_lib_files(LIB_NAMES);
+    check_source_with_libs(source, "test.tsx", options, &libs)
+}
 
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+fn check_jsx_with_libs(source: &str) -> Vec<u32> {
+    check_jsx_with_libs_diagnostics(source)
+        .iter()
+        .map(|d| d.code)
+        .collect()
 }
 
 /// Empty spread into a target whose only required member is inherited from
@@ -201,5 +140,59 @@ function make3<T extends { y: string }>(obj: T) {
     assert!(
         ts2322_count >= 2,
         "Both make2 and make3 must emit TS2322 (generic spread incompatible with target); got codes: {codes:?}"
+    );
+}
+
+/// Generic JSX spreads must render the source as the type parameter itself,
+/// not the normalized intersection with its constraint. tsc reports
+/// `Type 'T' is not assignable to type 'Attribs1'.` for both functions.
+#[test]
+fn generic_spread_ts2322_message_preserves_type_parameter_source() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        test1: Attribs1;
+    }
+}
+interface Attribs1 {
+    x: string;
+}
+function make2<T extends { x: number }>(obj: T) {
+    return <test1 {...obj} />;
+}
+function make3<U extends { y: string }>(obj: U) {
+    return <test1 {...obj} />;
+}
+"#;
+    let diagnostics = check_jsx_with_libs_diagnostics(source);
+    let ts2322_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert_eq!(
+        ts2322_messages.len(),
+        2,
+        "Expected one TS2322 for each incompatible generic JSX spread, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type 'T' is not assignable to type 'Attribs1'")),
+        "Expected first generic spread to render source as T, got: {ts2322_messages:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type 'U' is not assignable to type 'Attribs1'")),
+        "Expected renamed generic spread to render source as U, got: {ts2322_messages:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| !message.contains("& { x: number; }")
+                && !message.contains("& { y: string; }")),
+        "Generic spread source display must not include the evaluated constraint intersection: {ts2322_messages:#?}"
     );
 }

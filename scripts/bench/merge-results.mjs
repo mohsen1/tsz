@@ -9,12 +9,19 @@ if (!outFile || inputFiles.length === 0) {
   process.exit(2);
 }
 
-const payloads = inputFiles
-  .filter((file) => fs.existsSync(file))
-  .map((file) => {
-    const payload = JSON.parse(fs.readFileSync(file, "utf8"));
-    return { file, payload };
-  });
+const missingInputFiles = inputFiles.filter((file) => !fs.existsSync(file));
+if (missingInputFiles.length > 0) {
+  console.error("Missing benchmark JSON inputs:");
+  for (const file of missingInputFiles) {
+    console.error(`  ${file}`);
+  }
+  process.exit(1);
+}
+
+const payloads = inputFiles.map((file) => {
+  const payload = JSON.parse(fs.readFileSync(file, "utf8"));
+  return { file, payload };
+});
 
 if (payloads.length === 0) {
   console.error("No benchmark JSON inputs found.");

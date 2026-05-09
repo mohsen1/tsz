@@ -433,6 +433,7 @@ fn test_classify_element_indexable_preserves_union_members() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -498,6 +499,7 @@ fn test_object_with_string_props_assignable_to_dual_index_target() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,

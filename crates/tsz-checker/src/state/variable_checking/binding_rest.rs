@@ -7,6 +7,7 @@ use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::{SyntaxKind, keyword_to_text_static};
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
@@ -90,7 +91,7 @@ impl<'a> CheckerState<'a> {
 
     /// Collect static property names from all non-rest sibling elements in
     /// an object binding pattern.
-    fn collect_non_rest_property_names(&self, pattern_idx: NodeIndex) -> Vec<String> {
+    pub(crate) fn collect_non_rest_property_names(&self, pattern_idx: NodeIndex) -> Vec<String> {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return Vec::new();
         };
@@ -119,8 +120,11 @@ impl<'a> CheckerState<'a> {
             // Extract the property name (same logic as the main property_name extraction).
             let prop_name = if element_data.property_name.is_some() {
                 if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                    // Try identifier first
-                    if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
+                    if let Some(keyword) =
+                        SyntaxKind::try_from_u16(prop_node.kind).and_then(keyword_to_text_static)
+                    {
+                        Some(keyword.to_string())
+                    } else if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
                         Some(ident.escaped_text.clone())
                     } else if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
                         // String literal property name: { 'b': renamed }
@@ -166,7 +170,7 @@ impl<'a> CheckerState<'a> {
     /// (getters/setters) in source declaration order. This keeps the
     /// `Omit<T, "method" | "getter" | "setter">` rendering identical between
     /// tsz and tsc.
-    fn collect_unspreadable_prototype_names_from(&self, type_id: TypeId) -> Vec<String> {
+    pub(crate) fn collect_unspreadable_prototype_names_from(&self, type_id: TypeId) -> Vec<String> {
         let shape = query::object_shape(self.ctx.types, type_id).or_else(|| {
             let constraint = query::type_parameter_constraint(self.ctx.types, type_id)?;
             query::object_shape(self.ctx.types, constraint)

@@ -8,98 +8,15 @@
 //! which now scans all JSDoc comments for bare @param/@return type names and
 //! checks them against global lib symbols for required type arguments.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
-        "es5.d.ts",
-        "es2015.d.ts",
-        "es2015.core.d.ts",
-        "es2015.collection.d.ts",
-        "es2015.iterable.d.ts",
-        "es2015.generator.d.ts",
-        "es2015.promise.d.ts",
-        "es2015.proxy.d.ts",
-        "es2015.reflect.d.ts",
-        "es2015.symbol.d.ts",
-        "es2015.symbol.wellknown.d.ts",
-        "dom.d.ts",
-        "dom.generated.d.ts",
-        "dom.iterable.d.ts",
-        "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                let lib_file = LibFile::from_source(file_name.to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-                break;
-            }
-        }
-    }
-
-    lib_files
-}
+use tsz_checker::test_utils::{check_source_with_libs, load_default_lib_files};
 
 fn check_js_with_libs(source: &str, options: CheckerOptions) -> Vec<u32> {
-    let file_name = "test.js";
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let lib_files = load_lib_files_for_test();
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    let libs = load_default_lib_files();
+    check_source_with_libs(source, "test.js", options, &libs)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
 }
 
 fn check_js_no_implicit_any(source: &str) -> Vec<u32> {
@@ -238,6 +155,27 @@ function f(arr) { return []; }
     assert!(
         !codes.contains(&2314),
         "should not emit TS2314 for already-parameterized Array<T>, got: {codes:?}"
+    );
+}
+
+#[test]
+fn arrow_generic_type_params_with_tab_constraint_keep_template_arg_in_scope() {
+    let codes = check_js_strict(
+        "\
+/**
+ * @template T
+ * @typedef {{ value: T }} Box
+ */
+
+/**
+ * @param {<T extends\tstring>(value: Box<T>) => void} cb
+ */
+function use(cb) {}
+",
+    );
+    assert!(
+        !codes.contains(&2304) && !codes.contains(&2314) && !codes.contains(&2315),
+        "tab-whitespace JSDoc arrow type parameter should keep T in scope for Box<T>, got: {codes:?}"
     );
 }
 

@@ -93,8 +93,8 @@ impl<'a> CheckerState<'a> {
 
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
-        for (_sym_id, _name) in &symbols_to_check {
-            let sym_id = *_sym_id;
+        for (sym_id, name) in &symbols_to_check {
+            let sym_id = *sym_id;
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
@@ -102,6 +102,12 @@ impl<'a> CheckerState<'a> {
 
             // Only track ALIAS symbols (imports)
             if (flags & symbol_flags::ALIAS) == 0 {
+                continue;
+            }
+
+            // TSC treats underscore-prefixed imports as intentionally unused,
+            // so they should not contribute to aggregate TS6192 accounting.
+            if name.starts_with('_') {
                 continue;
             }
 
@@ -294,18 +300,42 @@ impl<'a> CheckerState<'a> {
             }
 
             // Skip special/internal names
-            if name == "default" || name == "__export" || name == "arguments" {
+            if name == "default" || name == "arguments" {
                 continue;
             }
 
-            // Skip React import only in classic JSX mode where React must be in scope.
-            // In react-jsx/react-jsxdev modes, the automatic runtime handles the factory,
-            // so an unused React import should be flagged.
-            if name == "React" {
+            // Skip the JSX factory import in classic/preserve JSX mode where the
+            // factory must be in scope (e.g. `import React from "react"` is
+            // referenced implicitly by `React.createElement`/JSX emit).
+            //
+            // The skip is intentionally narrow:
+            //   * only in `react`/`preserve` JSX modes — `react-jsx`/`react-jsxdev`
+            //     use the automatic runtime, so an unused factory import is real;
+            //   * only for import-alias bindings — a local `const React = 1` is
+            //     not a JSX factory dependency and must still report TS6133;
+            //   * only when the binding's name matches the configured factory's
+            //     root (e.g. `React` for `React.createElement`); and
+            //   * only when the current file actually contains JSX, since JSX
+            //     emit/checking is what consumes the factory in the first place.
+            //
+            // This mirrors tsc, which still reports TS6133 for unused locals or
+            // imports named `React` in files without JSX.
+            {
                 use tsz_common::checker_options::JsxMode;
                 let jsx_mode = self.effective_jsx_mode();
-                if jsx_mode == JsxMode::React || jsx_mode == JsxMode::Preserve {
-                    continue;
+                let is_classic_or_preserve = matches!(jsx_mode, JsxMode::React | JsxMode::Preserve);
+                if is_classic_or_preserve && (flags & symbol_flags::ALIAS) != 0 {
+                    let factory_root = self
+                        .ctx
+                        .compiler_options
+                        .jsx_factory
+                        .split('.')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("React");
+                    if name == factory_root && self.current_file_contains_jsx() {
+                        continue;
+                    }
                 }
             }
 
@@ -332,11 +362,9 @@ impl<'a> CheckerState<'a> {
                 if !is_private {
                     continue; // Public/protected members may be used externally
                 }
-                // Setter-only private members are "used" by write accesses.
-                // TSC never flags them as unused since writes count as usage.
                 let is_setter_only = (flags & symbol_flags::SET_ACCESSOR) != 0
                     && (flags & symbol_flags::GET_ACCESSOR) == 0;
-                if is_setter_only {
+                if is_setter_only && self.ctx.written_symbols.borrow().contains(&sym_id) {
                     continue;
                 }
                 // Fall through to check private members
@@ -860,7 +888,13 @@ impl<'a> CheckerState<'a> {
     /// Also returns true for binding elements nested inside a PARAMETER node
     /// (e.g. `function f({ a, b: [c] }) {}` — `a`, `b`, and `c` are all
     /// parameters in tsc's accounting and are exempt from `noUnusedLocals`).
+    ///
+    /// The walk is bounded only by parser recursion depth (which limits AST
+    /// depth), not by an arbitrary fixed-depth heuristic — arbitrarily deep
+    /// destructured parameter bindings must still resolve to their owning
+    /// `Parameter` (see issue #3139).
     fn is_parameter_declaration(&self, idx: NodeIndex) -> bool {
+        use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -870,9 +904,10 @@ impl<'a> CheckerState<'a> {
         }
         // Walk up through BINDING_ELEMENT / OBJECT_BINDING_PATTERN / ARRAY_BINDING_PATTERN
         // ancestors — if the enclosing declaration is a PARAMETER, this is a destructured
-        // parameter binding.
+        // parameter binding. Anything else (VariableDeclaration, CatchClause, ...) means
+        // the binding is local.
         let mut current = idx;
-        for _ in 0..20 {
+        for _ in 0..MAX_PARSER_RECURSION_DEPTH {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return false;
             };
@@ -996,18 +1031,28 @@ impl<'a> CheckerState<'a> {
     /// Check if a declaration is a catch clause variable.
     fn is_catch_clause_variable(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
-        let parent_idx = self
-            .ctx
-            .arena
-            .get_extended(idx)
-            .map_or(NodeIndex::NONE, |ext| ext.parent);
-        if parent_idx.is_none() {
-            return false;
-        }
-        if let Some(parent) = self.ctx.arena.get(parent_idx)
-            && parent.kind == syntax_kind_ext::CATCH_CLAUSE
-        {
-            return true;
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::CATCH_CLAUSE => return true,
+                syntax_kind_ext::BINDING_ELEMENT
+                | syntax_kind_ext::OBJECT_BINDING_PATTERN
+                | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                | syntax_kind_ext::VARIABLE_DECLARATION => {
+                    current = parent;
+                }
+                _ => return false,
+            }
         }
         false
     }
@@ -1019,7 +1064,7 @@ impl<'a> CheckerState<'a> {
         // Walk up from parameter to find containing function/method/constructor
         // Structure: Parameter → SyntaxList/ParameterList → FunctionDecl/MethodDecl/Constructor
         let mut current = idx;
-        for _ in 0..5 {
+        for _ in 0..20 {
             let parent_idx = self
                 .ctx
                 .arena
@@ -1649,15 +1694,24 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Checks if a symbol name appears to be used in a JSDoc comment.
-    /// This uses a fast string search over the file text to suppress false
-    /// positive unused local errors for symbols referenced in JSDoc tags
-    /// like `{@link X}`, `@import { X }`, `@type {X}`, etc.
+    /// This restricts the pattern search to actual block-comment ranges so
+    /// JSDoc-looking text inside string literals, regular code, or
+    /// regex/template literals does not falsely suppress TS6196 / TS6133.
+    /// Mirrors tsc's behavior where only real `/** ... */` comments
+    /// contribute symbol references via `@type`, `@import`, `@param`,
+    /// `@returns`, `@template`, and `{@link ...}` tags.
     fn is_symbol_used_in_jsdoc(&self, name: &str) -> bool {
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return false;
         };
         let text: &str = &sf.text;
 
+        // `@template T` *declares* a scoped type parameter; it does not
+        // *reference* an existing symbol. Don't include
+        // `format!("@template {name}")` here — that would falsely mark
+        // an unrelated value/local of the same name as "used", and the
+        // raw substring would also match `@template TypeParam` as a
+        // hit for `@template T` (issue #3506).
         let patterns = [
             format!("{{@link {name}}}"),
             format!("{{@link {name}."),
@@ -1672,18 +1726,29 @@ impl<'a> CheckerState<'a> {
             format!("@returns {{{name}}}"),
             format!("@returns {{{name}[]}}"),
             format!("@returns {{ {name} }}"),
-            format!("@template {name}"),
         ];
 
-        for p in &patterns {
-            if text.contains(p) {
+        let import_brace_pattern = format!("{{ {name} }}");
+
+        for range in &sf.comments {
+            // Only real JSDoc block comments can contribute type references.
+            if !tsz_common::comments::is_jsdoc_comment(range, text) {
+                continue;
+            }
+            let comment_text = range.get_text(text);
+
+            for p in &patterns {
+                if comment_text.contains(p) {
+                    return true;
+                }
+            }
+
+            // Match JSDoc import with whitespace: `@import { Type } from ...`.
+            if comment_text.contains(&import_brace_pattern)
+                && Self::jsdoc_contains_tag(comment_text, "import")
+            {
                 return true;
             }
-        }
-
-        // Match JSDoc import with whitespace: `@import { Type } from ...`
-        if text.contains(&format!("{{ {name} }}")) && text.contains("@import") {
-            return true;
         }
 
         false

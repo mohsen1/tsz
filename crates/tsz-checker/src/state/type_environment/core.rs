@@ -6,6 +6,7 @@ use crate::query_boundaries::state::type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
+use std::cell::Cell;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -14,6 +15,10 @@ use tsz_solver::MappedTypeId;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo};
+
+thread_local! {
+    static ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK: Cell<bool> = const { Cell::new(false) };
+}
 
 // Global instantiation depth and fuel counters now live in
 // `EvaluationSession` (shared via `Rc` on `CheckerContext::eval_session`).
@@ -129,6 +134,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: props.len() as u32 + 1,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -387,7 +393,19 @@ impl<'a> CheckerState<'a> {
         // to ensure the TypeIds in the body match the TypeIds in the substitution.
         // Previously we called type_reference_symbol_type and get_type_params_for_symbol
         // separately, which created DIFFERENT TypeIds for the same type parameters.
-        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        let (mut body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+            && crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, body_type)
+                .is_some_and(|shape| !shape.construct_signatures.is_empty())
+            && let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
+            && let Ok(env) = self.ctx.type_env.try_borrow()
+            && let Some(instance_type) = env.get_class_instance_type(def_id)
+        {
+            body_type = instance_type;
+        }
 
         if body_type == TypeId::ANY || body_type == TypeId::ERROR {
             return type_id;
@@ -546,10 +564,13 @@ impl<'a> CheckerState<'a> {
         // - ConditionalApplicationInfer: preserve Application-form args specifically
         // - EvaluateAll: evaluate all args normally
         let arg_preservation = query::classify_body_for_arg_preservation(self.ctx.types, body_type);
+        let body_is_conditional =
+            crate::query_boundaries::common::is_conditional_type(self.ctx.types, body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
                 match arg_preservation {
+                    _ if body_is_conditional && self.contains_type_parameters_cached(arg) => arg,
                     query::BodyArgPreservation::ConditionalInfer
                         if self.contains_type_parameters_cached(arg)
                             || query::application_info(self.ctx.types, arg).is_some() =>
@@ -564,7 +585,10 @@ impl<'a> CheckerState<'a> {
                         // match at the Application level for infer pattern matching.
                         arg
                     }
-                    _ => self.evaluate_type_with_env(arg),
+                    _ => {
+                        let evaluated = self.evaluate_type_with_env(arg);
+                        self.resolve_type_query_type(evaluated)
+                    }
                 }
             })
             .collect();
@@ -734,12 +758,15 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
-        if let Some(&cached) = self
-            .ctx
-            .narrowing_cache
-            .resolve_cache
-            .borrow()
-            .get(&type_id)
+        let concrete_remapped_fallback =
+            ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get());
+        if !concrete_remapped_fallback
+            && let Some(&cached) = self
+                .ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow()
+                .get(&type_id)
         {
             return cached;
         }
@@ -747,7 +774,8 @@ impl<'a> CheckerState<'a> {
         // Memoize mapped-type expansion for monomorphic inputs.
         // This is a hot path for repeated property access on mapped aliases
         // (e.g., DeepPartial<...>).
-        let can_cache = !self.contains_type_parameters_cached(type_id);
+        let can_cache =
+            !concrete_remapped_fallback && !self.contains_type_parameters_cached(type_id);
 
         if !self.ctx.mapped_eval_set.insert(type_id) {
             return type_id;
@@ -776,6 +804,22 @@ impl<'a> CheckerState<'a> {
                 .insert(type_id, result);
         }
         result
+    }
+
+    pub(crate) fn evaluate_concrete_remapped_mapped_type_with_resolution(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.set(false));
+            }
+        }
+
+        ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.set(true));
+        let _reset = Reset;
+        self.evaluate_mapped_type_with_resolution(type_id)
     }
 
     pub(crate) fn evaluate_mapped_type_with_resolution_inner(
@@ -842,11 +886,12 @@ impl<'a> CheckerState<'a> {
         // Detect homomorphic source early: needed both for the solver retry
         // decision and for property expansion below.
         let is_homomorphic_source = query::keyof_inner_type(self.ctx.types, mapped.constraint);
-        let is_homomorphic = is_homomorphic_source.is_some();
+        let modifier_source = is_homomorphic_source;
+        let is_homomorphic = modifier_source.is_some();
         let is_identity_homomorphic =
             crate::query_boundaries::common::homomorphic_mapped_source(self.ctx.types, type_id)
                 .is_some();
-        let source_has_type_params = is_homomorphic_source.is_some_and(|source| {
+        let source_has_type_params = modifier_source.is_some_and(|source| {
             crate::query_boundaries::common::is_type_parameter_or_intersection_with_type_parameter(
                 self.ctx.types,
                 source,
@@ -877,7 +922,98 @@ impl<'a> CheckerState<'a> {
         // Iterate the source keys. Name remapping is applied per key below so
         // generic `as` clauses that cannot produce exact property names keep the
         // mapped type deferred instead of expanding to the original key space.
-        let string_keys: Vec<_> = query::extract_string_literal_keys(self.ctx.types, keys);
+        let mut string_keys: Vec<_> = query::extract_string_literal_keys(self.ctx.types, keys);
+        if string_keys.is_empty()
+            && ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get())
+            && crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
+                self.ctx.types,
+                type_id,
+            )
+            && let Some(source) = modifier_source
+        {
+            let source_props =
+                query::collect_homomorphic_source_property_infos(self.ctx.types, source);
+            if !source_props.is_empty() {
+                string_keys = source_props.iter().map(|prop| prop.name).collect();
+            }
+        }
+        let allow_concrete_remapped_fallback =
+            ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK.with(|flag| flag.get())
+                && mapped.name_type.is_some()
+                && crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
+                    self.ctx.types,
+                    type_id,
+                );
+        if string_keys.is_empty() && allow_concrete_remapped_fallback {
+            let source_members =
+                query::union_members(self.ctx.types, keys).unwrap_or_else(|| vec![keys]);
+            let mut properties = Vec::new();
+            for source_member in source_members {
+                if matches!(
+                    source_member,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+                ) {
+                    return type_id;
+                }
+
+                let subst = TypeSubstitution::single(mapped.type_param.name, source_member);
+                let Some(name_type) = mapped.name_type else {
+                    return type_id;
+                };
+                let instantiated_name = instantiate_type(self.ctx.types, name_type, &subst);
+                let remapped_name = self.evaluate_type_with_env(instantiated_name);
+                let remapped_names: Vec<Atom> = if let Some(name) =
+                    query::literal_string(self.ctx.types, remapped_name)
+                {
+                    vec![name]
+                } else if let Some(members) = query::union_members(self.ctx.types, remapped_name) {
+                    let mut names = Vec::with_capacity(members.len());
+                    for member in members {
+                        let Some(name) = query::literal_string(self.ctx.types, member) else {
+                            return type_id;
+                        };
+                        names.push(name);
+                    }
+                    if names.is_empty() {
+                        return type_id;
+                    }
+                    names
+                } else {
+                    let names = query::extract_string_literal_keys(self.ctx.types, remapped_name);
+                    if names.is_empty() {
+                        return type_id;
+                    }
+                    names
+                };
+
+                let property_type = instantiate_type(self.ctx.types, mapped.template, &subst);
+                let property_type = self.evaluate_type_with_env(property_type);
+                let (optional, readonly) =
+                    query::compute_mapped_modifiers(&mapped, false, false, false);
+
+                for remapped_name in remapped_names {
+                    properties.push(PropertyInfo {
+                        name: remapped_name,
+                        type_id: property_type,
+                        write_type: property_type,
+                        optional,
+                        readonly,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
+            }
+
+            if !properties.is_empty() {
+                return factory.object(properties);
+            }
+        }
         if string_keys.is_empty() {
             // Can't evaluate - return original
             return type_id;
@@ -885,7 +1021,7 @@ impl<'a> CheckerState<'a> {
 
         let mut source_decl_order = Vec::new();
         let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
-            if let Some(source) = is_homomorphic_source {
+            if let Some(source) = modifier_source {
                 // Pre-resolve lazy refs in the homomorphic source so property
                 // collection sees the fully resolved object shape.
                 self.ensure_relation_input_ready(source);
@@ -896,12 +1032,12 @@ impl<'a> CheckerState<'a> {
                     if !ordered.is_empty() {
                         ordered
                     } else {
-                        match tsz_solver::objects::collect_properties(
+                        match crate::query_boundaries::intersection_display::collect_properties(
                             resolved_source,
                             self.ctx.types,
                             &self.ctx,
                         ) {
-                            tsz_solver::objects::PropertyCollectionResult::Properties {
+                            crate::query_boundaries::intersection_display::PropertyCollectionResult::Properties {
                                 properties,
                                 ..
                             } => properties,
@@ -993,6 +1129,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -1157,8 +1294,33 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.symbol_types.contains_key(&sym_id) {
                     continue;
                 }
-                // Look up existing DefId in the shared store.
-                let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0) else {
+                // Look up the file-aware DefId for this symbol. Raw SymbolId values are
+                // reused across binders, so the shared store's symbol-only lookup can
+                // seed a local declaration from an unrelated lib definition with the
+                // same raw id. This loop already holds the local DefId cache borrows,
+                // so avoid `get_existing_def_id` and query the shared store directly.
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    continue;
+                };
+                let file_idx = self
+                    .ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .map(|idx| idx as u32)
+                    .unwrap_or_else(|| {
+                        if symbol.decl_file_idx == u32::MAX
+                            && !self.ctx.symbol_is_from_actual_lib(sym_id)
+                            && self.ctx.current_file_idx != usize::MAX
+                        {
+                            self.ctx.current_file_idx as u32
+                        } else {
+                            symbol.decl_file_idx
+                        }
+                    });
+                let Some(def_id) = self
+                    .ctx
+                    .definition_store
+                    .lookup_by_symbol(sym_id.0, file_idx)
+                else {
                     continue;
                 };
                 // Check if the body has been resolved (set_body was called by
@@ -1543,8 +1705,7 @@ impl<'a> CheckerState<'a> {
             .then(|| self.ctx.def_type_params.borrow().get(&def_id).cloned())
             .flatten();
         if let Some(cached) = cached_params {
-            let cached_is_placeholder = self.ctx.symbol_is_from_lib(sym_id)
-                && !cached.is_empty()
+            let cached_is_placeholder = !cached.is_empty()
                 && cached
                     .iter()
                     .all(|param| param.constraint.is_none() && param.default.is_none());

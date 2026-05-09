@@ -4,40 +4,16 @@
 //! even when the values are the same. This validates TypeScript's nominal
 //! typing for enums.
 
-use tsz_binder::BinderState;
-use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::check_source_code_messages as collect_diagnostics;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{
+    check_source_code_messages as collect_diagnostics, check_source_diagnostics,
+};
 
 fn test_enum_assignability(source: &str, expected_errors: usize) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let error_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let diagnostics = check_source_diagnostics(source);
+    let error_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         error_count, expected_errors,
-        "Expected {} TS2322 errors, got {}: {:?}",
-        expected_errors, error_count, checker.ctx.diagnostics
+        "Expected {expected_errors} TS2322 errors, got {error_count}: {diagnostics:?}",
     );
 }
 
@@ -294,6 +270,54 @@ namespace Second { export const enum E { a, b, c } }
 let x: First.E;
 let y: Second.E;
 x = y;
+";
+    test_enum_assignability(source, 1);
+}
+
+// Regression: numeric enum literal initializers must keep enum identity so
+// cross-enum assignments still emit TS2322. Issue #3659.
+#[test]
+fn test_let_with_numeric_literal_initializer_preserves_cross_enum_check() {
+    let source = r"
+enum A { X, Y }
+enum B { X, Y }
+let a: A = 1;
+let b: B = a;
+";
+    test_enum_assignability(source, 1);
+}
+
+#[test]
+fn test_const_with_numeric_literal_initializer_preserves_cross_enum_check() {
+    let source = r"
+enum A { X, Y }
+enum B { X, Y }
+const a: A = 1;
+let b: B = a;
+";
+    test_enum_assignability(source, 1);
+}
+
+#[test]
+fn test_let_enum_literal_initializer_still_assignable_to_number() {
+    // Sanity: keeping enum identity must not break the numeric-enum -> number
+    // structural assignability rule. `let n: number = a` stays valid.
+    let source = r"
+enum A { X, Y }
+let a: A = 1;
+let n: number = a;
+";
+    test_enum_assignability(source, 0);
+}
+
+#[test]
+fn test_let_with_member_initializer_preserves_member_identity() {
+    // `let a: A = A.Y` should still narrow `a` to `A.Y` so a same-enum member
+    // assignment to a different member fails (TS2322).
+    let source = r"
+enum A { X, Y }
+let a: A = A.Y;
+let other: A.X = a;
 ";
     test_enum_assignability(source, 1);
 }

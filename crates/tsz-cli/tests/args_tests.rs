@@ -12,6 +12,7 @@ fn parses_defaults() {
 
     assert_eq!(args.target, None);
     assert_eq!(args.module, None);
+    assert_eq!(args.ignore_deprecations, None);
     assert!(args.out_dir.is_none());
     assert!(args.project.is_none());
     assert!(!args.strict);
@@ -89,6 +90,7 @@ fn parses_cli_only_flags() {
 #[test]
 fn parses_target_variants() {
     let targets = [
+        ("es3", Target::Es3),
         ("es5", Target::Es5),
         ("es2015", Target::Es2015),
         ("es6", Target::Es2015), // alias
@@ -261,6 +263,17 @@ fn parses_type_checking_flags() {
     assert!(args.no_unchecked_indexed_access);
     assert!(args.no_implicit_override);
     assert!(args.no_property_access_from_index_signature);
+}
+
+#[test]
+fn parses_ignore_deprecations() {
+    let args = CliArgs::try_parse_from(["tsz", "--ignoreDeprecations", "6.0"])
+        .expect("--ignoreDeprecations should parse");
+    assert_eq!(args.ignore_deprecations.as_deref(), Some("6.0"));
+
+    let args = CliArgs::try_parse_from(["tsz", "--ignore-deprecations", "6.0"])
+        .expect("--ignore-deprecations alias should parse");
+    assert_eq!(args.ignore_deprecations.as_deref(), Some("6.0"));
 }
 
 #[test]
@@ -884,6 +897,7 @@ fn parses_use_define_for_class_fields() {
 #[test]
 fn target_to_script_target_covers_every_variant() {
     let cases = [
+        (Target::Es3, ScriptTarget::ES3),
         (Target::Es5, ScriptTarget::ES5),
         (Target::Es2015, ScriptTarget::ES2015),
         (Target::Es2016, ScriptTarget::ES2016),
@@ -934,6 +948,7 @@ fn target_to_script_target_is_total() {
     // `to_script_target`, this test will not compile (exhaustiveness),
     // and the assertion below catches an accidental duplicate codomain.
     let all = [
+        Target::Es3,
         Target::Es5,
         Target::Es2015,
         Target::Es2016,

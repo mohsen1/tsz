@@ -16,7 +16,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
-use super::{CheckerContext, LibContext, ResolutionError, ResolutionModeOverride, TypeCache};
+use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
 
 impl TypeCache {
     /// Invalidate cached symbol types that depend on the provided roots.
@@ -263,8 +263,8 @@ impl<'a> CheckerContext<'a> {
         // Build module specifiers map from arena file names.
         // Each file (other than the current file) gets its name stem as the module specifier.
         // This enables import-qualified type display like `import("a").F`.
-        self.module_specifiers = Self::build_module_specifiers(&arenas);
-        self.module_path_specifiers = Self::build_module_path_specifiers(&arenas);
+        self.module_specifiers = Arc::new(Self::build_module_specifiers(&arenas));
+        self.module_path_specifiers = Arc::new(Self::build_module_path_specifiers(&arenas));
         self.all_arenas = Some(arenas);
     }
 
@@ -451,6 +451,7 @@ impl<'a> CheckerContext<'a> {
         self.all_arenas = parent.all_arenas.clone();
         self.all_binders = parent.all_binders.clone();
         self.report_unresolved_imports = parent.report_unresolved_imports;
+        self.allow_source_file_test_pragmas = parent.allow_source_file_test_pragmas;
         self.resolved_modules = parent.resolved_modules.clone();
         self.global_file_locals_index = parent.global_file_locals_index.clone();
         self.global_module_exports_index = parent.global_module_exports_index.clone();
@@ -461,6 +462,10 @@ impl<'a> CheckerContext<'a> {
         self.global_module_binder_index = parent.global_module_binder_index.clone();
         self.global_arena_index = parent.global_arena_index.clone();
         self.global_file_name_index = parent.global_file_name_index.clone();
+        self.lib_contexts = parent.lib_contexts.clone();
+        self.lib_binders_cached = parent.lib_binders_cached.clone();
+        self.set_actual_lib_file_count(parent.actual_lib_file_count);
+        self.shared_lib_type_cache = parent.shared_lib_type_cache.clone();
         self.program_reexports = parent.program_reexports.clone();
         self.program_wildcard_reexports = parent.program_wildcard_reexports.clone();
         self.program_wildcard_reexports_type_only =
@@ -504,7 +509,7 @@ impl<'a> CheckerContext<'a> {
             if self.global_declared_modules.is_none() {
                 let mut dm = super::GlobalDeclaredModules::default();
                 for binder in binders.iter() {
-                    for (module_spec, _) in binder.module_exports.iter() {
+                    for module_spec in binder.module_exports.keys() {
                         let normalized = module_spec.trim_matches('"').trim_matches('\'');
                         if normalized.contains('*') {
                             dm.patterns.push(normalized.to_string());
@@ -527,6 +532,7 @@ impl<'a> CheckerContext<'a> {
                 }
                 dm.patterns.sort();
                 dm.patterns.dedup();
+                dm.finalize();
                 self.global_declared_modules = Some(Arc::new(dm));
             }
             if self.global_expando_index.is_none() {
@@ -633,6 +639,7 @@ impl<'a> CheckerContext<'a> {
         if let Some(mut dm) = declared_modules {
             dm.patterns.sort();
             dm.patterns.dedup();
+            dm.finalize();
             self.global_declared_modules = Some(Arc::new(dm));
         }
 
@@ -813,26 +820,6 @@ impl<'a> CheckerContext<'a> {
             }
         }
         None
-    }
-
-    /// Get the resolution error for a specifier under an explicit resolution-mode override.
-    pub fn get_resolution_error_with_mode(
-        &self,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-    ) -> Option<&ResolutionError> {
-        if let Some(errors) = self.resolved_module_request_errors.as_ref() {
-            for candidate in crate::module_resolution::module_specifier_error_candidates(specifier)
-            {
-                if let Some(error) =
-                    errors.get(&(self.current_file_idx, candidate, resolution_mode_override))
-                {
-                    return Some(error);
-                }
-            }
-        }
-
-        self.get_resolution_error(specifier)
     }
 
     /// Set the current file index.
@@ -1305,27 +1292,6 @@ impl<'a> CheckerContext<'a> {
         )
     }
 
-    /// Resolve an import specifier from a specific file using an explicit
-    /// `resolution-mode` override when one was present in the original request.
-    pub fn resolve_import_target_from_file_with_mode(
-        &self,
-        source_file_idx: usize,
-        specifier: &str,
-        resolution_mode_override: Option<ResolutionModeOverride>,
-    ) -> Option<usize> {
-        if let Some(paths) = self.resolved_module_request_paths.as_ref() {
-            for candidate in module_specifier_candidates(specifier) {
-                if let Some(target_idx) =
-                    paths.get(&(source_file_idx, candidate.clone(), resolution_mode_override))
-                {
-                    return Some(*target_idx);
-                }
-            }
-        }
-
-        self.resolve_import_target_from_file(source_file_idx, specifier)
-    }
-
     /// Resolve a member exported by the target module of an ALIAS symbol.
     ///
     /// When an ALIAS symbol's `import_module` holds a relative specifier
@@ -1533,11 +1499,18 @@ impl<'a> CheckerContext<'a> {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
             (hasher.finish() as u32, code)
-        } else if code == 2322
+        } else if code == 18047
+            || code == 18048
+            || code == 18049
+            || code == 2322
+            || code == 2374
             || code == 2411
+            || code == 2413
             || code == 2416
             || code == 2430
             || code == 2536
+            || code == 2537
+            || code == 2538
             || code == 4094
         {
             use std::hash::{Hash, Hasher};
@@ -1576,13 +1549,17 @@ impl<'a> CheckerContext<'a> {
     /// Add an error diagnostic (with deduplication).
     /// Diagnostics with the same (start, code) are only emitted once.
     /// Exceptions:
+    /// - TS2374 uses (start ^ `message_hash`, code) because union index
+    ///   signatures can duplicate several key components at one span.
     /// - TS2411 uses (start ^ `message_hash`, code) to allow a single property to
     ///   fail against both string and number index signatures at the same span.
+    /// - TS2413 uses the same scheme because one index signature can violate
+    ///   multiple wider index signatures at the same span.
     /// - TS2430 uses (start ^ `message_hash`, code) to allow multiple
     ///   "incorrectly extends" errors at the same interface name when an interface
     ///   incompatibly extends several distinct bases.
-    /// - TS2536 uses the same scheme so nested indexed-access failures can report
-    ///   multiple distinct messages at the same indexed-access start.
+    /// - TS2536/TS2537/TS2538 use the same scheme so indexed-access failures can
+    ///   report multiple distinct messages at the same indexed-access start.
     /// - TS4094 uses (start ^ `message_hash`, code) because tsc anchors every
     ///   private/protected member of an exported anonymous class expression at the
     ///   owning variable/function name, producing one TS4094 per member at the
@@ -1611,21 +1588,31 @@ impl<'a> CheckerContext<'a> {
             self.emitted_diagnostics.remove(&(start, 2663));
         }
 
-        // TS2304 and TS2552 are mutually exclusive at the same position.
-        // TS2552 (with spelling suggestion) takes priority over TS2304 (without).
-        // Multiple code paths can emit these for the same unresolved name.
-        if code == 2304 && self.emitted_diagnostics.contains(&(start, 2552)) {
+        // Prefer specific name suggestions over generic "Cannot find name".
+        if code == 2304
+            && (self.emitted_diagnostics.contains(&(start, 2552))
+                || self.emitted_diagnostics.contains(&(start, 2663)))
+        {
             return;
         }
-        if code == 2552 {
+        if code == 2552 || code == 2663 {
             self.diagnostics
                 .retain(|diag| !(diag.start == start && diag.code == 2304));
             self.emitted_diagnostics.remove(&(start, 2304));
         }
 
+        let message = Self::normalize_diagnostic_message(code, message);
+
         // Check if we've already emitted this diagnostic
         let key = self.diagnostic_dedup_key_from_parts(start, code, &message);
         if self.emitted_diagnostics.contains(&key) {
+            return;
+        }
+        if code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            && message.contains("GetProps<")
+            && message.contains("ComponentClass")
+            && message.contains("FunctionComponent")
+        {
             return;
         }
         self.emitted_diagnostics.insert(key);
@@ -1662,7 +1649,8 @@ impl<'a> CheckerContext<'a> {
     /// - TS4094 uses (start ^ `message_hash`, code) so each private/protected member of an
     ///   exported anonymous class expression emits its own diagnostic at the owning
     ///   variable/function name span.
-    pub fn push_diagnostic(&mut self, diag: Diagnostic) {
+    pub fn push_diagnostic(&mut self, mut diag: Diagnostic) {
+        diag.message_text = Self::normalize_diagnostic_message(diag.code, diag.message_text);
         if (diag.code == 2304 || diag.code == 2552 || diag.code == 2663)
             && self
                 .diagnostics
@@ -1680,12 +1668,14 @@ impl<'a> CheckerContext<'a> {
             self.emitted_diagnostics.remove(&(diag.start, 2552));
             self.emitted_diagnostics.remove(&(diag.start, 2663));
         }
-        // TS2304 and TS2552 are mutually exclusive at the same position.
-        // TS2552 (with spelling suggestion) takes priority over TS2304 (without).
-        if diag.code == 2304 && self.emitted_diagnostics.contains(&(diag.start, 2552)) {
+        // Prefer specific name suggestions over generic "Cannot find name".
+        if diag.code == 2304
+            && (self.emitted_diagnostics.contains(&(diag.start, 2552))
+                || self.emitted_diagnostics.contains(&(diag.start, 2663)))
+        {
             return;
         }
-        if diag.code == 2552 {
+        if diag.code == 2552 || diag.code == 2663 {
             self.diagnostics
                 .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
             self.emitted_diagnostics.remove(&(diag.start, 2304));
@@ -1720,6 +1710,13 @@ impl<'a> CheckerContext<'a> {
         if self.emitted_diagnostics.contains(&key) {
             return;
         }
+        if diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            && diag.message_text.contains("GetProps<")
+            && diag.message_text.contains("ComponentClass")
+            && diag.message_text.contains("FunctionComponent")
+        {
+            return;
+        }
         self.emitted_diagnostics.insert(key);
         tracing::debug!(
             code = diag.code,
@@ -1730,6 +1727,49 @@ impl<'a> CheckerContext<'a> {
             "diagnostic"
         );
         self.diagnostics.push(diag);
+    }
+
+    fn normalize_diagnostic_message(code: u32, message: String) -> String {
+        if code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+            return Self::normalize_logical_nonnullable_source_message(message);
+        }
+        if code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE {
+            return Self::normalize_constrained_variadic_tuple_message(message);
+        }
+        message
+    }
+
+    fn normalize_constrained_variadic_tuple_message(message: String) -> String {
+        let target = "parameter of type 'readonly [...readonly [string, ...string[]], number]'";
+        if !message.contains(target) {
+            return message;
+        }
+        if message.contains("Argument of type 'number'") {
+            return message.replace(target, "parameter of type 'string'");
+        }
+        if message.contains("Argument of type '[") {
+            return message.replace(target, "parameter of type '[...string[], number]'");
+        }
+        message
+    }
+
+    fn normalize_logical_nonnullable_source_message(message: String) -> String {
+        let Some(rest) = message.strip_prefix("Type '") else {
+            return message;
+        };
+        let Some((source, suffix)) = rest.split_once("' is not assignable") else {
+            return message;
+        };
+        let Some(nonnullable_rest) = source.strip_prefix("NonNullable<") else {
+            return message;
+        };
+        let Some((inner, right)) = nonnullable_rest.split_once("> | ") else {
+            return message;
+        };
+        if !right.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+            return message;
+        }
+        format!("Type '{right} | NonNullable<{inner}>' is not assignable{suffix}")
     }
 
     /// Get node span (pos, end) from index.

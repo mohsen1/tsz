@@ -11,36 +11,14 @@
 //! - Union callee types
 //! - Generic call inference with overloads
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    get_diagnostics_with_options(source, CheckerOptions::default())
+    get_diagnostics_with_options(source, &CheckerOptions::default())
 }
 
-fn get_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
+fn get_diagnostics_with_options(source: &str, options: &CheckerOptions) -> Vec<(u32, String)> {
+    tsz_checker::test_utils::check_with_options(source, options.clone())
         .into_iter()
         .filter(|d| d.code != 2318) // Filter "Cannot find global type"
         .map(|d| (d.code, d.message_text))
@@ -58,11 +36,17 @@ fn has_error(source: &str, code: u32) -> bool {
     get_codes(source).contains(&code)
 }
 
+fn has_error_with_options(source: &str, options: &CheckerOptions, code: u32) -> bool {
+    get_diagnostics_with_options(source, options)
+        .into_iter()
+        .any(|(diag_code, _)| diag_code == code)
+}
+
 fn no_errors(source: &str) -> bool {
     get_codes(source).is_empty()
 }
 
-fn no_errors_with_options(source: &str, options: CheckerOptions) -> bool {
+fn no_errors_with_options(source: &str, options: &CheckerOptions) -> bool {
     get_diagnostics_with_options(source, options).is_empty()
 }
 
@@ -101,6 +85,85 @@ x();
     assert!(
         has_error(source, 18046),
         "Calling unknown should emit TS18046"
+    );
+}
+
+#[test]
+fn call_unknown_emits_ts2349_without_strict() {
+    let source = r#"
+declare let x: unknown;
+x();
+"#;
+    let options = CheckerOptions {
+        strict: false,
+        strict_null_checks: false,
+        ..CheckerOptions::default()
+    };
+    assert!(
+        has_error_with_options(source, &options, 2349),
+        "Calling unknown should emit TS2349 without strictNullChecks"
+    );
+    assert!(
+        !has_error_with_options(
+            source,
+            &CheckerOptions {
+                strict: false,
+                strict_null_checks: false,
+                ..CheckerOptions::default()
+            },
+            18046
+        ),
+        "Calling unknown should not emit TS18046 without strictNullChecks"
+    );
+}
+
+#[test]
+fn construct_unknown_emits_ts2351_without_strict() {
+    let source = r#"
+declare let x: unknown;
+new x();
+"#;
+    let options = CheckerOptions {
+        strict: false,
+        strict_null_checks: false,
+        ..CheckerOptions::default()
+    };
+    assert!(
+        has_error_with_options(source, &options, 2351),
+        "Constructing unknown should emit TS2351 without strictNullChecks"
+    );
+    assert!(
+        !has_error_with_options(
+            source,
+            &CheckerOptions {
+                strict: false,
+                strict_null_checks: false,
+                ..CheckerOptions::default()
+            },
+            18046
+        ),
+        "Constructing unknown should not emit TS18046 without strictNullChecks"
+    );
+}
+
+#[test]
+fn construct_unknown_emits_ts18046_with_strict() {
+    let source = r#"
+declare let x: unknown;
+new x();
+"#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    assert!(
+        has_error_with_options(source, &options, 18046),
+        "Constructing unknown should emit TS18046 with strictNullChecks"
+    );
+    assert!(
+        !has_error_with_options(source, &options, 2351),
+        "Constructing unknown should not emit TS2351 when TS18046 is expected"
     );
 }
 
@@ -185,6 +248,34 @@ f("hello");
     assert!(
         has_error(source, 2345),
         "Passing string to number param should emit TS2345"
+    );
+}
+
+#[test]
+fn argument_mismatch_display_uses_declared_parameter_not_sibling_literal() {
+    let source = r#"
+function foo(a: string, b?: number) {}
+foo(1, "bar");
+"#;
+    let diags = get_diagnostics(source);
+    let messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, message)| (*code == 2345).then_some(message.as_str()))
+        .collect();
+    assert_eq!(
+        messages.len(),
+        1,
+        "Expected one TS2345 for the first argument. Diagnostics: {diags:?}"
+    );
+    let message = messages[0];
+    assert!(
+        message
+            .contains("Argument of type 'number' is not assignable to parameter of type 'string'."),
+        "TS2345 should use the declared parameter type, not the sibling string literal. Got: {message:?}"
+    );
+    assert!(
+        !message.contains("parameter of type '\"bar\"'"),
+        "Sibling argument literals must not repaint non-generic parameter display. Got: {message:?}"
     );
 }
 
@@ -339,6 +430,25 @@ f(42);
     assert!(
         no_errors(source),
         "Union callee with compatible signatures should work"
+    );
+}
+
+#[test]
+fn union_callee_intersects_any_with_specific_parameter_type() {
+    let source = r#"
+declare let f: ((x: any) => number) | ((x: number) => string);
+f(true);
+"#;
+    let diagnostics = get_diagnostics(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type 'boolean' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "union callable should check against the specific parameter type, got: {diagnostics:?}"
     );
 }
 
@@ -793,6 +903,41 @@ overloaded(true);
     assert!(
         has_error(source, 2769),
         "No matching overload should emit TS2769"
+    );
+}
+
+#[test]
+fn user_defined_concat_overload_with_generic_array_arg_emits_ts2769() {
+    let source = r#"
+interface Weird {
+    concat(value: number): void;
+    concat(value: string): void;
+}
+
+declare const weird: Weird;
+
+function f<T>(items: T[]) {
+    weird.concat(items);
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2769),
+        "User-defined concat overloads should not use Array.concat suppression. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn array_concat_with_generic_array_arg_keeps_ts2769_suppression() {
+    let source = r#"
+function f<T>(left: T[], right: T[]) {
+    left.concat(right);
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2769),
+        "Array.concat generic-array workaround should still suppress TS2769. Diagnostics: {diags:#?}"
     );
 }
 
@@ -1383,6 +1528,41 @@ let result = map([1, 2, 3], x => String(x));
     assert!(
         !has_error(source, 7006),
         "Generic call with callable arg should provide contextual type to callback"
+    );
+}
+
+#[test]
+fn overloaded_generic_call_keeps_inner_callback_argument_errors() {
+    let source = r#"
+type FuncType = (x: <T>(p: T) => T) => typeof x;
+
+declare function fun<T>(f: FuncType, x: T): T;
+declare function fun<T>(f: FuncType, g: FuncType, x: T): T;
+
+fun(x => { x<number>(undefined); return x; }, 10);
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type 'undefined' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "contextually typed overloaded callback should keep inner TS2345, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_function_return_arrow_gets_contextual_parameter_type() {
+    let source = r#"
+const f = <F extends (...args: any[]) => <G>(x: G) => void>(_: F): F => _;
+const a = f(<K extends string>(_: K) => _ => ({}));
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 7006),
+        "generic contextual return arrow should type the inner parameter, got: {diagnostics:?}"
     );
 }
 
@@ -2302,7 +2482,7 @@ a.doThing().then((result: Bar | Baz) => {});
     assert!(
         no_errors_with_options(
             source,
-            CheckerOptions {
+            &CheckerOptions {
                 strict: true,
                 ..CheckerOptions::default()
             },

@@ -1,10 +1,9 @@
 //! Tests for class member modifier ordering (TS1029) and ambient context (TS1040).
 
-use crate::parser::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 fn parse_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     parser
         .get_diagnostics()
         .iter()
@@ -82,6 +81,18 @@ class D extends B {
     assert!(
         has_error(source, 1029),
         "`async override` should produce TS1029"
+    );
+}
+
+#[test]
+fn abstract_static_illegal_pair_does_not_emit_ts1029() {
+    let source = "abstract class A { abstract static x: number }\n";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 1029 && message.contains("'static' modifier must precede 'abstract'")
+        }),
+        "`abstract static` should be left to TS1243 without an extra TS1029: {diagnostics:?}"
     );
 }
 

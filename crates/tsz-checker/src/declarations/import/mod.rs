@@ -4,6 +4,8 @@ mod ambient_default_dup_collect;
 mod context_helpers;
 pub(crate) mod core;
 pub(crate) mod declaration;
+mod declaration_helpers;
 pub(crate) mod equals;
 mod exports;
+mod import_alias_duplicates;
 mod verbatim;

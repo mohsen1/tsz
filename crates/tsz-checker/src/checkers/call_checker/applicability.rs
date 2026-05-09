@@ -1,7 +1,9 @@
 //! Adapter methods for routing call/new resolution through the solver.
 
 use super::CheckerCallAssignabilityAdapter;
-use crate::query_boundaries::checkers::call::{resolve_call, resolve_new};
+use crate::query_boundaries::checkers::call::{
+    resolve_call, resolve_call_with_arg_sources, resolve_new,
+};
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -122,6 +124,33 @@ impl<'a> CheckerState<'a> {
             force_bivariant_callbacks,
             contextual_type,
             actual_this_type,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_call_with_checker_adapter_and_arg_sources(
+        &mut self,
+        func_type: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+        actual_this_type: Option<TypeId>,
+        arg_source_is_type_annotation: &[bool],
+    ) -> tsz_solver::operations::CallWithCheckerResult {
+        self.ensure_relation_input_ready(func_type);
+        self.ensure_relation_inputs_ready(arg_types);
+
+        let db = self.ctx.types;
+        let mut checker = CheckerCallAssignabilityAdapter { state: self };
+        resolve_call_with_arg_sources(
+            db,
+            &mut checker,
+            func_type,
+            arg_types,
+            force_bivariant_callbacks,
+            contextual_type,
+            actual_this_type,
+            arg_source_is_type_annotation,
         )
     }
 

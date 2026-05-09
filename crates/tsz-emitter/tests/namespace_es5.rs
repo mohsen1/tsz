@@ -38,6 +38,36 @@ fn test_namespace_with_content() {
 }
 
 #[test]
+fn test_namespace_exported_destructuring_uses_single_temp() {
+    let output = emit_namespace("namespace M { export var [a, b] = [1, 2]; }");
+    assert!(
+        output.contains("var _a;"),
+        "Exported destructuring should hoist a temp. Got:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [1, 2], M.a = _a[0], M.b = _a[1];"),
+        "Exported destructuring should read the initializer once. Got:\n{output}"
+    );
+    assert!(
+        !output.contains("M.a = [1, 2]"),
+        "Exported destructuring should not repeat the initializer. Got:\n{output}"
+    );
+}
+
+#[test]
+fn test_namespace_exported_object_destructuring_uses_single_temp() {
+    let output = emit_namespace("namespace M { export var { a, b } = make(); }");
+    assert!(
+        output.contains("var _a;"),
+        "Exported object destructuring should hoist a temp. Got:\n{output}"
+    );
+    assert!(
+        output.contains("_a = make(), M.a = _a.a, M.b = _a.b;"),
+        "Exported object destructuring should read the initializer once. Got:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_with_function() {
     let output = emit_namespace("namespace M { export function foo() { return 1; } }");
     assert!(output.contains("var M;"), "Should declare var M");
@@ -102,6 +132,61 @@ fn test_cjs_exported_namespace_iife_tail_folding() {
         assert!(
             !output.contains("exports.Models = Models;"),
             "Should NOT have separate exports.Models = Models; line. Got:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
+    let source = r#"export namespace m1 {
+    /** b's comment*/
+    export var b: number;
+    /** foo's comment*/
+    function foo() {
+        return b;
+    }
+    export namespace m2 {
+        export class c {
+        };
+        /** i*/
+        export var i = new c();
+    }
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+    {
+        let ns_idx = if let Some(stmt_node) = parser.arena.get(stmt_idx)
+            && let Some(export_decl) = parser.arena.get_export_decl(stmt_node)
+        {
+            export_decl.export_clause
+        } else {
+            stmt_idx
+        };
+
+        let mut emitter = NamespaceES5Emitter::with_commonjs(&parser.arena, true);
+        emitter.set_source_text(source);
+        emitter.set_target_es5(true);
+        let output = emitter.emit_exported_namespace(ns_idx);
+        assert!(
+            output.contains("return m1.b;"),
+            "References to uninitialized exported vars should be namespace-qualified. Got:\n{output}"
+        );
+        assert!(
+            !output.contains("b's comment"),
+            "No-op exported var comments should not be emitted. Got:\n{output}"
+        );
+        assert!(
+            !output.lines().any(|line| line.trim() == "export"),
+            "Namespace output should not contain stray export keyword lines. Got:\n{output}"
+        );
+        assert_eq!(
+            output.matches("/** i*/").count(),
+            1,
+            "Initialized export comments should be emitted once. Got:\n{output}"
         );
     }
 }

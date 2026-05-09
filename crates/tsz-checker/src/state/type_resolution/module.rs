@@ -9,12 +9,62 @@ use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn emit_module_has_no_default_export_at(
+        &mut self,
+        module_specifier: &str,
+        decl_node: NodeIndex,
+    ) {
+        let (start, length) = if decl_node.is_some() {
+            if let Some(node) = self.ctx.arena.get(decl_node) {
+                (node.pos, node.end - node.pos)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let display_name = self.imported_namespace_display_module_name(module_specifier);
+        let quoted_name = format!("\"{display_name}\"");
+        let message = format_message(
+            diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
+            &[&quoted_name],
+        );
+        self.error(
+            start,
+            length,
+            message,
+            diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
+        );
+    }
+
+    pub(crate) fn source_file_idx_is_js_with_esm_syntax(&self, target_idx: usize) -> bool {
+        if !self.source_file_idx_has_esm_syntax(target_idx) {
+            return false;
+        }
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        if source_file.is_declaration_file {
+            return false;
+        }
+        let file_name = source_file.file_name.as_str();
+        file_name.ends_with(".js")
+            || file_name.ends_with(".jsx")
+            || file_name.ends_with(".mjs")
+            || file_name.ends_with(".cjs")
+    }
+
     fn module_export_file_key_candidates(&self, file_name: &str) -> Vec<String> {
         let mut candidates = Vec::new();
         let mut push_unique = |value: String| {
@@ -139,6 +189,26 @@ impl<'a> CheckerState<'a> {
         resolved
     }
 
+    fn module_augmentation_export_preempts_reexport_alias(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        augmenting_file_idx: usize,
+    ) -> bool {
+        let Some(binder) = self.ctx.get_binder_for_file(augmenting_file_idx) else {
+            return false;
+        };
+        let Some(symbol) = binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(augmenting_file_idx as u32);
+
+        symbol.declarations.iter().any(|decl| {
+            arena
+                .get(*decl)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+        })
+    }
+
     /// Resolve a named type reference to its `TypeId`.
     ///
     /// This is a core function for resolving type names like `User`, `Array`, `Promise`,
@@ -239,6 +309,13 @@ impl<'a> CheckerState<'a> {
                 return Some(prop_type);
             }
             let mut result = self.type_reference_symbol_type(sym_id);
+            if matches!(result, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                && self.ctx.has_lib_loaded()
+                && self.is_well_known_lib_type_name(name)
+                && let Some(lib_type) = self.resolve_lib_type_by_name(name)
+            {
+                result = lib_type;
+            }
             if let Some(module_specifier) = self.resolve_named_import_module_for_local_name(name) {
                 result = self.apply_module_augmentations(&module_specifier, name, result);
                 // In type-reference position, a class name means the instance
@@ -345,9 +422,23 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Check if the exported value's type has a property matching the import name
+        // Check if the exported value's type has a property matching the import name.
+        // In a type-reference position, a constructor-valued property denotes the
+        // constructed instance type (`import { C } ...; let x: C`), not the
+        // constructor object type itself.
         match self.resolve_property_access_with_env(export_type, import_name) {
-            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+            PropertyAccessResult::Success { type_id, .. } => {
+                if let Some(construct_sigs) =
+                    crate::query_boundaries::common::construct_signatures_for_type(
+                        self.ctx.types,
+                        type_id,
+                    )
+                    && let Some(sig) = construct_sigs.first()
+                {
+                    return Some(sig.return_type);
+                }
+                Some(type_id)
+            }
             _ => None,
         }
     }
@@ -508,17 +599,6 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<tsz_binder::SymbolId> {
-        if let Some((sym_id, binder_idx)) =
-            self.resolve_ambient_module_export(module_specifier, export_name)
-        {
-            // Record cross-file origin so delegate_cross_arena_symbol_resolution
-            // can find the correct arena/binder for this symbol.
-            if !self.ctx.has_symbol_file_index(sym_id) {
-                self.ctx.register_symbol_file_target(sym_id, binder_idx);
-            }
-            return Some(sym_id);
-        }
-
         // First, try to resolve the module specifier to a target file index.
         // When source_file_idx is provided, resolve from that file's perspective
         // (for following re-export chains where specifiers are relative to the
@@ -529,7 +609,21 @@ impl<'a> CheckerState<'a> {
                 .resolve_import_target_from_file(from_file, module_specifier)
         } else {
             self.ctx.resolve_import_target(module_specifier)
-        }?;
+        };
+
+        let Some(target_file_idx) = target_file_idx else {
+            if let Some((sym_id, binder_idx)) =
+                self.resolve_ambient_module_export(module_specifier, export_name)
+            {
+                // Record cross-file origin so delegate_cross_arena_symbol_resolution
+                // can find the correct arena/binder for this symbol.
+                if !self.ctx.has_symbol_file_index(sym_id) {
+                    self.ctx.register_symbol_file_target(sym_id, binder_idx);
+                }
+                return Some(sym_id);
+            }
+            return None;
+        };
 
         // Get the target file's binder
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
@@ -545,6 +639,42 @@ impl<'a> CheckerState<'a> {
                 .register_symbol_file_target(sym_id, target_file_idx);
             Some(sym_id)
         };
+
+        let is_reexport_alias = |sym_id: tsz_binder::SymbolId| {
+            target_binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.import_module.is_some())
+        };
+
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
+            && let Some(sym_id) =
+                self.resolve_export_from_table(target_binder, exports_table, export_name)
+            && !is_reexport_alias(sym_id)
+        {
+            return record_and_return(sym_id);
+        }
+
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, module_specifier)
+            && let Some(sym_id) =
+                self.resolve_export_from_table(target_binder, exports_table, export_name)
+            && !is_reexport_alias(sym_id)
+        {
+            return record_and_return(sym_id);
+        }
+
+        let augmentation_export =
+            self.resolve_module_augmentation_export_for_file(target_file_idx, export_name);
+        if let Some((sym_id, augmenting_file_idx)) = augmentation_export
+            && self.module_augmentation_export_preempts_reexport_alias(sym_id, augmenting_file_idx)
+        {
+            self.ctx
+                .register_symbol_file_target(sym_id, augmenting_file_idx);
+            return Some(sym_id);
+        }
 
         if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
             && let Some((sym_id, _is_type_only)) =
@@ -562,26 +692,6 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        // Look up the export in the target binder's module_exports.
-        // Prefer canonical file key, then module specifier fallback.
-        if let Some(exports_table) = self
-            .ctx
-            .module_exports_for_module(target_binder, &target_file_name)
-            && let Some(sym_id) =
-                self.resolve_export_from_table(target_binder, exports_table, export_name)
-        {
-            return record_and_return(sym_id);
-        }
-
-        if let Some(exports_table) = self
-            .ctx
-            .module_exports_for_module(target_binder, module_specifier)
-            && let Some(sym_id) =
-                self.resolve_export_from_table(target_binder, exports_table, export_name)
-        {
-            return record_and_return(sym_id);
-        }
-
         // Follow re-export chains (wildcard and named re-exports) BEFORE
         // falling back to file_locals. file_locals may contain merged globals
         // that shadow the actual re-exported symbols.
@@ -594,9 +704,7 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        if let Some((sym_id, augmenting_file_idx)) =
-            self.resolve_module_augmentation_export_for_file(target_file_idx, export_name)
-        {
+        if let Some((sym_id, augmenting_file_idx)) = augmentation_export {
             self.ctx
                 .register_symbol_file_target(sym_id, augmenting_file_idx);
             return Some(sym_id);
@@ -606,15 +714,21 @@ impl<'a> CheckerState<'a> {
         // where module_exports wasn't populated).
         //
         // IMPORTANT: Only use file_locals as a fallback when module_exports is
-        // empty or unavailable. When module_exports IS populated, it is the
-        // authoritative source — file_locals may contain namespace import
-        // members that leaked from type-only imports and should not be returned
-        // as value exports.
+        // empty or unavailable AND the target file is a script (not an external
+        // module). For real ES modules — files with `import`/`export` syntax or
+        // module file extensions like `.mts`/`.cts` — `file_locals` may hold
+        // imported aliases (`import x from "./other"`) that are NOT part of the
+        // module's public surface. Returning those here would let
+        // `import * as ns from "./self"` see the file's local imports through
+        // `ns.x`, which `tsc` rejects with TS2339 (issue #3585).
         let has_module_exports = self
             .ctx
             .module_exports_for_module(target_binder, &target_file_name)
             .is_some_and(|e| !e.is_empty());
-        if !has_module_exports && let Some(sym_id) = target_binder.file_locals.get(export_name) {
+        if !target_binder.is_external_module
+            && !has_module_exports
+            && let Some(sym_id) = target_binder.file_locals.get(export_name)
+        {
             return record_and_return(sym_id);
         }
 
@@ -737,15 +851,18 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
-        // Files with an unambiguous ESM extension (.mjs/.mts/.d.mts) never
-        // synthesize a `default` export from `export =` — `export =` is a
-        // syntax error in ESM (TS1203). Skip the synthesis when resolving
-        // the `default` export for these files so consumers see TS1192.
+        // Files with an unambiguous ESM extension (.mjs/.mts/.d.mts) generally
+        // do not synthesize a `default` export from `export =`, because
+        // `export =` is a syntax error in ESM (TS1203). `module: preserve` is
+        // the exception: it permits CJS and ESM syntax side-by-side and tsc
+        // treats `export =` as the default-import target there.
         let target_is_explicit_esm = {
             let n = target_file_name.as_str();
             n.ends_with(".mjs") || n.ends_with(".mts")
         };
-        let default_skips_export_equals = export_name == "default" && target_is_explicit_esm;
+        let default_skips_export_equals = export_name == "default"
+            && (target_is_explicit_esm || self.source_file_idx_is_js_with_esm_syntax(file_idx))
+            && self.ctx.compiler_options.module != tsz_common::common::ModuleKind::Preserve;
 
         // Check direct exports (module_exports)
         if let Some(exports) = self
@@ -813,15 +930,21 @@ impl<'a> CheckerState<'a> {
         // where module_exports wasn't populated).
         //
         // IMPORTANT: Only use file_locals as a fallback when module_exports is
-        // empty or unavailable. When module_exports IS populated, it is the
-        // authoritative source — file_locals may contain namespace import
-        // members that leaked from type-only imports (e.g., `import type * as X
-        // from 'mod'`) and should not be returned as value exports.
+        // empty or unavailable AND the target file is a script (not an external
+        // module). For real ES modules — files with `import`/`export` syntax or
+        // module file extensions like `.mts`/`.cts` — `file_locals` may hold
+        // imported aliases (`import x from "./other"`) that are NOT part of the
+        // module's public surface. Returning those here would let
+        // `import * as ns from "./self"` see the file's local imports through
+        // `ns.x`, which `tsc` rejects with TS2339 (issue #3585).
         let has_module_exports = self
             .ctx
             .module_exports_for_module(target_binder, &target_file_name)
             .is_some_and(|e| !e.is_empty());
         if has_module_exports {
+            return None;
+        }
+        if target_binder.is_external_module {
             return None;
         }
         // When looking for "default" and the module has `export =`, prefer the
@@ -858,14 +981,51 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<tsz_binder::SymbolTable> {
+        let cache_key = (self.ctx.current_file_idx, module_specifier.to_string());
+        if let Some(cached) = self
+            .ctx
+            .namespace_exports_cache
+            .borrow()
+            .get(&cache_key)
+            .cloned()
+        {
+            return cached;
+        }
+
         if let Some(exports) = self.resolve_ambient_module_namespace_exports(module_specifier) {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(cache_key, Some(exports.clone()));
             return Some(exports);
         }
 
-        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
-        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let Some(target_file_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(cache_key, None);
+            return None;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(cache_key, None);
+            return None;
+        };
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+        let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|source_file| source_file.file_name.clone())
+        else {
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(cache_key, None);
+            return None;
+        };
 
         // Helper: record cross-file origin for all symbols in a table.
         let record_symbols = |table: &tsz_binder::SymbolTable| {
@@ -905,6 +1065,10 @@ impl<'a> CheckerState<'a> {
                 Some(module_specifier),
             );
             record_symbols(&combined);
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(cache_key, Some(combined.clone()));
             return Some(combined);
         }
 
@@ -935,9 +1099,17 @@ impl<'a> CheckerState<'a> {
             // type-only exports (e.g., `export type * from '...'`). An empty namespace
             // object type is correct and will produce TS2339 for value access, instead
             // of falling through to "module not found" → TypeId::ANY.
+            self.ctx
+                .namespace_exports_cache
+                .borrow_mut()
+                .insert(cache_key, Some(combined.clone()));
             return Some(combined);
         }
 
+        self.ctx
+            .namespace_exports_cache
+            .borrow_mut()
+            .insert(cache_key, None);
         None
     }
 
@@ -1003,6 +1175,19 @@ impl<'a> CheckerState<'a> {
                 record_symbols(&combined);
             }
             return Some(combined);
+        }
+
+        // The target file is a real ES module (has top-level `import`/`export`
+        // statements or a module file extension) but its public surface is
+        // empty — e.g. `main.mts` only declares `import` aliases, no exports.
+        // tsc still types `import * as ns from "./main.mjs"` as the empty
+        // module namespace `{}`, so `ns.default` / `ns.imported` correctly
+        // report TS2339 instead of leaking the local imports as members.
+        // Returning an empty table here matches that behavior; falling
+        // through to `None` would let the caller widen the namespace to
+        // `any`, which silently accepts any property access.
+        if target_binder.is_external_module {
+            return Some(tsz_binder::SymbolTable::new());
         }
 
         None
@@ -1818,8 +2003,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Only emit TS1192 if report_unresolved_imports is enabled
-        if !self.ctx.report_unresolved_imports {
+        let resolved_import_target = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier));
+
+        // Only let report_unresolved_imports suppress diagnostics for truly
+        // unresolved modules. A resolved module with no default export still
+        // needs TS1192 even in checked-JS rechecks.
+        if !self.ctx.report_unresolved_imports && resolved_import_target.is_none() {
             return;
         }
 
@@ -1830,6 +2022,12 @@ impl<'a> CheckerState<'a> {
             && self.ctx.compiler_options.module == tsz_common::common::ModuleKind::System
             && !self.module_has_export_equals(module_specifier)
             && !self.module_has_export_assignment_declaration(module_specifier)
+        {
+            return;
+        }
+
+        if self.ctx.compiler_options.module.is_node_module()
+            && self.module_can_use_synthetic_default_import(module_specifier)
         {
             return;
         }
@@ -1848,7 +2046,13 @@ impl<'a> CheckerState<'a> {
         // When only allowSyntheticDefaultImports is true (without esModuleInterop),
         // suppression applies to CJS-shaped modules. ESM .d.ts files (from packages
         // with "type": "module") still require an explicit default export.
-        if self.ctx.allow_synthetic_default_imports() && !is_source_file_import {
+        let target_is_js_with_esm_syntax = resolved_import_target
+            .is_some_and(|idx| self.source_file_idx_is_js_with_esm_syntax(idx));
+
+        if self.ctx.allow_synthetic_default_imports()
+            && !is_source_file_import
+            && !target_is_js_with_esm_syntax
+        {
             // esModuleInterop: suppress TS1192 for non-source-file imports unless
             // the module is from a genuine ESM package (e.g., node_modules with
             // package.json "type": "module"). The file_is_esm_map marks all files
@@ -1894,11 +2098,16 @@ impl<'a> CheckerState<'a> {
         let has_export_equals = self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier);
 
-        // `export =` inside an ESM-extension module (.mts/.mjs/.d.mts) is a
-        // syntax error (TS1203) and does not provide a default export. Fall
-        // through to TS1192 so the default-import side is also diagnosed.
-        let export_equals_provides_default =
-            has_export_equals && !self.module_has_explicit_esm_extension(module_specifier);
+        // `export =` inside an ESM-extension module (.mts/.mjs/.d.mts) is
+        // usually a syntax error (TS1203) and does not provide a default
+        // export. `module: preserve` permits `export =`, so do not add TS1192
+        // on consumers in that mode.
+        let explicit_esm_export_equals_suppresses_default = self
+            .module_has_explicit_esm_extension(module_specifier)
+            && self.ctx.compiler_options.module != tsz_common::common::ModuleKind::Preserve;
+        let export_equals_provides_default = has_export_equals
+            && !explicit_esm_export_equals_suppresses_default
+            && !target_is_js_with_esm_syntax;
 
         if export_equals_provides_default {
             // TS1259: "Module X can only be default-imported using the 'allowSyntheticDefaultImports' flag"
@@ -1961,6 +2170,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier));
+        if let Some(target_idx) = target_idx
+            && self.source_file_idx_is_js_with_esm_syntax(target_idx)
+        {
+            return false;
+        }
         if self
             .resolve_js_export_surface_for_module(module_specifier, Some(self.ctx.current_file_idx))
             .is_some_and(|surface| surface.has_commonjs_exports)
@@ -1968,7 +2186,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+        let Some(target_idx) = target_idx else {
             return false;
         };
         let arena = self.ctx.get_arena_for_file(target_idx as u32);
@@ -1983,7 +2201,6 @@ impl<'a> CheckerState<'a> {
         if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
             return false;
         }
-
         self.ctx
             .file_is_esm_map
             .as_ref()
@@ -2072,6 +2289,45 @@ impl<'a> CheckerState<'a> {
         export_name: &str,
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<tsz_binder::SymbolId> {
+        let cache_key = (
+            self.ctx.current_file_idx,
+            module_specifier.to_string(),
+            export_name.to_string(),
+        );
+        let cache_miss = visited_aliases.len() == 0;
+        if let Some(cached) = self
+            .ctx
+            .export_equals_named_cache
+            .borrow()
+            .get(&cache_key)
+            .copied()
+            && (cached.is_some() || cache_miss)
+        {
+            return cached;
+        }
+
+        let resolved = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.resolve_named_export_via_export_equals_tracked_uncached(
+                module_specifier,
+                export_name,
+                visited_aliases,
+            )
+        });
+        if resolved.is_some() || cache_miss {
+            self.ctx
+                .export_equals_named_cache
+                .borrow_mut()
+                .insert(cache_key, resolved);
+        }
+        resolved
+    }
+
+    fn resolve_named_export_via_export_equals_tracked_uncached(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        visited_aliases: &mut AliasCycleTracker,
+    ) -> Option<tsz_binder::SymbolId> {
         let symbol_export_named_member =
             |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<tsz_binder::SymbolId> {
                 if let Some(exports) = symbol.exports.as_ref()
@@ -2108,6 +2364,16 @@ impl<'a> CheckerState<'a> {
         };
 
         let lookup_by_name = |name: &str| -> Vec<tsz_binder::SymbolId> {
+            if let Some(cached) = self
+                .ctx
+                .symbol_name_candidates_cache
+                .borrow()
+                .get(name)
+                .cloned()
+            {
+                return cached;
+            }
+
             let mut result: Vec<tsz_binder::SymbolId> = self
                 .ctx
                 .binder
@@ -2115,20 +2381,34 @@ impl<'a> CheckerState<'a> {
                 .find_all_by_name(name)
                 .to_vec();
             if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                let mut seen: FxHashSet<tsz_binder::SymbolId> = result.iter().copied().collect();
                 for binder in all_binders.iter() {
                     for &sym_id in binder.get_symbols().find_all_by_name(name) {
-                        if !result.contains(&sym_id) {
+                        if seen.insert(sym_id) {
                             result.push(sym_id);
                         }
                     }
                 }
             }
+            self.ctx
+                .symbol_name_candidates_cache
+                .borrow_mut()
+                .insert(name.to_string(), result.clone());
             result
         };
         let prefer_value_named_member = |member_id: tsz_binder::SymbolId| -> tsz_binder::SymbolId {
             let Some(member_symbol) = lookup_symbol(member_id) else {
                 return member_id;
             };
+            if (member_symbol.flags
+                & (symbol_flags::CLASS
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::VARIABLE
+                    | symbol_flags::ENUM))
+                != 0
+            {
+                return member_id;
+            }
             if (member_symbol.flags
                 & (symbol_flags::MODULE
                     | symbol_flags::NAMESPACE_MODULE
@@ -2154,10 +2434,9 @@ impl<'a> CheckerState<'a> {
             member_id
         };
 
-        let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
-                                    visited_aliases: &mut AliasCycleTracker|
+        let resolve_from_export_equals_sym = |export_equals_sym: tsz_binder::SymbolId,
+                                              visited_aliases: &mut AliasCycleTracker|
          -> Option<tsz_binder::SymbolId> {
-            let export_equals_sym = exports.get("export=")?;
             if export_name == "default" {
                 return Some(export_equals_sym);
             }
@@ -2237,30 +2516,46 @@ impl<'a> CheckerState<'a> {
 
             None
         };
+        let resolve_from_exports = |exports: &tsz_binder::SymbolTable,
+                                    visited_aliases: &mut AliasCycleTracker|
+         -> Option<tsz_binder::SymbolId> {
+            let export_equals_sym = exports.get("export=")?;
+            resolve_from_export_equals_sym(export_equals_sym, visited_aliases)
+        };
 
-        for candidate in module_specifier_candidates(module_specifier) {
+        let candidates = module_specifier_candidates(module_specifier);
+        for candidate in &candidates {
             if let Some(exports) = self
                 .ctx
-                .module_exports_for_module(self.ctx.binder, &candidate)
+                .module_exports_for_module(self.ctx.binder, candidate)
                 && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 return Some(sym_id);
             }
-            if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                if let Some(file_indices) = self.ctx.files_for_module_specifier(&candidate) {
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            if let Some(module_binder_index) = self.ctx.global_module_binder_index.as_ref() {
+                let mut checked = rustc_hash::FxHashSet::default();
+                for candidate in &candidates {
+                    let Some(file_indices) = module_binder_index.get(candidate) else {
+                        continue;
+                    };
                     for &file_idx in file_indices {
-                        if let Some(binder) = all_binders.get(file_idx)
+                        if checked.insert((file_idx, candidate.as_str()))
+                            && let Some(binder) = all_binders.get(file_idx)
                             && let Some(exports) =
-                                self.ctx.module_exports_for_module(binder, &candidate)
+                                self.ctx.module_exports_for_module(binder, candidate)
                             && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);
                         }
                     }
-                } else {
+                }
+            } else {
+                for candidate in &candidates {
                     for binder in all_binders.iter() {
-                        if let Some(exports) =
-                            self.ctx.module_exports_for_module(binder, &candidate)
+                        if let Some(exports) = self.ctx.module_exports_for_module(binder, candidate)
                             && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);
@@ -2315,10 +2610,8 @@ impl<'a> CheckerState<'a> {
                     for &(file_idx, export_equals_sym_id) in entries {
                         self.ctx
                             .register_symbol_file_target(export_equals_sym_id, file_idx);
-                        let mut export_equals_only = tsz_binder::SymbolTable::new();
-                        export_equals_only.set("export=".to_string(), export_equals_sym_id);
                         if let Some(sym_id) =
-                            resolve_from_exports(&export_equals_only, visited_aliases)
+                            resolve_from_export_equals_sym(export_equals_sym_id, visited_aliases)
                         {
                             return Some(sym_id);
                         }
@@ -2431,7 +2724,27 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_messages, format_message};
         // TSC includes source-level quotes in module diagnostic messages
         let quoted_module = format!("\"{module_specifier}\"");
-        if has_default && member_name != "default" {
+        let suggestion = self
+            .resolve_effective_module_exports(module_specifier)
+            .and_then(|exports| {
+                let export_names: Vec<&str> =
+                    exports.iter().map(|(name, _)| name.as_str()).collect();
+                tsz_parser::parser::spelling::get_spelling_suggestion(member_name, &export_names)
+                    .map(|s| s.to_string())
+            });
+
+        if let Some(suggestion) = suggestion {
+            let message = format_message(
+                diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+                &[&quoted_module, member_name, &suggestion],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+            );
+        } else if has_default && member_name != "default" {
             let message = format_message(
                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
                 &[&quoted_module, member_name],
@@ -2443,42 +2756,16 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
             );
         } else {
-            // Check for spelling suggestions (TS2724) before TS2305
-            let suggestion = self
-                .resolve_effective_module_exports(module_specifier)
-                .and_then(|exports| {
-                    let export_names: Vec<&str> =
-                        exports.iter().map(|(name, _)| name.as_str()).collect();
-                    tsz_parser::parser::spelling::get_spelling_suggestion(
-                        member_name,
-                        &export_names,
-                    )
-                    .map(|s| s.to_string())
-                });
-
-            if let Some(suggestion) = suggestion {
-                let message = format_message(
-                    diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
-                    &[&quoted_module, member_name, &suggestion],
-                );
-                self.error(
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
-                );
-            } else {
-                let message = format_message(
-                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                    &[&quoted_module, member_name],
-                );
-                self.error(
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                );
-            }
+            let message = format_message(
+                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                &[&quoted_module, member_name],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+            );
         }
     }
 

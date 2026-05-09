@@ -13,7 +13,7 @@
 //!
 //! The result is cached per target file index to avoid redundant computation.
 
-use crate::state::CheckerState;
+use crate::{context::is_js_file_name, state::CheckerState};
 use rustc_hash::FxHashMap;
 use tsz_solver::{CallableShape, ObjectShape, PropertyInfo, TypeId, Visibility};
 
@@ -137,6 +137,7 @@ impl JsExportSurface {
                 overlay.declaration_order,
             ),
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }
     }
@@ -550,6 +551,39 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|surface| surface.has_named_export(export_name, self.ctx.types))
     }
 
+    /// Check whether a CommonJS module has an export surface but not the requested
+    /// named export. This lets import validation prefer the semantic JS export
+    /// surface over the binder's syntactic `module_exports` table for cases like
+    /// `exports.x = void 0`, which tsc does not expose as a named export.
+    pub(crate) fn js_commonjs_export_surface_lacks_export(
+        &mut self,
+        module_name: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        let Some(target_file_idx) = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_is_js = target_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| is_js_file_name(&source_file.file_name));
+        if !target_is_js {
+            return false;
+        }
+
+        let surface = self.resolve_js_export_surface(target_file_idx);
+        surface.has_commonjs_exports && !surface.has_named_export(export_name, self.ctx.types)
+    }
+
     /// Build the namespace type for a CommonJS file from its export surface.
     ///
     /// This is the canonical replacement for `commonjs_namespace_type_for_file`.
@@ -584,8 +618,16 @@ impl<'a> CheckerState<'a> {
 
     /// Compute the JS export surface from scratch (uncached).
     fn compute_js_export_surface(&mut self, target_file_idx: usize) -> JsExportSurface {
+        if self.source_file_idx_has_esm_syntax(target_file_idx) {
+            return JsExportSurface::empty();
+        }
+
         let mut surface = JsExportSurface::empty();
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        let target_is_external_module = self
+            .ctx
+            .get_binder_for_file(target_file_idx)
+            .is_some_and(tsz_binder::BinderState::is_external_module);
 
         let last_direct_export =
             self.last_direct_module_export_assignment_for_file(target_file_idx);
@@ -634,7 +676,7 @@ impl<'a> CheckerState<'a> {
 
         surface.has_commonjs_exports = surface.direct_export_type.is_some()
             || !surface.named_exports.is_empty()
-            || !surface.prototype_members.is_empty()
+            || (!target_is_external_module && !surface.prototype_members.is_empty())
             || has_define_property_call;
 
         surface
@@ -790,6 +832,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: idx as u32 + 1,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -861,6 +904,7 @@ mod tests {
             parent_id: None,
             declaration_order,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }
     }

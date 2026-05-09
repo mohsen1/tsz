@@ -737,6 +737,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: properties.len() as u32,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -850,6 +851,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: property_count as u32,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );

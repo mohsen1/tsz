@@ -4,8 +4,8 @@
 //! over object literal elements and builds the resulting object type.
 
 use super::super::object_literal_context::ContextualPropertyPresence;
-use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{
     is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
@@ -26,6 +26,32 @@ fn rebase_spread_display_property_order(props: &[PropertyInfo], base: u32) -> Ve
         prop.declaration_order = base.saturating_add(index as u32);
     }
     props
+}
+
+fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyInfo>]) {
+    let mut required_names = rustc_hash::FxHashSet::default();
+    for props in member_props.iter() {
+        for prop in props {
+            if !prop.optional {
+                required_names.insert(prop.name);
+            }
+        }
+    }
+    if required_names.is_empty() {
+        return;
+    }
+
+    // Conditional object literal unions are completed with `p?: undefined`
+    // placeholders for display/type-union balance. In an object spread, that
+    // placeholder means the branch omits `p`; it should not materialize as a
+    // spread property when another branch supplies a required `p`.
+    for props in member_props {
+        props.retain(|prop| {
+            !(prop.optional
+                && prop.type_id == TypeId::UNDEFINED
+                && required_names.contains(&prop.name))
+        });
+    }
 }
 
 /// Whether a contextual type is "literal-permissive" — i.e., does not
@@ -70,6 +96,46 @@ fn is_single_quoted_string_property_name_node(
 }
 
 impl<'a> CheckerState<'a> {
+    fn spread_source_is_unannotated_object_literal_binding(&self, expression: NodeIndex) -> bool {
+        let expression = self.ctx.arena.skip_parenthesized_and_assertions(expression);
+        let Some(node) = self.ctx.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expression)
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if var_decl.type_annotation.is_some() {
+                return false;
+            }
+            let initializer = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(var_decl.initializer);
+            let Some(init_node) = self.ctx.arena.get(initializer) else {
+                return false;
+            };
+            return init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
+        }
+        false
+    }
+
     /// Merge a single spread-contributed property into the running
     /// `properties` map.
     ///
@@ -116,6 +182,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 } else {
@@ -123,6 +190,95 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn object_literal_variable_initializer_symbol(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let parent_idx = self.ctx.arena.get_extended(idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer != idx {
+            return None;
+        }
+        self.ctx
+            .binder
+            .get_node_symbol(var_decl.name)
+            .or_else(|| self.resolve_identifier_symbol_without_tracking(var_decl.name))
+    }
+
+    fn record_partial_object_literal_property(
+        &mut self,
+        stack_index: Option<usize>,
+        prop: &PropertyInfo,
+    ) {
+        let Some(stack_index) = stack_index else {
+            return;
+        };
+        if let Some(active) = self
+            .ctx
+            .object_literal_tracking
+            .partial_initializers
+            .get_mut(stack_index)
+        {
+            active.properties.insert(prop.name, prop.clone());
+        }
+    }
+
+    fn pop_partial_object_literal_initializer(&mut self, stack_index: Option<usize>) {
+        let Some(stack_index) = stack_index else {
+            return;
+        };
+        if stack_index + 1 == self.ctx.object_literal_tracking.partial_initializers.len() {
+            self.ctx.object_literal_tracking.partial_initializers.pop();
+        } else if stack_index < self.ctx.object_literal_tracking.partial_initializers.len() {
+            self.ctx
+                .object_literal_tracking
+                .partial_initializers
+                .remove(stack_index);
+        }
+    }
+
+    fn pop_object_literal_contexts(
+        &mut self,
+        marker_this_type: Option<TypeId>,
+        partial_initializer_stack_index: Option<usize>,
+    ) {
+        if marker_this_type.is_some() {
+            self.ctx.this_type_stack.pop();
+        }
+        self.pop_partial_object_literal_initializer(partial_initializer_stack_index);
+    }
+
+    fn contextual_this_type_from_marker(&self, ctx_type: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::common::ContextualTypeContext;
+
+        let env = self.ctx.type_env.borrow();
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            ctx_type,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        if let Some(this_type) = ctx_helper.get_this_type_from_marker_with_resolver(&*env) {
+            return Some(this_type);
+        }
+
+        let def_id = self.ctx.definition_store.find_def_for_type(ctx_type)?;
+        let body = self.ctx.definition_store.get_body(def_id)?;
+        if body == ctx_type {
+            return None;
+        }
+
+        let body_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            body,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        body_helper.get_this_type_from_marker_with_resolver(&*env)
     }
 
     fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
@@ -179,6 +335,44 @@ impl<'a> CheckerState<'a> {
         Some(format!("[{expr_text}]"))
     }
 
+    fn this_options_property_access_receiver(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(expr_node)?;
+
+        let base_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(access.expression);
+        let base_node = self.ctx.arena.get(base_idx)?;
+        if base_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let base_access = self.ctx.arena.get_access_expr(base_node)?;
+        let base_name_is_options = self
+            .ctx
+            .arena
+            .get(base_access.name_or_argument)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .is_some_and(|ident| ident.escaped_text == "options");
+        if !base_name_is_options {
+            return None;
+        }
+
+        let receiver_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(base_access.expression);
+        self.ctx
+            .arena
+            .get(receiver_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            .then_some(receiver_idx)
+    }
+
     pub(crate) fn get_type_of_object_literal_with_request(
         &mut self,
         idx: NodeIndex,
@@ -187,7 +381,7 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
-        use tsz_solver::PropertyInfo;
+        use tsz_solver::{IndexSignature, PropertyInfo};
         let mut contextual_type = request.contextual_type;
 
         // Strip nullish types from contextual type for object literals.
@@ -226,7 +420,8 @@ impl<'a> CheckerState<'a> {
             // diagnostic elaboration, and clearing the side table there loses the
             // richer surface we want to report.
             self.ctx
-                .object_literal_contextual_targets
+                .object_literal_tracking
+                .contextual_targets
                 .insert(idx, ctx_ty);
         }
 
@@ -239,6 +434,26 @@ impl<'a> CheckerState<'a> {
 
         // Collect properties from the object literal (later entries override earlier ones)
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let all_properties_context_sensitive = !obj.elements.nodes.is_empty()
+            && obj.elements.nodes.iter().all(|&element_idx| {
+                let Some(element) = self.ctx.arena.get(element_idx) else {
+                    return false;
+                };
+
+                if let Some(prop) = self.ctx.arena.get_property_assignment(element) {
+                    return super::super::contextual::is_contextually_sensitive(
+                        self,
+                        prop.initializer,
+                    );
+                }
+
+                if element.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    return super::super::contextual::is_contextually_sensitive(self, element_idx);
+                }
+
+                element.kind == syntax_kind_ext::GET_ACCESSOR
+                    || element.kind == syntax_kind_ext::SET_ACCESSOR
+            });
         // Track pre-widened (display) types for freshness model.
         // Maps property name → original literal TypeId before widening.
         // Only populated when a property's type was actually widened.
@@ -248,9 +463,10 @@ impl<'a> CheckerState<'a> {
         // Index signatures inherited from spread sources (kept separate because
         // they should only be included when the literal has no explicit properties —
         // tsc drops spread index signatures when explicit properties exist).
-        let mut spread_string_index_types: Vec<TypeId> = Vec::new();
-        let mut spread_number_index_types: Vec<TypeId> = Vec::new();
+        let mut spread_string_index_signatures: Vec<IndexSignature> = Vec::new();
+        let mut spread_number_index_signatures: Vec<IndexSignature> = Vec::new();
         let mut has_spread = false;
+        let mut has_any_spread = false;
         let mut has_union_spread = false;
         let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
         // Track type-parameter-containing spread types for intersection creation.
@@ -273,42 +489,6 @@ impl<'a> CheckerState<'a> {
         let skip_duplicate_check = self.ctx.in_destructuring_target;
         let mut prop_order: u32 = 1;
         let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
-
-        // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
-        // We need to extract this BEFORE the for loop so it's available for the pop at the end
-        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
-            use crate::query_boundaries::common::ContextualTypeContext;
-            let ctx_helper = ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                ctx_type,
-                self.ctx.compiler_options.no_implicit_any,
-            );
-            let env = self.ctx.type_env.borrow();
-            ctx_helper.get_this_type_from_marker_with_resolver(&*env)
-        } else {
-            None
-        };
-
-        // Push this type onto stack if found (methods will pick it up)
-        if let Some(mut this_type) = marker_this_type {
-            // The ThisType<T> marker may contain unresolved type parameters
-            // (e.g., `Data & Readonly<Props> & Instance` before inference completes)
-            // or unresolved Lazy references to generic interfaces that need their
-            // default type arguments applied (e.g., `ThisType<T & Comp>` where
-            // `Comp<U = any>` appears as bare `Lazy(DefId)` without an Application
-            // wrapper). Evaluate through the type environment to resolve both
-            // cases, ensuring property access on `this` inside method bodies
-            // works correctly.
-            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, this_type)
-                || crate::query_boundaries::common::contains_lazy_or_recursive(
-                    self.ctx.types,
-                    this_type,
-                )
-            {
-                this_type = self.evaluate_type_with_env(this_type);
-            }
-            self.ctx.this_type_stack.push(this_type);
-        }
 
         // Pre-scan: collect ALL method names from the object literal so that
         // the synthetic `this` type includes placeholders for all methods,
@@ -392,11 +572,40 @@ impl<'a> CheckerState<'a> {
                 contextual_type = Some(narrowed);
             }
         }
+        // Check for ThisType<T> marker in contextual type (Vue 2 / Options API
+        // pattern) after union narrowing so discriminated object literals choose
+        // the matching union member's marker.
+        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
+            self.contextual_this_type_from_marker(ctx_type)
+        } else {
+            None
+        };
+
+        // Push this type onto stack if found (methods will pick it up)
+        if let Some(mut this_type) = marker_this_type {
+            // The ThisType<T> marker may contain unresolved type parameters
+            // (e.g., `Data & Readonly<Props> & Instance` before inference completes)
+            // or unresolved Lazy references to generic interfaces that need their
+            // default type arguments applied (e.g., `ThisType<T & Comp>` where
+            // `Comp<U = any>` appears as bare `Lazy(DefId)` without an Application
+            // wrapper). Evaluate through the type environment to resolve both
+            // cases, ensuring property access on `this` inside method bodies
+            // works correctly.
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, this_type)
+                || crate::query_boundaries::common::contains_lazy_or_recursive(
+                    self.ctx.types,
+                    this_type,
+                )
+            {
+                this_type = self.evaluate_type_with_env(this_type);
+            }
+            self.ctx.this_type_stack.push(this_type);
+        }
         let prototype_owner_this_type = if self.is_js_file() {
             self.js_prototype_owner_expression_for_node(idx)
                 .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
                 .and_then(|owner_target| {
-                    self.js_constructor_body_instance_type_for_function(owner_target)
+                    self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
                 })
         } else {
             None
@@ -405,6 +614,15 @@ impl<'a> CheckerState<'a> {
             self.contextual_object_receiver_this_type(contextual_type, marker_this_type)
         });
         let base_request = request.contextual_opt(contextual_type);
+        let partial_initializer_stack_index = self
+            .object_literal_variable_initializer_symbol(idx)
+            .map(|variable_symbol| {
+                self.ctx
+                    .object_literal_tracking
+                    .partial_initializers
+                    .push(PartialObjectLiteralInitializer::new(variable_symbol, idx));
+                self.ctx.object_literal_tracking.partial_initializers.len() - 1
+            });
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -606,7 +824,8 @@ impl<'a> CheckerState<'a> {
                         .or(resolved_prop_ctx)
                     {
                         self.ctx
-                            .object_literal_property_diag_targets
+                            .object_literal_tracking
+                            .property_diag_targets
                             .insert(elem_idx, diag_target);
                     }
                     let property_request = base_request.contextual_opt(
@@ -923,22 +1142,25 @@ impl<'a> CheckerState<'a> {
                         ) || self.is_computed_string_property_name(prop.name);
                     let single_quoted_name =
                         is_single_quoted_string_property_name_node(self.ctx.arena, prop.name);
-                    properties.insert(
-                        name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id: value_type,
-                            write_type: value_type,
-                            optional: is_optional_destructuring,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: order,
-                            is_string_named,
-                            single_quoted_name,
-                        },
+                    let prop_info = PropertyInfo {
+                        name: name_atom,
+                        type_id: value_type,
+                        write_type: value_type,
+                        optional: is_optional_destructuring,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: order,
+                        is_string_named,
+                        is_symbol_named: self.is_symbol_property_name(prop.name),
+                        single_quoted_name,
+                    };
+                    properties.insert(name_atom, prop_info.clone());
+                    self.record_partial_object_literal_property(
+                        partial_initializer_stack_index,
+                        &prop_info,
                     );
                 } else {
                     // Computed property name that can't be statically resolved (e.g., { [expr]: value })
@@ -1086,8 +1308,14 @@ impl<'a> CheckerState<'a> {
                             crate::call_checker::CallableContext::none(),
                         ),
                     );
-                    let value_type =
+                    let mut value_type =
                         self.get_type_of_node_with_request(prop.initializer, &property_request);
+                    if self.ctx.in_const_assertion
+                        && let Some(literal_type) =
+                            self.literal_type_from_initializer(prop.initializer)
+                    {
+                        value_type = literal_type;
+                    }
 
                     if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(value_type);
@@ -1132,7 +1360,8 @@ impl<'a> CheckerState<'a> {
                         contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
                     if let Some(diag_target) = jsdoc_declared_type.or(property_context_type) {
                         self.ctx
-                            .object_literal_property_diag_targets
+                            .object_literal_tracking
+                            .property_diag_targets
                             .insert(elem_idx, diag_target);
                     }
                     let shorthand_request =
@@ -1351,22 +1580,25 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
-                    properties.insert(
-                        name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id: value_type,
-                            write_type: value_type,
-                            optional: is_optional_shorthand,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: order,
-                            is_string_named: false,
-                            single_quoted_name: false,
-                        },
+                    let prop_info = PropertyInfo {
+                        name: name_atom,
+                        type_id: value_type,
+                        write_type: value_type,
+                        optional: is_optional_shorthand,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: order,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    };
+                    properties.insert(name_atom, prop_info.clone());
+                    self.record_partial_object_literal_property(
+                        partial_initializer_stack_index,
+                        &prop_info,
                     );
                 } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
                     self.check_computed_property_name(shorthand.name);
@@ -1414,7 +1646,6 @@ impl<'a> CheckerState<'a> {
                                 .or(define_property_context_type),
                         ),
                     );
-
                     // If no explicit ThisType marker exists, use the object literal's
                     // contextual type as `this` inside method bodies.
                     let mut pushed_contextual_this = false;
@@ -1669,25 +1900,28 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
-                    properties.insert(
-                        name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id: method_type,
-                            write_type: method_type,
-                            // A method shorthand may carry `?` — `{ a?() {} }` —
-                            // in which case the inferred property type must be
-                            // optional so the .d.ts emits `a?(): void`.
-                            optional: method.question_token,
-                            readonly: false,
-                            is_method: true, // Object literal methods should be bivariant
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: order,
-                            is_string_named: false,
-                            single_quoted_name: false,
-                        },
+                    let prop_info = PropertyInfo {
+                        name: name_atom,
+                        type_id: method_type,
+                        write_type: method_type,
+                        // A method shorthand may carry `?` — `{ a?() {} }` —
+                        // in which case the inferred property type must be
+                        // optional so the .d.ts emits `a?(): void`.
+                        optional: method.question_token,
+                        readonly: false,
+                        is_method: true, // Object literal methods should be bivariant
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: order,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    };
+                    properties.insert(name_atom, prop_info.clone());
+                    self.record_partial_object_literal_property(
+                        partial_initializer_stack_index,
+                        &prop_info,
                     );
                 } else {
                     // Computed method name - still type-check the expression and function body.
@@ -1882,6 +2116,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             });
                         }
@@ -2046,22 +2281,25 @@ impl<'a> CheckerState<'a> {
                             (existing.type_id, accessor_type)
                         };
                         // Both getter and setter exist → not readonly
-                        properties.insert(
-                            name_atom,
-                            PropertyInfo {
-                                name: name_atom,
-                                type_id: read_type,
-                                write_type,
-                                optional: false,
-                                readonly: false,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: existing_order,
-                                is_string_named: false,
-                                single_quoted_name: false,
-                            },
+                        let prop_info = PropertyInfo {
+                            name: name_atom,
+                            type_id: read_type,
+                            write_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: existing_order,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        };
+                        properties.insert(name_atom, prop_info.clone());
+                        self.record_partial_object_literal_property(
+                            partial_initializer_stack_index,
+                            &prop_info,
                         );
                     } else {
                         // Single accessor so far: getter-only is readonly.
@@ -2074,22 +2312,25 @@ impl<'a> CheckerState<'a> {
                         };
                         let order = prop_order;
                         prop_order += 1;
-                        properties.insert(
-                            name_atom,
-                            PropertyInfo {
-                                name: name_atom,
-                                type_id: read_type,
-                                write_type,
-                                optional: false,
-                                readonly,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: order,
-                                is_string_named: false,
-                                single_quoted_name: false,
-                            },
+                        let prop_info = PropertyInfo {
+                            name: name_atom,
+                            type_id: read_type,
+                            write_type,
+                            optional: false,
+                            readonly,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: order,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        };
+                        properties.insert(name_atom, prop_info.clone());
+                        self.record_partial_object_literal_property(
+                            partial_initializer_stack_index,
+                            &prop_info,
                         );
                     }
                 } else {
@@ -2253,6 +2494,18 @@ impl<'a> CheckerState<'a> {
                     };
                     let spread_type =
                         self.get_type_of_node_with_request(spread_expr, &spread_request);
+                    let this_options_receiver_type = self
+                        .this_options_property_access_receiver(spread_expr)
+                        .map(|receiver_idx| self.get_type_of_node(receiver_idx));
+                    let is_contextual_this_options_any_spread = spread_type == TypeId::ANY
+                        && this_options_receiver_type
+                            .is_some_and(|receiver_type| receiver_type != TypeId::ANY);
+                    if !self.ctx.in_destructuring_target
+                        && spread_type == TypeId::ANY
+                        && !is_contextual_this_options_any_spread
+                    {
+                        has_any_spread = true;
+                    }
                     // TS2698: Spread types may only be created from object types.
                     // Only check in expression context — in destructuring targets,
                     // `{ ...x }` is a rest binding (x receives remaining properties),
@@ -2295,10 +2548,10 @@ impl<'a> CheckerState<'a> {
                                 spread_type,
                             ))
                     {
-                        // Pop this type from stack if we pushed it earlier
-                        if marker_this_type.is_some() {
-                            self.ctx.this_type_stack.pop();
-                        }
+                        self.pop_object_literal_contexts(
+                            marker_this_type,
+                            partial_initializer_stack_index,
+                        );
                         return spread_type;
                     }
 
@@ -2385,10 +2638,11 @@ impl<'a> CheckerState<'a> {
 
                         // Collect properties from each union member for TS2783
                         // and branching.
-                        let all_member_props: Vec<Vec<PropertyInfo>> = members
+                        let mut all_member_props: Vec<Vec<PropertyInfo>> = members
                             .iter()
                             .map(|m| self.collect_object_spread_properties(*m))
                             .collect();
+                        remove_synthetic_missing_union_spread_props(&mut all_member_props);
 
                         // TS2783: When a property is required (non-optional)
                         // in ALL members of the union spread, it will always
@@ -2492,39 +2746,64 @@ impl<'a> CheckerState<'a> {
                             generic_spread_types.push(spread_type);
                         }
 
-                        let spread_props = self.collect_object_spread_properties(spread_type);
                         let resolved_spread = self.resolve_lazy_type(spread_type);
                         let resolved_spread = self.evaluate_type_with_env(resolved_spread);
                         let resolved_spread =
                             self.resolve_type_for_property_access(resolved_spread);
-                        let idx_resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
-                        if let Some(value_type) = idx_resolver.resolve_string_index(resolved_spread)
+                        let spread_props = self.collect_object_spread_properties(resolved_spread);
+                        // In thisless generic option patterns, `this.options.foo` can
+                        // temporarily resolve to `any` even though the containing call
+                        // gives this literal a concrete contextual target. Use that
+                        // target only for TS2783 overwrite diagnostics; keep type
+                        // construction based on the actual spread source.
+                        let spread_props_for_overwrite = if spread_props.is_empty()
+                            && spread_type == TypeId::ANY
+                            && is_contextual_this_options_any_spread
+                            && let Some(ctx_type) = contextual_type
                         {
-                            spread_string_index_types.push(value_type);
-                        }
-                        if let Some(value_type) = idx_resolver.resolve_number_index(resolved_spread)
-                        {
-                            spread_number_index_types.push(value_type);
-                        }
-
+                            self.collect_object_spread_properties(ctx_type)
+                        } else {
+                            spread_props.clone()
+                        };
                         // Propagate index signatures from spread source.
                         // When spreading an object with index signatures (e.g.,
                         // `{ ...roindex }` where `roindex: { readonly [x: string]: number }`),
                         // the result should inherit the index signatures (with readonly removed).
                         // These are collected separately and only included in the final type
                         // when the literal has no explicit (non-spread) properties, matching tsc.
+                        if (spread_props.is_empty()
+                            || !self.spread_source_is_unannotated_object_literal_binding(spread_expr))
+                            && !crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
+                                self.ctx.types,
+                                resolved_spread,
+                            )
                         {
                             use crate::query_boundaries::common::IndexSignatureResolver;
                             let resolver = IndexSignatureResolver::new(self.ctx.types);
-                            if let Some(string_index_value) =
-                                resolver.resolve_string_index(resolved_spread)
-                            {
-                                spread_string_index_types.push(string_index_value);
+                            let index_info = resolver.get_index_info(resolved_spread);
+                            if let Some(string_index) = index_info.string_index.or_else(|| {
+                                resolver.resolve_string_index(resolved_spread).map(|value_type| {
+                                    IndexSignature {
+                                        key_type: TypeId::STRING,
+                                        value_type,
+                                        readonly: false,
+                                        param_name: None,
+                                    }
+                                })
+                            }) {
+                                spread_string_index_signatures.push(string_index);
                             }
-                            if let Some(number_index_value) =
-                                resolver.resolve_number_index(resolved_spread)
-                            {
-                                spread_number_index_types.push(number_index_value);
+                            if let Some(number_index) = index_info.number_index.or_else(|| {
+                                resolver.resolve_number_index(resolved_spread).map(|value_type| {
+                                    IndexSignature {
+                                        key_type: TypeId::NUMBER,
+                                        value_type,
+                                        readonly: false,
+                                        param_name: None,
+                                    }
+                                })
+                            }) {
+                                spread_number_index_signatures.push(number_index);
                             }
                         }
 
@@ -2534,7 +2813,7 @@ impl<'a> CheckerState<'a> {
                         // TSC checks constraint properties even for generic spreads,
                         // so we do too (unlike type construction, approximations are fine here).
                         if self.ctx.strict_null_checks() {
-                            for sp in &spread_props {
+                            for sp in &spread_props_for_overwrite {
                                 if !sp.optional
                                     && let Some((prop_node, prop_name)) =
                                         named_property_nodes.get(&sp.name)
@@ -2556,7 +2835,7 @@ impl<'a> CheckerState<'a> {
                         // for properties that the spread overwrites (so only the
                         // first occurrence can trigger the diagnostic, not later
                         // spreads which are spread-vs-spread and exempt).
-                        for prop in &spread_props {
+                        for prop in &spread_props_for_overwrite {
                             named_property_nodes.remove(&prop.name);
                         }
 
@@ -2585,9 +2864,25 @@ impl<'a> CheckerState<'a> {
         // Merge spread-contributed index signatures only when the object literal
         // has no explicit (non-spread) properties. In tsc, `{ ...indexedObj, b: 1 }`
         // drops the index signature, but `{ ...indexedObj }` preserves it.
+        let mut string_index_param_name = None;
+        let mut number_index_param_name = None;
         if explicit_property_names.is_empty() {
-            string_index_types.extend(spread_string_index_types);
-            number_index_types.extend(spread_number_index_types);
+            string_index_param_name = spread_string_index_signatures
+                .iter()
+                .find_map(|idx| idx.param_name);
+            number_index_param_name = spread_number_index_signatures
+                .iter()
+                .find_map(|idx| idx.param_name);
+            string_index_types.extend(
+                spread_string_index_signatures
+                    .into_iter()
+                    .map(|idx| idx.value_type),
+            );
+            number_index_types.extend(
+                spread_number_index_signatures
+                    .into_iter()
+                    .map(|idx| idx.value_type),
+            );
         }
 
         let object_type = self.finalize_object_literal_type(
@@ -2595,10 +2890,14 @@ impl<'a> CheckerState<'a> {
             display_type_overrides,
             string_index_types,
             number_index_types,
+            string_index_param_name,
+            number_index_param_name,
             has_spread,
+            has_any_spread,
             has_union_spread,
             union_spread_branches,
             generic_spread_types,
+            all_properties_context_sensitive,
         );
 
         // Check getter/setter type compatibility for object literal accessors.
@@ -2607,10 +2906,7 @@ impl<'a> CheckerState<'a> {
         // This matches tsc behavior for object literals with accessor pairs.
         self.check_object_literal_accessor_type_compatibility(&obj.elements.nodes);
 
-        // Pop this type from stack if we pushed it earlier
-        if marker_this_type.is_some() {
-            self.ctx.this_type_stack.pop();
-        }
+        self.pop_object_literal_contexts(marker_this_type, partial_initializer_stack_index);
 
         object_type
     }

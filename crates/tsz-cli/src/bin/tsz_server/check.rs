@@ -12,7 +12,7 @@ use tsz::checker::context::{CheckerOptions, LibContext, ProjectEnv};
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::checker::module_resolution::build_module_resolution_maps;
 use tsz::checker::state::CheckerState;
-use tsz::emitter::ScriptTarget;
+use tsz::emitter::{ModuleKind, ScriptTarget};
 use tsz::lib_loader::LibFile;
 use tsz::parallel;
 use tsz::parser::ParserState;
@@ -112,15 +112,12 @@ impl Server {
             Err(_) => return Vec::new(),
         };
 
+        // Client-supplied `open_files` content is never normalized — preserves
+        // tsc-equivalent behavior for paths like `/fourslash.ts`. See #3799.
         let mut files: Vec<(String, String)> = self
             .open_files
             .iter()
-            .map(|(path, raw)| {
-                (
-                    path.clone(),
-                    Self::normalize_fourslash_virtual_content(path, raw),
-                )
-            })
+            .map(|(path, raw)| (path.clone(), raw.clone()))
             .collect();
         if let Some((_, existing)) = files.iter_mut().find(|(path, _)| path == file_path) {
             *existing = content.to_string();
@@ -156,9 +153,12 @@ impl Server {
                 .iter()
                 .enumerate()
                 .map(|(file_idx, file)| {
-                    Arc::new(parallel::create_binder_from_bound_file(
-                        file, &program, file_idx,
-                    ))
+                    let mut binder =
+                        parallel::create_binder_from_bound_file(file, &program, file_idx);
+                    binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+                    binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+                    binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+                    Arc::new(binder)
                 })
                 .collect(),
         );
@@ -419,9 +419,12 @@ impl Server {
                 .iter()
                 .enumerate()
                 .map(|(file_idx, file)| {
-                    Arc::new(parallel::create_binder_from_bound_file(
-                        file, &program, file_idx,
-                    ))
+                    let mut binder =
+                        parallel::create_binder_from_bound_file(file, &program, file_idx);
+                    binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+                    binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+                    binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+                    Arc::new(binder)
                 })
                 .collect(),
         );
@@ -808,8 +811,25 @@ impl Server {
 
     pub(crate) fn parse_target(target: &Option<String>) -> ScriptTarget {
         match target.as_deref() {
-            Some(value) => ScriptTarget::from_ts_str(value).unwrap_or(ScriptTarget::ESNext),
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .and_then(ScriptTarget::from_ts_numeric)
+                .or_else(|| ScriptTarget::from_ts_str(value))
+                .unwrap_or(ScriptTarget::ESNext),
             None => ScriptTarget::ES5,
+        }
+    }
+
+    pub(crate) fn parse_module(module: &Option<String>) -> ModuleKind {
+        match module.as_deref() {
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .and_then(ModuleKind::from_ts_numeric)
+                .or_else(|| ModuleKind::from_ts_str(value))
+                .unwrap_or(ModuleKind::None),
+            None => ModuleKind::CommonJS,
         }
     }
 
@@ -842,28 +862,9 @@ impl Server {
             isolated_modules: options.isolated_modules,
             no_lib: options.no_lib,
             no_types_and_symbols: false,
+            types_explicitly_set: false,
             target: checker_target,
-            module: if let Some(module_str) = &options.module {
-                // Parse module kind from string (inline version of parse_module_kind)
-                match module_str.to_lowercase().as_str() {
-                    "commonjs" => tsz::ModuleKind::CommonJS,
-                    "amd" => tsz::ModuleKind::AMD,
-                    "umd" => tsz::ModuleKind::UMD,
-                    "system" => tsz::ModuleKind::System,
-                    "es2015" => tsz::ModuleKind::ES2015,
-                    "es2020" => tsz::ModuleKind::ES2020,
-                    "es2022" => tsz::ModuleKind::ES2022,
-                    "esnext" => tsz::ModuleKind::ESNext,
-                    "node16" => tsz::ModuleKind::Node16,
-                    "node18" => tsz::ModuleKind::Node18,
-                    "node20" => tsz::ModuleKind::Node20,
-                    "nodenext" => tsz::ModuleKind::NodeNext,
-                    _ => tsz::ModuleKind::None,
-                }
-            } else {
-                // Default to CommonJS if not specified (matches tsc behavior)
-                tsz::ModuleKind::CommonJS
-            },
+            module: Self::parse_module(&options.module),
             es_module_interop: options.es_module_interop,
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports
@@ -894,18 +895,21 @@ impl Server {
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
             no_implicit_use_strict: false,
-            allow_importing_ts_extensions: false,
-            rewrite_relative_import_extensions: false,
+            // Issue #3579: route server-protocol options that were previously
+            // hardcoded to `false` so the legacy `check` request matches the
+            // CLI/checker behavior for the same options.
+            allow_importing_ts_extensions: options.allow_importing_ts_extensions,
+            rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
-            verbatim_module_syntax: false,
+            verbatim_module_syntax: options.verbatim_module_syntax,
             ignore_deprecations: false,
-            allow_umd_global_access: false,
-            preserve_const_enums: false,
+            allow_umd_global_access: options.allow_umd_global_access,
+            preserve_const_enums: options.preserve_const_enums,
             strict_builtin_iterator_return: options
                 .strict_builtin_iterator_return
                 .unwrap_or(options.strict),
-            erasable_syntax_only: false,
+            erasable_syntax_only: options.erasable_syntax_only,
             no_fallthrough_cases_in_switch: options.no_fallthrough_cases_in_switch,
         }
     }

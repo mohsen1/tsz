@@ -1,0 +1,24 @@
+# File-size ratchet baselines.
+#
+# Format: one line per ceiling, `<name> <usize>`. Lines starting with `#` and
+# blank lines are ignored. The order does not matter.
+#
+# To update after a PR legitimately grows or shrinks a file, run:
+#
+#     TSZ_FILE_SIZE_RATCHET_UPDATE=1 cargo nextest run -p tsz-solver --lib \
+#         -E 'test(file_size_ceiling)'
+#
+# The test will rewrite this file with the observed values and pass. Commit
+# the resulting diff alongside your PR.
+#
+# Manual edits are also fine, but the env-var path keeps the comments below
+# in sync with the actual values.
+
+solver_max_loc        8374
+solver_oversized      13
+
+binder_max_loc        2890
+binder_oversized      1
+
+emitter_max_loc     8925
+emitter_oversized   19

@@ -24,7 +24,10 @@ impl<'a> LoweringPass<'a> {
                     self.current_source_text = previous_source_text;
                 }
             }
-            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+            k if k == syntax_kind_ext::BLOCK
+                || k == syntax_kind_ext::CASE_BLOCK
+                || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
+            {
                 if let Some(block) = self.get_block_like(node) {
                     let statements = block.statements.nodes.clone();
                     for stmt in statements {
@@ -122,6 +125,20 @@ impl<'a> LoweringPass<'a> {
                             n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
+                    if is_destructuring_assignment
+                        && self.ctx.needs_es2018_lowering
+                        && self.arena.get(bin.left).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                && self.arena.get_literal_expr(n).is_some_and(|lit| {
+                                    lit.elements
+                                        .nodes
+                                        .iter()
+                                        .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
+                                })
+                        })
+                    {
+                        self.transforms.helpers_mut().rest = true;
+                    }
                     if is_destructuring_assignment {
                         let prev = self.in_assignment_target;
                         self.in_assignment_target = true;
@@ -197,18 +214,34 @@ impl<'a> LoweringPass<'a> {
                         }
                     }
                     // Set __metadata helper when a decorated method WITH a body exists.
-                    // Overload signatures (no body) are not emitted as __decorate targets.
+                    // Parameter decorators also emit method metadata. Overload signatures
+                    // (no body) are not emitted as __decorate targets.
                     let is_overload = !method.body.is_some();
+                    let has_method_decorator = method.modifiers.as_ref().is_some_and(|m| {
+                        m.nodes.iter().any(|&mod_idx| {
+                            self.arena
+                                .get(mod_idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                    });
+                    let has_parameter_decorator =
+                        method.parameters.nodes.iter().any(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_parameter(param_node))
+                                .and_then(|param| param.modifiers.as_ref())
+                                .is_some_and(|mods| {
+                                    mods.nodes.iter().any(|&mod_idx| {
+                                        self.arena
+                                            .get(mod_idx)
+                                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                                    })
+                                })
+                        });
                     if !is_overload
                         && self.ctx.options.legacy_decorators
                         && self.ctx.options.emit_decorator_metadata
-                        && method.modifiers.as_ref().is_some_and(|m| {
-                            m.nodes.iter().any(|&mod_idx| {
-                                self.arena
-                                    .get(mod_idx)
-                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                            })
-                        })
+                        && (has_method_decorator || has_parameter_decorator)
                     {
                         self.transforms.helpers_mut().metadata = true;
                     }
@@ -353,15 +386,25 @@ impl<'a> LoweringPass<'a> {
                                         .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
                                 })
                             });
+                        // The class-decorator path only writes the
+                        // `__setFunctionName(_classThis, ...)` static block when
+                        // the source class is *anonymous* (a named class
+                        // expression carries its own name to the engine). Match
+                        // that here so we don't drop a phantom helper preamble
+                        // for `const C = @dec class C {}`.
+                        let class_is_anonymous = class_data.name.is_none();
                         let helpers = self.transforms.helpers_mut();
                         helpers.es_decorate = true;
                         helpers.run_initializers = true;
                         if needs_prop_key {
                             helpers.prop_key = true;
                         }
-                        if needs_set_function_name || has_class_decorators {
+                        if needs_set_function_name || (has_class_decorators && class_is_anonymous) {
                             helpers.set_function_name = true;
                         }
+                    }
+                    if self.class_expr_static_comma_needs_set_function_name(idx, class_data) {
+                        self.transforms.helpers_mut().set_function_name = true;
                     }
 
                     let needs_es5_transform = self.ctx.target_es5;
@@ -392,6 +435,14 @@ impl<'a> LoweringPass<'a> {
                     }
                     if let Some(mods) = &class_data.modifiers {
                         for &mod_idx in &mods.nodes {
+                            if self.ctx.options.legacy_decorators
+                                && self
+                                    .arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            {
+                                continue;
+                            }
                             self.visit(mod_idx);
                         }
                     }
@@ -562,6 +613,13 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
+                    if self.in_assignment_target
+                        && self.ctx.needs_es2018_lowering
+                        && self.assignment_pattern_has_object_rest(idx)
+                    {
+                        self.transforms.helpers_mut().rest = true;
+                    }
+
                     // Skip transform if this is the left side of a destructuring assignment
                     if !self.in_assignment_target
                         && self.ctx.target_es5
@@ -613,6 +671,55 @@ impl<'a> LoweringPass<'a> {
                     for &elem in &lit.elements.nodes {
                         self.visit(elem);
                     }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_ELEMENT => {
+                if let Some(jsx) = self.arena.get_jsx_element(node) {
+                    self.visit(jsx.opening_element);
+                    for &child in &jsx.children.nodes {
+                        self.visit(child);
+                    }
+                    self.visit(jsx.closing_element);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                || k == syntax_kind_ext::JSX_OPENING_ELEMENT =>
+            {
+                if let Some(jsx) = self.arena.get_jsx_opening(node) {
+                    self.visit(jsx.tag_name);
+                    self.visit(jsx.attributes);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_FRAGMENT => {
+                if let Some(jsx) = self.arena.get_jsx_fragment(node) {
+                    for &child in &jsx.children.nodes {
+                        self.visit(child);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_ATTRIBUTES => {
+                if let Some(attrs) = self.arena.get_jsx_attributes(node) {
+                    for &prop in &attrs.properties.nodes {
+                        self.visit(prop);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_ATTRIBUTE => {
+                if let Some(attr) = self.arena.get_jsx_attribute(node) {
+                    self.visit(attr.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE => {
+                if self.ctx.target_es5 {
+                    self.transforms.helpers_mut().assign = true;
+                }
+                if let Some(spread) = self.arena.get_jsx_spread_attribute(node) {
+                    self.visit(spread.expression);
+                }
+            }
+            k if k == syntax_kind_ext::JSX_EXPRESSION => {
+                if let Some(expr) = self.arena.get_jsx_expression(node) {
+                    self.visit(expr.expression);
                 }
             }
             k if k == syntax_kind_ext::IF_STATEMENT => {

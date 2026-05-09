@@ -1,6 +1,7 @@
 //! Declaration emitter - import, module, parameter, and heritage clause emission.
 
 use super::super::DeclarationEmitter;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -12,6 +13,112 @@ impl<'a> DeclarationEmitter<'a> {
         // through the filtered declaration path and reserve auto-import synthesis for
         // genuinely foreign symbols that have no source import in this file.
         self.emit_import_declaration(import_idx);
+    }
+
+    pub(crate) fn emit_deferred_js_import_declaration(&mut self, import_idx: NodeIndex) -> bool {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return false;
+        };
+        let Some(import) = self.arena.get_import_decl(import_node) else {
+            return false;
+        };
+
+        if import.import_clause.is_none() {
+            let before = self.writer.len();
+            self.emit_import_declaration(import_idx);
+            return self.writer.len() > before;
+        }
+
+        let (default_used, named_used) = self.count_used_imports(import);
+        if default_used == 0 && named_used == 0 {
+            if self.is_import_required_by_augmentation(import.module_specifier) {
+                self.write_indent();
+                self.write("import ");
+                self.emit_node(import.module_specifier);
+                self.write(";");
+                self.write_line();
+                return true;
+            }
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return false;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return false;
+        };
+
+        let mut emitted = false;
+        if clause.name.is_some() && default_used > 0 {
+            self.write_indent();
+            self.write("import ");
+            if clause.is_type_only {
+                self.write("type ");
+            }
+            if clause.is_deferred {
+                self.write("defer ");
+            }
+            self.emit_node(clause.name);
+            self.write(" from ");
+            self.emit_node(import.module_specifier);
+            self.emit_declaration_import_attributes(import.attributes);
+            self.write(";");
+            self.write_line();
+            emitted = true;
+        }
+
+        if clause.named_bindings.is_some() && named_used > 0 {
+            let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+                return emitted;
+            };
+            let Some(bindings) = self.arena.get_named_imports(bindings_node) else {
+                return emitted;
+            };
+
+            if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                self.write_indent();
+                self.write("import ");
+                if clause.is_type_only {
+                    self.write("type ");
+                }
+                if clause.is_deferred {
+                    self.write("defer ");
+                }
+                self.write("* as ");
+                self.emit_node(bindings.name);
+                self.write(" from ");
+                self.emit_node(import.module_specifier);
+                self.emit_declaration_import_attributes(import.attributes);
+                self.write(";");
+                self.write_line();
+                emitted = true;
+            } else {
+                for &spec_idx in &bindings.elements.nodes {
+                    if !self.should_emit_import_specifier(spec_idx) {
+                        continue;
+                    }
+                    self.write_indent();
+                    self.write("import ");
+                    if clause.is_type_only {
+                        self.write("type ");
+                    }
+                    if clause.is_deferred {
+                        self.write("defer ");
+                    }
+                    self.write("{ ");
+                    self.emit_specifier(spec_idx, !clause.is_type_only);
+                    self.write(" } from ");
+                    self.emit_node(import.module_specifier);
+                    self.emit_declaration_import_attributes(import.attributes);
+                    self.write(";");
+                    self.write_line();
+                    emitted = true;
+                }
+            }
+        }
+
+        emitted
     }
 
     pub(crate) fn emit_import_declaration(&mut self, import_idx: NodeIndex) {
@@ -407,6 +514,18 @@ impl<'a> DeclarationEmitter<'a> {
                         self.module_body_has_scope_marker(stmts, !is_ambient_ns);
                 }
 
+                let prev_self_import_alias = self.current_namespace_self_import_alias.clone();
+                let prev_self_export_names = self.current_namespace_self_export_names.clone();
+                let prev_shadowed_default_name =
+                    self.current_namespace_shadowed_default_name.clone();
+                if let Some((alias, default_name, export_names)) =
+                    self.shadowed_default_self_import_context(stmts)
+                {
+                    self.current_namespace_self_import_alias = Some(alias);
+                    self.current_namespace_shadowed_default_name = Some(default_name);
+                    self.current_namespace_self_export_names = export_names;
+                }
+
                 let scoped_js_named_exports = self.js_named_export_names_for_module_body(stmts);
                 let scoped_js_named_export_targets =
                     self.js_named_export_targets_for_module_body(stmts);
@@ -465,6 +584,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emitted_scope_marker = prev_emitted_scope_marker;
                 self.emitted_module_indicator = prev_emitted_module_indicator;
                 self.ambient_module_has_scope_marker = prev_ambient_scope_marker;
+                self.current_namespace_self_import_alias = prev_self_import_alias;
+                self.current_namespace_self_export_names = prev_self_export_names;
+                self.current_namespace_shadowed_default_name = prev_shadowed_default_name;
             }
 
             self.public_api_scope_depth = prev_public_api_scope_depth;
@@ -480,6 +602,319 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn namespace_import_needed_for_shadowed_self_type(
+        &self,
+        alias_idx: NodeIndex,
+        module_specifier_idx: NodeIndex,
+    ) -> bool {
+        let Some(alias) = self.get_identifier_text(alias_idx) else {
+            return false;
+        };
+        if !self.import_specifier_targets_current_file(module_specifier_idx) {
+            return false;
+        }
+        let Some(default_name) = self.default_exported_local_name() else {
+            return false;
+        };
+        self.source_has_namespace_shadowing_name(&default_name)
+            && self.self_namespace_import_alias().as_deref() == Some(alias.as_str())
+    }
+
+    fn shadowed_default_self_import_context(
+        &self,
+        stmts: &NodeList,
+    ) -> Option<(String, String, FxHashSet<String>)> {
+        let alias = self.self_namespace_import_alias()?;
+        let default_name = self.default_exported_local_name()?;
+        if !self.namespace_body_shadows_name(stmts, &default_name) {
+            return None;
+        }
+        let mut export_names = self.top_level_self_exported_names();
+        export_names.insert(default_name.clone());
+        Some((alias, default_name, export_names))
+    }
+
+    pub(in crate::declaration_emitter) fn self_namespace_import_alias(&self) -> Option<String> {
+        let source_file = self.current_source_file()?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if !self.import_specifier_targets_current_file(import.module_specifier) {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+                continue;
+            };
+            let Some(bindings) = self.arena.get_named_imports(bindings_node) else {
+                continue;
+            };
+            if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                return self.get_identifier_text(bindings.name);
+            }
+        }
+        None
+    }
+
+    fn import_specifier_targets_current_file(&self, module_specifier_idx: NodeIndex) -> bool {
+        let Some(current_path) = self.current_file_path.as_deref() else {
+            return false;
+        };
+        let Some(spec) = self
+            .arena
+            .get(module_specifier_idx)
+            .and_then(|node| self.arena.get_literal(node))
+            .map(|lit| lit.text.as_str())
+        else {
+            return false;
+        };
+        if !spec.starts_with('.') {
+            return false;
+        }
+
+        let current = std::path::Path::new(current_path);
+        let current_dir = current.parent().unwrap_or(std::path::Path::new(""));
+        let joined = current_dir.join(spec);
+        let normalized = Self::normalize_path_text(&joined);
+        let current_no_ext = self.strip_ts_extensions(current_path);
+        let normalized_no_ext = self.strip_ts_extensions(&normalized);
+        if normalized_no_ext == current_no_ext {
+            return true;
+        }
+
+        let spec_stem = std::path::Path::new(spec)
+            .file_stem()
+            .and_then(|stem| stem.to_str());
+        let current_stem = std::path::Path::new(current_path)
+            .file_stem()
+            .and_then(|stem| stem.to_str());
+        spec_stem.is_some() && spec_stem == current_stem
+    }
+
+    fn normalize_path_text(path: &std::path::Path) -> String {
+        let mut parts = Vec::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    parts.pop();
+                }
+                other => parts.push(other.as_os_str().to_string_lossy().into_owned()),
+            }
+        }
+        parts.join("/")
+    }
+
+    pub(in crate::declaration_emitter) fn default_exported_local_name(&self) -> Option<String> {
+        let source_file = self.current_source_file()?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if let Some(export) = self.arena.get_export_decl(stmt_node)
+                && export.is_default_export
+                && export.export_clause.is_some()
+            {
+                let mut names = FxHashSet::default();
+                self.collect_declaration_names(export.export_clause, &mut names);
+                if let Some(name) = names.into_iter().next() {
+                    return Some(name);
+                }
+            }
+            if let Some(class) = self.arena.get_class(stmt_node)
+                && self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                && self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword)
+            {
+                return self.get_identifier_text(class.name);
+            }
+            if let Some(func) = self.arena.get_function(stmt_node)
+                && self
+                    .arena
+                    .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                && self
+                    .arena
+                    .has_modifier(&func.modifiers, SyntaxKind::DefaultKeyword)
+            {
+                return self.get_identifier_text(func.name);
+            }
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn top_level_self_exported_names(
+        &self,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        let Some(source_file) = self.current_source_file() else {
+            return names;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if let Some(export) = self.arena.get_export_decl(stmt_node)
+                && export.export_clause.is_some()
+                && export.module_specifier.is_none()
+            {
+                if export.is_default_export
+                    || self.arena.get(export.export_clause).is_some_and(|node| {
+                        matches!(
+                            node.kind,
+                            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                || k == syntax_kind_ext::CLASS_DECLARATION
+                                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::ENUM_DECLARATION
+                                || k == syntax_kind_ext::VARIABLE_STATEMENT
+                        )
+                    })
+                {
+                    self.collect_declaration_names(export.export_clause, &mut names);
+                }
+                continue;
+            }
+            if !self.stmt_has_export_modifier(stmt_node) {
+                continue;
+            }
+            self.collect_declaration_names(stmt_idx, &mut names);
+        }
+        names
+    }
+
+    pub(in crate::declaration_emitter) fn source_has_namespace_shadowing_name(
+        &self,
+        name: &str,
+    ) -> bool {
+        let Some(source_file) = self.current_source_file() else {
+            return false;
+        };
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let module_idx = self
+                    .arena
+                    .get(stmt_idx)
+                    .and_then(|node| self.arena.get_module(node).map(|_| stmt_idx))
+                    .or_else(|| {
+                        let node = self.arena.get(stmt_idx)?;
+                        let export = self.arena.get_export_decl(node)?;
+                        self.arena
+                            .get(export.export_clause)
+                            .and_then(|clause| self.arena.get_module(clause))
+                            .map(|_| export.export_clause)
+                    });
+                module_idx
+                    .and_then(|idx| self.arena.get(idx))
+                    .and_then(|node| self.arena.get_module(node))
+                    .and_then(|module| self.arena.get(module.body))
+                    .and_then(|body_node| self.arena.get_module_block(body_node))
+                    .and_then(|block| {
+                        self.namespace_body_shadows_name(block.statements.as_ref()?, name)
+                            .then_some(())
+                    })
+                    .is_some()
+            })
+    }
+
+    fn namespace_body_shadows_name(&self, stmts: &NodeList, name: &str) -> bool {
+        stmts.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if self.stmt_has_export_modifier(stmt_node) {
+                return false;
+            }
+            let mut names = FxHashSet::default();
+            self.collect_declaration_names(stmt_idx, &mut names);
+            names.contains(name)
+        })
+    }
+
+    fn collect_declaration_names(&self, stmt_idx: NodeIndex, names: &mut FxHashSet<String>) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        if let Some(export) = self.arena.get_export_decl(stmt_node) {
+            if export.export_clause.is_some() {
+                self.collect_declaration_names(export.export_clause, names);
+            }
+            return;
+        }
+        if let Some(class) = self.arena.get_class(stmt_node) {
+            if let Some(name) = self.get_identifier_text(class.name) {
+                names.insert(name);
+            }
+            return;
+        }
+        if let Some(func) = self.arena.get_function(stmt_node) {
+            if let Some(name) = self.get_identifier_text(func.name) {
+                names.insert(name);
+            }
+            return;
+        }
+        if let Some(iface) = self.arena.get_interface(stmt_node) {
+            if let Some(name) = self.get_identifier_text(iface.name) {
+                names.insert(name);
+            }
+            return;
+        }
+        if let Some(alias) = self.arena.get_type_alias(stmt_node) {
+            if let Some(name) = self.get_identifier_text(alias.name) {
+                names.insert(name);
+            }
+            return;
+        }
+        if let Some(enum_data) = self.arena.get_enum(stmt_node) {
+            if let Some(name) = self.get_identifier_text(enum_data.name) {
+                names.insert(name);
+            }
+            return;
+        }
+        if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_list_node)
+                    && let Some(name) = self.get_identifier_text(decl.name)
+                {
+                    names.insert(name);
+                } else if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                {
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                            && let Some(name) = self.get_identifier_text(decl.name)
+                        {
+                            names.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn current_source_file(&self) -> Option<&tsz_parser::parser::node::SourceFileData> {
+        self.arena
+            .get(self.current_source_file_idx?)
+            .and_then(|node| self.arena.get_source_file(node))
     }
 
     /// True when a module body walks down to an empty block (or is missing
@@ -962,6 +1397,7 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(0);
 
         let mut first = true;
+        let mut previous_param_end = 0;
         for (i, &param_idx) in params.nodes.iter().enumerate() {
             if !first {
                 self.write(", ");
@@ -1001,7 +1437,19 @@ impl<'a> DeclarationEmitter<'a> {
                     });
 
                 // Inline JSDoc comment before parameter (e.g. /** comment */ a: string)
-                self.emit_inline_parameter_comment(param_node.pos);
+                let comment_pos = self
+                    .arena
+                    .get(param.name)
+                    .map_or(param_node.pos, |name_node| name_node.pos);
+                if self.strip_internal && self.in_constructor_params {
+                    self.emit_strip_internal_constructor_parameter_comment(
+                        comment_pos,
+                        previous_param_end,
+                        params.nodes.len() == 1,
+                    );
+                } else {
+                    self.emit_inline_parameter_comment(comment_pos);
+                }
 
                 // Modifiers (public, private, etc for constructor parameters)
                 self.emit_member_modifiers(&param.modifiers);
@@ -1032,6 +1480,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Type
                 if param.type_annotation.is_some() {
                     self.write(": ");
+                    let before_type = self.writer.len();
                     if let Some(rescued) = self.rescued_asserts_parameter_type_text(param_idx) {
                         self.write(&rescued);
                     } else if self.normalize_string_literal_type_quotes
@@ -1047,7 +1496,10 @@ impl<'a> DeclarationEmitter<'a> {
                     // parameter type. For private params, the type is hidden so skip.
                     if is_parameter_property && !is_private_param_property && param.question_token {
                         let output = self.writer.get_output();
-                        if !output.ends_with("| undefined") {
+                        let type_text = &output[before_type..];
+                        if !output.ends_with("| undefined")
+                            && !Self::type_text_has_undefined_branch(type_text)
+                        {
                             self.write(" | undefined");
                         }
                     }
@@ -1070,6 +1522,12 @@ impl<'a> DeclarationEmitter<'a> {
                 ) {
                     self.write(": ");
                     self.write(&type_text);
+                } else if param.initializer.is_some()
+                    && let Some(type_text) =
+                        self.conditional_boolean_undefined_default_type_text(param.initializer)
+                {
+                    self.write(": ");
+                    self.write(type_text);
                 } else if let Some(type_id) = self.parameter_type_for_emit(param_idx, param.name) {
                     // Inferred type from type cache
                     self.write(": ");
@@ -1134,6 +1592,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 }
+                previous_param_end = self.parameter_semantic_end(param_node.end, param);
             }
         }
 
@@ -1786,7 +2245,29 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
-                self.emit_node(param.name);
+                // When the parser recovered from a missing identifier (the
+                // user's "name" token was a reserved word and unusable, e.g.
+                // `<in in>`), the synthesized name has an empty atom and
+                // zero-width source range.  tsc renders this case as a
+                // phantom comma after the modifier (`<in , >`), reflecting
+                // its own recovery shape (one modifier-only param + one
+                // empty trailing slot).  We mirror that rendering only when
+                // (a) at least one modifier was emitted, and (b) the name
+                // is genuinely synthesized — never for user-chosen names.
+                let name_is_synthesized = self
+                    .arena
+                    .get(param.name)
+                    .and_then(|n| self.arena.get_identifier(n))
+                    .is_some_and(|id| id.escaped_text.is_empty());
+                let has_modifier = param
+                    .modifiers
+                    .as_ref()
+                    .is_some_and(|m| !m.nodes.is_empty());
+                if name_is_synthesized && has_modifier {
+                    self.write(", ");
+                } else {
+                    self.emit_node(param.name);
+                }
 
                 if param.constraint.is_some() {
                     self.write(" extends ");

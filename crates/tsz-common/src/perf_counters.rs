@@ -1,5 +1,5 @@
 //! Process-wide performance counters used to drive the perf-architectural
-//! plan in `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+//! plan in `docs/plan/PERFORMANCE_PLAN.md`.
 //!
 //! Counters are gated by the `TSZ_PERF_COUNTERS` environment variable. When
 //! the variable is unset the increments still fire (`AtomicU64::fetch_add`
@@ -506,6 +506,40 @@ pub fn record_max(counter: &AtomicU64, value: u64) {
     }
 }
 
+/// RAII guard that tracks recursion depth into
+/// `delegate_cross_arena_symbol_resolution`. Each `enter_delegate()` increments
+/// a thread-local counter and updates `delegate_max_recursion_depth` to the
+/// running peak; the guard's `Drop` impl decrements when the call returns.
+/// The whole thing short-circuits when counters are disabled, so timing builds
+/// pay one branch per call.
+pub struct DelegateDepthGuard(());
+
+thread_local! {
+    static DELEGATE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+pub fn enter_delegate() -> DelegateDepthGuard {
+    if !enabled_fast() {
+        return DelegateDepthGuard(());
+    }
+    DELEGATE_DEPTH.with(|d| {
+        let next = d.get().saturating_add(1);
+        d.set(next);
+        record_max(&counters().delegate_max_recursion_depth, u64::from(next));
+    });
+    DelegateDepthGuard(())
+}
+
+impl Drop for DelegateDepthGuard {
+    fn drop(&mut self) {
+        if !enabled_fast() {
+            return;
+        }
+        DELEGATE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 /// Returns true when `TSZ_PERF_COUNTERS` is set. Use this to gate the
 /// expensive bookkeeping; the simple `inc` calls are always cheap enough
 /// that gating them is more expensive than just doing them.
@@ -641,20 +675,20 @@ impl PerfCounters {
              intern calls (total)             n/a  (not wired in this PR)\n  \
              intern hits                      n/a  (not wired in this PR)\n  \
              intern misses                    n/a  (not wired in this PR)\n  \
-             string intern calls              n/a  (not wired in this PR)\n  \
-             type-list intern calls           n/a  (not wired in this PR)\n  \
-             object-shape intern calls        n/a  (not wired in this PR)\n  \
-             function-shape intern calls      n/a  (not wired in this PR)\n  \
-             application intern calls         n/a  (not wired in this PR)\n  \
-             conditional intern calls         n/a  (not wired in this PR)\n  \
-             mapped intern calls              n/a  (not wired in this PR)\n\
+             string intern calls        {:>12}\n  \
+             type-list intern calls     {:>12}\n  \
+             object-shape intern calls  {:>12}\n  \
+             function-shape intern calls{:>12}\n  \
+             application intern calls   {:>12}\n  \
+             conditional intern calls   {:>12}\n  \
+             mapped intern calls        {:>12}\n\
              Resolver:\n  \
              lookup calls               {:>12}\n  \
              is_file calls                    n/a  (not wired in this PR)\n  \
              is_dir calls                     n/a  (not wired in this PR)\n  \
              read_dir calls                   n/a  (not wired in this PR)\n  \
              read_package_json calls    {:>12}\n  \
-             candidate paths total            n/a  (not wired in this PR)\n",
+             candidate paths total      {:>12}\n",
             load(&c.delegate_cross_arena_calls),
             load(&c.delegate_cross_arena_cache_hits_lib),
             load(&c.delegate_cross_arena_cache_hits_cross_file),
@@ -671,8 +705,16 @@ impl PerfCounters {
             load(&c.copy_symbol_file_targets_len_ge_1m),
             load(&c.compute_type_of_symbol_calls),
             load(&c.compute_type_of_symbol_cache_hits),
+            load(&c.interner_string_intern_calls),
+            load(&c.interner_type_list_intern_calls),
+            load(&c.interner_object_shape_intern_calls),
+            load(&c.interner_function_shape_intern_calls),
+            load(&c.interner_application_intern_calls),
+            load(&c.interner_conditional_intern_calls),
+            load(&c.interner_mapped_intern_calls),
             load(&c.resolver_lookup_calls),
             load(&c.resolver_read_package_json_calls),
+            load(&c.resolver_candidate_paths_total),
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()

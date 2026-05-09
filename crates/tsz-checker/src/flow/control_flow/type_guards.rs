@@ -466,10 +466,10 @@ impl<'a> FlowAnalyzer<'a> {
                 let ctor_expr = self.skip_parens_and_assertions(bin.right);
                 if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
                     let name = &ident.escaped_text;
-                    if name == "Object" {
+                    if name == "Object" && self.is_builtin_global_reference(ctor_expr) {
                         return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
                     }
-                    if name == "Function" {
+                    if name == "Function" && self.is_builtin_global_reference(ctor_expr) {
                         return Some((
                             TypeGuard::Instanceof(TypeId::FUNCTION, true),
                             target,
@@ -598,6 +598,11 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((guard, target, is_optional));
         }
 
+        if let Some((guard, target)) = self.check_has_own_property(call) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
         // Check for array.every(predicate) calls
         if let Some((guard, target)) = self.check_array_every_predicate(call, condition) {
             let is_optional = self.is_optional_call(condition, call);
@@ -606,6 +611,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         // 1. Check for optional chaining on the call
         let is_optional = self.is_optional_call(condition, call);
+        if self
+            .call_type_predicates
+            .is_some_and(|calls| calls.is_invalid_assertion_call(condition.0))
+        {
+            return None;
+        }
 
         // 2. Check for instantiated predicate from generic call resolution first.
         // Generic functions like `isDefined<T>(value: T | undefined): value is T` need
@@ -762,6 +773,9 @@ impl<'a> FlowAnalyzer<'a> {
         if obj_text != "Array" {
             return None;
         }
+        if !self.is_builtin_global_reference(access.expression) {
+            return None;
+        }
 
         // Check if the property name is "isArray"
         let prop_text = self
@@ -778,6 +792,26 @@ impl<'a> FlowAnalyzer<'a> {
         let arg = call.arguments.as_ref()?.nodes.first().copied()?;
 
         Some((TypeGuard::Array, arg))
+    }
+
+    fn check_has_own_property(&self, call: &CallExprData) -> Option<(TypeGuard, NodeIndex)> {
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+        if access.question_dot_token {
+            return None;
+        }
+
+        let method = self.arena.get_identifier_at(access.name_or_argument)?;
+        if method.escaped_text != "hasOwnProperty" {
+            return None;
+        }
+
+        let args = call.arguments.as_ref()?.nodes.as_slice();
+        let &[property_arg] = args else {
+            return None;
+        };
+        let (property_name, _) = self.literal_atom_and_kind_from_node_or_type(property_arg)?;
+        Some((TypeGuard::InProperty(property_name), access.expression))
     }
 
     /// Resolve a `SymbolRef` to a proper `Lazy(DefId)` `TypeId` via the `TypeEnvironment`.
@@ -804,6 +838,9 @@ impl<'a> FlowAnalyzer<'a> {
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
         if obj_text != "ArrayBuffer" {
+            return None;
+        }
+        if !self.is_builtin_global_reference(access.expression) {
             return None;
         }
 
@@ -869,6 +906,12 @@ impl<'a> FlowAnalyzer<'a> {
             },
             arg,
         ))
+    }
+
+    fn is_builtin_global_reference(&self, reference: NodeIndex) -> bool {
+        self.binder
+            .resolve_identifier(self.arena, reference)
+            .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
     }
 
     /// Check if a call is `array.every(predicate)` where predicate has a type predicate.
@@ -1024,7 +1067,8 @@ impl<'a> FlowAnalyzer<'a> {
     /// `TypePredicate` so callers can narrow on the function's call.
     ///
     /// `body_idx` is the function body (either an arrow's expression body or a
-    /// block whose only statement is `return <expr>`). `params_list` is the
+    /// block ending in `return <expr>` with only simple prefix statements).
+    /// `params_list` is the
     /// list of parameter declaration nodes (parallel to `params` minus any
     /// `this` parameter). Returns `None` for any pattern outside the
     /// well-defined inference cases.
@@ -1035,7 +1079,27 @@ impl<'a> FlowAnalyzer<'a> {
         params: &[ParamInfo],
     ) -> Option<TypePredicate> {
         let expr = self.find_inferable_predicate_body_expression(body_idx)?;
-        let (mut guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
+        let expr = self.skip_parens_and_assertions(expr);
+
+        if let Some(predicate) = self.try_infer_logical_or_type_predicate(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
+        if let Some(predicate) = self.try_infer_truthiness_type_predicate(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
+
+        self.try_infer_type_predicate_from_guard_expression(expr, params_list, params)
+    }
+
+    fn try_infer_type_predicate_from_guard_expression(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let (guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
 
         if is_optional {
             return None;
@@ -1049,14 +1113,10 @@ impl<'a> FlowAnalyzer<'a> {
         // `fb.type === "foo"`), `extract_type_guard` returns
         // `LiteralEquality(literal)` with `target = fb.type`. Promote that to a
         // discriminant on `fb` so narrowing can refine the parameter union.
-        if let TypeGuard::LiteralEquality(literal) = guard
-            && let Some((base, path)) =
+        if let TypeGuard::LiteralEquality(_) = guard
+            && let Some((base, _path)) =
                 self.parameter_property_access_chain(guard_target, params_list)
         {
-            guard = TypeGuard::Discriminant {
-                property_path: path,
-                value_type: literal,
-            };
             guard_target = base;
         }
 
@@ -1065,8 +1125,27 @@ impl<'a> FlowAnalyzer<'a> {
             self.match_guard_target_to_parameter(guard_target, params_list, params)?;
         let param_type = params.get(param_idx)?.type_id;
 
-        // Run the guard through the solver's narrowing primitive.
-        let narrowed = self.narrow_with_inferred_predicate_guard(param_type, &guard);
+        // Infer from the same full condition-narrowing path used by inline
+        // `if (<guard>)` checks. That keeps inferred predicates aligned with
+        // richer flow handling such as `instanceof` on `object`, `in` through
+        // non-null assertions, and other expression-level refinements.
+        let mut narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            guard_target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            && matches!(param_type, TypeId::OBJECT | TypeId::UNKNOWN)
+            && let TypeGuard::Instanceof(instance_type, _) = guard
+            && !matches!(
+                instance_type,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+            )
+        {
+            narrowed = instance_type;
+        }
 
         // Only emit a predicate when the narrowed type is strictly more
         // specific. Equal-or-wider results would not give callers useful
@@ -1088,25 +1167,187 @@ impl<'a> FlowAnalyzer<'a> {
         })
     }
 
+    fn try_infer_truthiness_type_predicate(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let target = self.double_negation_target(expr)?;
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+        let narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        let falsy = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            target,
+            false,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if !self.is_nullish_only_type(falsy) {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn double_negation_target(&self, expr: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let outer = self.arena.get_unary_expr(expr_node)?;
+        if outer.operator != SyntaxKind::ExclamationToken as u16 {
+            return None;
+        }
+        let inner_idx = self.skip_parens_and_assertions(outer.operand);
+        let inner_node = self.arena.get(inner_idx)?;
+        if inner_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let inner = self.arena.get_unary_expr(inner_node)?;
+        if inner.operator != SyntaxKind::ExclamationToken as u16 {
+            return None;
+        }
+        let target = self.skip_parens_and_assertions(inner.operand);
+        let target_node = self.arena.get(target)?;
+        if target_node.kind == SyntaxKind::Identifier as u16 {
+            Some(target)
+        } else {
+            None
+        }
+    }
+
+    fn is_nullish_only_type(&self, type_id: TypeId) -> bool {
+        if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.interner, type_id)
+        {
+            return !members.is_empty()
+                && members
+                    .iter()
+                    .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
+        }
+        false
+    }
+
+    fn try_infer_logical_or_type_predicate(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(expr_node)?;
+        if bin.operator_token != SyntaxKind::BarBarToken as u16 {
+            return None;
+        }
+
+        let left = self.skip_parens_and_assertions(bin.left);
+        let right = self.skip_parens_and_assertions(bin.right);
+        let left_target = self.inferable_guard_target(left, params_list)?;
+        let right_target = self.inferable_guard_target(right, params_list)?;
+
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(left_target, params_list, params)?;
+        let (right_param_idx, _) =
+            self.match_guard_target_to_parameter(right_target, params_list, params)?;
+        if right_param_idx != param_idx {
+            return None;
+        }
+
+        let param_type = params.get(param_idx)?.type_id;
+        let narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            left_target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn inferable_guard_target(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+    ) -> Option<NodeIndex> {
+        let (guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
+        if is_optional || matches!(guard, TypeGuard::Predicate { asserts: true, .. }) {
+            return None;
+        }
+
+        if let TypeGuard::LiteralEquality(_) = guard
+            && let Some((base, _path)) =
+                self.parameter_property_access_chain(guard_target, params_list)
+        {
+            guard_target = base;
+        }
+
+        Some(guard_target)
+    }
+
     /// Locate the single guard expression in an inferable function body.
     ///
     /// Returns the expression node when:
     ///   * the body is itself an expression (arrow function expression body),
-    ///   * the body is a `{ return <expr>; }` block with no other statements.
+    ///   * the body is a `{ return <expr>; }` block,
+    ///   * the body is a block with simple non-control-flow statements before
+    ///     the final `return <expr>`.
     ///
-    /// Anything else (multiple statements, missing return value, statements
-    /// before the return) is rejected so we never infer a predicate from a
-    /// body that may also produce side-effects or alternative paths.
+    /// Anything else (missing return value, earlier control-flow statements, or
+    /// non-final returns) is rejected so we never infer a predicate from a body
+    /// that may also produce alternative paths.
     fn find_inferable_predicate_body_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
         let body = self.arena.get(body_idx)?;
         if body.kind != syntax_kind_ext::BLOCK {
             return Some(body_idx);
         }
         let block = self.arena.get_block(body)?;
-        if block.statements.nodes.len() != 1 {
-            return None;
+        let (&stmt_idx, prefix_statements) = block.statements.nodes.split_last()?;
+        for &prefix_stmt_idx in prefix_statements {
+            if !self.is_inferable_predicate_prefix_statement(prefix_stmt_idx) {
+                return None;
+            }
         }
-        let stmt_idx = block.statements.nodes[0];
         let stmt = self.arena.get(stmt_idx)?;
         if stmt.kind != syntax_kind_ext::RETURN_STATEMENT {
             return None;
@@ -1116,6 +1357,61 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         Some(ret.expression)
+    }
+
+    fn is_inferable_predicate_prefix_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt.kind {
+            syntax_kind_ext::EMPTY_STATEMENT
+            | syntax_kind_ext::DEBUGGER_STATEMENT
+            | syntax_kind_ext::VARIABLE_STATEMENT => true,
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                let Some(expr_stmt) = self.arena.get_expression_statement(stmt) else {
+                    return false;
+                };
+                let Some(expr) = self.arena.get(expr_stmt.expression) else {
+                    return false;
+                };
+                !matches!(
+                    expr.kind,
+                    syntax_kind_ext::BINARY_EXPRESSION
+                        | syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                )
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_stmt) = self.arena.get_if_statement(stmt) else {
+                    return false;
+                };
+                if if_stmt.else_statement.is_some() {
+                    return false;
+                }
+                self.statement_always_throws_for_predicate_prefix(if_stmt.then_statement)
+            }
+            _ => false,
+        }
+    }
+
+    fn statement_always_throws_for_predicate_prefix(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt.kind {
+            syntax_kind_ext::THROW_STATEMENT => true,
+            syntax_kind_ext::BLOCK => {
+                let Some(block) = self.arena.get_block(stmt) else {
+                    return false;
+                };
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .any(|&child| self.statement_always_throws_for_predicate_prefix(child))
+            }
+            _ => false,
+        }
     }
 
     /// If `node` is a property-access chain rooted at one of the parameters

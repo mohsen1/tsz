@@ -10,6 +10,7 @@ use crate::instantiation::instantiate::{
 };
 use crate::types::{
     MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
+    TypeParamInfo,
 };
 
 impl<'a> PropertyAccessEvaluator<'a> {
@@ -329,8 +330,36 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             TypeData::Intrinsic(crate::types::IntrinsicKind::String)
             | TypeData::Conditional(_)
-            | TypeData::Application(_)
             | TypeData::Infer(_) => true,
+
+            // Generic type alias application like `Exclude<keyof T, "x">`. The
+            // evaluator may leave such bound applications unreduced when the
+            // resolver in this context lacks the lib alias body, so we fall
+            // back to a structural inspection: an application of two arguments
+            // where the first arg is a finite set of literal keys and the
+            // second arg is a literal that equals `prop_name` exhibits the
+            // tsc Exclude/Omit shape — exclude that key. Other applications
+            // remain conservatively permissive.
+            TypeData::Application(app_id) => {
+                let app = self.interner().type_application(app_id);
+                if app.args.len() == 2
+                    && let Some(filter_atom) =
+                        crate::visitor::literal_string(self.interner(), app.args[1])
+                {
+                    let filter_str = self.interner().resolve_atom(filter_atom);
+                    if filter_str == prop_name {
+                        // The first arg may itself be an unreduced Application
+                        // (e.g. `keyof T` rendered as Lazy/Application). Only
+                        // treat as exclusion when we can confirm `prop_name`
+                        // appears in arg[0] as a literal — otherwise stay
+                        // permissive to avoid false negatives.
+                        if self.application_first_arg_excludes_key(app.args[0], prop_name) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
 
             // Generic keyof that survived evaluation.  The solver's NoopResolver
             // cannot resolve Lazy(DefId) constraints, so `keyof P` stays deferred
@@ -375,6 +404,37 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 ..
             }
         )
+    }
+
+    /// Check whether `type_id` is a *finite* union of string-literal keys that
+    /// includes `prop_name` AND has at least two distinct keys. The two-keys
+    /// floor is what distinguishes the Exclude/Omit shape from a degenerate
+    /// `(A extends Narrowable ? ...)`-style conditional whose first argument
+    /// is a single literal — those are not exclusions and we should leave
+    /// them permissive.
+    fn application_first_arg_excludes_key(&self, type_id: TypeId, prop_name: &str) -> bool {
+        use crate::types::TypeData;
+        let key = match self.interner().lookup(type_id) {
+            Some(k) => k,
+            None => return false,
+        };
+        if let TypeData::Union(members) = key {
+            let members = self.interner().type_list(members);
+            let mut literal_count = 0usize;
+            let mut found_prop = false;
+            for &member in members.iter() {
+                if let Some(atom) = crate::visitor::literal_string(self.interner(), member) {
+                    literal_count += 1;
+                    if self.interner().resolve_atom(atom) == prop_name {
+                        found_prop = true;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            return found_prop && literal_count >= 2;
+        }
+        false
     }
 
     /// Check if a mapped type has a string index signature (constraint includes `string`).
@@ -455,6 +515,41 @@ impl<'a> PropertyAccessEvaluator<'a> {
         PropertyAccessResult::simple(self.any_args_function(return_type))
     }
 
+    fn application_base_type_params(
+        &self,
+        base: TypeId,
+        symbol: Option<tsz_binder::SymbolId>,
+    ) -> Vec<TypeParamInfo> {
+        if crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+            .is_some_and(|array_base| array_base == base)
+        {
+            let array_params =
+                crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+            if !array_params.is_empty() {
+                return array_params.to_vec();
+            }
+        }
+
+        if let Some(sym_id) = symbol {
+            let symbol_ref = crate::types::SymbolRef(sym_id.0);
+            let symbol_params = self.resolver().get_type_params(symbol_ref);
+            let lazy_params = self
+                .resolver()
+                .symbol_to_def_id(symbol_ref)
+                .and_then(|def_id| self.resolver().get_lazy_type_params(def_id));
+            match (symbol_params, lazy_params) {
+                (Some(symbol), Some(lazy)) if !symbol.is_empty() && lazy.len() > symbol.len() => {
+                    return lazy;
+                }
+                (Some(symbol), _) if !symbol.is_empty() => return symbol,
+                (_, Some(lazy)) if !lazy.is_empty() => return lazy,
+                _ => {}
+            }
+        }
+
+        Vec::new()
+    }
+
     /// Resolve property access on a generic Application type (e.g., `D<string>`) nominally.
     ///
     /// This preserves nominal identity for classes/interfaces instead of structurally
@@ -495,26 +590,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the Object's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // Get type params from the array base type (stored during test setup).
-                //
-                // GUARD: only apply array_base_type_params when this Application's
-                // base is actually the registered global Array. For other generic
-                // interfaces resolved to Object (e.g., BigInt64Array<TArrayBuffer>),
-                // these are *Array's* type-params, not the resolved interface's, and
-                // substituting with them is a no-op-or-worse. Without this guard,
-                // method return types like `(): BigInt64Array<TArrayBuffer>` get a
-                // wrong-substitution that yields a different `TypeId` than the
-                // receiver's own property lookup, surfacing as TS2719 ("Two
-                // different types with this name exist") on assignability checks
-                // (see project_iter21_typed_array_variance_root_cause.md).
-                let is_global_array_base =
-                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
-                        .is_some_and(|b| b == app.base);
-                let type_params = if is_global_array_base {
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
-                } else {
-                    &[]
-                };
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
 
                 // Instantiate the property type with type-param substitution (only
                 // when we have valid type-params for this base). Then ALWAYS run
@@ -527,7 +603,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -548,22 +624,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the ObjectWithIndex's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // GUARD: only apply array_base_type_params when this Application's
-                // base is the registered global Array. See Object branch above.
-                let is_global_array_base =
-                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
-                        .is_some_and(|b| b == app.base);
-                let type_params = if is_global_array_base {
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
-                } else {
-                    &[]
-                };
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
 
                 let instantiated_prop_type = if type_params.is_empty() {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -591,25 +658,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the Callable's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // For Callable properties, we need to substitute type parameters.
-                // GUARD: only apply array_base_type_params when this Application's
-                // base is the registered global Array. See Object branch above —
-                // the array_base_type_params are *Array's* params, only valid when
-                // the Application's base actually references the global Array.
-                let is_global_array_base =
-                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
-                        .is_some_and(|b| b == app.base);
-                let type_params = if is_global_array_base {
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
-                } else {
-                    &[]
-                };
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
 
                 let instantiated_prop_type = if type_params.is_empty() {
                     prop.type_id
                 } else {
                     let substitution =
-                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
                 };
                 let app_type = self.interner().application(app.base, app.args.clone());
@@ -622,6 +677,30 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 type_id: self.interner().application(app.base, app.args.clone()),
                 property_name: prop_atom,
             };
+        }
+
+        // Array<T> from merged lib declarations is represented as a structural
+        // intersection. Instantiating the base before member lookup keeps method
+        // parameters like push(...items: T[]) bound to the actual array element
+        // type instead of leaking the raw lib T into call checking.
+        if crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+            .is_some_and(|array_base| array_base == app.base)
+            && matches!(base_key, TypeData::Intersection(_))
+        {
+            let type_params =
+                crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+            if !type_params.is_empty() {
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                let instantiated_base = self.instantiate_type_cached(app.base, &substitution);
+                if instantiated_base != app.base {
+                    return self.resolve_property_access_inner(
+                        instantiated_base,
+                        prop_name,
+                        Some(prop_atom),
+                    );
+                }
+            }
         }
 
         // We only handle Lazy types (def_id references)
@@ -746,6 +825,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                     let write = (instantiated_write_type != instantiated_read_type)
@@ -1084,8 +1164,28 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
-        if prop_name == "toString" || prop_name == "valueOf" {
-            return PropertyAccessResult::simple(TypeId::ANY);
+        let boxed_loaded = if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Symbol)
+        {
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            if !result.is_not_found() {
+                return result;
+            }
+            true
+        } else {
+            false
+        };
+
+        if boxed_loaded
+            && crate::objects::apparent::is_post_es5_primitive_member(
+                IntrinsicKind::Symbol,
+                prop_name,
+            )
+        {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: TypeId::SYMBOL,
+                property_name: prop_atom,
+            };
         }
 
         self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)
@@ -1101,17 +1201,27 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
-        // For fixed-length tuples, .length returns a literal numeric type (e.g., 2 for [string, number])
-        // instead of the generic `number` from the Array<T> interface.
+        // For fixed-length tuples, .length returns literal numeric types
+        // instead of the generic `number` from the Array<T> interface. Optional
+        // elements contribute a range: `[number?]["length"]` is `0 | 1`.
         if prop_name == "length"
-            && let Some(len) = self.compute_tuple_fixed_length(array_type)
+            && let Some(length_type) = self.compute_tuple_length_type(array_type)
         {
-            let literal = self.interner().literal_number(len as f64);
-            return PropertyAccessResult::simple(literal);
+            return PropertyAccessResult::simple(length_type);
         }
 
         if prop_name == "toLocaleString" {
             return self.method_result(TypeId::STRING);
+        }
+
+        if let Some(TypeData::Tuple(elements_id)) = self.interner().lookup(array_type)
+            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
+            && let Ok(index) = index_text.parse::<usize>()
+        {
+            let elements = self.interner().tuple_list(elements_id);
+            if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
+                return PropertyAccessResult::simple(element_type);
+            }
         }
 
         let element_type = self.array_element_type(array_type);
@@ -1315,6 +1425,61 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.interner().union(members)
     }
 
+    fn tuple_fixed_element_type(&self, elements: &[TupleElement], index: usize) -> Option<TypeId> {
+        self.tuple_fixed_element_type_inner(elements, index, 0)
+    }
+
+    fn tuple_fixed_element_type_inner(
+        &self,
+        elements: &[TupleElement],
+        index: usize,
+        depth: usize,
+    ) -> Option<TypeId> {
+        const MAX_TUPLE_SPREAD_DEPTH: usize = 64;
+
+        if depth > MAX_TUPLE_SPREAD_DEPTH {
+            return None;
+        }
+
+        let mut position = 0usize;
+        for elem in elements {
+            if elem.rest {
+                let rest_id = elem.type_id;
+                if rest_id.is_intrinsic() {
+                    return None;
+                }
+                let inner_list_id = match self.interner().lookup(rest_id) {
+                    Some(TypeData::Tuple(id)) => id,
+                    _ => return None,
+                };
+                let inner = self.interner().tuple_list(inner_list_id);
+                let rest_index = index.checked_sub(position)?;
+                if let Some(ty) = self.tuple_fixed_element_type_inner(&inner, rest_index, depth + 1)
+                {
+                    return Some(ty);
+                }
+                let inner_len = self.compute_tuple_fixed_length(rest_id)?;
+                position = position.checked_add(inner_len)?;
+            } else {
+                if position == index {
+                    let ty = if elem.optional {
+                        self.element_type_with_undefined(elem.type_id)
+                    } else {
+                        elem.type_id
+                    };
+                    return Some(ty);
+                }
+                position = position.checked_add(1)?;
+            }
+
+            if position > index {
+                return None;
+            }
+        }
+
+        None
+    }
+
     fn element_type_with_undefined(&self, element_type: TypeId) -> TypeId {
         self.interner().union2(element_type, TypeId::UNDEFINED)
     }
@@ -1380,6 +1545,85 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         Some(total)
+    }
+
+    fn compute_tuple_length_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let (min, max) = self.compute_tuple_length_bounds(type_id)?;
+        if min == max {
+            return Some(self.interner().literal_number(max as f64));
+        }
+
+        let members = (min..=max)
+            .map(|len| self.interner().literal_number(len as f64))
+            .collect();
+        Some(self.interner().union(members))
+    }
+
+    fn compute_tuple_length_bounds(&self, type_id: TypeId) -> Option<(usize, usize)> {
+        const MAX_FIXED_LENGTH: usize = 1000;
+
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        let list_id = match self.interner().lookup(type_id) {
+            Some(TypeData::Tuple(id)) => id,
+            _ => return None,
+        };
+
+        let elements = self.interner().tuple_list(list_id);
+        let mut min = 0usize;
+        let mut max = 0usize;
+        let mut rest_type: Option<TypeId> = None;
+        let mut rest_count = 0;
+
+        for elem in elements.iter() {
+            if elem.rest {
+                rest_count += 1;
+                if rest_count > 1 {
+                    return None;
+                }
+                rest_type = Some(elem.type_id);
+            } else {
+                if !elem.optional {
+                    min += 1;
+                }
+                max += 1;
+                if max > MAX_FIXED_LENGTH {
+                    return None;
+                }
+            }
+        }
+
+        while let Some(rest_id) = rest_type.take() {
+            if rest_id.is_intrinsic() {
+                return None;
+            }
+            let inner_list_id = match self.interner().lookup(rest_id) {
+                Some(TypeData::Tuple(id)) => id,
+                _ => return None,
+            };
+            let inner_elements = self.interner().tuple_list(inner_list_id);
+            let mut inner_rest_count = 0;
+            for elem in inner_elements.iter() {
+                if elem.rest {
+                    inner_rest_count += 1;
+                    if inner_rest_count > 1 {
+                        return None;
+                    }
+                    rest_type = Some(elem.type_id);
+                } else {
+                    if !elem.optional {
+                        min += 1;
+                    }
+                    max += 1;
+                    if max > MAX_FIXED_LENGTH {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some((min, max))
     }
 
     pub(super) fn resolve_function_property(

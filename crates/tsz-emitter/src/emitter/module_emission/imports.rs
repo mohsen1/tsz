@@ -25,6 +25,15 @@ impl<'a> Printer<'a> {
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
     ) -> bool {
+        if self.import_clause_is_namespace_only(clause)
+            && self
+                .arena
+                .get_import_decl(node)
+                .is_some_and(|import| self.import_references_type_only_export_equals_module(import))
+        {
+            return false;
+        }
+
         let mut names = Vec::new();
         if clause.name.is_some() {
             let default_name = self.get_identifier_text_idx(clause.name);
@@ -65,47 +74,73 @@ impl<'a> Printer<'a> {
         let Some(source_text) = self.source_text else {
             return true;
         };
-        // Use the module specifier end as the base offset, since node.end may
-        // include trailing trivia that extends into the next statement.
-        let mut start = if let Some(import_decl) = self.arena.get_import_decl(node)
-            && let Some(module_node) = self.arena.get(import_decl.module_specifier)
-        {
-            module_node.end as usize
-        } else {
-            node.end as usize
+        // Issue #3597: ES import declarations are module-scoped, so a
+        // top-level use BEFORE the import is still a real value use. Scan
+        // the entire source with the import declaration's text whited out
+        // (including trailing comments on the same line as the import).
+        let Some(import_decl) = self.arena.get_import_decl(node) else {
+            return true;
         };
-        start = start.min(source_text.len());
-        let bytes = source_text.as_bytes();
-        // Skip past the entire import line (including trailing comments)
-        // to avoid matching identifiers in trailing comments like
-        // `import { yield } from "m"; // error to use default as binding name`
-        while start < bytes.len() {
-            match bytes[start] {
-                b'\n' => {
-                    start += 1;
-                    break;
-                }
-                b'\r' => {
-                    start += 1;
-                    if start < bytes.len() && bytes[start] == b'\n' {
-                        start += 1;
-                    }
-                    break;
-                }
-                _ => start += 1,
-            }
-        }
-        let haystack = &source_text[start..];
+        let haystack =
+            Self::source_excluding_import_decl(source_text, node, import_decl, self.arena);
         // Strip type-only content from the haystack so that identifiers
         // appearing only in type positions (type annotations, declare lines,
         // other import/export type statements, etc.) don't count as value usages.
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
-        names
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
+        let appears_in_value_haystack = names
             .iter()
-            .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
-            || (self.ctx.target_es5
-                && self
-                    .async_return_type_uses_imported_promise_constructor_after_node(node, &names))
+            .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name));
+        if appears_in_value_haystack {
+            return true;
+        }
+        // Under `--emitDecoratorMetadata`, type annotations on decorated
+        // class members become *value* references at runtime via
+        // `__metadata("design:type", X)`. The standard type-only strip would
+        // elide those names; check separately whether any decorated-member
+        // type annotation in the unstripped haystack references one of our
+        // imported names.
+        if self.ctx.options.emit_decorator_metadata
+            && names.iter().any(|name| {
+                crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, name)
+            })
+        {
+            return true;
+        }
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
+    }
+
+    fn import_clause_is_namespace_only(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_some() && named.elements.nodes.is_empty())
+    }
+
+    pub(in crate::emitter) fn import_references_type_only_export_equals_module(
+        &self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import.module_specifier) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal(module_node) else {
+            return false;
+        };
+        self.ctx
+            .options
+            .type_only_export_equals_modules
+            .contains(lit.text.as_str())
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(
@@ -211,6 +246,45 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Whether the default binding of an import clause is referenced as a
+    /// value in the rest of the file. Mirrors `filter_value_specs_by_usage`
+    /// for the default binding so that an unused default beside a used named
+    /// or namespace binding is elided (matching tsc).
+    fn default_binding_has_value_usage(
+        &self,
+        import_node: &Node,
+        default_name_idx: NodeIndex,
+    ) -> bool {
+        let local_name = self.get_identifier_text_idx(default_name_idx);
+        if local_name.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let Some(import_data) = self.arena.get_import_decl(import_node) else {
+            return true;
+        };
+        // Issue #3597: ES import declarations are module-scoped; a top-level
+        // use BEFORE the import is still a real value use. Scan the entire
+        // source with the import declaration's text whited out.
+        let haystack =
+            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
+        if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name) {
+            return true;
+        }
+        // Under `--emitDecoratorMetadata`, decorated-member type
+        // annotations are *value* references; preserve the default whose
+        // name appears in such an annotation.
+        self.ctx.options.emit_decorator_metadata
+            && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &local_name)
+    }
+
     /// Filter named import specifiers to only those with value-level usage
     /// in the rest of the file. Used in --noCheck mode.
     fn filter_value_specs_by_usage(
@@ -224,8 +298,15 @@ impl<'a> Printer<'a> {
         let Some(import_data) = self.arena.get_import_decl(import_node) else {
             return specs.to_vec();
         };
-        let haystack = Self::source_after_import(source_text, import_node, import_data, self.arena);
-        let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+        // Issue #3597: scan the entire module so a use BEFORE the import
+        // still keeps the binding alive.
+        let haystack =
+            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
 
         specs
             .iter()
@@ -241,9 +322,48 @@ impl<'a> Printer<'a> {
                 if local_name.is_empty() {
                     return true;
                 }
-                crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
+                if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)
+                {
+                    return true;
+                }
+                // Under `--emitDecoratorMetadata`, decorated-member type
+                // annotations are *value* references; preserve specs whose
+                // name appears in such an annotation.
+                self.ctx.options.emit_decorator_metadata
+                    && crate::import_usage::name_appears_in_decorator_metadata_type(
+                        &haystack,
+                        &local_name,
+                    )
             })
             .collect()
+    }
+
+    fn default_import_has_value_usage_after_node(
+        &self,
+        import_node: &Node,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let name = self.get_identifier_text_idx(name_idx);
+        if name.is_empty() {
+            return true;
+        }
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        // Issue #3597: scan the entire module so a use BEFORE the import
+        // still keeps the default binding alive.
+        let haystack =
+            Self::source_excluding_import_decl(source_text, import_node, import_data, self.arena);
+        let value_haystack = crate::import_usage::strip_type_only_content(&haystack);
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
+
+        crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+            || (self.ctx.options.emit_decorator_metadata
+                && crate::import_usage::name_appears_in_decorator_metadata_type(&haystack, &name))
     }
 
     /// Check if an import-equals declaration's identifier is used after the import.
@@ -252,6 +372,10 @@ impl<'a> Printer<'a> {
         node: &Node,
         import_data: &tsz_parser::parser::node::ImportDeclData,
     ) -> bool {
+        if self.import_references_type_only_export_equals_module(import_data) {
+            return false;
+        }
+
         let name = self.get_identifier_text_idx(import_data.import_clause);
         if name.is_empty() {
             return true;
@@ -262,6 +386,59 @@ impl<'a> Printer<'a> {
         let haystack = Self::source_after_import(source_text, node, import_data, self.arena);
         let value_haystack = crate::import_usage::strip_type_only_content(haystack);
         crate::import_usage::contains_identifier_occurrence(&value_haystack, &name)
+    }
+
+    /// Check if an external import-equals alias is only value-used through a
+    /// later namespace import alias, such as:
+    /// `import ReactRouter = require("react-router");`
+    /// `import Route = ReactRouter.Route;`
+    /// `<Route />`
+    pub(in crate::emitter) fn import_equals_has_value_usage_through_namespace_alias_after_node(
+        &self,
+        import_stmt_idx: NodeIndex,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        let root_name = self.get_identifier_text_idx(import_data.import_clause);
+        if root_name.is_empty() {
+            return false;
+        }
+
+        let mut after_import = false;
+        for &stmt_idx in &source.statements.nodes {
+            if stmt_idx == import_stmt_idx {
+                after_import = true;
+                continue;
+            }
+            if !after_import {
+                continue;
+            }
+
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                continue;
+            }
+            let Some(alias_import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if alias_import.is_type_only || !self.import_decl_has_runtime_value(alias_import) {
+                continue;
+            }
+            if self
+                .get_module_root_name(alias_import.module_specifier)
+                .as_deref()
+                != Some(root_name.as_str())
+            {
+                continue;
+            }
+            if self.import_equals_has_value_usage_after_node(stmt_node, alias_import) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check if an import alias name has value usage in the remaining source.
@@ -300,7 +477,126 @@ impl<'a> Printer<'a> {
         // value usage. This matches tsc which erases namespace import aliases
         // when the alias is only referenced in type positions.
         let stripped = crate::import_usage::strip_type_only_content(haystack);
-        crate::import_usage::contains_identifier_occurrence(&stripped, &name)
+        Self::contains_alias_value_reference_before_shadow(&stripped, &name)
+    }
+
+    fn contains_alias_value_reference_before_shadow(haystack: &str, ident: &str) -> bool {
+        if ident.is_empty() {
+            return false;
+        }
+
+        let mut search_from = 0usize;
+        while let Some(rel) = haystack[search_from..].find(ident) {
+            let pos = search_from + rel;
+            if Self::is_standalone_identifier_at(haystack, ident, pos) {
+                if Self::identifier_occurrence_is_binding(haystack, pos) {
+                    // A second `import <ident> = ...` re-declares the same
+                    // alias; it doesn't shadow the original import — both
+                    // refer to the same name. tsc treats this as a duplicate
+                    // diagnostic but still emits the first value-bearing
+                    // import. Skip past this binding and keep searching for a
+                    // genuine value reference (e.g., `<ident>.foo`).
+                    if Self::binding_is_import_redeclaration(haystack, pos) {
+                        search_from = pos + ident.len();
+                        continue;
+                    }
+                    return false;
+                }
+                return true;
+            }
+            search_from = pos + ident.len();
+        }
+        false
+    }
+
+    fn binding_is_import_redeclaration(haystack: &str, pos: usize) -> bool {
+        let bytes = haystack.as_bytes();
+        let mut p = pos;
+        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+            p -= 1;
+        }
+        let preceding = &haystack[..p];
+        if !preceding.ends_with("import") {
+            return false;
+        }
+        let start = p - "import".len();
+        let before_keyword_ok = start == 0
+            || haystack[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
+        if !before_keyword_ok {
+            return false;
+        }
+
+        let mut after = pos;
+        while after < bytes.len()
+            && (bytes[after] == b'_'
+                || bytes[after] == b'$'
+                || bytes[after].is_ascii_alphanumeric())
+        {
+            after += 1;
+        }
+        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        bytes.get(after) == Some(&b'=')
+    }
+
+    fn is_standalone_identifier_at(haystack: &str, ident: &str, pos: usize) -> bool {
+        let before_ok = if pos == 0 {
+            true
+        } else {
+            haystack[..pos].chars().next_back().is_none_or(|ch| {
+                !(ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+            })
+        };
+        let after_idx = pos + ident.len();
+        let after_ok = if after_idx >= haystack.len() {
+            true
+        } else {
+            haystack[after_idx..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+        };
+        before_ok && after_ok
+    }
+
+    fn identifier_occurrence_is_binding(haystack: &str, pos: usize) -> bool {
+        let bytes = haystack.as_bytes();
+        let mut p = pos;
+        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+            p -= 1;
+        }
+
+        let preceding = &haystack[..p];
+        for keyword in [
+            "var",
+            "let",
+            "const",
+            "function",
+            "class",
+            "enum",
+            "namespace",
+            "module",
+            "import",
+        ] {
+            if !preceding.ends_with(keyword) {
+                continue;
+            }
+            let start = p - keyword.len();
+            let before_keyword_ok = start == 0
+                || haystack[..start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
+            if before_keyword_ok {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Get the source text after an import node (skipping to the next line).
@@ -337,6 +633,34 @@ impl<'a> Printer<'a> {
         &source_text[start..]
     }
 
+    /// Get the full source text with the import declaration's text replaced
+    /// by space characters (preserving line breaks). Used by ESM
+    /// import-elision usage scans so that a top-level use BEFORE the import
+    /// declaration still counts as a use (issue #3597). The replacement
+    /// keeps byte offsets stable and stops the import declaration's own
+    /// specifiers from showing up as uses.
+    fn source_excluding_import_decl(
+        source_text: &str,
+        node: &Node,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        arena: &tsz_parser::parser::node::NodeArena,
+    ) -> String {
+        let import_start = (node.pos as usize).min(source_text.len());
+        let after_slice = Self::source_after_import(source_text, node, import_data, arena);
+        let import_end = source_text.len().saturating_sub(after_slice.len());
+        let mut out = String::with_capacity(source_text.len());
+        out.push_str(&source_text[..import_start]);
+        let cleared = source_text
+            .get(import_start..import_end)
+            .unwrap_or("")
+            .chars()
+            .map(|c| if c == '\n' || c == '\r' { c } else { ' ' })
+            .collect::<String>();
+        out.push_str(&cleared);
+        out.push_str(after_slice);
+        out
+    }
+
     pub(in crate::emitter) fn emit_import_declaration(&mut self, node: &Node) {
         if let Some(import) = self.arena.get_import_decl(node)
             && let Some(clause_node) = self.arena.get(import.import_clause)
@@ -359,6 +683,13 @@ impl<'a> Printer<'a> {
         };
 
         if import.import_clause.is_none() {
+            if self
+                .arena
+                .has_modifier(&import.modifiers, SyntaxKind::AccessorKeyword)
+                || self.has_recovered_accessor_modifier(node)
+            {
+                self.write("accessor ");
+            }
             self.write("import ");
             self.emit_module_specifier(import.module_specifier);
             self.emit_import_attributes(import.attributes);
@@ -377,6 +708,20 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let preserve_invalid_module_syntax = self.recovered_module_syntax_block_depth > 0;
+
+        if self.import_clause_is_empty_named_import(clause) {
+            if !(self.ctx.options.verbatim_module_syntax || self.source_is_js_file) {
+                return;
+            }
+
+            self.write("import {} from ");
+            self.emit_module_specifier(import.module_specifier);
+            self.emit_import_attributes(import.attributes);
+            self.write_semicolon();
+            return;
+        }
+
         let mut has_default = false;
         let mut namespace_name = None;
         let mut value_specs = Vec::new();
@@ -384,7 +729,17 @@ impl<'a> Printer<'a> {
         let mut trailing_comma = false;
 
         if clause.name.is_some() {
-            has_default = true;
+            has_default = if preserve_invalid_module_syntax {
+                true
+            } else if self.ctx.options.type_only_nodes.is_empty()
+                && !self.source_is_js_file
+                && !self.ctx.options.verbatim_module_syntax
+                && !self.is_jsx_factory_import_clause(clause)
+            {
+                self.default_import_has_value_usage_after_node(node, import, clause.name)
+            } else {
+                true
+            };
         }
 
         if clause.named_bindings.is_some()
@@ -400,6 +755,7 @@ impl<'a> Printer<'a> {
                     if self.ctx.options.type_only_nodes.is_empty()
                         && !self.source_is_js_file
                         && !self.ctx.options.verbatim_module_syntax
+                        && !preserve_invalid_module_syntax
                     {
                         value_specs = self.filter_value_specs_by_usage(node, &value_specs);
                     }
@@ -413,10 +769,34 @@ impl<'a> Printer<'a> {
 
         let has_named =
             namespace_name.is_some() || !value_specs.is_empty() || raw_named_bindings.is_some();
+
+        // Elide an unused default binding when another binding survives in the
+        // same clause. Mirrors the named-specifier filter above and matches
+        // tsc's behavior for `import Foo, { bar } from "x"; bar();` -> emits
+        // only `import { bar } from "x";`. JSX-factory defaults are exempt
+        // because their name is referenced implicitly by JSX elements.
+        if has_default
+            && has_named
+            && self.ctx.options.type_only_nodes.is_empty()
+            && !self.source_is_js_file
+            && !self.ctx.options.verbatim_module_syntax
+            && !self.is_jsx_factory_import_clause(clause)
+            && !self.default_binding_has_value_usage(node, clause.name)
+        {
+            has_default = false;
+        }
+
         if !has_default && !has_named {
             return;
         }
 
+        if self
+            .arena
+            .has_modifier(&import.modifiers, SyntaxKind::AccessorKeyword)
+            || self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
         self.write("import ");
         if has_default {
             self.emit(clause.name);
@@ -812,9 +1192,62 @@ impl<'a> Printer<'a> {
         let Some(module_node) = self.arena.get(import.module_specifier) else {
             return;
         };
+        let is_external = module_node.is_string_literal()
+            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
 
-        if !is_exported_var && !self.import_decl_has_runtime_value(import) {
+        if self.recovered_module_syntax_block_depth > 0 && is_external && !is_exported_var {
+            self.write("import ");
+            self.emit(import.import_clause);
+            self.write(" = require(");
+            self.emit_module_specifier(import.module_specifier);
+            self.write(")");
             return;
+        }
+
+        let has_runtime_value = self.import_decl_has_runtime_value(import);
+        // Script-mode preservation: when the file is not a module and the
+        // alias targets a top-level *interface or type alias* identifier,
+        // tsc preserves `var x = T;` (broken-at-runtime) instead of
+        // eliding. Top-level type-only declarations create a global
+        // identifier that the alias references, so tsc emits the
+        // assignment as written. Non-instantiated namespaces are
+        // different — tsc still elides them to avoid duplicate-`var`
+        // conflicts when the alias name shadows an existing binding
+        // (`var a; namespace M {} import a = M;` elides the alias).
+        let is_simple_identifier_target = module_node.is_identifier();
+        let is_script_mode = !self.ctx.file_is_module
+            && self.ctx.original_module_kind.is_none()
+            && !self.ctx.options.module_detection_force;
+        let target_is_interface_or_type_alias = is_simple_identifier_target
+            && self.identifier_target_is_interface_or_type_alias(import.module_specifier);
+        let script_mode_preserves_alias = is_script_mode && target_is_interface_or_type_alias;
+        let is_namespace_alias =
+            module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
+        if !(has_runtime_value
+            || script_mode_preserves_alias
+            || is_exported_var && module_node.kind != SyntaxKind::Identifier as u16)
+        {
+            return;
+        }
+        // Even when the alias has the `export` modifier, skip the runtime
+        // assignment when the qualified target chain resolves to an
+        // *exported* interface or type alias (e.g. `export import b = a.I`
+        // where namespace `a` exports `interface I`). tsc emits neither the
+        // void-0 preamble nor `exports.b = a.I;` in that case. Non-exported
+        // inner members are unreachable from outside the namespace and tsc
+        // preserves the (broken) runtime emit, so we must not elide there.
+        if is_exported_var {
+            let stmts = self.scope_statements_for_runtime_lookup(None);
+            if !stmts.is_empty()
+                && crate::transforms::module_commonjs::import_alias_resolves_to_exported_type_only(
+                    self.arena,
+                    import.module_specifier,
+                    &stmts,
+                    self.ctx.options.preserve_const_enums,
+                )
+            {
+                return;
+            }
         }
 
         // Inside namespace IIFEs, elide namespace aliases (`import X = Y;`)
@@ -824,8 +1257,6 @@ impl<'a> Printer<'a> {
         // This is restricted to namespace scope because top-level import
         // aliases in scripts create global variables that may be consumed
         // externally, and tsc preserves those even when unreferenced locally.
-        let is_namespace_alias =
-            module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
         if is_namespace_alias
             && self.in_namespace_iife
             && !is_exported_var
@@ -858,9 +1289,6 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let is_external = module_node.is_string_literal()
-            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
-
         // AMD and System bind external imports via wrapper parameters/setters,
         // so we must not emit a duplicate runtime require here.
         // UMD is NOT included because UMD's factory body uses require() calls
@@ -890,12 +1318,12 @@ impl<'a> Printer<'a> {
         } else if is_external {
             // `import X = require("module")` uses const/var based on target.
             self.write_var_or_const();
-            self.emit(import.import_clause);
+            self.emit_decl_name(import.import_clause);
             self.write(" = ");
         } else {
             // `import X = Y` (entity name) always uses `var` per TSC behavior.
             self.write("var ");
-            self.emit(import.import_clause);
+            self.emit_decl_name(import.import_clause);
             self.write(" = ");
         }
 
@@ -1173,5 +1601,22 @@ impl<'a> Printer<'a> {
             }
         }
         self.write(" }");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Printer;
+
+    #[test]
+    fn import_alias_redeclaration_requires_import_equals() {
+        assert!(Printer::contains_alias_value_reference_before_shadow(
+            "import M = Z.I;\nM.bar();",
+            "M",
+        ));
+        assert!(!Printer::contains_alias_value_reference_before_shadow(
+            "import M from \"pkg\";\nM.bar();",
+            "M",
+        ));
     }
 }

@@ -11,7 +11,36 @@ use crate::type_queries::{
     get_callable_shape_for_type, get_string_literal_value, get_union_members, is_invokable_type,
 };
 use crate::types::{CallSignature, ParamInfo, TypeData, TypeId};
+use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 use tsz_common::Atom;
+
+// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS used by
+// `has_type_query_for_symbol`. Mirrors the pool pattern from #4722 / #4790
+// and several follow-up PRs.
+thread_local! {
+    static FLOW_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_flow_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = FLOW_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    FLOW_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 // =============================================================================
 // Control Flow Type Classification Helpers
@@ -232,6 +261,12 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
     // present, defines the instance type. This wins over `prototype` and over
     // construct signature return types per tsc.
     if let Some(predicate_type) = instance_type_from_symbol_has_instance(db, type_id) {
+        if predicate_type == TypeId::ANY
+            && let Some(generic_construct_type) =
+                generic_construct_instance_type_from_constructor(db, type_id)
+        {
+            return Some(generic_construct_type);
+        }
         return Some(predicate_type);
     }
 
@@ -256,7 +291,7 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
             let returns: Vec<TypeId> = shape
                 .construct_signatures
                 .iter()
-                .map(|s| s.return_type)
+                .map(|s| erase_signature_type_params_from_type(db, s.return_type, &s.type_params))
                 .collect();
             Some(if returns.len() == 1 {
                 returns[0]
@@ -351,13 +386,81 @@ pub fn instance_type_from_symbol_has_instance(
     let has_instance_prop =
         crate::type_queries::find_property_in_type_by_str(db, type_id, "[Symbol.hasInstance]")?;
     let signature = extract_predicate_signature(db, has_instance_prop.type_id)?;
-    let predicate_type = signature.predicate.type_id?;
+    let predicate_type = erase_signature_type_params_from_type(
+        db,
+        signature.predicate.type_id?,
+        &signature.type_params,
+    );
     if signature.predicate.asserts {
         // `asserts value is T` does not narrow the instanceof source type
         // (tsc treats only non-asserting predicates as narrowing).
         return None;
     }
     Some(predicate_type)
+}
+
+fn generic_construct_instance_type_from_constructor(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    match classify_for_constructor_instance(db, type_id) {
+        ConstructorInstanceKind::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            let returns: Vec<TypeId> = shape
+                .construct_signatures
+                .iter()
+                .filter(|sig| !sig.type_params.is_empty())
+                .map(|sig| {
+                    erase_signature_type_params_from_type(db, sig.return_type, &sig.type_params)
+                })
+                .filter(|&ty| ty != TypeId::ANY)
+                .collect();
+            match returns.len() {
+                0 => None,
+                1 => Some(returns[0]),
+                _ => Some(db.union(returns)),
+            }
+        }
+        ConstructorInstanceKind::Union(members) => {
+            let instance_types: Vec<TypeId> = members
+                .into_iter()
+                .filter_map(|member| generic_construct_instance_type_from_constructor(db, member))
+                .collect();
+            match instance_types.len() {
+                0 => None,
+                1 => Some(instance_types[0]),
+                _ => Some(db.union(instance_types)),
+            }
+        }
+        ConstructorInstanceKind::Intersection(members) => {
+            let instance_types: Vec<TypeId> = members
+                .into_iter()
+                .filter_map(|member| generic_construct_instance_type_from_constructor(db, member))
+                .collect();
+            match instance_types.len() {
+                0 => None,
+                1 => Some(instance_types[0]),
+                _ => Some(db.intersection(instance_types)),
+            }
+        }
+        ConstructorInstanceKind::None => None,
+    }
+}
+
+fn erase_signature_type_params_from_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    type_params: &[crate::types::TypeParamInfo],
+) -> TypeId {
+    if type_params.is_empty() {
+        return type_id;
+    }
+
+    let mut substitution = TypeSubstitution::new();
+    for type_param in type_params {
+        substitution.insert(type_param.name, TypeId::ANY);
+    }
+    instantiate_type(db, type_id, &substitution)
 }
 
 /// Classification for type parameter constraint access.
@@ -1681,73 +1784,70 @@ pub fn has_type_query_for_symbol(
     target_sym_id: u32,
     mut resolve_lazy: impl FnMut(TypeId) -> TypeId,
 ) -> bool {
-    use crate::TypeData;
-    use rustc_hash::FxHashSet;
-
-    let mut worklist = vec![type_id];
-    let mut visited = FxHashSet::default();
-
-    while let Some(ty) = worklist.pop() {
-        if !visited.insert(ty) {
-            continue;
-        }
-
-        if ty.is_intrinsic() {
-            continue;
-        }
-
-        let resolved = resolve_lazy(ty);
-        if resolved != ty {
-            worklist.push(resolved);
-            continue;
-        }
-
-        let Some(key) = db.lookup(ty) else { continue };
-        match key {
-            TypeData::TypeQuery(sym_ref) if sym_ref.0 == target_sym_id => {
-                return true;
+    with_flow_visited(|visited| {
+        let mut worklist = vec![type_id];
+        while let Some(ty) = worklist.pop() {
+            if !visited.insert(ty) {
+                continue;
             }
-            TypeData::Array(elem) => worklist.push(elem),
-            TypeData::Union(list) | TypeData::Intersection(list) => {
-                let members = db.type_list(list);
-                worklist.extend(members.iter().copied());
+
+            if ty.is_intrinsic() {
+                continue;
             }
-            TypeData::Tuple(list) => {
-                let elements = db.tuple_list(list);
-                for elem in elements.iter() {
-                    worklist.push(elem.type_id);
+
+            let resolved = resolve_lazy(ty);
+            if resolved != ty {
+                worklist.push(resolved);
+                continue;
+            }
+
+            let Some(key) = db.lookup(ty) else { continue };
+            match key {
+                TypeData::TypeQuery(sym_ref) if sym_ref.0 == target_sym_id => {
+                    return true;
                 }
+                TypeData::Array(elem) => worklist.push(elem),
+                TypeData::Union(list) | TypeData::Intersection(list) => {
+                    let members = db.type_list(list);
+                    worklist.extend(members.iter().copied());
+                }
+                TypeData::Tuple(list) => {
+                    let elements = db.tuple_list(list);
+                    for elem in elements.iter() {
+                        worklist.push(elem.type_id);
+                    }
+                }
+                TypeData::Conditional(id) => {
+                    let cond = db.conditional_type(id);
+                    worklist.push(cond.check_type);
+                    worklist.push(cond.extends_type);
+                    worklist.push(cond.true_type);
+                    worklist.push(cond.false_type);
+                }
+                TypeData::Application(id) => {
+                    let app = db.type_application(id);
+                    worklist.push(app.base);
+                    worklist.extend(&app.args);
+                }
+                TypeData::IndexAccess(obj, idx) => {
+                    worklist.push(obj);
+                    worklist.push(idx);
+                }
+                TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
+                    worklist.push(inner);
+                }
+                TypeData::Function(_)
+                | TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Mapped(_) => {
+                    // These types break the "direct" reference cycle logic for TS2502.
+                    // Recursive types via function return/params or object properties are allowed.
+                }
+                _ => {}
             }
-            TypeData::Conditional(id) => {
-                let cond = db.conditional_type(id);
-                worklist.push(cond.check_type);
-                worklist.push(cond.extends_type);
-                worklist.push(cond.true_type);
-                worklist.push(cond.false_type);
-            }
-            TypeData::Application(id) => {
-                let app = db.type_application(id);
-                worklist.push(app.base);
-                worklist.extend(&app.args);
-            }
-            TypeData::IndexAccess(obj, idx) => {
-                worklist.push(obj);
-                worklist.push(idx);
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
-                worklist.push(inner);
-            }
-            TypeData::Function(_)
-            | TypeData::Object(_)
-            | TypeData::ObjectWithIndex(_)
-            | TypeData::Mapped(_) => {
-                // These types break the "direct" reference cycle logic for TS2502.
-                // Recursive types via function return/params or object properties are allowed.
-            }
-            _ => {}
         }
-    }
-    false
+        false
+    })
 }
 
 /// Extract contextual type parameters from a type.
@@ -2083,6 +2183,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }]);
 
@@ -2100,6 +2201,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }]);
 
@@ -2134,6 +2236,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }]);
 
@@ -2156,6 +2259,7 @@ mod tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }]);
 
@@ -2222,6 +2326,7 @@ mod tests {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             }],
             string_index: None,
@@ -2235,6 +2340,203 @@ mod tests {
             result,
             Some(TypeId::STRING),
             "Predicate type STRING must override construct sig return NUMBER"
+        );
+    }
+
+    #[test]
+    fn instance_type_from_constructor_erases_generic_construct_return_to_any() {
+        use crate::def::DefId;
+        use crate::types::{CallSignature, CallableShape, TypeParamInfo};
+
+        let db = crate::intern::TypeInterner::new();
+        let t_name = db.intern_string("T");
+        let t_info = TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        let t_type = db.type_param(t_info);
+        let box_base = db.lazy(DefId(4242));
+        let box_t = db.application(box_base, vec![t_type]);
+        let box_any = db.application(box_base, vec![TypeId::ANY]);
+
+        let constructor = db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature {
+                type_params: vec![t_info],
+                params: vec![],
+                this_type: None,
+                return_type: box_t,
+                type_predicate: None,
+                is_method: false,
+            }],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        assert_eq!(
+            super::instance_type_from_constructor(&db, constructor),
+            Some(box_any),
+            "generic construct signatures must produce their erased instance type for instanceof"
+        );
+    }
+
+    #[test]
+    fn instance_type_from_symbol_has_instance_erases_generic_predicate_to_any() {
+        use crate::def::DefId;
+        use crate::types::{
+            CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeParamInfo, TypePredicate,
+            TypePredicateTarget, Visibility,
+        };
+
+        let db = crate::intern::TypeInterner::new();
+        let value_atom = db.intern_string("value");
+        let t_name = db.intern_string("T");
+        let t_info = TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        let t_type = db.type_param(t_info);
+        let box_base = db.lazy(DefId(4243));
+        let box_t = db.application(box_base, vec![t_type]);
+        let box_any = db.application(box_base, vec![TypeId::ANY]);
+        let has_instance_atom = db.intern_string("[Symbol.hasInstance]");
+
+        let has_instance_fn = db.function(FunctionShape {
+            type_params: vec![t_info],
+            params: vec![ParamInfo {
+                name: Some(value_atom),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: false,
+                target: TypePredicateTarget::Identifier(value_atom),
+                type_id: Some(box_t),
+                parameter_index: Some(0),
+            }),
+            is_constructor: false,
+            is_method: true,
+        });
+
+        let constructor = db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![],
+            properties: vec![PropertyInfo {
+                name: has_instance_atom,
+                type_id: has_instance_fn,
+                write_type: has_instance_fn,
+                optional: false,
+                readonly: false,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            }],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        assert_eq!(
+            super::instance_type_from_constructor(&db, constructor),
+            Some(box_any),
+            "generic Symbol.hasInstance predicates must erase their own type parameters to any"
+        );
+    }
+
+    #[test]
+    fn instance_type_from_constructor_uses_generic_construct_when_predicate_collapses_to_any() {
+        use crate::def::DefId;
+        use crate::types::{
+            CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeParamInfo,
+            TypePredicate, TypePredicateTarget, Visibility,
+        };
+
+        let db = crate::intern::TypeInterner::new();
+        let value_atom = db.intern_string("value");
+        let t_name = db.intern_string("T");
+        let t_info = TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        let t_type = db.type_param(t_info);
+        let box_base = db.lazy(DefId(4244));
+        let box_t = db.application(box_base, vec![t_type]);
+        let box_any = db.application(box_base, vec![TypeId::ANY]);
+        let has_instance_atom = db.intern_string("[Symbol.hasInstance]");
+
+        let has_instance_fn = db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(value_atom),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: false,
+                target: TypePredicateTarget::Identifier(value_atom),
+                type_id: Some(TypeId::ANY),
+                parameter_index: Some(0),
+            }),
+            is_constructor: false,
+            is_method: true,
+        });
+
+        let constructor = db.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature {
+                type_params: vec![t_info],
+                params: vec![],
+                this_type: None,
+                return_type: box_t,
+                type_predicate: None,
+                is_method: false,
+            }],
+            properties: vec![PropertyInfo {
+                name: has_instance_atom,
+                type_id: has_instance_fn,
+                write_type: has_instance_fn,
+                optional: false,
+                readonly: false,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            }],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        assert_eq!(
+            super::instance_type_from_constructor(&db, constructor),
+            Some(box_any),
+            "a collapsed any predicate should not hide the concrete erased generic construct candidate"
         );
     }
 
@@ -2288,6 +2590,7 @@ mod tests {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 }],
                 string_index: None,
@@ -2352,6 +2655,7 @@ mod tests {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             }],
             string_index: None,

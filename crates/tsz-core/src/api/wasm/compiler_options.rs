@@ -22,6 +22,10 @@ pub(crate) struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict_function_types: Option<bool>,
 
+    /// Enable strict checking of `bind`, `call`, and `apply` methods.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    strict_bind_call_apply: Option<bool>,
+
     /// Enable strict property initialization checks in classes.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict_property_initialization: Option<bool>,
@@ -33,6 +37,14 @@ pub(crate) struct CompilerOptions {
     /// Raise error on 'this' expressions with an implied 'any' type.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_implicit_this: Option<bool>,
+
+    /// Default catch clause variables as `unknown` instead of `any`.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    use_unknown_in_catch_variables: Option<bool>,
+
+    /// Enable strict built-in iterator return types.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    strict_builtin_iterator_return: Option<bool>,
 
     /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
     #[serde(default, deserialize_with = "deserialize_target")]
@@ -162,66 +174,10 @@ where
 }
 
 impl CompilerOptions {
-    /// Resolve a boolean option with strict mode fallback.
-    /// If the specific option is set, use it; otherwise, fall back to strict mode.
-    fn resolve_bool(&self, specific: Option<bool>, strict_implies: bool) -> bool {
-        if let Some(value) = specific {
-            return value;
-        }
-        if strict_implies {
-            // In TypeScript 6.0+, strict-family flags default to true even
-            // without `--strict`. When `strict` is not explicitly set (None),
-            // strict-implied flags are enabled by default.
-            return self.strict.unwrap_or(true);
-        }
-        false
-    }
-
-    /// Get the effective value for noImplicitAny.
-    fn get_no_implicit_any(&self) -> bool {
-        self.resolve_bool(self.no_implicit_any, true)
-    }
-
-    /// Get the effective value for strictNullChecks.
-    fn get_strict_null_checks(&self) -> bool {
-        self.resolve_bool(self.strict_null_checks, true)
-    }
-
-    /// Get the effective value for strictFunctionTypes.
-    fn get_strict_function_types(&self) -> bool {
-        self.resolve_bool(self.strict_function_types, true)
-    }
-
-    /// Get the effective value for strictPropertyInitialization.
-    fn get_strict_property_initialization(&self) -> bool {
-        self.resolve_bool(self.strict_property_initialization, true)
-    }
-
-    /// Get the effective value for noImplicitReturns.
-    fn get_no_implicit_returns(&self) -> bool {
-        self.resolve_bool(self.no_implicit_returns, false)
-    }
-
-    /// Get the effective value for noImplicitThis.
-    fn get_no_implicit_this(&self) -> bool {
-        self.resolve_bool(self.no_implicit_this, true)
-    }
-
     fn resolve_target(&self) -> crate::checker::context::ScriptTarget {
-        use crate::checker::context::ScriptTarget;
-
-        match self.target {
-            Some(0) => ScriptTarget::ES3,
-            Some(1) => ScriptTarget::ES5,
-            Some(2) => ScriptTarget::ES2015,
-            Some(3) => ScriptTarget::ES2016,
-            Some(4) => ScriptTarget::ES2017,
-            Some(5) => ScriptTarget::ES2018,
-            Some(6) => ScriptTarget::ES2019,
-            Some(7) => ScriptTarget::ES2020,
-            Some(_) => ScriptTarget::ESNext,
-            None => ScriptTarget::default(),
-        }
+        self.target
+            .and_then(crate::checker::context::ScriptTarget::from_ts_numeric)
+            .unwrap_or_default()
     }
 
     fn resolve_module(&self) -> crate::common::ModuleKind {
@@ -230,67 +186,89 @@ impl CompilerOptions {
             .unwrap_or(crate::common::ModuleKind::None)
     }
 
+    const fn apply_strict_option(
+        options: &mut crate::checker::context::CheckerOptions,
+        strict: bool,
+    ) {
+        options.strict = strict;
+        if strict {
+            options.no_implicit_any = true;
+            options.strict_null_checks = true;
+            options.strict_function_types = true;
+            options.strict_bind_call_apply = true;
+            options.strict_property_initialization = true;
+            options.no_implicit_this = true;
+            options.use_unknown_in_catch_variables = true;
+            options.always_strict = true;
+            options.strict_builtin_iterator_return = true;
+        } else {
+            options.no_implicit_any = false;
+            options.strict_null_checks = false;
+            options.strict_function_types = false;
+            options.strict_bind_call_apply = false;
+            options.strict_property_initialization = false;
+            options.no_implicit_this = false;
+            options.use_unknown_in_catch_variables = false;
+            options.strict_builtin_iterator_return = false;
+        }
+    }
+
     /// Convert to `CheckerOptions` for type checking.
     pub(crate) fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
-        let strict = self.strict.unwrap_or(false);
-        let strict_null_checks = self.get_strict_null_checks();
-        crate::checker::context::CheckerOptions {
-            strict,
-            no_implicit_any: self.get_no_implicit_any(),
-            no_implicit_returns: self.get_no_implicit_returns(),
-            strict_null_checks,
-            strict_function_types: self.get_strict_function_types(),
-            strict_property_initialization: self.get_strict_property_initialization(),
-            no_implicit_this: self.get_no_implicit_this(),
-            use_unknown_in_catch_variables: strict_null_checks,
-            isolated_modules: false,
-            no_unchecked_indexed_access: self.no_unchecked_indexed_access.unwrap_or(false),
-            strict_bind_call_apply: false,
-            exact_optional_property_types: self.exact_optional_property_types.unwrap_or(false),
-            no_lib: self.no_lib.unwrap_or(false),
-            no_types_and_symbols: false,
-            target: self.resolve_target(),
-            module: self.resolve_module(),
-            jsx_factory: "React.createElement".to_string(),
-            jsx_factory_from_config: false,
-            jsx_fragment_factory: "React.Fragment".to_string(),
-            jsx_fragment_factory_from_config: false,
+        let mut options = crate::checker::context::CheckerOptions::default();
 
-            es_module_interop: false,
-            allow_synthetic_default_imports: false,
-            allow_unreachable_code: None,
-            allow_unused_labels: None,
-            no_property_access_from_index_signature: false,
-            sound_mode: self.sound_mode.unwrap_or(false),
-            experimental_decorators: false,
-            no_unused_locals: false,
-            no_unused_parameters: false,
-            always_strict: strict,
-            resolve_json_module: false, // WASM API: defaults to false
-            check_js: false,            // WASM API: defaults to false
-            allow_js: false,
-            no_resolve: false,
-            isolated_declarations: false,
-            emit_declarations: false,
-            no_unchecked_side_effect_imports: true,
-            no_implicit_override: false,
-            jsx_mode: tsz_common::checker_options::JsxMode::None,
-            module_explicitly_set: self.module.is_some(),
-            suppress_excess_property_errors: false,
-            suppress_implicit_any_index_errors: false,
-            no_implicit_use_strict: false,
-            allow_importing_ts_extensions: false,
-            rewrite_relative_import_extensions: false,
-            implied_classic_resolution: false,
-            jsx_import_source: String::new(),
-            verbatim_module_syntax: false,
-            ignore_deprecations: false,
-            allow_umd_global_access: false,
-            preserve_const_enums: false,
-            strict_builtin_iterator_return: strict,
-            erasable_syntax_only: false,
-            no_fallthrough_cases_in_switch: false,
+        if let Some(strict) = self.strict {
+            Self::apply_strict_option(&mut options, strict);
         }
+
+        if let Some(v) = self.no_implicit_any {
+            options.no_implicit_any = v;
+        }
+        if let Some(v) = self.no_implicit_returns {
+            options.no_implicit_returns = v;
+        }
+        if let Some(v) = self.strict_null_checks {
+            options.strict_null_checks = v;
+        }
+        if let Some(v) = self.strict_function_types {
+            options.strict_function_types = v;
+        }
+        if let Some(v) = self.strict_bind_call_apply {
+            options.strict_bind_call_apply = v;
+        }
+        if let Some(v) = self.strict_property_initialization {
+            options.strict_property_initialization = v;
+        }
+        if let Some(v) = self.no_implicit_this {
+            options.no_implicit_this = v;
+        }
+        if let Some(v) = self.use_unknown_in_catch_variables {
+            options.use_unknown_in_catch_variables = v;
+        }
+        if let Some(v) = self.strict_builtin_iterator_return {
+            options.strict_builtin_iterator_return = v;
+        }
+        if let Some(v) = self.no_unchecked_indexed_access {
+            options.no_unchecked_indexed_access = v;
+        }
+        if let Some(v) = self.exact_optional_property_types {
+            options.exact_optional_property_types = v;
+        }
+        if let Some(v) = self.no_lib {
+            options.no_lib = v;
+        }
+        if let Some(v) = self.sound_mode {
+            options.sound_mode = v;
+        }
+        if self.target.is_some() {
+            options.target = self.resolve_target();
+        }
+        if self.module.is_some() {
+            options.module = self.resolve_module();
+            options.module_explicitly_set = true;
+        }
+
+        options
     }
 }
 
@@ -320,6 +298,80 @@ mod tests {
             parsed.to_checker_options().module,
             crate::common::ModuleKind::ES2015
         );
+    }
+
+    #[test]
+    fn to_checker_options_uses_shared_target_numeric_conversion() {
+        let options = parse_compiler_options_json(r#"{"target":12}"#)
+            .unwrap()
+            .to_checker_options();
+
+        assert_eq!(options.target, crate::common::ScriptTarget::ES2025);
+    }
+
+    #[test]
+    fn to_checker_options_starts_from_shared_defaults() {
+        let options = CompilerOptions::default().to_checker_options();
+        let defaults = crate::checker::context::CheckerOptions::default();
+
+        assert!(options.strict);
+        assert!(options.no_implicit_any);
+        assert!(options.strict_bind_call_apply);
+        assert!(options.use_unknown_in_catch_variables);
+        assert!(options.always_strict);
+        assert!(options.strict_builtin_iterator_return);
+        assert_eq!(options.jsx_factory, defaults.jsx_factory);
+        assert_eq!(options.jsx_fragment_factory, defaults.jsx_fragment_factory);
+        assert_eq!(options.target, defaults.target);
+        assert_eq!(options.module, defaults.module);
+        assert_eq!(
+            options.no_unchecked_side_effect_imports,
+            defaults.no_unchecked_side_effect_imports
+        );
+    }
+
+    #[test]
+    fn to_checker_options_strict_false_matches_shared_resolver_shape() {
+        let options = parse_compiler_options_json(r#"{"strict":false}"#)
+            .unwrap()
+            .to_checker_options();
+
+        assert!(!options.strict);
+        assert!(!options.no_implicit_any);
+        assert!(!options.strict_null_checks);
+        assert!(!options.strict_function_types);
+        assert!(!options.strict_bind_call_apply);
+        assert!(!options.strict_property_initialization);
+        assert!(!options.no_implicit_this);
+        assert!(!options.use_unknown_in_catch_variables);
+        assert!(!options.strict_builtin_iterator_return);
+        assert!(
+            options.always_strict,
+            "strict:false should not clobber the shared alwaysStrict default"
+        );
+    }
+
+    #[test]
+    fn to_checker_options_individual_flags_override_strict() {
+        let options = parse_compiler_options_json(
+            r#"{
+                "strict": true,
+                "noImplicitAny": false,
+                "strictNullChecks": false,
+                "strictBindCallApply": false,
+                "strictBuiltinIteratorReturn": false,
+                "useUnknownInCatchVariables": false
+            }"#,
+        )
+        .unwrap()
+        .to_checker_options();
+
+        assert!(options.strict);
+        assert!(!options.no_implicit_any);
+        assert!(!options.strict_null_checks);
+        assert!(!options.strict_bind_call_apply);
+        assert!(!options.strict_builtin_iterator_return);
+        assert!(!options.use_unknown_in_catch_variables);
     }
 
     #[test]

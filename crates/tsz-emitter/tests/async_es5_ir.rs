@@ -18,6 +18,22 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+fn transform_generator_and_print(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+    {
+        let mut transformer = AsyncES5Transformer::new(&parser.arena);
+        let ir = transformer.transform_generator_function(func_idx);
+        IRPrinter::emit_to_string(&ir)
+    } else {
+        String::new()
+    }
+}
+
 #[test]
 fn test_simple_async_function() {
     let output = transform_and_print("async function foo() { }");
@@ -33,6 +49,20 @@ fn test_simple_async_function() {
 }
 
 #[test]
+fn test_generator_var_hoist_preserves_declaration_list_group() {
+    let output = transform_generator_and_print("function * f() { var x = 1, y; }");
+
+    assert!(
+        output.contains("function f() {\n    var x, y;\n    return __generator"),
+        "Downlevel generator var hoists should preserve declaration-list grouping: {output}"
+    );
+    assert!(
+        !output.contains("var x;\n    var y;"),
+        "The grouped source declaration should not split into separate hoists: {output}"
+    );
+}
+
+#[test]
 fn test_async_with_return() {
     let output = transform_and_print("async function foo() { return 42; }");
     assert!(output.contains("[2 /*return*/, 42]"), "Should return 42");
@@ -44,6 +74,41 @@ fn test_async_with_await() {
     assert!(output.contains("switch (_a.label)"), "Should have switch");
     assert!(output.contains("[4 /*yield*/"), "Should have yield");
     assert!(output.contains("_a.sent()"), "Should call _a.sent()");
+}
+
+#[test]
+fn test_async_while_with_await_lowers_to_generator_cases() {
+    let output =
+        transform_and_print("async function f(xs) { while (xs.length) { await g(xs.pop()); } }");
+
+    assert!(
+        !output.contains("while ("),
+        "Raw while statement must not remain around suspended body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
+        "Loop condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, g(xs.pop())];"),
+        "Await in the loop body should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.sent();"),
+        "Resumed await result should be consumed.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Loop body should jump back to the condition case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/];"),
+        "Loop exit should have a final generator return case.\nOutput:\n{output}"
+    );
 }
 
 #[test]
@@ -245,5 +310,48 @@ fn test_async_await_under_satisfies_emits_yield() {
     assert!(
         output.contains("[4 /*yield*/"),
         "Output must contain a yield instruction for `(await bar()) satisfies number`.\nOutput:\n{output}"
+    );
+}
+
+// Issue #3540: ES5 async transform must lower tagged template literals
+// with substitutions to a __makeTemplateObject call. The previous
+// fallback re-emitted the raw source text (including the trailing `;`)
+// inside the generator return tuple, producing invalid JavaScript.
+#[test]
+fn test_async_tagged_template_with_substitutions_lowers_to_make_template_object() {
+    let output = transform_and_print("async function f() { return tag`a${1}b`; }");
+
+    assert!(
+        output.contains("__makeTemplateObject([\"a\", \"b\"], [\"a\", \"b\"])"),
+        "Tagged template with substitutions must lower to __makeTemplateObject(...)\
+         with cooked + raw arrays.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tag(__makeTemplateObject"),
+        "Tag must call into __makeTemplateObject(...) wrapper.\nOutput:\n{output}"
+    );
+    // The substitution expression is appended as a trailing argument.
+    assert!(
+        output.contains("[\"a\", \"b\"], [\"a\", \"b\"]), 1)"),
+        "Substitution expressions must follow as call arguments.\nOutput:\n{output}"
+    );
+    // Pre-fix bug: raw source text (with semicolon) leaked into the
+    // generator return tuple. Make sure it does not.
+    assert!(
+        !output.contains("tag`a${1}b`"),
+        "Raw template syntax must not appear in lowered output.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("`;"),
+        "Trailing `;` from source-text fallback must not appear.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_tagged_template_no_substitutions_unchanged() {
+    let output = transform_and_print("async function f() { return tag`hello`; }");
+    assert!(
+        output.contains("__makeTemplateObject([\"hello\"], [\"hello\"])"),
+        "No-substitution tagged template should still lower to __makeTemplateObject.\nOutput:\n{output}"
     );
 }

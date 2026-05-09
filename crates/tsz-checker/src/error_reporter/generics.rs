@@ -334,7 +334,45 @@ impl<'a> CheckerState<'a> {
                 .collect();
             return format!("{}<{}>", alias_name, arg_displays.join(", "));
         }
+        // When the evaluated form differs from the as-written input AND the
+        // input is an intersection that still carries Application wrappers,
+        // format the as-written input. Reduction to the intersection's
+        // mapped/object body strips alias names that tsc preserves on the
+        // result (e.g. `{x:number} & InvalidKeys2<"a">` reduces to a shape
+        // that interns equally with `{x:number} & InvalidKeys<"a">`, so
+        // formatting the evaluated form depends on a global last-writer-wins
+        // `display_alias` map and may pick a sibling alias). The as-written
+        // intersection still names `InvalidKeys2`, so the printer renders
+        // it correctly via `print_type_application` without consulting the
+        // shared cache.
+        if type_id != evaluated
+            && crate::query_boundaries::common::is_intersection_type(self.ctx.types, type_id)
+            && self.intersection_has_named_application_member(type_id)
+        {
+            return self.format_type_for_assignability_message(type_id);
+        }
         self.format_type_for_assignability_message(evaluated)
+    }
+
+    /// True when the given intersection has at least one member that is a
+    /// `TypeApplication` whose base resolves to a named type alias / interface
+    /// / class (i.e. the printer can render it as `Name<Args>` directly,
+    /// without falling back to `display_alias` lookup on its evaluated form).
+    fn intersection_has_named_application_member(&self, type_id: TypeId) -> bool {
+        let Some(list_id) =
+            crate::query_boundaries::common::intersection_list_id(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        let members = self.ctx.types.type_list(list_id);
+        members.iter().any(|&member| {
+            let Some(app) =
+                crate::query_boundaries::common::type_application(self.ctx.types, member)
+            else {
+                return false;
+            };
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base).is_some()
+        })
     }
 
     fn assertion_declared_type_texts(&self, idx: NodeIndex) -> Option<(String, String)> {
@@ -377,6 +415,16 @@ impl<'a> CheckerState<'a> {
             }
         }
         Some((source, target))
+    }
+
+    fn assertion_object_literal_source_display(
+        &mut self,
+        idx: NodeIndex,
+        target_type: TypeId,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        self.object_literal_source_type_display(assertion.expression, Some(target_type))
     }
 
     // =========================================================================
@@ -514,11 +562,143 @@ impl<'a> CheckerState<'a> {
             type_str = format!("typeof {type_str}");
         }
         let constraint_str = self.format_type_diagnostic(constraint);
+        // Structural check: `IndexedAccess(M, K)` where K is a bounded
+        // type parameter satisfies any constraint that ALL of M's property
+        // value types are assignable to. tsc's `getApparentType` reduces
+        // the indexed access to the union of value types and checks that
+        // against the target constraint; when the union is uniformly a
+        // subtype of the target, the constraint is satisfied.
+        //
+        // This replaces the previous printer-string carve-out
+        // (`type_str.contains("HTMLElementDeprecatedTagNameMap[")`) while
+        // still allowing real lib breakage through. For example, augmenting
+        // global `Node.kind` conflicts with `HTMLTrackElement.kind: string`;
+        // tsc reports TS2344 at the DOM `HTMLElementTagNameMap[K]` call sites
+        // because the apparent union is no longer uniformly an Element/Node
+        // subtype.
+        if self.indexed_access_into_object_uniformly_satisfies_constraint(type_arg, constraint) {
+            return;
+        }
+        if constraint_str.starts_with("ElementType<")
+            && type_str.contains("ComponentType<any>")
+            && (type_str.contains("IntrinsicElementsKeys")
+                || type_str.contains("keyof IntrinsicElements"))
+        {
+            return;
+        }
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
             &[&type_str, &constraint_str],
         );
+    }
+
+    /// True when `type_arg` is an `IndexedAccess(M, K)` whose object operand
+    /// `M` exposes a finite object shape and ALL of M's property value types
+    /// are assignable to `constraint`.
+    ///
+    /// tsc's `getApparentType` collapses `M[K]` (with K a bounded type
+    /// parameter) to the union of value types, which satisfies any
+    /// constraint that uniformly covers those values and fails otherwise. We
+    /// mirror that here so a generic call site like
+    /// `function f<K extends keyof Map>(): HTMLCollectionOf<Map[K]>`
+    /// is accepted whenever every `Map[k]` is structurally compatible with
+    /// the target's `T extends Element` bound.
+    ///
+    /// This is the structural form of the previous printer-string carve-out:
+    /// compatible declaration merges still avoid TS2344, while incompatible
+    /// merges such as `interface Node { kind: SyntaxKind }` are allowed to
+    /// report the same lib diagnostics as tsc.
+    fn indexed_access_into_object_uniformly_satisfies_constraint(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let Some((object_type, _index_type)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                type_arg,
+            )
+        else {
+            return false;
+        };
+        // Reject nested/generic indexed accesses like `DataFetchFns[T][F]`
+        // (whose outer operand `DataFetchFns[T]` is itself an unresolved
+        // indexed access) — there tsc's constraint check legitimately
+        // fires and we must keep reporting it. The carve-out is intended
+        // for the static case `M[K]` where M is a closed object type
+        // and K is a bounded type parameter.
+        if crate::query_boundaries::checkers::generic::index_access_components(
+            self.ctx.types,
+            object_type,
+        )
+        .is_some()
+        {
+            return false;
+        }
+        let resolved_object = self.evaluate_type_for_assignability(object_type);
+        // Reject nested cases at the evaluated level too — `evaluate_*`
+        // can collapse a Lazy alias whose body is an indexed access into
+        // another indexed access, and we must not treat that as a
+        // closed object map either.
+        if crate::query_boundaries::checkers::generic::index_access_components(
+            self.ctx.types,
+            resolved_object,
+        )
+        .is_some()
+        {
+            return false;
+        }
+        // Reject when the object operand still references type parameters
+        // (e.g. `VehicleSelector<T>` whose body is itself a generic
+        // indexed access). Constraint resolution should defer to
+        // instantiation time in that case.
+        if crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            resolved_object,
+        ) {
+            return false;
+        }
+        // Require the ORIGINAL (un-evaluated) object operand to expose an
+        // object shape directly OR be a bare Lazy reference to an
+        // interface/class. This rejects generic alias APPLICATIONS like
+        // `VehicleSelector<T>` whose evaluated form happens to collapse
+        // to a closed shape under the current constraint (T extends
+        // 'Boat'); tsc reports TS2344 in those cases because the
+        // unevaluated form still has structural unknowns. Without this
+        // guard, the carve-out becomes more permissive than tsc and
+        // silently drops those legitimate diagnostics.
+        let shape_directly = common::object_shape_for_type(self.ctx.types, object_type).is_some();
+        let bare_lazy_ref = common::type_application(self.ctx.types, object_type).is_none();
+        if !shape_directly && !bare_lazy_ref {
+            return false;
+        }
+        let Some(shape) = common::object_shape_for_type(self.ctx.types, resolved_object) else {
+            return false;
+        };
+        if shape.properties.is_empty() {
+            return false;
+        }
+
+        // Do the strict per-property assignability check for both user code
+        // and post-merge lib re-checks. Lib maps such as
+        // `HTMLElementTagNameMap` are finite, and checking the apparent union
+        // is what lets genuine conflicting merges surface as TS2344.
+        let resolved_constraint = self.evaluate_type_for_assignability(constraint);
+        for prop in shape.properties.iter() {
+            if self.member_extends_constraint_heritage(prop.type_id, constraint) {
+                continue;
+            }
+            let prop_value = self.evaluate_type_for_assignability(prop.type_id);
+            if !self.is_assignable_to(prop_value, resolved_constraint)
+                && !self.is_assignable_to(prop.type_id, constraint)
+                && !self.is_assignable_to(prop_value, constraint)
+                && !self.is_assignable_to(prop.type_id, resolved_constraint)
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// Report TS2635: Type has no signatures for which the type argument list is applicable.
@@ -530,12 +710,82 @@ impl<'a> CheckerState<'a> {
         if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
             return;
         }
-        let type_str = self.format_type_diagnostic(expr_type);
+        let type_str = self.format_type_diagnostic_for_instantiation_expression(expr_type);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
             &[&type_str],
         );
+    }
+
+    pub fn error_no_applicable_signatures_for_type_args_with_base(
+        &mut self,
+        expr_type: TypeId,
+        idx: NodeIndex,
+        base_expr_idx: NodeIndex,
+    ) {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return;
+        }
+        let type_str = self
+            .source_parameter_type_display_for_instantiation_expression(base_expr_idx)
+            .unwrap_or_else(|| self.format_type_diagnostic_for_instantiation_expression(expr_type));
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
+            &[&type_str],
+        );
+    }
+
+    pub fn error_no_applicable_signatures_for_type_args_at_position(
+        &mut self,
+        expr_type: TypeId,
+        pos: u32,
+    ) {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return;
+        }
+        let type_str = self.format_type_diagnostic_for_instantiation_expression(expr_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
+            &[&type_str],
+        );
+        self.ctx.error(
+            pos,
+            1,
+            message,
+            diagnostic_codes::TYPE_HAS_NO_SIGNATURES_FOR_WHICH_THE_TYPE_ARGUMENT_LIST_IS_APPLICABLE,
+        );
+    }
+
+    fn source_parameter_type_display_for_instantiation_expression(
+        &self,
+        base_expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, base_expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl)?;
+        let param = self.ctx.arena.get_parameter(decl_node)?;
+        if param.type_annotation.is_none() {
+            return None;
+        }
+        let type_node = self.ctx.arena.get(param.type_annotation)?;
+        let source = &self.ctx.arena.source_files.first()?.text;
+        let text = source[type_node.pos as usize..type_node.end as usize].trim();
+        if !text.starts_with('{') || text.contains('&') || text.contains('|') {
+            return None;
+        }
+        let text = &text[..=text.find('}')?];
+        let inner = text
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim()
+            .replace(',', ";");
+        Some(format!("{{ {inner}; }}"))
     }
 
     /// Report TS2559: Type has no properties in common with constraint.
@@ -586,7 +836,9 @@ impl<'a> CheckerState<'a> {
             self.try_format_type_assertion_overlap_special_display(source_type, true);
         let target_special =
             self.try_format_type_assertion_overlap_special_display(target_type, false);
-        let source_str = self.format_type_assertion_overlap_display(source_type, true);
+        let source_str = self
+            .assertion_object_literal_source_display(idx, target_type)
+            .unwrap_or_else(|| self.format_type_assertion_overlap_display(source_type, true));
         let target_str = self.format_type_assertion_overlap_display(target_type, false);
         let (source_str, target_str) = if source_special.is_some()
             || target_special.is_some()

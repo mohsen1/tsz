@@ -11,9 +11,10 @@
 
 use super::handlers_code_fixes_utils::{
     class_body_has_member, extract_jsdoc_imported_names, extract_jsdoc_type_identifier_spans,
-    extract_type_identifiers, find_first_implements_class, is_identifier,
-    parse_bare_identifier_expression, parse_identifier_call_expression, parse_interface_properties,
-    parse_named_import_map, positions_overlap, resolve_module_path, should_import_identifier,
+    extract_quoted_text, extract_type_identifiers, find_first_implements_class,
+    find_matching_brace, is_identifier, parse_bare_identifier_expression,
+    parse_identifier_call_expression, parse_interface_properties, parse_named_import_map,
+    positions_overlap, resolve_module_path, should_import_identifier,
 };
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::checker::diagnostics::DiagnosticCategory;
@@ -39,11 +40,6 @@ impl Server {
                     .collect()
             })
             .unwrap_or_default();
-        let request_start_line = request
-            .arguments
-            .get("startLine")
-            .and_then(serde_json::Value::as_u64)
-            .map(|line| line as usize);
         let request_span = request
             .arguments
             .get("startLine")
@@ -141,9 +137,17 @@ impl Server {
                 None
             };
             let add_missing_const_anywhere = Self::apply_add_missing_const_fallback(&content);
-            let mut add_missing_const_candidate = add_missing_const_preview
-                .clone()
-                .or_else(|| add_missing_const_anywhere.clone());
+            // When the client supplies a request span, only honor a fix that
+            // covers the cursor position. Falling back to the file-wide
+            // anywhere search would surface fixes for diagnostics outside
+            // the requested range (issue #3832).
+            let mut add_missing_const_candidate = if request_span.is_some() {
+                add_missing_const_preview.clone()
+            } else {
+                add_missing_const_preview
+                    .clone()
+                    .or_else(|| add_missing_const_anywhere.clone())
+            };
             if has_mixed_declared_binding_assignment {
                 add_missing_const_candidate = None;
             }
@@ -232,7 +236,10 @@ impl Server {
                     reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
                         .then_some(true),
                 };
-            let mut filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
+            // tsc returns no fixes when the request span does not overlap any
+            // diagnostic. Don't fall back to all matching diagnostics in the
+            // file once the span filter is empty (issue #3832).
+            let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .iter()
                 .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
                 .filter(|d| {
@@ -245,13 +252,6 @@ impl Server {
                 })
                 .map(to_lsp_diag)
                 .collect();
-            if filtered_diagnostics.is_empty() && request_span.is_some() {
-                filtered_diagnostics = diagnostics
-                    .iter()
-                    .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
-                    .map(to_lsp_diag)
-                    .collect();
-            }
             let auto_import_file_exclude_patterns =
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
@@ -497,30 +497,10 @@ impl Server {
                 && let Some(prop_name) =
                     Self::find_property_access_name_for_missing_member_fallback(&content)
             {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
-                }
+                response_actions.extend(
+                    self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                );
+            }
 
             if response_actions.is_empty()
                 && error_codes.len() == 1
@@ -797,6 +777,44 @@ impl Server {
                 }));
             }
 
+            // Final fallback for plain unresolved call sites (`foo(1);`).
+            // The import-candidate code path emits an empty
+            // `fixMissingImport` action when no candidate is available; if no
+            // action carries real text changes, fall back to the
+            // missing-function-declaration fix. Keeps real import fixes
+            // (e.g. `useEffect`) untouched. See #3806.
+            if includes_cannot_find_name
+                && response_actions
+                    .iter()
+                    .all(Self::action_has_no_text_changes)
+                && let Some((name, updated_content)) =
+                    Self::apply_add_missing_function_declaration_for_plain_call_at_request(
+                        &content,
+                        &line_map,
+                        request_span,
+                    )
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.retain(|a| {
+                    a.get("fixId").and_then(serde_json::Value::as_str) != Some("fixMissingImport")
+                });
+                response_actions.push(serde_json::json!({
+                    "fixName": "fixMissingFunctionDeclaration",
+                    "description": format!("Add missing function declaration '{name}'"),
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                }));
+            }
+
             if let Some(action) = self.synthetic_implement_interface_codefix(
                 file_path,
                 &content,
@@ -828,43 +846,14 @@ impl Server {
             Self::rewrite_jsdoc_import_fixes(&content, &mut response_actions);
             self.rewrite_commonjs_import_fixes(file_path, &content, &mut response_actions);
             self.rewrite_import_fixes_for_type_order(&content, &mut response_actions);
-            let jsdoc_infer_placeholders_enabled =
-                Self::should_emit_jsdoc_infer_placeholders(file_path);
-            let has_annotate_jsdoc = response_actions.iter().any(|action| {
-                action.get("fixName").and_then(serde_json::Value::as_str)
-                    == Some("annotateWithTypeFromJSDoc")
-            });
-            let has_infer_from_usage = response_actions.iter().any(|action| {
-                action.get("fixId").and_then(serde_json::Value::as_str) == Some("inferFromUsage")
-            });
-            if error_codes.len() == 1
-                && error_codes[0] == 80004
-                && jsdoc_infer_placeholders_enabled
-                && has_annotate_jsdoc
-                && !has_infer_from_usage
-            {
-                let infer_count =
-                    Self::estimate_jsdoc_infer_action_count(&content, request_start_line);
-                if infer_count > 0 {
-                    let infer_labels =
-                        Self::estimate_jsdoc_infer_action_labels(&content, request_start_line);
-                    let mut infer_actions = Vec::with_capacity(infer_count);
-                    for idx in 0..infer_count {
-                        let label = infer_labels
-                            .get(idx)
-                            .cloned()
-                            .unwrap_or_else(|| format!("arg{}", idx + 1));
-                        infer_actions.push(serde_json::json!({
-                            "fixName": "inferFromUsage",
-                            "description": format!("Infer type from usage: {label}"),
-                            "changes": [],
-                            "fixId": "inferFromUsage",
-                            "fixAllDescription": "Infer all types from usage",
-                        }));
-                    }
-                    response_actions.splice(0..0, infer_actions);
-                }
-            }
+            // tsserver does NOT emit `inferFromUsage` placeholder actions for
+            // JSDoc `@type {function(...)}` annotations. tsz used to inject
+            // empty-changes placeholders gated on a hardcoded list of
+            // conformance fixture filenames (issue #3848). The
+            // filename-driven branch was a CLAUDE.md §25 anti-hardcoding
+            // pattern and produced different protocol responses for the
+            // same source text under different file names; deleted in
+            // favor of always matching tsserver.
             if response_actions.iter().any(|action| {
                 action
                     .get("description")
@@ -911,29 +900,9 @@ impl Server {
                     Self::find_property_access_name_for_missing_member_fallback(&content);
 
                 if let Some(prop_name) = prop_name {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
+                    response_actions.extend(
+                        self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                    );
                 }
             }
             normalize_response_actions(&mut response_actions);
@@ -976,29 +945,9 @@ impl Server {
                     Self::find_property_access_name_for_missing_member_fallback(&content);
 
                 if let Some(prop_name) = prop_name {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
+                    response_actions.extend(
+                        self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                    );
                 }
             }
 
@@ -1010,29 +959,9 @@ impl Server {
                     && let Some(prop_name) =
                         Self::find_property_access_name_for_missing_member_fallback(&content)
                 {
-                    response_actions.extend([
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare method '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Declare property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                        serde_json::json!({
-                            "fixName": "addMissingMember",
-                            "description": format!("Add index signature for property '{prop_name}'"),
-                            "changes": [],
-                            "fixId": "fixMissingMember",
-                            "fixAllDescription": "Add all missing members",
-                        }),
-                    ]);
+                    response_actions.extend(
+                        self.missing_member_codefix_actions(file_path, &content, &prop_name),
+                    );
                 }
                 return TsServerResponse {
                     seq,
@@ -1058,6 +987,10 @@ impl Server {
             && let Some(prop_name) =
                 Self::find_property_access_name_for_missing_member_fallback(&content)
         {
+            let actions = self.missing_member_codefix_actions(file_path, &content, &prop_name);
+            if actions.is_empty() {
+                return self.stub_response(seq, request, Some(serde_json::json!([])));
+            }
             return TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),
@@ -1065,29 +998,7 @@ impl Server {
                 request_seq: request.seq,
                 success: true,
                 message: None,
-                body: Some(serde_json::json!([
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Declare method '{prop_name}'"),
-                        "changes": [],
-                        "fixId": "fixMissingMember",
-                        "fixAllDescription": "Add all missing members",
-                    }),
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Declare property '{prop_name}'"),
-                        "changes": [],
-                        "fixId": "fixMissingMember",
-                        "fixAllDescription": "Add all missing members",
-                    }),
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Add index signature for property '{prop_name}'"),
-                        "changes": [],
-                        "fixId": "fixMissingMember",
-                        "fixAllDescription": "Add all missing members",
-                    }),
-                ])),
+                body: Some(serde_json::json!(actions)),
             };
         }
 
@@ -1128,6 +1039,200 @@ impl Server {
         }
 
         None
+    }
+
+    fn missing_member_codefix_actions(
+        &self,
+        file_path: &str,
+        content: &str,
+        prop_name: &str,
+    ) -> Vec<serde_json::Value> {
+        let Some((receiver_name, _)) =
+            Self::find_property_access_for_missing_member_fallback(content, prop_name)
+        else {
+            return Vec::new();
+        };
+        let Some(interface_name) = Self::find_declared_type_for_identifier(content, &receiver_name)
+        else {
+            return Vec::new();
+        };
+        let Some((target_file, target_content, insert_offset)) =
+            self.find_interface_member_insert_target(file_path, content, &interface_name)
+        else {
+            return Vec::new();
+        };
+
+        let line_map = LineMap::build(&target_content);
+        let insert_pos = line_map.offset_to_position(insert_offset as u32, &target_content);
+        let change_for = |new_text: String| {
+            serde_json::json!([{
+                "fileName": target_file,
+                "textChanges": [{
+                    "start": { "line": insert_pos.line + 1, "offset": insert_pos.character + 1 },
+                    "end": { "line": insert_pos.line + 1, "offset": insert_pos.character + 1 },
+                    "newText": new_text
+                }]
+            }])
+        };
+
+        vec![
+            serde_json::json!({
+                "fixName": "addMissingMember",
+                "description": format!("Declare method '{prop_name}'"),
+                "changes": change_for(format!("\n    {prop_name}(): unknown;\n")),
+                "fixId": "fixMissingMember",
+                "fixAllDescription": "Add all missing members",
+            }),
+            serde_json::json!({
+                "fixName": "addMissingMember",
+                "description": format!("Declare property '{prop_name}'"),
+                "changes": change_for(format!("\n    {prop_name}: unknown;\n")),
+                "fixId": "fixMissingMember",
+                "fixAllDescription": "Add all missing members",
+            }),
+            serde_json::json!({
+                "fixName": "addMissingMember",
+                "description": format!("Add index signature for property '{prop_name}'"),
+                "changes": change_for("\n    [x: string]: unknown;\n".to_string()),
+                "fixId": "fixMissingMember",
+                "fixAllDescription": "Add all missing members",
+            }),
+        ]
+    }
+
+    fn find_property_access_for_missing_member_fallback(
+        content: &str,
+        prop_name: &str,
+    ) -> Option<(String, String)> {
+        for line in content.lines() {
+            if line.trim_start().starts_with("import ") {
+                continue;
+            }
+
+            let needle = format!(".{prop_name}");
+            let Some(dot_idx) = line.find(&needle) else {
+                continue;
+            };
+            let suffix = &line[dot_idx + needle.len()..];
+            if suffix
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            {
+                continue;
+            }
+
+            let prefix = &line[..dot_idx];
+            let receiver_end = prefix.len();
+            let receiver_start = prefix
+                .char_indices()
+                .rev()
+                .find_map(|(idx, ch)| {
+                    (!matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '$'))
+                        .then_some(idx + ch.len_utf8())
+                })
+                .unwrap_or(0);
+            let receiver_name = prefix[receiver_start..receiver_end].trim();
+            if is_identifier(receiver_name) {
+                return Some((receiver_name.to_string(), prop_name.to_string()));
+            }
+        }
+
+        None
+    }
+
+    fn find_declared_type_for_identifier(content: &str, ident: &str) -> Option<String> {
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            let Some(declaration_start) = [
+                "declare const ",
+                "declare let ",
+                "declare var ",
+                "const ",
+                "let ",
+                "var ",
+            ]
+            .iter()
+            .find_map(|prefix| trimmed.strip_prefix(prefix)) else {
+                continue;
+            };
+            let Some(rest) = declaration_start.strip_prefix(ident) else {
+                continue;
+            };
+            if rest
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            {
+                continue;
+            }
+            let Some(after_colon) = rest.trim_start().strip_prefix(':') else {
+                continue;
+            };
+            let after_colon = after_colon.trim_start();
+            let type_name: String = after_colon
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                .collect();
+            if is_identifier(&type_name) {
+                return Some(type_name);
+            }
+        }
+
+        None
+    }
+
+    fn find_interface_member_insert_target(
+        &self,
+        file_path: &str,
+        content: &str,
+        interface_name: &str,
+    ) -> Option<(String, String, usize)> {
+        let mut candidates = Vec::new();
+        candidates.push(file_path.to_string());
+
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with("import ") {
+                continue;
+            }
+            let Some(specifier) = extract_quoted_text(trimmed) else {
+                continue;
+            };
+            if let Some(resolved) = resolve_module_path(file_path, specifier, &self.open_files) {
+                candidates.push(resolved);
+            }
+        }
+
+        candidates.extend(self.open_files.keys().cloned());
+        candidates.sort();
+        candidates.dedup();
+
+        for candidate in candidates {
+            let Some(candidate_content) = self
+                .open_files
+                .get(&candidate)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(&candidate).ok())
+            else {
+                continue;
+            };
+            if let Some(insert_offset) =
+                Self::find_interface_member_insert_offset(&candidate_content, interface_name)
+            {
+                return Some((candidate, candidate_content, insert_offset));
+            }
+        }
+
+        None
+    }
+
+    fn find_interface_member_insert_offset(content: &str, interface_name: &str) -> Option<usize> {
+        let interface_token = format!("interface {interface_name}");
+        let interface_pos = content.find(&interface_token)?;
+        let open_brace_rel = content[interface_pos..].find('{')?;
+        let open_brace = interface_pos + open_brace_rel;
+        find_matching_brace(content, open_brace)
     }
 
     fn find_first_binding_identifier(text: &str) -> Option<(usize, usize, String)> {
@@ -1460,6 +1565,113 @@ impl Server {
             "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
         ));
         Some((name, updated))
+    }
+
+    /// True iff every `changes[].textChanges` array in the action is empty
+    /// (or absent). Used to detect placeholder import actions like
+    /// `Add all missing imports` with no real candidates.
+    fn action_has_no_text_changes(action: &serde_json::Value) -> bool {
+        let Some(changes) = action.get("changes").and_then(serde_json::Value::as_array) else {
+            return true;
+        };
+        changes.iter().all(|change| {
+            change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(|tc| tc.is_empty())
+        })
+    }
+
+    /// Match a plain function call `name(...)` at the request span and produce
+    /// a `fixMissingFunctionDeclaration` candidate, mirroring tsserver's
+    /// behavior for unresolved call expressions outside destructuring contexts.
+    /// Returns `(name, updated_content)` or `None` when the call site doesn't
+    /// look like an unresolved function call.
+    ///
+    /// Regression for <https://github.com/mohsen1/tsz/issues/3806> — without this
+    /// path, the empty `fixMissingImport` action stays in `response_actions`
+    /// and the missing-function fallback never fires.
+    fn apply_add_missing_function_declaration_for_plain_call_at_request(
+        content: &str,
+        line_map: &LineMap,
+        request_span: Option<(tsz::lsp::position::Position, tsz::lsp::position::Position)>,
+    ) -> Option<(String, String)> {
+        let (start, _) = request_span?;
+        let start_off = line_map.position_to_offset(start, content)? as usize;
+        if start_off >= content.len() {
+            return None;
+        }
+        let bytes = content.as_bytes();
+
+        // Identify the identifier surrounding/at start_off.
+        let mut ident_start = start_off;
+        while ident_start > 0 {
+            let c = bytes[ident_start - 1] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_start -= 1;
+            } else {
+                break;
+            }
+        }
+        let mut ident_end = start_off;
+        while ident_end < bytes.len() {
+            let c = bytes[ident_end] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
+                ident_end += 1;
+            } else {
+                break;
+            }
+        }
+        if ident_start >= ident_end {
+            return None;
+        }
+        let first = bytes[ident_start] as char;
+        if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+            return None;
+        }
+
+        let name = content.get(ident_start..ident_end)?.to_string();
+
+        // Keep this text fallback narrowly scoped. Fourslash has existing
+        // incomplete-call cases inside generic functions where tsserver infers
+        // type parameters from the call arguments; a simple text fallback would
+        // mask those richer fixes.
+        if !Self::is_top_level_offset(content, ident_start) {
+            return None;
+        }
+
+        // Must be immediately followed (after whitespace) by `(`.
+        let mut after = ident_end;
+        while after < bytes.len() && (bytes[after] as char).is_ascii_whitespace() {
+            after += 1;
+        }
+        if after >= bytes.len() || bytes[after] as char != '(' {
+            return None;
+        }
+
+        // Don't offer the fix if a `function <name>(` already exists somewhere in the file.
+        if content.contains(&format!("function {name}(")) {
+            return None;
+        }
+
+        let mut updated = content.trim_end_matches('\n').to_string();
+        updated.push_str("\n\n");
+        updated.push_str(&format!(
+            "function {name}() {{\n    throw new Error(\"Function not implemented.\");\n}}\n"
+        ));
+        Some((name, updated))
+    }
+
+    fn is_top_level_offset(content: &str, offset: usize) -> bool {
+        let mut depth = 0usize;
+        for ch in content[..offset.min(content.len())].chars() {
+            match ch {
+                '{' => depth = depth.saturating_add(1),
+                '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        depth == 0
     }
 
     fn apply_add_missing_function_declaration_fallback_anywhere(
@@ -3007,7 +3219,7 @@ impl Server {
             .unwrap_or_default();
         let has_missing_member = interface_properties
             .iter()
-            .any(|(name, _)| !class_body_has_member(class_body, name));
+            .any(|m| !class_body_has_member(class_body, m.name()));
         if !has_missing_member {
             return Vec::new();
         }
@@ -3256,21 +3468,21 @@ impl Server {
         }
 
         let class_body = content.get(class_open_brace + 1..class_close_brace)?;
-        let mut missing_properties = Vec::new();
-        for (name, ty) in interface_properties {
-            if !class_body_has_member(class_body, &name) {
-                missing_properties.push((name, ty));
+        let mut missing_members = Vec::new();
+        for member in interface_properties {
+            if !class_body_has_member(class_body, member.name()) {
+                missing_members.push(member);
             }
         }
-        if missing_properties.is_empty() {
+        if missing_members.is_empty() {
             return None;
         }
 
         let interface_imports = parse_named_import_map(&interface_content);
         let mut needed_imports: std::collections::BTreeSet<String> =
             std::collections::BTreeSet::new();
-        for (_, ty) in &missing_properties {
-            for ident in extract_type_identifiers(ty) {
+        for member in &missing_members {
+            for ident in extract_type_identifiers(member.referenced_types()) {
                 if should_import_identifier(&ident) && !class_imports.contains_key(&ident) {
                     needed_imports.insert(ident);
                 }
@@ -3302,9 +3514,9 @@ impl Server {
             }
         }
 
-        let members_text = missing_properties
+        let members_text = missing_members
             .iter()
-            .map(|(name, ty)| format!("    {name}: {ty};"))
+            .map(|m| format!("    {}", m.render()))
             .collect::<Vec<_>>()
             .join("\n");
         let updated_body = if class_body.trim().is_empty() {
@@ -3676,70 +3888,6 @@ impl Server {
         }
 
         self.stub_response(seq, request, Some(serde_json::json!({"changes": []})))
-    }
-
-    fn estimate_jsdoc_infer_action_labels(
-        content: &str,
-        start_line_one_based: Option<usize>,
-    ) -> Vec<String> {
-        let lines: Vec<&str> = content.lines().collect();
-        if lines.is_empty() {
-            return Vec::new();
-        }
-
-        let mut line_idx = start_line_one_based
-            .unwrap_or(1)
-            .saturating_sub(1)
-            .min(lines.len().saturating_sub(1));
-        while line_idx > 0 && !lines[line_idx].contains("/**") {
-            line_idx -= 1;
-        }
-        if !lines[line_idx].contains("/**") {
-            return Vec::new();
-        }
-
-        let mut block_end = line_idx;
-        while block_end < lines.len() && !lines[block_end].contains("*/") {
-            block_end += 1;
-        }
-        if block_end >= lines.len() {
-            return Vec::new();
-        }
-
-        let target_line = lines
-            .iter()
-            .enumerate()
-            .skip(block_end + 1)
-            .find_map(|(idx, line)| (!line.trim().is_empty()).then_some((idx, *line)));
-        let Some((_, target)) = target_line else {
-            return Vec::new();
-        };
-
-        let Some(open) = target.find('(') else {
-            return Vec::new();
-        };
-        let Some(close) = target.rfind(')') else {
-            return Vec::new();
-        };
-        if close <= open {
-            return Vec::new();
-        }
-
-        target[open + 1..close]
-            .split(',')
-            .filter_map(|segment| {
-                let trimmed = segment.trim();
-                if trimmed.is_empty() || trimmed.contains(':') {
-                    return None;
-                }
-                let label = trimmed.trim_start_matches("...").trim();
-                let label = label
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
-                    .collect::<String>();
-                (!label.is_empty()).then_some(label)
-            })
-            .collect()
     }
 }
 

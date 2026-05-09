@@ -30,6 +30,32 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|access| access.expression == idx)
     }
 
+    fn should_preserve_declared_generic_index_access_for_fresh_flow(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        declared_type: TypeId,
+        flow_type: TypeId,
+    ) -> bool {
+        if !self.symbol_value_decl_has_explicit_type_annotation(sym_id) {
+            return false;
+        }
+
+        let Some((_, index_type)) = common_query::index_access_parts(self.ctx.types, declared_type)
+        else {
+            return false;
+        };
+
+        let has_type_parameter_key =
+            common_query::is_type_parameter_like(self.ctx.types, index_type)
+                || common_query::is_type_parameter_like(
+                    self.ctx.types,
+                    self.resolve_lazy_type(index_type),
+                );
+        has_type_parameter_key
+            && (flow_type == TypeId::ANY
+                || common_query::is_fresh_object_type(self.ctx.types, flow_type))
+    }
+
     fn import_equals_alias_value_type(&mut self, sym_id: tsz_binder::SymbolId) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if !symbol.has_any_flags(symbol_flags::ALIAS) {
@@ -54,11 +80,39 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let import = self.ctx.arena.get_import_decl(decl_node)?;
-        if self
-            .get_require_module_specifier(import.module_specifier)
-            .is_some()
-        {
-            return None;
+        if let Some(module_specifier) = self.get_require_module_specifier(import.module_specifier) {
+            if let Some(exports) = self
+                .resolve_effective_module_exports_from_file(
+                    &module_specifier,
+                    Some(self.ctx.current_file_idx),
+                )
+                .or_else(|| self.resolve_effective_module_exports(&module_specifier))
+                && let Some(export_equals_sym) = exports.get("export=")
+            {
+                let mut candidates = Vec::new();
+
+                if let Some(export_equals_symbol) = self.get_cross_file_symbol(export_equals_sym)
+                    && export_equals_symbol.has_any_flags(symbol_flags::ALIAS)
+                {
+                    let mut visited = AliasCycleTracker::new();
+                    if let Some(resolved) =
+                        self.resolve_alias_symbol(export_equals_sym, &mut visited)
+                    {
+                        candidates.push(resolved);
+                    }
+                }
+                candidates.push(export_equals_sym);
+
+                for candidate in candidates {
+                    let ty = self.get_type_of_symbol(candidate);
+                    if ty != TypeId::UNKNOWN && ty != TypeId::ERROR {
+                        return Some(ty);
+                    }
+                }
+            }
+
+            return self
+                .commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx));
         }
 
         let target_sym = self.resolve_qualified_symbol(import.module_specifier)?;
@@ -311,6 +365,21 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
+            // TS2522: 'arguments' cannot be referenced in an async function or
+            // method in ES5. Arrow functions are transparent for `arguments`,
+            // so this checks the nearest non-arrow function boundary.
+            if !has_local_shadow
+                && self.ctx.compiler_options.target.is_es5()
+                && self.is_arguments_in_async_function_or_method(idx)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
+                    diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
+                );
+            }
+
             // If not shadowed by a local variable, resolve to the built-in IArguments type.
             // This handles both regular functions and arrow functions (which are transparent
             // for `arguments` — they capture from the enclosing regular function).
@@ -535,6 +604,27 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.alias_resolves_to_type_only(sym_id) {
+                let augmentation_lookup = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|symbol| {
+                        symbol.import_module.as_ref().map(|module_spec| {
+                            (
+                                module_spec.clone(),
+                                symbol
+                                    .import_name
+                                    .clone()
+                                    .unwrap_or_else(|| name.to_string()),
+                            )
+                        })
+                    });
+                if let Some((module_spec, import_name)) = augmentation_lookup
+                    && let Some(value_type) =
+                        self.module_augmentation_value_type(&module_spec, &import_name)
+                {
+                    return self.instantiate_callable_result_from_request(idx, value_type, request);
+                }
+
                 // Duplicate import-equals aliases may merge type-only and value targets
                 // under one symbol. If a value import binding with the same local name
                 // exists in the current source/module block, don't treat this as type-only.
@@ -746,6 +836,22 @@ impl<'a> CheckerState<'a> {
                 && let Some(value_type) = self.import_equals_alias_value_type(sym_id)
             {
                 return self.check_flow_usage(idx, value_type, sym_id);
+            }
+            if (flags & tsz_binder::symbol_flags::ALIAS) != 0
+                && !self.is_identifier_in_type_position(idx)
+                && let Some(module_name) = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|symbol| {
+                        (symbol.import_name.as_deref() == Some("default"))
+                            .then(|| symbol.import_module.clone())
+                            .flatten()
+                    })
+                    .or_else(|| self.source_file_default_import_module_named(idx, name))
+                && let Some(module_type) =
+                    self.node_esm_cjs_default_import_namespace_type(&module_name)
+            {
+                return self.check_flow_usage(idx, module_type, sym_id);
             }
 
             // Check for type-only symbols used as values
@@ -1043,7 +1149,10 @@ impl<'a> CheckerState<'a> {
                         }
                         let target = self.get_symbol_globally(target_sym_id)?;
                         let tflags = target.flags;
-                        if (tflags & tsz_binder::symbol_flags::INTERFACE) != 0
+                        if (tflags
+                            & (tsz_binder::symbol_flags::INTERFACE
+                                | tsz_binder::symbol_flags::TYPE_ALIAS))
+                            != 0
                             && (tflags & tsz_binder::symbol_flags::VALUE) != 0
                             && target.value_declaration.is_some()
                         {
@@ -1623,6 +1732,12 @@ impl<'a> CheckerState<'a> {
                     // `any` through control flow. Preserve that evolved type instead of
                     // collapsing back to the declared `any`.
                     flow_type
+                } else if self.should_preserve_declared_generic_index_access_for_fresh_flow(
+                    sym_id,
+                    declared_type,
+                    flow_type,
+                ) {
+                    declared_type
                 } else if flow_type != declared_type && flow_type != TypeId::ERROR {
                     // Flow narrowed the type - but check if this is just the initializer
                     // literal being returned. For mutable variables without annotations,

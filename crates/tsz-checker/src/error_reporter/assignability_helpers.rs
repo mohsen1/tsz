@@ -272,6 +272,44 @@ impl<'a> CheckerState<'a> {
             ));
     }
 
+    pub(crate) fn error_type_not_assignable_at_with_widened_source_display(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        let (start, length) = self
+            .resolve_diagnostic_anchor(
+                anchor_idx,
+                super::fingerprint_policy::DiagnosticAnchorKind::Exact,
+            )
+            .map(|anchor| (anchor.start, anchor.length))
+            .unwrap_or_else(|| {
+                let (pos, end) = self.get_node_span(anchor_idx).unwrap_or((0, 0));
+                self.normalized_anchor_span(anchor_idx, pos, end.saturating_sub(pos))
+            });
+        let source_str = self.format_type_diagnostic_widened(source_for_display);
+        let target_str = self.format_type_for_diagnostic_role(
+            target_for_display,
+            DiagnosticTypeDisplayRole::AssignmentTarget {
+                source: source_for_display,
+                anchor_idx,
+            },
+        );
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        self.ctx
+            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            ));
+    }
+
     /// Report a type not assignable error using a pre-computed failure reason.
     /// This renders the failure reason with the provided display types and pushes the diagnostic.
     pub(crate) fn error_type_not_assignable_with_reason_and_display(
@@ -618,7 +656,7 @@ impl<'a> CheckerState<'a> {
         let find_member = |props: &[tsz_solver::PropertyInfo]| {
             props.iter().find_map(|prop| {
                 let prop_name = self.ctx.types.resolve_atom(prop.name);
-                if prop_name.starts_with("__private_brand_")
+                if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name)
                     || required_property_name.is_some_and(|required| prop.name != required)
                     || prop.visibility == tsz_solver::Visibility::Public
                 {
@@ -940,5 +978,42 @@ impl<'a> CheckerState<'a> {
         });
 
         ordered.into_iter().map(|(_, name)| name).collect()
+    }
+
+    pub(crate) fn try_report_concrete_remapped_mapped_missing_property(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        let resolved = self.resolve_lazy_type(source);
+        if !crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
+            self.ctx.types,
+            resolved,
+        ) {
+            return false;
+        }
+        let evaluated = self.evaluate_concrete_remapped_mapped_type_with_resolution(resolved);
+        if evaluated == resolved || self.is_assignable_to(evaluated, target) {
+            return false;
+        }
+        let before = self.ctx.diagnostics.len();
+        let original = self.format_type_for_assignability_message(resolved);
+        let replacement_type = self.format_type_for_assignability_message(evaluated);
+        self.error_type_not_assignable_with_reason_at(evaluated, target, diag_idx);
+        if let Some(diag) = self.ctx.diagnostics.get_mut(before)
+            && diag.code
+                == crate::diagnostics::diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        {
+            let replacement = format!("in type '{replacement_type}' but required");
+            if diag.message_text.contains(&original) {
+                diag.message_text = diag.message_text.replace(&original, &replacement_type);
+            } else if let Some((prefix, rest)) = diag.message_text.split_once("in type '")
+                && let Some((_, suffix)) = rest.split_once("' but required")
+            {
+                diag.message_text = format!("{prefix}{replacement}{suffix}");
+            }
+        }
+        true
     }
 }

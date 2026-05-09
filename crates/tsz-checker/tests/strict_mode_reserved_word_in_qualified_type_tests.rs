@@ -13,37 +13,16 @@
 //! `private`, `protected`, `package`, `interface`, `implements`,
 //! `static`, `let`, `yield` triggers it.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_checker::context::CheckerOptions;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
 fn checker_diag_codes(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let opts = CheckerOptions::default();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        opts,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    tsz_checker::test_utils::check_source_codes(source)
 }
 
 const TS1212: u32 = 1212;
 const TS1213: u32 = 1213;
 const TS1214: u32 = 1214;
+const TS2300: u32 = 2300;
 const TS2503: u32 = 2503;
+const TS2507: u32 = 2507;
 
 #[test]
 fn public_at_head_of_qualified_type_emits_strict_mode_error() {
@@ -109,5 +88,36 @@ fn class_context_uses_class_specific_message() {
     assert!(
         codes.contains(&TS1213),
         "expected TS1213 (class-specific reserved-word message) inside class body, got: {codes:?}"
+    );
+}
+
+#[test]
+fn recovered_strict_reserved_declarations_keep_duplicate_and_heritage_errors() {
+    let src = r#"
+function foo() {
+    "use strict";
+    var public = 10;
+    var package = "hello";
+    function package() { }
+    var myClass = class package extends public {}
+    var b: public.bar;
+    let b: interface.package.implements.B;
+}
+"#;
+    let codes = checker_diag_codes(src);
+    let ts1213 = codes.iter().filter(|&&code| code == TS1213).count();
+    let ts2300 = codes.iter().filter(|&&code| code == TS2300).count();
+
+    assert!(
+        ts1213 >= 2,
+        "expected TS1213 for both `class package` and `extends public`, got: {codes:?}"
+    );
+    assert!(
+        ts2300 >= 4,
+        "expected TS2300 for both `package` declarations and both `b` declarations, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&TS2507),
+        "expected TS2507 when `extends public` resolves to the local number variable, got: {codes:?}"
     );
 }

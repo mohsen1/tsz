@@ -297,9 +297,21 @@ impl<'a> CheckerState<'a> {
             }
             other => return other,
         };
-        left_sym = self
-            .resolve_alias_symbol(left_sym, visited_aliases)
-            .unwrap_or(left_sym);
+        let lib_binders = self.get_lib_binders();
+        let unresolved_left_sym = left_sym;
+        let left_sym_has_local_namespace_conflict = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(left_sym, &lib_binders)
+            .is_some_and(|symbol| {
+                self.ctx
+                    .namespace_import_alias_has_local_namespace_conflict(symbol)
+            });
+        if !left_sym_has_local_namespace_conflict {
+            left_sym = self
+                .resolve_alias_symbol(left_sym, visited_aliases)
+                .unwrap_or(left_sym);
+        }
 
         // When the left side of a qualified name resolves to a type parameter,
         // it cannot serve as a namespace (no exports). In tsc, type parameters
@@ -307,7 +319,6 @@ impl<'a> CheckerState<'a> {
         // `E.Whatever` — the import `* as E` takes precedence.
         // Fall back to file_locals lookup which bypasses the scope chain
         // (where the type parameter lives) and finds file-level imports directly.
-        let lib_binders = self.get_lib_binders();
         if self
             .ctx
             .binder
@@ -353,7 +364,7 @@ impl<'a> CheckerState<'a> {
         // Look up the symbol across binders (file + libs).
         // After alias resolution, left_sym may point to a symbol in a different
         // file's binder. Use get_cross_file_symbol to avoid SymbolId collisions.
-        let original_left_sym = left_sym;
+        let original_left_sym = unresolved_left_sym;
         let Some(left_symbol) = self
             .get_cross_file_symbol(left_sym)
             .or_else(|| self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders))
@@ -383,6 +394,27 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(original_left_sym, &lib_binders);
+        let unresolved_left_has_local_namespace_conflict =
+            unresolved_left_symbol.as_ref().is_some_and(|symbol| {
+                self.ctx
+                    .namespace_import_alias_has_local_namespace_conflict(symbol)
+            });
+        let left_name_has_import_conflict = self
+            .ctx
+            .arena
+            .get(qn.left)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .is_some_and(|ident| {
+                self.ctx
+                    .import_conflict_names
+                    .contains(ident.escaped_text.as_str())
+            })
+            && left_symbol.has_any_flags(symbol_flags::MODULE);
+        let left_has_local_namespace_conflict = self
+            .ctx
+            .namespace_import_alias_has_local_namespace_conflict(left_symbol)
+            || unresolved_left_has_local_namespace_conflict
+            || left_name_has_import_conflict;
         let module_specifier = unresolved_left_symbol
             .and_then(|symbol| symbol.import_module.clone())
             .or_else(|| left_symbol.import_module.clone())
@@ -398,7 +430,9 @@ impl<'a> CheckerState<'a> {
                     })
             });
 
-        if let Some(module_specifier) = module_specifier.as_deref() {
+        if !left_has_local_namespace_conflict
+            && let Some(module_specifier) = module_specifier.as_deref()
+        {
             if left_symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
@@ -422,8 +456,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(reexported_sym) =
-            self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
+        if !left_has_local_namespace_conflict
+            && let Some(reexported_sym) = self.resolve_member_from_import_equals_alias(
+                original_left_sym,
+                right_name,
+                visited_aliases,
+            )
         {
             let reexported_sym =
                 self.propagate_cross_file_member_target(left_sym, reexported_sym, right_name);
@@ -443,7 +481,8 @@ impl<'a> CheckerState<'a> {
                 .get_symbol_with_libs(original_left_sym, &lib_binders)
                 .and_then(|symbol| symbol.import_module.clone())
         });
-        if let Some(ref module_specifier) = augmentation_module_specifier
+        if !left_has_local_namespace_conflict
+            && let Some(ref module_specifier) = augmentation_module_specifier
             && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
                 module_specifier,
                 right_name,
@@ -606,12 +645,12 @@ impl<'a> CheckerState<'a> {
         namespace_name: &str,
         member_name: &str,
     ) -> Option<SymbolId> {
-        let cache_key = (namespace_name.to_string(), member_name.to_string());
         if let Some(cached) = self
             .ctx
             .namespace_member_resolution_cache
             .borrow()
-            .get(&cache_key)
+            .get(namespace_name)
+            .and_then(|members| members.get(member_name))
             .copied()
         {
             return cached;
@@ -667,31 +706,69 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For nested namespaces (e.g., `Utils` inside `A`): search parent
-        // namespace exports in each binder for the target namespace name.
-        // This part still scans all_binders since the nested namespace name
-        // isn't a file_locals key -- it's an export of a parent namespace.
-        for (file_idx, binder) in all_binders.iter().enumerate() {
-            for (_, &parent_sym_id) in binder.file_locals.iter() {
-                let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
-                    continue;
-                };
-                if !parent_sym
-                    .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                {
-                    continue;
+        let nested_candidates = if let Some(cached) = self
+            .ctx
+            .nested_namespace_candidates_cache
+            .borrow()
+            .get(namespace_name)
+            .cloned()
+        {
+            cached
+        } else if self.ctx.nested_namespace_candidates_cache_complete.get() {
+            Vec::new()
+        } else {
+            // For nested namespaces (e.g., `Utils` inside `A`): search parent
+            // namespace exports in each binder once and index every nested
+            // namespace name. This avoids rescanning every binder for each
+            // different missing namespace root.
+            let mut candidates_by_name: rustc_hash::FxHashMap<String, Vec<(usize, SymbolId)>> =
+                rustc_hash::FxHashMap::default();
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                for (_, &parent_sym_id) in binder.file_locals.iter() {
+                    let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
+                        continue;
+                    };
+                    if !parent_sym
+                        .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                    {
+                        continue;
+                    }
+                    if let Some(parent_exports) = parent_sym.exports.as_ref() {
+                        for (nested_name, &nested_ns_id) in parent_exports.iter() {
+                            if let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
+                                && nested_ns.flags
+                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                                    != 0
+                            {
+                                candidates_by_name
+                                    .entry(nested_name.clone())
+                                    .or_default()
+                                    .push((file_idx, nested_ns_id));
+                            }
+                        }
+                    }
                 }
-                if let Some(parent_exports) = parent_sym.exports.as_ref()
-                    && let Some(nested_ns_id) = parent_exports.get(namespace_name)
-                    && let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
-                    && nested_ns.flags
-                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                        != 0
-                    && let Some(nested_exports) = nested_ns.exports.as_ref()
-                    && let Some(member_id) = nested_exports.get(member_name)
-                {
-                    consider_member(member_id, file_idx);
-                }
+            }
+            let candidates = candidates_by_name
+                .get(namespace_name)
+                .cloned()
+                .unwrap_or_default();
+            self.ctx
+                .nested_namespace_candidates_cache
+                .borrow_mut()
+                .extend(candidates_by_name);
+            self.ctx
+                .nested_namespace_candidates_cache_complete
+                .set(true);
+            candidates
+        };
+
+        for (file_idx, nested_ns_id) in nested_candidates {
+            if let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
+                && let Some(nested_exports) = nested_ns.exports.as_ref()
+                && let Some(member_id) = nested_exports.get(member_name)
+            {
+                consider_member(member_id, file_idx);
             }
         }
 
@@ -699,14 +776,18 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_member_resolution_cache
                 .borrow_mut()
-                .insert(cache_key, None);
+                .entry(namespace_name.to_string())
+                .or_default()
+                .insert(member_name.to_string(), None);
             return None;
         };
         self.record_cross_file_member(member_id, member_name, file_idx);
         self.ctx
             .namespace_member_resolution_cache
             .borrow_mut()
-            .insert(cache_key, Some(member_id));
+            .entry(namespace_name.to_string())
+            .or_default()
+            .insert(member_name.to_string(), Some(member_id));
         Some(member_id)
     }
 

@@ -6,9 +6,9 @@ use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::{CallSignature, CallableShape};
+use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -94,21 +94,16 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::METHOD_DECLARATION
                             | syntax_kind_ext::METHOD_SIGNATURE
                             | syntax_kind_ext::CALL_SIGNATURE
+                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
                             | syntax_kind_ext::ARROW_FUNCTION
                             | syntax_kind_ext::FUNCTION_TYPE
                     )
                 });
-                // Skip TS1228 for error-recovery positions — tsc handles these
-                // with different errors at the parser/grammar level and does NOT
-                // emit TS1228 for constructors, construct signatures, or constructor types.
-                let is_error_recovery_position = parent_kind.is_some_and(|kind| {
-                    matches!(
-                        kind,
-                        syntax_kind_ext::CONSTRUCTOR
-                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
-                            | syntax_kind_ext::CONSTRUCTOR_TYPE
-                    )
-                });
+                // Skip TS1228 for constructor declarations that tsc covers
+                // through grammar recovery. Construct signatures and constructor
+                // type nodes (`new (...) => asserts x`) still get TS1228.
+                let is_error_recovery_position =
+                    parent_kind.is_some_and(|kind| matches!(kind, syntax_kind_ext::CONSTRUCTOR));
                 // Skip TS1228 for getters/setters with invalid parameters — tsc
                 // only emits TS1228 for valid accessor signatures (e.g. getters with
                 // 0 params). When the accessor has parameter errors, those parser
@@ -625,6 +620,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: Some(sym_id),
                 declaration_order: properties.len() as u32,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
             changed = true;
@@ -643,23 +639,119 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(crate) fn get_global_this_type(&mut self, error_node: NodeIndex) -> TypeId {
+        let mut names: FxHashSet<String> = FxHashSet::default();
+
+        for (name, _) in self.ctx.binder.file_locals.iter() {
+            names.insert(name.clone());
+        }
+
+        if self.ctx.binder.lib_symbols_are_merged() {
+            for &sym_id in self.ctx.binder.lib_symbol_ids.iter() {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    names.insert(symbol.escaped_name.clone());
+                }
+            }
+        } else {
+            for lib_binder in self.get_lib_binders().iter() {
+                for (name, _) in lib_binder.file_locals.iter() {
+                    names.insert(name.clone());
+                }
+            }
+        }
+
+        names.insert("globalThis".to_string());
+
+        let mut properties = Vec::new();
+        for name in names {
+            if !self.is_global_this_surface_candidate(&name) {
+                continue;
+            }
+
+            let type_id = self.resolve_global_this_property_type(
+                &name,
+                error_node,
+                true,
+                "typeof globalThis",
+            );
+            if type_id == TypeId::ERROR {
+                continue;
+            }
+
+            let prop_name = self.ctx.types.intern_string(&name);
+            let mut prop = PropertyInfo::new(prop_name, type_id);
+            prop.write_type = type_id;
+            prop.readonly = name == "globalThis";
+            prop.parent_id = self.resolve_global_value_symbol(&name);
+            prop.declaration_order = properties.len() as u32;
+            properties.push(prop);
+        }
+
+        self.ctx.types.factory().object_with_index(ObjectShape {
+            properties,
+            ..ObjectShape::default()
+        })
+    }
+
+    fn is_global_this_surface_candidate(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+
+        if name == "globalThis" {
+            return true;
+        }
+
+        let Some(sym_id) = self.resolve_global_value_symbol(name) else {
+            return false;
+        };
+
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if !symbol.has_any_flags(symbol_flags::VALUE) {
+                return false;
+            }
+
+            if symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                && !symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE)
+            {
+                return self.resolve_lib_global_var_symbol(name).is_some();
+            }
+
+            return self.symbol_has_globalable_declaration(sym_id, symbol, None);
+        }
+
+        self.resolve_lib_global_var_symbol(name).is_some()
+    }
+
     pub(crate) fn collect_expando_properties_for_root(&self, root_name: &str) -> FxHashSet<String> {
         let mut expando_props: FxHashSet<String> = FxHashSet::default();
 
         if let Some(props) = self.ctx.binder.expando_properties.get(root_name) {
-            expando_props.extend(props.iter().cloned());
+            expando_props.extend(
+                props
+                    .iter()
+                    .map(|prop| self.canonical_expando_property_name(prop)),
+            );
         }
 
         // Use the pre-built global expando index (O(1) lookup) when available,
         // falling back to O(N) all_binders scan only if the index wasn't built.
         if let Some(expando_idx) = &self.ctx.global_expando_index {
             if let Some(props) = expando_idx.get(root_name) {
-                expando_props.extend(props.iter().cloned());
+                expando_props.extend(
+                    props
+                        .iter()
+                        .map(|prop| self.canonical_expando_property_name(prop)),
+                );
             }
         } else if let Some(all_binders) = &self.ctx.all_binders {
             for binder in all_binders.iter() {
                 if let Some(props) = binder.expando_properties.get(root_name) {
-                    expando_props.extend(props.iter().cloned());
+                    expando_props.extend(
+                        props
+                            .iter()
+                            .map(|prop| self.canonical_expando_property_name(prop)),
+                    );
                 }
             }
         }
@@ -751,6 +843,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: Some(sym_id),
                 declaration_order: property_count as u32,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
             property_count += 1;
@@ -853,6 +946,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
+            if name == "window" && base_type == TypeId::ANY {
+                return TypeId::UNKNOWN;
+            }
             return self.augment_js_global_value_type_with_expandos(name, sym_id, base_type);
         }
 

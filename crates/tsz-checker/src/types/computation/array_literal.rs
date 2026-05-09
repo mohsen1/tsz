@@ -13,6 +13,48 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn mutable_spread_declared_type_in_const_assertion(
+        &mut self,
+        expression: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.ctx.in_const_assertion {
+            return None;
+        }
+        let expression = self.ctx.arena.skip_parenthesized(expression);
+        let node = self.ctx.arena.get(expression)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expression)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.ctx.arena.get(decl_idx)?;
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.ctx.arena.is_const_variable_declaration(decl_idx) {
+                return None;
+            }
+            if var_decl.type_annotation.is_some() {
+                return None;
+            }
+            let init_idx = self.ctx.arena.skip_parenthesized(var_decl.initializer);
+            let init_node = self.ctx.arena.get(init_idx)?;
+            if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                return None;
+            }
+            let prev_in_const_assertion = self.ctx.in_const_assertion;
+            self.ctx.in_const_assertion = false;
+            let declared_type = self.get_type_of_variable_declaration(decl_idx);
+            self.ctx.in_const_assertion = prev_in_const_assertion;
+            return Some(declared_type);
+        }
+        None
+    }
+
     fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
         match crate::query_boundaries::common::classify_promise_type(self.ctx.types, type_id) {
             crate::query_boundaries::common::PromiseTypeKind::Application { args, .. }
@@ -274,6 +316,15 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        if self.ctx.in_const_assertion && self.array_literal_produces_too_large_tuple(idx) {
+            self.error_at_node(
+                idx,
+                crate::diagnostics::diagnostic_messages::EXPRESSION_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                crate::diagnostics::diagnostic_codes::EXPRESSION_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+            );
+            return TypeId::ANY;
+        }
+
         if array.elements.nodes.is_empty() {
             // In const assertion context (e.g., `[] as const` or inside a `const T`
             // type parameter call), empty arrays become empty readonly tuples, not
@@ -461,7 +512,16 @@ impl<'a> CheckerState<'a> {
                         applicable,
                     )
                     .is_some();
-                if has_type_param_rest || is_intersection_context {
+                // Full contextual evaluation can expand `HandleOptions<T[K]>` to an
+                // object/index-signature type, so also inspect the original tuple rest
+                // before mapped-application identity is erased.
+                let has_homomorphic_mapped_rest = elems
+                    .iter()
+                    .any(|e| e.rest && self.is_homomorphic_mapped_rest_context(e.type_id))
+                    || original_contextual_type.is_some_and(|original| {
+                        self.tuple_type_has_homomorphic_mapped_rest(original)
+                    });
+                if has_type_param_rest || is_intersection_context || has_homomorphic_mapped_rest {
                     Some(elems)
                 } else {
                     None
@@ -575,6 +635,7 @@ impl<'a> CheckerState<'a> {
         let mut element_types = Vec::new();
         let mut element_nodes = Vec::new();
         let mut tuple_elements = Vec::new();
+        let mut preserve_tuple_spread_literals = false;
         // Total element count for tuple contextual typing. Elided slots count toward
         // the position of subsequent elements (e.g. `[42,,true]` has length 3 with
         // an undefined slot at index 1), matching tsc's `elementCount = elements.length`.
@@ -676,6 +737,13 @@ impl<'a> CheckerState<'a> {
                     self.get_type_of_node_with_request(spread_data.expression, &elem_request)
                 };
                 let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
+                let spread_expr_type = if let Some(declared_type) =
+                    self.mutable_spread_declared_type_in_const_assertion(spread_data.expression)
+                {
+                    self.resolve_lazy_type(declared_type)
+                } else {
+                    spread_expr_type
+                };
                 // Check if spread argument is iterable, emit TS2488 if not.
                 // Skip this check when the array is a destructuring target
                 // (e.g., `[...c] = expr`), since the spread element is an assignment
@@ -702,7 +770,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     spread_expr_type,
                 ) {
-                    if let Some(ref _expected) = tuple_context {
+                    if tuple_context.is_some() || self.ctx.in_const_assertion {
                         // For tuple context, expand each element of the spread source
                         // tuple, preserving its `rest` flag so a trailing rest element
                         // (e.g. spreading `[string, boolean, ...boolean[]]`) keeps the
@@ -727,8 +795,16 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         // For array context, add element types
+                        preserve_tuple_spread_literals = true;
                         for elem in &elems {
-                            element_types.push(elem.type_id);
+                            if elem.rest
+                                && let Some(rest_elem) =
+                                    query_common::array_element_type(self.ctx.types, elem.type_id)
+                            {
+                                element_types.push(rest_elem);
+                            } else {
+                                element_types.push(elem.type_id);
+                            }
                         }
                     }
                     continue;
@@ -742,13 +818,18 @@ impl<'a> CheckerState<'a> {
                     self.for_of_element_type(spread_expr_type, false)
                 };
 
-                if let Some(ref _expected) = tuple_context {
+                if tuple_context.is_some() || self.ctx.in_const_assertion {
+                    let rest_type = if self.ctx.in_const_assertion && tuple_context.is_none() {
+                        factory.array(elem_type)
+                    } else {
+                        elem_type
+                    };
                     let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                         Some(el) => el.optional,
                         None => false,
                     };
                     tuple_elements.push(TupleElement {
-                        type_id: elem_type,
+                        type_id: rest_type,
                         name: None,
                         optional,
                         rest: true, // Mark as spread for non-tuple spreads in tuple context
@@ -765,6 +846,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_node_with_request(elem_idx, &elem_request)
             };
+            if !self.ctx.in_destructuring_target
+                && elem_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                && self.ctx.enclosing_class.is_some()
+                && !self.is_this_in_nested_function_inside_class(elem_idx)
+                && !self.is_this_in_static_class_member(elem_idx)
+            {
+                elem_type = self.ctx.types.this_type();
+            }
 
             if !self.ctx.in_destructuring_target
                 && (self.ctx.in_const_assertion || self.ctx.preserve_literal_types)
@@ -776,7 +865,7 @@ impl<'a> CheckerState<'a> {
                 elem_type = self.get_type_of_node_with_request(binary.right, &elem_request);
             }
 
-            if let Some(ref _expected) = tuple_context {
+            if tuple_context.is_some() || self.ctx.in_const_assertion {
                 let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                     Some(el) => el.optional,
                     None => false,
@@ -853,17 +942,10 @@ impl<'a> CheckerState<'a> {
         // When in a const assertion context, array literals become tuples (not arrays)
         // This allows [1, 2, 3] as const to become readonly [1, 2, 3] instead of readonly Array<number>
         if self.ctx.in_const_assertion {
-            // Convert element_types to tuple_elements
-            let const_tuple_elements: Vec<tsz_solver::TupleElement> = element_types
-                .iter()
-                .map(|&type_id| tsz_solver::TupleElement {
-                    type_id,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                })
-                .collect();
-            return factory.tuple(const_tuple_elements);
+            if tuple_elements.len() == 1 && tuple_elements[0].rest {
+                return tuple_elements[0].type_id;
+            }
+            return factory.tuple(tuple_elements);
         }
 
         // Use contextual element type when available for better inference
@@ -980,7 +1062,7 @@ impl<'a> CheckerState<'a> {
         // skip BCT's literal widening by computing the union directly. This preserves
         // literal types like "foo" | "bar" instead of widening to string, enabling
         // correct type parameter inference (e.g., K inferred as "foo" | "bar" not string).
-        let element_type = if self.ctx.preserve_literal_types {
+        let element_type = if self.ctx.preserve_literal_types || preserve_tuple_spread_literals {
             self.ctx.types.union(element_types.clone())
         } else {
             expr_ops::compute_best_common_type_cached(
@@ -1024,6 +1106,39 @@ impl<'a> CheckerState<'a> {
         };
         let (body_type, _type_params) = self.type_reference_symbol_type_with_params(sym_id);
         query::is_homomorphic_mapped_type_context(self.ctx.types, body_type)
+    }
+
+    fn is_homomorphic_mapped_rest_context(&mut self, type_id: tsz_solver::TypeId) -> bool {
+        use crate::query_boundaries::common as query;
+        query::is_homomorphic_mapped_type_context(self.ctx.types, type_id)
+            || self.original_context_is_homomorphic_mapped_application(type_id)
+            || self.mapped_type_has_generic_keyof_source(type_id)
+            || {
+                let evaluated = self.evaluate_application_type(type_id);
+                evaluated != type_id && self.mapped_type_has_generic_keyof_source(evaluated)
+            }
+    }
+
+    fn tuple_type_has_homomorphic_mapped_rest(&mut self, type_id: tsz_solver::TypeId) -> bool {
+        use crate::query_boundaries::common as query;
+        query::array_applicable_type(self.ctx.types, type_id)
+            .and_then(|applicable| query::tuple_elements(self.ctx.types, applicable))
+            .is_some_and(|elems| {
+                elems
+                    .iter()
+                    .any(|e| e.rest && self.is_homomorphic_mapped_rest_context(e.type_id))
+            })
+    }
+
+    fn mapped_type_has_generic_keyof_source(&self, type_id: tsz_solver::TypeId) -> bool {
+        use crate::query_boundaries::common as query;
+        let Some(mapped) = query::mapped_type_info(self.ctx.types, type_id) else {
+            return false;
+        };
+        let Some(keyof_source) = query::keyof_inner_type(self.ctx.types, mapped.constraint) else {
+            return false;
+        };
+        query::contains_type_parameters(self.ctx.types, keyof_source)
     }
 
     /// Resolve array element type from union members by checking number index signatures.

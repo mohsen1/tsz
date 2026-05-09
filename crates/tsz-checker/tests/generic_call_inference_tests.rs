@@ -11,35 +11,85 @@
 //! - Anyish inference detection across composite types
 //! - Return context substitution through tuples, arrays, and generics
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+
+use std::path::Path;
+use std::sync::Arc;
+use tsz_binder::lib_loader::LibFile;
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
+    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
+}
+
+fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+    ];
+
+    lib_paths
+        .iter()
+        .filter_map(|lib_path| {
+            let content = std::fs::read_to_string(lib_path).ok()?;
+            let file_name = lib_path.file_name()?.to_string_lossy().to_string();
+            Some(Arc::new(LibFile::from_source(file_name, content)))
+        })
+        .collect()
+}
+
+fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = load_es5_lib_files_for_test();
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
+}
+
+fn relevant_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_with_es5_lib_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
+}
+
+fn compile_strict_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
+}
+
+fn compile_js_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 fn relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -47,6 +97,159 @@ fn relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
         .into_iter()
         .filter(|(code, _)| *code != 2318) // Filter out "Cannot find global type"
         .collect()
+}
+
+fn relevant_js_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_js_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318) // Filter out "Cannot find global type"
+        .collect()
+}
+
+fn relevant_strict_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_strict_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318) // Filter out "Cannot find global type"
+        .collect()
+}
+
+fn relevant_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_default_lib_files();
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect()
+}
+
+#[test]
+fn variadic_rest_tuple_satisfies_array_rest_constraint() {
+    let source = r#"
+export {};
+
+export interface Option<T> {
+  zip<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray<O>]>;
+}
+
+type UnzipOption<T> = T extends Option<infer V> ? V : never;
+type UnzipOptionArray<T> = { [k in keyof T]: T[k] extends Option<any> ? UnzipOption<T[k]> : never };
+
+declare const opt1: Option<number>;
+declare const opt2: Option<string>;
+declare const opt3: Option<boolean>;
+
+opt1.zip(opt2, opt3);
+"#;
+
+    let diagnostics = relevant_lib_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "rest tuple should satisfy Array<Option<any>> constraint: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn conditional_parameter_infers_through_branches_before_assignability() {
+    let source = r#"
+interface Iterable<T> {}
+interface Array<T> extends Iterable<T> {}
+
+type NonStringIterable<T> =
+  T extends string ? never : T extends Iterable<any> ? T : never;
+
+declare function doSomething<T>(value: NonStringIterable<T>): T;
+
+doSomething('value'); // error: T = string, parameter reduces to never
+doSomething(['v']); // ok: T = string[], parameter reduces to string[]
+doSomething([{ foo() {} }]); // ok: T = { foo(): void }[]
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Only the string argument should fail after branch inference. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345
+            .iter()
+            .any(|(_, msg)| msg.contains("not assignable to parameter of type 'never'")),
+        "The rejected string branch should reduce the parameter to never. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn user_defined_comparable_diagnostic_is_not_rewritten_from_source_text() {
+    // Regression test for issue #3057: when a user defines their own
+    // `Comparable<T>` and calls a function whose declared parameter type is
+    // `Comparable<number>`, the diagnostic must reflect the declared type.
+    // It must never be rewritten to `Comparable<1 | 2>` (or any other generic
+    // instantiation) by scanning numeric literals at the call site, because
+    // nothing in the program defines or expects that instantiation.
+    let source = r#"
+interface Comparable<T> {
+    value: T;
+}
+
+declare function acceptsComparable(value: Comparable<number>, ...rest: number[]): void;
+
+acceptsComparable(1, 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for acceptsComparable(1, 2); got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("parameter of type 'Comparable<number>'"),
+        "diagnostic must report the declared parameter type, not a synthesized \
+         instantiation derived from numeric call-site literals. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Comparable<1 | 2>"),
+        "the source-text rewrite must not synthesize a `Comparable<1 | 2>` type \
+         that the program never declares. Got: {msg}"
+    );
+}
+
+#[test]
+fn user_defined_comparable_with_three_literals_is_not_rewritten() {
+    // Same rule, different literal arity — verifies the fix is structural and
+    // not just dropping the special case for "two literals".
+    let source = r#"
+interface Comparable<T> {
+    value: T;
+}
+
+declare function acceptsComparable(value: Comparable<number>, ...rest: number[]): void;
+
+acceptsComparable(1, 2, 3);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for acceptsComparable(1, 2, 3); got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("parameter of type 'Comparable<number>'"),
+        "diagnostic must report the declared parameter type. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Comparable<1 | 2 | 3>"),
+        "the source-text rewrite must not synthesize a literal-union \
+         instantiation of `Comparable`. Got: {msg}"
+    );
 }
 
 // ─── Overloaded function arguments ───────────────────────────────────
@@ -123,6 +326,57 @@ const result = zip([1, 2], ["a", "b"], (x, y) => [x, y]);
     );
 }
 
+#[test]
+fn mapped_object_key_inference_is_lower_priority_than_direct_key_argument() {
+    let source = r#"
+type Lower<T> = { [K in keyof T]: T[K] };
+
+declare function appendToOptionalArray<
+  K extends string | number | symbol,
+  T
+>(
+  object: { [x in K]?: Lower<T>[] },
+  key: K,
+  value: T
+): void;
+
+const foo: { x?: number[]; y?: string[] } = {};
+appendToOptionalArray(foo, "x", 123);
+appendToOptionalArray(foo, "y", "bar");
+appendToOptionalArray(foo, "y", 12);
+appendToOptionalArray(foo, "x", "no");
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    let ts2345_messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, message)| (*code == 2345).then_some(message.as_str()))
+        .collect();
+
+    assert_eq!(
+        ts2345_messages.len(),
+        2,
+        "only the two mismatched key/value calls should report TS2345. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345_messages
+            .iter()
+            .any(|message| message.contains("{ y?: 12[]")),
+        "the numeric value passed with key 'y' should check the object against only the y slot. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345_messages
+            .iter()
+            .any(|message| message.contains("{ x?: string[]")),
+        "the string value passed with key 'x' should check the object against only the x slot. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2345_messages
+            .iter()
+            .all(|message| !message.contains("Lower<")),
+        "the final TS2345 surface should use the instantiated mapped property type, not the alias wrapper. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Return-context substitution ─────────────────────────────────────
 
 #[test]
@@ -175,9 +429,15 @@ declare function bar<T>(item1: T, item2: T): T;
 bar(1, "");
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        ts2345.is_some(),
         "Expected TS2345 for conflicting direct inference candidates. Diagnostics: {diags:#?}"
+    );
+    let msg = &ts2345.unwrap().1;
+    assert!(
+        msg.contains("Argument of type '\"\"' is not assignable to parameter of type '1'."),
+        "TS2345 should preserve direct literal candidates. Got: {msg:?}"
     );
 }
 
@@ -188,9 +448,34 @@ declare function g<T>(a: T, b: T, c: (t: T) => T): T;
 g("", 3, a => a);
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
+        ts2345.is_some(),
         "Expected TS2345 for conflicting direct candidates before callback inference. Diagnostics: {diags:#?}"
+    );
+    let msg = &ts2345.unwrap().1;
+    assert!(
+        msg.contains("Argument of type '3' is not assignable to parameter of type '\"\"'."),
+        "TS2345 should preserve the first direct literal inference candidate in the diagnostic. Got: {msg:?}"
+    );
+}
+
+#[test]
+fn rest_generic_argument_mismatch_displays_primitive_bases() {
+    let source = r#"
+declare function rest<T>(...items: T[]): T;
+rest(1, "");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
+    assert!(
+        ts2345.is_some(),
+        "Expected TS2345 for conflicting rest inference candidates. Diagnostics: {diags:#?}"
+    );
+    let msg = &ts2345.unwrap().1;
+    assert!(
+        msg.contains("Argument of type 'string' is not assignable to parameter of type 'number'."),
+        "TS2345 should display primitive bases for conflicting rest generic candidates. Got: {msg:?}"
     );
 }
 
@@ -198,20 +483,72 @@ g("", 3, a => a);
 fn contextual_signature_instantiation_rejects_conflicting_generic_params() {
     let source = r#"
 declare function foo<T>(cb: (x: number, y: string) => T): T;
+declare function bar<T, U, V>(x: T, y: U, cb: (x: T, y: U) => V): V;
 declare function g<T>(x: T, y: T): T;
 
 var b: number | string;
 var b = foo(g);
+var b = bar(1, "one", g);
+var b = bar("one", 1, g);
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2345_count = diags.iter().filter(|(code, _)| *code == 2345).count();
+    let ts2403_count = diags.iter().filter(|(code, _)| *code == 2403).count();
     assert!(
-        diags.iter().any(|(code, _)| *code == 2345),
-        "Expected TS2345 when one generic source parameter gets incompatible contextual candidates. Diagnostics: {diags:#?}"
+        ts2345_count >= 3,
+        "Expected TS2345 for each incompatible contextual generic callback. Diagnostics: {diags:#?}"
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2403),
-        "Expected downstream TS2403 from the failed call's unknown return. Diagnostics: {diags:#?}"
+        ts2403_count >= 3,
+        "Expected downstream TS2403 from each failed call's unknown return. Diagnostics: {diags:#?}"
     );
+}
+
+#[test]
+fn generic_class_function_member_annotated_callback_keeps_outer_type_param_in_ts2345() {
+    let source = r#"
+namespace WithCandidates {
+    class C<T> {
+        foo2<T, U>(x: T, cb: (a: T) => U) {
+            return cb(x);
+        }
+    }
+    declare var c: C<number>;
+
+    class C3<T, U> {
+        foo3<T, U>(x: T, cb: (a: T) => U, y: U) {
+            return cb(x);
+        }
+    }
+    declare var c3: C3<number, string>;
+
+    function other<T, U>(t: T, u: U) {
+        var r10 = c.foo2(1, (x: T) => '');
+        var r11 = c3.foo3(1, (x: T) => '', '');
+        var r11b = c3.foo3(1, (x: T) => '', 1);
+    }
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345_messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, msg)| (*code == 2345).then_some(msg.as_str()))
+        .collect();
+    assert_eq!(
+        ts2345_messages.len(),
+        3,
+        "Expected exactly three TS2345 diagnostics. Diagnostics: {diags:#?}"
+    );
+    for msg in &ts2345_messages {
+        assert!(
+            msg.contains("Argument of type 'number' is not assignable to parameter of type 'T'."),
+            "Expected the diagnostic to keep the annotated outer type parameter. Got: {msg:?}"
+        );
+        assert!(
+            !msg.contains("parameter of type '1'"),
+            "Fresh literal inference should not replace the annotated outer type parameter. Got: {msg:?}"
+        );
+    }
 }
 
 #[test]
@@ -735,15 +1072,15 @@ const k = keys(Direction);
     );
 }
 
-// ─── Zero-param callback conditional branch ──────────────────────────
+// ─── Callback conditional branch ─────────────────────────────────────
 
 #[test]
-fn zero_param_callback_conditional_branch_used_for_contextual_type() {
-    // A zero-parameter callback whose body is a conditional expression
-    // should use the true branch for contextual typing
+fn callback_conditional_branch_used_for_contextual_type() {
+    // An unannotated callback whose body is a conditional expression should use
+    // the true branch for contextual typing, even when it has contextual params.
     let source = r#"
-declare function lazy<T>(fn: () => T): T;
-const result = lazy(() => true ? 42 : "hello");
+declare function lazy<T>(fn: (flag: boolean) => T): T;
+const result = lazy(flag => flag ? 42 : "hello");
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
@@ -865,6 +1202,101 @@ const r2 = f4([{ a: 1 }, { a: 2 }]);
     assert!(
         diags.is_empty(),
         "const T in multiple tuple positions should union candidates. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_infers_deep_readonly_literals() {
+    let source = r#"
+declare function keep<const T>(value: T): T;
+
+const tupleViaConstParam = keep(["a", "b"]);
+tupleViaConstParam[0] = "a";
+tupleViaConstParam[1] = "z";
+
+const objectViaConstParam = keep({ tag: "ok", nested: { value: 1 } });
+objectViaConstParam.tag = "ok";
+objectViaConstParam.nested.value = 1;
+
+declare function keepMutable<T extends string[]>(value: T): T;
+const mutable = keepMutable(["a", "b"]);
+mutable[0] = "z";
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2540 = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540, 4,
+        "const T should infer readonly tuple/object literals while mutable T remains writable. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_readonly_tuple_rejects_mutable_array_assignment() {
+    let source = r#"
+declare function readonlyConstraint<const T extends readonly string[]>(value: T): T;
+const fromReadonlyConstraint = readonlyConstraint(["a", "b"]);
+let mutableArray: string[] = fromReadonlyConstraint;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 4104),
+        "const T inferred readonly tuple should not assign to mutable array. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_mutable_array_constraint_does_not_reject_array_literal() {
+    let source = r#"
+declare function mutableConstraint<const T extends unknown[]>(value: T): T;
+declare function mutableRest<const T extends unknown[]>(...args: T): T;
+
+mutableConstraint(["hello", 42]);
+mutableRest("hello", 42);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "mutable array constraints on const T should not force readonly argument types. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_parameter_mixed_mutable_readonly_array_constraint_accepts_literals() {
+    let source = r#"
+declare function mixed<const T extends string[] | readonly number[]>(value: T): T;
+
+mixed(["hello", "world"]);
+mixed([1, 2, 3]);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "mixed mutable/readonly array constraints on const T should accept matching array literals. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn jsdoc_const_template_infers_deep_readonly_literals() {
+    let source = r#"
+/**
+ * @template const T
+ * @param {T} value
+ * @returns {T}
+ */
+function keep(value) { return value; }
+
+const tupleViaConstParam = keep(["a", "b"]);
+tupleViaConstParam[0] = "a";
+
+const objectViaConstParam = keep({ tag: "ok", nested: { value: 1 } });
+objectViaConstParam.tag = "ok";
+objectViaConstParam.nested.value = 1;
+"#;
+    let diags = relevant_js_diagnostics(source);
+    let ts2540 = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540, 3,
+        "JSDoc @template const should infer readonly tuple/object literals. Diagnostics: {diags:#?}"
     );
 }
 
@@ -995,6 +1427,63 @@ const result = make(42);
     );
 }
 
+#[test]
+fn noinfer_blocks_inferred_generic_call_candidates() {
+    let source = r#"
+declare function choose<T>(value: T, fallback: NoInfer<T>): T;
+choose("a", "b");
+choose("a", "a");
+
+type NI<T> = NoInfer<T>;
+declare function chooseAlias<T>(value: T, fallback: NI<T>): T;
+chooseAlias("a", "b");
+
+declare function choosePlain<T>(value: T, fallback: T): T;
+choosePlain("a", "b");
+
+choose<"a">("a", "b");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        3,
+        "NoInfer fallback positions and explicit type args should reject \"b\", while plain T should infer from both arguments. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_blocks_candidates_nested_in_object_properties() {
+    let source = r#"
+declare function chooseProp<T extends string>(value: T, fallback: { x: NoInfer<T> }): void;
+chooseProp("a", { x: "b" });
+chooseProp("a", { x: "a" });
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "NoInfer nested in an object property should block fallback inference and reject only the \"b\" NoInfer property. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_blocks_candidates_nested_in_object_properties_with_lib_intrinsic() {
+    let source = r#"
+declare function chooseProp<T extends string>(value: T, fallback: { x: NoInfer<T> }): void;
+chooseProp("a", { x: "b" });
+chooseProp("a", { x: "a" });
+"#;
+    let diags = relevant_lib_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Lib intrinsic NoInfer nested in an object property should reject only the \"b\" property. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Inference with multiple callbacks ────────────────────────────────
 
 #[test]
@@ -1107,6 +1596,112 @@ const check: number = result;
     );
 }
 
+#[test]
+fn conditional_alias_first_arg_context_types_binding_pattern_callback() {
+    let source = r#"
+interface TypeLambda {
+    readonly In: unknown;
+    readonly Out: unknown;
+}
+type Kind<F extends TypeLambda, In, Target> = F extends { readonly type: unknown }
+    ? (F & { readonly In: In; readonly Target: Target })["type"]
+    : { readonly F: F; readonly In: (_: In) => void; readonly Target: (_: Target) => Target };
+
+declare const map: <F extends TypeLambda, R, A, B>(
+    self: Kind<F, R, A>,
+    f: (a: A) => B
+) => Kind<F, R, B>;
+
+declare const pair: <F extends TypeLambda, R, A, B>(
+    left: Kind<F, R, A>,
+    right: Kind<F, R, B>
+) => Kind<F, R, [A, B]>;
+
+function use<F extends TypeLambda, R, A, B>(
+    left: Kind<F, R, A>,
+    right: Kind<F, R, B>,
+    f: (a: A, b: B) => string
+): Kind<F, R, string> {
+    return map(pair(left, right), ([a, b]) => f(a, b));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| matches!(*code, 2345 | 7031)),
+        "conditional alias inference should type destructured callback params. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_conditional_alias_first_arg_context_types_binding_pattern_callback() {
+    let source = r#"
+interface TypeLambda {
+    readonly In: unknown;
+    readonly Out: unknown;
+}
+type Kind<F extends TypeLambda, In, Target> = F extends { readonly type: unknown }
+    ? (F & { readonly In: In; readonly Target: Target })["type"]
+    : { readonly F: F; readonly In: (_: In) => void; readonly Target: (_: Target) => Target };
+
+interface Covariant<F extends TypeLambda> {
+    readonly map: {
+        <A, B>(f: (a: A) => B): <R>(self: Kind<F, R, A>) => Kind<F, R, B>;
+        <R, A, B>(self: Kind<F, R, A>, f: (a: A) => B): Kind<F, R, B>;
+    };
+}
+interface Product<F extends TypeLambda> extends Covariant<F> {
+    readonly pair: <R, A, B>(
+        left: Kind<F, R, A>,
+        right: Kind<F, R, B>
+    ) => Kind<F, R, [A, B]>;
+}
+
+function use<F extends TypeLambda, R, A, B>(
+    F: Product<F>,
+    left: Kind<F, R, A>,
+    right: Kind<F, R, B>,
+    f: (a: A, b: B) => string
+): Kind<F, R, string> {
+    return F.map(F.pair(left, right), ([a, b]) => f(a, b));
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| matches!(*code, 2345 | 7031)),
+        "overloaded conditional alias inference should type destructured callback params. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_higher_order_rest_any_constraint_accepts_generic_body() {
+    let source = r#"
+type Parameters<T extends (...args: any[]) => any> =
+    T extends (...args: infer P) => any ? P : never;
+interface IArguments {}
+
+declare const dual: {
+    <DataLast extends (...args: any[]) => any, DataFirst extends (...args: any[]) => any>(
+        arity: Parameters<DataFirst>["length"],
+        body: DataFirst
+    ): DataLast & DataFirst;
+    <DataLast extends (...args: any[]) => any, DataFirst extends (...args: any[]) => any>(
+        isDataFirst: (args: IArguments) => boolean,
+        body: DataFirst
+    ): DataLast & DataFirst;
+};
+
+const make = (): {
+    <A, B, C>(a: A, b: B, f: (a: A, b: B) => C): C;
+} =>
+    dual(3, <A, B, C>(a: A, b: B, f: (a: A, b: B) => C): C => f(a, b));
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2769),
+        "higher-order generic body should satisfy the rest-any function constraint. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Contextual instantiation edge cases ──────────────────────────────
 
 #[test]
@@ -1150,6 +1745,31 @@ const result: Container<number> = box_it(42);
     assert!(
         diags.is_empty(),
         "Application matching should work in return context. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn returned_function_parameters_keep_same_application_return_context() {
+    let source = r#"
+type Mapper<T, U> = (x: T) => U;
+declare function wrap<T, U>(cb: Mapper<T, U>): Mapper<T, U>;
+declare function arrayize<T, U>(cb: Mapper<T, U>): Mapper<T, U[]>;
+declare function combine<A, B, C>(f: (x: A) => B, g: (x: B) => C): (x: A) => C;
+declare function foo(f: Mapper<string, number>): void;
+declare const strings: { map<U>(cb: (x: string, index: number, array: string[]) => U): U[] };
+declare function identity<T>(x: T): T;
+
+let f3: Mapper<string, number[]> = arrayize(wrap(s => s.length));
+let f4: Mapper<string, boolean> = combine(wrap(s => s.length), wrap(n => n >= 10));
+foo(wrap(s => s.length));
+let a4 = strings.map(combine(wrap(s => s.length), wrap(n => n > 10)));
+let a5 = strings.map(combine(identity, wrap(s => s.length)));
+let a6 = strings.map(combine(wrap(s => s.length), identity));
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Returned function parameter type should be preserved for same-application return context. Diagnostics: {diags:#?}"
     );
 }
 
@@ -1346,6 +1966,33 @@ x.f({s: 1})
     assert!(
         diags.iter().any(|(code, _)| *code == 2322),
         "Should also emit TS2322 for property type mismatch. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn dependent_type_parameter_constraint_checks_second_argument_against_first_inference() {
+    // Regression: typeParameterAsTypeParameterConstraint2.ts
+    // For <T, U extends T>, tsc fixes T from the first argument and then
+    // validates the second argument's inferred U against that T.
+    let source = r#"
+interface NumberVariant {
+    x: number;
+}
+
+var n: NumberVariant;
+function foo<T, U extends T>(x: T, y: U): U { return y; }
+foo(1, n);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2454),
+        "Should emit TS2454 for variable used before assignment. Got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2345 && message.contains("NumberVariant") && message.contains("number")
+        }),
+        "Should also emit TS2345 for NumberVariant not assignable to number. Got: {diags:#?}"
     );
 }
 
@@ -1634,6 +2281,308 @@ const x = pipe(es, filter(exists((n) => n > 0)));
     );
 }
 
+#[test]
+fn overloaded_pipe_return_context_types_chained_callback_params() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function pipe<A extends any[], B, C, D>(ab: (...args: A) => B, bc: (b: B) => C, cd: (c: C) => D): (...args: A) => D;
+type Fn = (n: number) => number;
+const fn30: Fn = pipe(
+    x => x + 1,
+    x => x * 2,
+);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2362),
+        "pipe return context should type chained callback parameters before checking arithmetic. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn curried_map_identity_preserves_array_element_type() {
+    let source = r#"
+interface Array<T> { map<U>(cb: (value: T) => U): U[]; }
+declare const identity: <T>(value: T) => T;
+declare function map<T, U>(transform: (t: T) => U): (arr: T[]) => U[];
+const arr1: string[] = map(identity)(['a']);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("string[]")),
+        "map(identity)(['a']) should preserve string[] assignability. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_preserves_self_constrained_generic_function_result() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function foo<T extends { value: T }>(x: T): T;
+
+const g10: <T extends { value: T }>(x: T) => T = pipe(foo);
+const g12: <T extends { value: T }>(x: T) => T = pipe(foo, foo);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "pipe(foo) should preserve the self-constrained generic signature. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn contextual_parameter_self_referential_no_excess_constraint_no_false_ts2345() {
+    let source = r#"
+type NoExcessProperties<T, U> = T & {
+  readonly [K in Exclude<keyof U, keyof T>]: never;
+};
+
+interface Effect<out A> {
+  readonly EffectTypeId: {
+    readonly _A: (_: never) => A;
+  };
+}
+
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+
+interface RepeatOptions<A> {
+  until?: (_: A) => boolean;
+}
+
+declare const repeat: {
+  <O extends NoExcessProperties<RepeatOptions<A>, O>, A>(
+    options: O,
+  ): (self: Effect<A>) => Effect<A>;
+};
+
+pipe(
+  {} as Effect<boolean>,
+  repeat({
+    until: (x) => {
+      return x;
+    },
+  }),
+);
+"#;
+    let diags = relevant_lib_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "self-referential NoExcessProperties constraint should not raise false TS2345. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_nested_generic_spread_inference() {
+    let source = r#"
+declare function wrap<X>(x: X): { x: X };
+declare function call<A extends unknown[], T>(x: { x: (...args: A) => T }, ...args: A): T;
+
+const leak = call(wrap(<T>(x: T) => x), 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "nested generic spread inference should not produce TS2345. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_inferential_typing_with_function_type() {
+    let source = r#"
+declare function map<T, U>(x: T, f: (s: T) => U): U;
+declare function identity<V>(y: V): V;
+
+var s = map("", identity);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "generic function argument identity should not produce TS2345. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_generic_method_overspecialization() {
+    let source = r#"
+var names = ["list", "table1", "table2", "table3", "summary"];
+
+interface HTMLElement {
+    clientWidth: number;
+    isDisabled: boolean;
+}
+
+declare var document: Document;
+interface Document {
+    getElementById(elementId: string): HTMLElement;
+}
+
+var elements = names.map(function (name) {
+    return document.getElementById(name);
+});
+
+var xxx = elements.filter(function (e) {
+    return !e.isDisabled;
+});
+
+var widths:number[] = elements.map(function (e) {
+    return e.clientWidth;
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2344),
+        "generic method overspecialization should not produce TS2344. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_inference_does_not_add_undefined_or_null() {
+    let source = r#"
+interface NodeArray<T extends Node> extends ReadonlyArray<T> {}
+
+interface Node {
+    forEachChild<T>(cbNode: (node: Node) => T | undefined, cbNodeArray?: (nodes: NodeArray<Node>) => T | undefined): T | undefined;
+}
+
+declare function toArray<T>(value: T | T[]): T[];
+declare function toArray<T>(value: T | readonly T[]): readonly T[];
+
+function flatMapChildren<T>(node: Node, cb: (child: Node) => readonly T[] | T | undefined): readonly T[] {
+    const result: T[] = [];
+    node.forEachChild(child => {
+        const value = cb(child);
+        if (value !== undefined) {
+            result.push(...toArray(value));
+        }
+    });
+    return result;
+}
+
+function flatMapChildren2<T>(node: Node, cb: (child: Node) => readonly T[] | T | null): readonly T[] {
+    const result: T[] = [];
+    node.forEachChild(child => {
+        const value = cb(child);
+        if (value !== null) {
+            result.push(...toArray(value));
+        }
+    });
+    return result;
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2344),
+        "inference should not add undefined or null to T. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_infer_from_generic_function_return_types_2() {
+    let source = r#"
+type Mapper<T, U> = (x: T) => U;
+
+declare function wrap<T, U>(cb: Mapper<T, U>): Mapper<T, U>;
+
+declare function arrayize<T, U>(cb: Mapper<T, U>): Mapper<T, U[]>;
+
+declare function combine<A, B, C>(f: (x: A) => B, g: (x: B) => C): (x: A) => C;
+
+declare function foo(f: Mapper<string, number>): void;
+
+let f1: Mapper<string, number> = s => s.length;
+let f2: Mapper<string, number> = wrap(s => s.length);
+let f3: Mapper<string, number[]> = arrayize(wrap(s => s.length));
+let f4: Mapper<string, boolean> = combine(wrap(s => s.length), wrap(n => n >= 10));
+
+foo(wrap(s => s.length));
+
+let a1 = ["a", "b"].map(s => s.length);
+let a2 = ["a", "b"].map(wrap(s => s.length));
+let a3 = ["a", "b"].map(wrap(arrayize(s => s.length)));
+let a4 = ["a", "b"].map(combine(wrap(s => s.length), wrap(n => n > 10)));
+let a5 = ["a", "b"].map(combine(identity, wrap(s => s.length)));
+let a6 = ["a", "b"].map(combine(wrap(s => s.length), identity));
+
+class SetOf<A> {
+  _store: A[];
+
+  add(a: A) {
+    this._store.push(a);
+  }
+
+  transform<B>(transformer: (a: SetOf<A>) => SetOf<B>): SetOf<B> {
+    return transformer(this);
+  }
+
+  forEach(fn: (a: A, index: number) => void) {
+      this._store.forEach((a, i) => fn(a, i));
+  }
+}
+
+function compose<A, B, C, D, E>(
+  fnA: (a: SetOf<A>) => SetOf<B>,
+  fnB: (b: SetOf<B>) => SetOf<C>,
+  fnC: (c: SetOf<C>) => SetOf<D>,
+  fnD: (c: SetOf<D>) => SetOf<E>,
+):(x: SetOf<A>) => SetOf<E>;
+function compose<T>(...fns: ((x: T) => T)[]): (x: T) => T {
+  return (x: T) => fns.reduce((prev, fn) => fn(prev), x);
+}
+
+function map<A, B>(fn: (a: A) => B): (s: SetOf<A>) => SetOf<B> {
+  return (a: SetOf<A>) => {
+    const b: SetOf<B> = new SetOf();
+    a.forEach(x => b.add(fn(x)));
+    return b;
+  }
+}
+
+function filter<A>(predicate: (a: A) => boolean): (s: SetOf<A>) => SetOf<A> {
+  return (a: SetOf<A>) => {
+    const result = new SetOf<A>();
+    a.forEach(x => {
+      if (predicate(x)) result.add(x);
+    });
+   return result;
+  }
+}
+
+const testSet = new SetOf<number>();
+testSet.add(1);
+testSet.add(2);
+testSet.add(3);
+
+const t1 = testSet.transform(
+  compose(
+    filter(x => x % 1 === 0),
+    map(x => x + x),
+    map(x => x + '!!!'),
+    map(x => x.toUpperCase())
+  )
+)
+
+declare function identity<T>(x: T): T;
+
+const t2 = testSet.transform(
+  compose(
+    filter(x => x % 1 === 0),
+    identity,
+    map(x => x + '!!!'),
+    map(x => x.toUpperCase())
+  )
+)
+"#;
+    let diags = relevant_default_lib_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2345),
+        "higher-order inference should not produce extra TS2322/TS2345. Got: {diags:#?}"
+    );
+}
+
 // ─── Const type parameter inference ─────────────────────────────────
 
 #[test]
@@ -1800,5 +2749,129 @@ const ok = out.responseXML.url; // must NOT raise TS18046
     assert!(
         diags.iter().any(|(code, _)| *code == 2345),
         "Outer Deep<...> assignability must still reject the `null` constituent. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn recursive_homomorphic_mapped_materializes_primitive_apparent_members() {
+    // `mappedTypeRecursiveInference.ts` includes `XMLHttpRequest` primitive
+    // properties such as `readyState: number` and `responseText: string`.
+    // Reverse inference through `Deep<T>` must infer apparent primitive member
+    // objects for those properties rather than collapsing them to `unknown`.
+    // Nullable callback properties should still be uninformative (`unknown`),
+    // unlike nullable object properties where we keep the existing `any`
+    // approximation so chained property accesses do not raise TS18046.
+    let source = r#"
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+interface DocLike { url: string }
+interface XLike {
+    onreadystatechange: (() => void) | null;
+    readonly readyState: number;
+    readonly responseText: string;
+    responseXML: DocLike | null;
+}
+declare let xhr: XLike;
+const out = foo(xhr);
+const ok = out.responseXML.url;
+const readyShape: { toString: unknown } = out.readyState;
+const textShape: { toString: unknown } = out.responseText;
+const callbackNumber: number = out.onreadystatechange;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 18046),
+        "Nullable object property should remain usable after recursive reverse inference. Got: {diags:#?}"
+    );
+    let ts2322_messages: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        ts2322_messages.len() == 1
+            && ts2322_messages[0].contains("Type 'unknown' is not assignable to type 'number'"),
+        "Only the nullable callback assignment should fail, proving it stayed `unknown` rather than `any`. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn recursive_homomorphic_mapped_with_nested_indexed_target_does_not_rewalk_target_param() {
+    let source = r#"
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+interface Payload {
+    label: string;
+    child: Payload;
+}
+interface XLike {
+    response: Payload;
+    responseText: string;
+    readyState: number;
+}
+declare let xhr: XLike;
+const out = foo(xhr);
+const childLabel: string = out.response.child.label;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 18046),
+        "nested Deep<T[K]> reverse inference must not leave chained accesses as unknown. Got: {diags:#?}"
+    );
+}
+
+// ─── Higher-order function inference (HOFI) — tracks compiler/genericFunctionInference1.ts ─
+
+/// Locks in the existing correct behavior: a generic source function with a
+/// non-self-referential type-parameter constraint is accepted as the argument
+/// of `pipe<A extends any[], B>(ab: (...args: A) => B)`. Inference should not
+/// collapse the source's type parameter to `unknown` and reject the call.
+///
+/// `tsc` accepts each of the calls below; tsz currently does too. This test
+/// exists to catch regressions if the inference path that handles non-recursive
+/// constraints is reworked while addressing the recursive-constraint gap
+/// captured by the `pipe_accepts_*_self_referential_*` ignored test below.
+#[test]
+fn pipe_accepts_generic_argument_with_simple_constraint() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function fooStr<T extends string>(x: T): T;
+declare function fooNum<T extends number>(x: T): T;
+declare function fooObj<T extends { other: number }>(x: T): T;
+declare function fooBare<T>(x: T): T;
+
+const a = pipe(fooStr);
+const b = pipe(fooNum);
+const c = pipe(fooObj);
+const d = pipe(fooBare);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "pipe(<T extends C>(x: T) => T) with non-self-referential C must not raise TS2345. Got: {diags:#?}"
+    );
+}
+
+/// HOFI gap: a generic source function whose type-parameter constraint refers
+/// back to the type parameter itself (`T extends { value: T }`) is rejected
+/// when passed to `pipe<A extends any[], B>(ab: (...args: A) => B)`. tsc
+/// accepts it and propagates the constraint into the result type
+/// (`<T extends { value: T; }>(x: T) => T`).
+///
+/// Conformance test: `compiler/genericFunctionInference1.ts` (lines 20, 21,
+/// 33, 34 — the recursive-constraint subset of the eight extra TS2345
+/// diagnostics).
+#[test]
+fn pipe_accepts_generic_argument_with_self_referential_constraint() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function fooSelf<T extends { value: T }>(x: T): T;
+
+const f = pipe(fooSelf);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "pipe(<T extends {{ value: T }}>(x: T) => T) must not raise TS2345 once HOFI is implemented. Got: {diags:#?}"
     );
 }

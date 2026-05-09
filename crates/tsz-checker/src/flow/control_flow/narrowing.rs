@@ -1,8 +1,4 @@
-//! Control flow narrowing: assignments, predicates, instanceof, in-operator,
-//! typeof, discriminants, and literal comparisons.
-//!
-//! Reference matching, literal parsing, and symbol resolution utilities are in
-//! `references.rs`.
+//! Control flow narrowing: assignments, predicates, discriminants, and literal comparisons.
 
 use tsz_binder::symbol_flags;
 use tsz_common::interner::Atom;
@@ -1147,6 +1143,10 @@ impl<'a> FlowAnalyzer<'a> {
         self.arena.skip_parenthesized_and_assertions_and_comma(idx)
     }
 
+    pub(crate) fn is_global_undefined_identifier(&self, idx: NodeIndex) -> bool {
+        super::narrowing_helpers::is_global_undefined_identifier(self.arena, self.binder, idx)
+    }
+
     pub(crate) fn skip_parens_and_assertions(&self, idx: NodeIndex) -> NodeIndex {
         self.arena.skip_parenthesized_and_assertions(idx)
     }
@@ -1218,6 +1218,23 @@ impl<'a> FlowAnalyzer<'a> {
         {
             return self.literal_type_from_node(initializer);
         }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+            && !access.question_dot_token
+            && let Some((_sym_id, initializer)) =
+                self.const_condition_initializer(access.expression)
+        {
+            if let Some(property_initializer) =
+                self.lookup_property_in_rhs(initializer, access.name_or_argument)
+            {
+                return self.literal_type_from_node(property_initializer);
+            }
+            if let Some(array_to_enum_literal) =
+                self.array_to_enum_member_literal_type(initializer, access.name_or_argument)
+            {
+                return Some(array_to_enum_literal);
+            }
+        }
 
         match node.kind {
             k if k == SyntaxKind::StringLiteral as u16
@@ -1286,10 +1303,10 @@ impl<'a> FlowAnalyzer<'a> {
                 self.literal_type_from_template_expression(idx, node)
             }
             _ => {
-                // Handle `undefined` in value position (it's an Identifier, not UndefinedKeyword)
-                if let Some(ident) = self.arena.get_identifier(node)
-                    && ident.escaped_text == "undefined"
-                {
+                // Handle `undefined` in value position (it's an Identifier, not UndefinedKeyword).
+                // Only the global `undefined` resolves to the literal sentinel; a same-file
+                // local named `undefined` (parameter, variable, etc.) is a regular value.
+                if self.is_global_undefined_identifier(idx) {
                     return Some(TypeId::UNDEFINED);
                 }
                 // Fallback: look up the already-computed type for this expression.
@@ -1397,20 +1414,15 @@ impl<'a> FlowAnalyzer<'a> {
         let member_name_owned: String;
         if let Some(member_ident) = self.arena.get_identifier_at(member_name_node) {
             member_name_owned = member_ident.escaped_text.clone();
-        } else if let Some(member_node) = self.arena.get(member_name_node) {
-            if member_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-                || member_node.kind == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        } else {
+            let member_node = self.arena.get(member_name_node)?;
+            if member_node.kind != tsz_scanner::SyntaxKind::StringLiteral as u16
+                && member_node.kind != tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
             {
-                if let Some(lit) = self.arena.get_literal(member_node) {
-                    member_name_owned = lit.text.clone();
-                } else {
-                    return None;
-                }
-            } else {
                 return None;
             }
-        } else {
-            return None;
+            let lit = self.arena.get_literal(member_node)?;
+            member_name_owned = lit.text.clone();
         }
         let member_name = &member_name_owned;
 
@@ -1505,9 +1517,7 @@ impl<'a> FlowAnalyzer<'a> {
             if init_node.kind == SyntaxKind::NullKeyword as u16 {
                 return Some(TypeId::NULL);
             }
-            if let Some(ident) = self.arena.get_identifier(init_node)
-                && ident.escaped_text == "undefined"
-            {
+            if self.is_global_undefined_identifier(decl_data.initializer) {
                 return Some(TypeId::UNDEFINED);
             }
         }
@@ -1531,10 +1541,10 @@ impl<'a> FlowAnalyzer<'a> {
         if node.kind == SyntaxKind::UndefinedKeyword as u16 {
             return Some(TypeId::UNDEFINED);
         }
-        // In value position, `undefined` is an Identifier, not UndefinedKeyword
-        if let Some(ident) = self.arena.get_identifier(node)
-            && ident.escaped_text == "undefined"
-        {
+        // In value position, `undefined` is an Identifier, not UndefinedKeyword.
+        // Only the global identifier counts as the literal sentinel; a same-file
+        // local named `undefined` is a regular value.
+        if self.is_global_undefined_identifier(idx) {
             return Some(TypeId::UNDEFINED);
         }
 
@@ -1796,9 +1806,7 @@ impl<'a> FlowAnalyzer<'a> {
         // 1) enum members,
         // 2) const aliases with literal initializers.
         if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.arena.get_identifier(node)
-                && ident.escaped_text == "undefined"
-            {
+            if self.is_global_undefined_identifier(idx) {
                 return Some(TypeId::UNDEFINED);
             }
 

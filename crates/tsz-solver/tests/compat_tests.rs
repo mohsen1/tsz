@@ -25,6 +25,7 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -41,6 +42,7 @@ fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -503,6 +505,7 @@ fn test_method_bivariance_even_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -518,6 +521,7 @@ fn test_method_bivariance_even_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -565,6 +569,7 @@ fn test_function_property_stays_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -580,6 +585,7 @@ fn test_function_property_stays_strict() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1728,6 +1734,7 @@ fn test_object_keyword_accepts_non_primitives() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     assert!(checker.is_assignable(obj, TypeId::OBJECT));
@@ -1814,6 +1821,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1829,6 +1837,7 @@ fn test_split_accessor_allows_wider_setter_in_source() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1853,6 +1862,7 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1868,6 +1878,7 @@ fn test_split_accessor_rejects_wider_setter_in_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1944,6 +1955,7 @@ fn test_function_type_rejects_non_callables() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     assert!(!checker.is_assignable(obj, function_top));
@@ -2473,6 +2485,7 @@ fn test_optional_property_allows_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -2487,6 +2500,7 @@ fn test_optional_property_allows_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2511,6 +2525,7 @@ fn test_optional_property_rejects_required_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -2525,6 +2540,7 @@ fn test_optional_property_rejects_required_target() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2549,6 +2565,7 @@ fn test_optional_property_rejects_string_index_signature() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2572,6 +2589,42 @@ fn test_optional_property_rejects_string_index_signature() {
 }
 
 #[test]
+fn test_template_literal_index_signature_tracks_excess_properties() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let allowed_suffix =
+        interner.union2(interner.literal_string("A"), interner.literal_string("B"));
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: interner.template_literal(vec![
+                TemplateSpan::Text(interner.intern_string("prefix")),
+                TemplateSpan::Type(allowed_suffix),
+            ]),
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let good = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("prefixA"),
+        TypeId::STRING,
+    )]);
+    let bad = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("prefixC"),
+        TypeId::STRING,
+    )]);
+
+    assert!(checker.is_assignable(good, target));
+    assert!(!checker.is_assignable(bad, target));
+}
+
+#[test]
 fn test_exact_optional_property_rejects_undefined() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
@@ -2590,6 +2643,7 @@ fn test_exact_optional_property_rejects_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -2604,6 +2658,7 @@ fn test_exact_optional_property_rejects_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2629,6 +2684,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3229,6 +3285,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3247,6 +3304,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3625,6 +3683,7 @@ fn test_void_return_exception_constructors() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3649,6 +3708,7 @@ fn test_void_return_exception_constructors() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3698,6 +3758,7 @@ fn test_method_bivariance_allows_derived_methods() {
         is_method: true,
         is_class_prototype: false,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3727,6 +3788,7 @@ fn test_method_bivariance_allows_derived_methods() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3774,6 +3836,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         is_method: true,
         is_class_prototype: false,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3803,6 +3866,7 @@ fn test_method_bivariance_persists_with_strict_function_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3865,6 +3929,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -3880,6 +3945,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4168,6 +4234,7 @@ fn test_union_intersection_distributivity_basic() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4185,6 +4252,7 @@ fn test_union_intersection_distributivity_basic() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4222,6 +4290,7 @@ fn test_intersection_union_distributivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4239,6 +4308,7 @@ fn test_intersection_union_distributivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4390,6 +4460,7 @@ fn test_strict_function_types_affects_methods_independently() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4408,6 +4479,7 @@ fn test_strict_function_types_affects_methods_independently() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -4517,6 +4589,7 @@ fn test_keyof_union_contravariance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4549,6 +4622,7 @@ fn test_keyof_union_contravariance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     // Type C: { name: string, x: number }
@@ -4597,6 +4671,7 @@ fn test_keyof_intersection_distributivity() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4614,6 +4689,7 @@ fn test_keyof_intersection_distributivity() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
@@ -4662,6 +4738,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(age, TypeId::NUMBER),
@@ -4682,6 +4759,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(email, TypeId::STRING),
@@ -4754,6 +4832,7 @@ fn test_best_common_type_with_supertype() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4772,6 +4851,7 @@ fn test_best_common_type_with_supertype() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo::new(breed, TypeId::STRING),
@@ -4873,6 +4953,54 @@ fn test_private_brand_lazy_self_resolution_does_not_recurse() {
 }
 
 #[test]
+fn test_private_brand_lazy_cycle_does_not_recurse() {
+    struct CyclicLazyResolver {
+        first_def: DefId,
+        first_type: TypeId,
+        second_def: DefId,
+        second_type: TypeId,
+    }
+
+    impl TypeResolver for CyclicLazyResolver {
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            if def_id == self.first_def {
+                Some(self.second_type)
+            } else if def_id == self.second_def {
+                Some(self.first_type)
+            } else {
+                None
+            }
+        }
+    }
+
+    let interner = TypeInterner::new();
+    let first_def = DefId(42);
+    let second_def = DefId(43);
+    let first_type = interner.intern(TypeData::Lazy(first_def));
+    let second_type = interner.intern(TypeData::Lazy(second_def));
+    let resolver = CyclicLazyResolver {
+        first_def,
+        first_type,
+        second_def,
+        second_type,
+    };
+    let checker = CompatChecker::with_resolver(&interner, &resolver);
+    let target = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
+
+    assert_eq!(
+        checker.private_brand_assignability_override(first_type, target),
+        None
+    );
+}
+
+#[test]
 fn test_private_brand_same_brand_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
@@ -4923,6 +5051,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![
@@ -4939,6 +5068,7 @@ fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand()
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -4970,6 +5100,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -4985,6 +5116,7 @@ fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -5012,6 +5144,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let target = interner.object(vec![PropertyInfo {
@@ -5026,6 +5159,7 @@ fn test_private_brand_neither_has_brand_falls_through() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6025,6 +6159,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6040,6 +6175,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6259,4 +6395,91 @@ fn test_explain_tuple_arity_takes_priority_over_element_mismatch() {
              TupleElementTypeMismatch, got: {other:?}"
         ),
     }
+}
+
+// ===========================================================================
+// Tests for unknown -> unknown-like union assignability
+// (tsc's `isUnknownLikeUnionType`: a union containing `{}`, `null`, AND
+// `undefined` is semantically equivalent to `unknown`, even if it has extra
+// non-nullish members like `{ x: string }` that are absorbed by `{}`.)
+// ===========================================================================
+
+#[test]
+fn test_unknown_assignable_to_canonical_unknown_like_union() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let union = interner.union(vec![empty_obj, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(
+        checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should be assignable to `{{}} | null | undefined`"
+    );
+}
+
+#[test]
+fn test_unknown_assignable_to_unknown_like_union_with_extra_object_member() {
+    // Repro: `let x3: {} | { x: string } | null | undefined = u;` where u: unknown.
+    // tsc accepts this because `{} | { x: string } | null | undefined` is unknown-like
+    // — `{ x: string }` is a subtype of `{}`, so the union still covers the entire
+    // unknown space (`{}` + `null` + `undefined`).
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let obj_with_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
+    let union = interner.union(vec![empty_obj, obj_with_x, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(
+        checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should be assignable to `{{}} | {{ x: string }} | null | undefined`"
+    );
+}
+
+#[test]
+fn test_unknown_not_assignable_to_union_missing_null() {
+    // `{} | undefined` is NOT unknown-like (no null constituent), so unknown is
+    // not assignable to it.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let union = interner.union(vec![empty_obj, TypeId::UNDEFINED]);
+
+    assert!(
+        !checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should not be assignable to `{{}} | undefined` (missing null)"
+    );
+}
+
+#[test]
+fn test_unknown_not_assignable_to_union_missing_undefined() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_obj = interner.object(vec![]);
+    let union = interner.union(vec![empty_obj, TypeId::NULL]);
+
+    assert!(
+        !checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should not be assignable to `{{}} | null` (missing undefined)"
+    );
+}
+
+#[test]
+fn test_unknown_not_assignable_to_union_missing_empty_object() {
+    // `string | null | undefined` does not contain `{}`, so unknown is not assignable.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(
+        !checker.is_assignable(TypeId::UNKNOWN, union),
+        "unknown should not be assignable to `string | null | undefined` (no `{{}}` member)"
+    );
 }

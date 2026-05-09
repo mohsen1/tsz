@@ -92,6 +92,78 @@ fn optional_parameter_missing_initializer_skips_question_after_trivia() {
 }
 
 #[test]
+fn es5_param_destructuring_prologue_keeps_function_body_let_name() {
+    let source = "let foo = \"\";\nfunction f({ [foo]: bar }: any[]) {\n    let foo = 2;\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("var _b = foo, bar = _a[_b];\n    var foo = 2;"),
+        "Function-body let declarations should use the function scope opened by the ES5 parameter prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var foo_1 = 2;"),
+        "Function-body let should not be renamed against the outer foo.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_spread_recovery_keeps_trailing_empty_object() {
+    let source = "let o9 = { ...matchMedia() { }};\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let o9 = Object.assign({}, matchMedia()), {};"),
+        "Malformed object spread should preserve the recovered trailing empty object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn optional_instantiation_recovery_emits_optional_call() {
+    let source = "declare let f: { <T>(): T };\nconst b1 = f?.<number>;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const b1 = f === null || f === void 0 ? void 0 : f();"),
+        "Malformed optional instantiation should recover as an optional call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn jsx_numeric_tag_recovery_preserves_tail() {
+    let source =
+        "const x = \"oops\";\nconst a = + <number> x;\nconst b = + <> x;\nconst c = + <1234> x;\n";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            jsx: JsxEmit::Preserve,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("const c = + < />1234> x;"),
+        "Malformed numeric JSX tag should preserve the recovered numeric tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_anonymous_class_expression_sets_empty_function_name() {
     let source = "declare let dec: any;\n(@dec class {});";
     let output = parse_lower_print(
@@ -113,6 +185,25 @@ fn test_es6_generator_param_named_yield_keeps_identifier_text() {
     let source = "function* foo(a = yield, yield) {}";
     let output = parse_lower_print(source, PrintOptions::es6());
     assert_eq!(output, "function* foo(a = yield, yield) { }\n");
+}
+
+#[test]
+fn recovered_template_object_property_name_emits_as_recovered_statements() {
+    let source = "var x = {\n    `abc${ 123 }def${ 456 }ghi`: 321\n}";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(output, "var x = {} `abc${123}def${456}ghi`;\n321;\n");
+}
+
+#[test]
+fn recovered_template_module_names_emit_as_recovered_statements() {
+    let source = "declare module `M1` {\n}\n\ndeclare module `M${2}` {\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert_eq!(
+        output,
+        "declare;\nmodule `M1`;\n{\n}\ndeclare;\nmodule `M${2}`;\n{\n}\n"
+    );
 }
 
 #[test]
@@ -182,20 +273,43 @@ fn test_exponentiation_downlevel_to_math_pow() {
     assert!(output.contains("y = Math.pow(y, 3)"));
 }
 
+/// `obj.prop **= rhs` must capture the receiver in a temp before
+/// re-reading the property, even when the receiver is a simple
+/// identifier. The lowered shape `obj.prop = Math.pow(obj.prop, rhs)`
+/// would re-evaluate the receiver-name lookup twice; tsc avoids this
+/// with `(_a = obj).prop = Math.pow(_a.prop, rhs)` so any future
+/// getter/Proxy on `obj` would only fire once. This locks that in.
+#[test]
+fn test_exponentiation_assignment_property_access_temps_simple_base() {
+    let source = "let x3 = { a: 2 };\nx3.a **= 4;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(_a = x3).a = Math.pow(_a.a, 4)"),
+        "Property-access `**=` must temp the receiver even for a simple identifier base.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("x3.a = Math.pow(x3.a"),
+        "Property-access `**=` must not re-emit the receiver expression twice.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn test_optional_call_downlevel_to_conditional() {
     let source = "const fn = () => 1;\nconst obj = { m() { return this; } };\nfn?.();\nobj?.m();\nobj.m?.();\nobj?.m?.();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2019,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(output.contains("fn === null || fn === void 0 ? void 0 : fn()"));
     assert!(output.matches(".call(").count() >= 2);
     assert!(!output.contains("?.("));
@@ -344,6 +458,21 @@ fn test_nested_namespace_extends_parent_export_when_name_conflicts() {
 }
 
 #[test]
+fn test_namespace_heritage_prefers_current_block_class_over_parent_export() {
+    let source = "namespace M {\n    export namespace C { export function f() {} }\n}\nnamespace M.P {\n    export class C {}\n    export class E extends C {}\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class E extends C"),
+        "Heritage references should prefer a class declared in the current namespace block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class E extends M.C"),
+        "Parent namespace export should not shadow the current block's local class binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_nested_namespace_qualifies_parent_class_from_prior_block() {
     // Regression for #2521 review: when a parent namespace is reopened in a
     // later block that contains a nested namespace, references to a class
@@ -386,6 +515,41 @@ fn test_nested_namespace_does_not_qualify_parent_class_in_same_block() {
         !output.contains("console.log(A.Foo)"),
         "Same-block nested namespace must NOT qualify parent class — that \
          would break tsc parity.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_reference_to_later_dotted_child_is_qualified() {
+    let source = "namespace TypeScript {\n    export class PositionedElement {\n        childIndex() {\n            return Syntax.childIndex();\n        }\n    }\n}\nnamespace TypeScript.Syntax {\n    export function childIndex() { }\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return TypeScript.Syntax.childIndex();"),
+        "Reference to a dotted child namespace declared in a later block should \
+         be qualified through the parent namespace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_namespace_qualifies_grandparent_export_when_name_collides() {
+    let source = "namespace M {\n    export var x = 3;\n    namespace m4 {\n        namespace M {\n            var p = x;\n        }\n    }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("var p = M_1.x;"),
+        "Nested colliding namespace should qualify grandparent export through \
+         the outer IIFE parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var p = x;"),
+        "Bare `x` would resolve against the nested namespace scope, not the \
+         exported grandparent value.\nOutput:\n{output}"
     );
 }
 
@@ -464,6 +628,47 @@ fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
 }
 
 #[test]
+fn es2015_computed_instance_field_side_effects_fold_into_method_name() {
+    let source = "class C {\n    [Symbol.iterator] = 0;\n    [Symbol.unscopables]: number;\n    [Symbol.toPrimitive]() { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("this[_a] = 0;"),
+        "expected constructor to use hoisted computed field temp:\n{output}"
+    );
+    assert!(
+        output.contains("[(_a = Symbol.iterator, Symbol.unscopables, Symbol.toPrimitive)]() { }"),
+        "expected prior computed field expressions to fold into the computed method name:\n{output}"
+    );
+    assert!(
+        !output.contains("_a = Symbol.iterator, Symbol.unscopables;"),
+        "unexpected trailing computed field side-effect expression:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_local_undefined_export_skips_redundant_assignment() {
+    let source = "var undefined;\nexport { undefined };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.undefined = void 0;\nvar undefined;"),
+        "expected undefined export preamble and local declaration:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.undefined = undefined;"),
+        "unexpected redundant undefined export assignment:\n{output}"
+    );
+}
+
+#[test]
 fn test_es_module_export_equals_erased_to_empty_export_marker() {
     let source = "var a = 10;\nexport = a;\n";
     let output = parse_lower_print(
@@ -533,6 +738,28 @@ fn test_amd_export_import_namespace_alias_emits_export_assignment() {
 }
 
 #[test]
+fn test_commonjs_export_import_type_only_namespace_identifier_is_erased() {
+    let source = "export namespace C { export interface I {} }\nexport import v = C;\nexport namespace M { export var w: v.I; }\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("exports.M = void 0;"),
+        "runtime namespace export should still be initialized.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.v"),
+        "type-only import-equals alias should not emit a CJS export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_known_declaration_file_without_bang_module_is_stripped() {
     let declarations = r#"declare module "regular" {
     export const value: number;
@@ -583,6 +810,46 @@ export const msg = "Hello!";
     assert!(
         !output.contains("/// <reference"),
         "Fallback bang-module detection should ignore non-module export declarations with string literals.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn consecutive_triple_slash_refs_emit_together_before_cjs_preamble() {
+    let source = r#"/// <reference path="O.d.ts" />
+/// <reference path="O2.d.ts" />
+
+import { x } from "M";
+export const y = x;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    let o_idx = output
+        .find("/// <reference path=\"O.d.ts\" />")
+        .expect("O.d.ts ref should be emitted");
+    let o2_idx = output
+        .find("/// <reference path=\"O2.d.ts\" />")
+        .expect("O2.d.ts ref should be emitted");
+    let preamble_idx = output
+        .find("Object.defineProperty(exports")
+        .expect("CJS preamble should be emitted");
+
+    assert!(
+        o_idx < preamble_idx,
+        "First triple-slash ref must appear before __esModule preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        o2_idx < preamble_idx,
+        "Second triple-slash ref must appear before __esModule preamble.\nOutput:\n{output}"
+    );
+    assert!(
+        o_idx < o2_idx,
+        "Triple-slash refs must preserve source order.\nOutput:\n{output}"
     );
 }
 
@@ -837,6 +1104,24 @@ fn test_unterminated_empty_switch_recovers_following_class() {
 }
 
 #[test]
+fn test_unterminated_empty_switch_recovers_extending_class_with_inline_member() {
+    let source = "declare const x: number;\ndeclare class B {}\nswitch (x) {\nclass C extends B { static value = 1 }\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("switch (x) {\n}\nclass C extends B {\n    static value = 1;\n}"),
+        "unterminated empty switch should recover following class with heritage and inline members.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_for_await_of_target_es2018_preserved() {
     let source = "async function f() {\n    const iterable = [];\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
     let output = parse_lower_print(
@@ -899,7 +1184,10 @@ fn test_nested_for_await_of_targets_nested_return_temps() {
 
     assert!(output.contains("for (var"));
     assert!(output.contains("__asyncValues"));
-    assert!(output.contains("var e_1"));
+    // After ESM for-await alignment, hoisted catch temps are coalesced into a
+    // single `var` declaration alongside other top-of-function temps, matching
+    // TypeScript's emit. Verify both temps still appear in such a declaration.
+    assert!(output.contains("e_1"));
     assert!(output.contains("e_2"));
     assert!(output.contains("_a ="));
 }
@@ -945,6 +1233,78 @@ fn test_tagged_template_closing_brace_with_whitespace() {
     assert!(
         output.contains("tag `${null}${null}`"),
         "expected tagged template with closing braces, got: {output}"
+    );
+}
+
+#[test]
+fn super_tagged_template_with_type_arguments_preserves_recovery_dot() {
+    let source =
+        "class Base {}\nclass Derived extends Base { constructor() { super<string> `value`; } }\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("super. `value`;"),
+        "Recovered super tagged template should preserve tsc's property-access dot.\nOutput:\n{output}"
+    );
+}
+
+// `import { css } from "lib"; css `...`;` lowered to CommonJS becomes
+// `(0, lib_1.css) `...`;` so the tagged-template invocation does not bind
+// `this` to the imported module namespace object. Without the `(0, ...)`
+// wrapper, `lib_1.css `...`` would receive `lib_1` as `this`. Mirrors
+// tsc's `inlineJsxFactoryDeclarations` and
+// `jsxImportSourceNonPragmaComment` baselines.
+#[test]
+fn cjs_imported_function_tagged_template_wraps_in_zero_comma() {
+    let source = "import { css } from \"lib\";\nconst a = css `red`;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(0, lib_1.css) `red`"),
+        "Tagged template with a CJS-imported tag must wrap in `(0, lib_1.css)` to detach `this`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("lib_1.css `red`"),
+        "Bare `lib_1.css` tag must not be emitted — would bind `this` to the namespace object.\nOutput:\n{output}"
+    );
+}
+
+/// JSX attribute names are property keys on the synthesized props
+/// object — they must not pick up the CJS-named-import substitution
+/// that `emit_identifier` applies to value identifiers. Without this,
+/// `<input css={...}/>` reads as `<input lib_1.css={...}/>` after
+/// CJS lowering with `--jsx preserve`, which is invalid JSX.
+#[test]
+fn jsx_attribute_name_skips_cjs_named_import_substitution() {
+    let source = "import { css } from \"lib\";\nconst foo = <input css={42}/>;\n";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            jsx: JsxEmit::Preserve,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("<input css={42}"),
+        "JSX attribute name `css` must be emitted bare even when the same identifier is a CJS-imported value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("<input lib_1.css="),
+        "JSX attribute name must not be substituted to `lib_1.css`.\nOutput:\n{output}"
     );
 }
 
@@ -1160,6 +1520,29 @@ fn test_commonjs_class_export_before_static_block_iife() {
     assert!(
         export_pos.unwrap() < iife_pos.unwrap(),
         "exports.C = C; must appear before the static block IIFE, got: {output}"
+    );
+}
+
+#[test]
+fn erased_computed_class_fields_emit_native_static_block_side_effects() {
+    let source = r#"declare const s: unique symbol;
+declare namespace N { const s: unique symbol; }
+class C {
+    static [s]: "a";
+    static [N.s]: "b";
+    [s]: "a";
+    [N.s]: "b";
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("class C {\n    static { N.s, N.s; }\n}"),
+        "Erased computed class field side effects should stay inside a native static block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}\nN.s;"),
+        "Erased computed class field side effects should not be emitted after the class.\nOutput:\n{output}"
     );
 }
 
@@ -1413,4 +1796,552 @@ fn test_async_arrow_destructuring_default_param_temp_var_no_collision() {
              awaiter body to collide on the same temp name.\nOutput:\n{output}"
         );
     }
+}
+
+/// `this.#field ??= rhs` on a private field must lower through the
+/// `__classPrivateFieldSet(get() ?? rhs)` pattern, mirroring the existing
+/// `+=`/`-=`/etc. compound-assignment lowering. Without this, the helper
+/// emit produces `__classPrivateFieldGet(...) ??= rhs` — invalid JS, since
+/// `??=` cannot apply to a function call. Mirrors tsc's emit for issue
+/// `microsoft/TypeScript#61109`.
+#[test]
+fn private_field_nullish_assign_lowers_to_set_get_nullish_rhs() {
+    let source = "class Cls {\n  #privateProp: number | undefined;\n  problem() {\n    this.#privateProp ??= 20;\n  }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("__classPrivateFieldSet(this, _Cls_privateProp, __classPrivateFieldGet(this, _Cls_privateProp, \"f\") ?? 20, \"f\")"),
+        "Private-field `??=` must lower to set(get() ?? rhs).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("??="),
+        "Lowered output must not still contain a `??=` operator.\nOutput:\n{output}"
+    );
+}
+
+/// When the RHS of `??=`/`||=`/`&&=` on a private field is a
+/// conditional expression, the lowered `get() <op> rhs` must wrap the
+/// conditional in parens. `??`, `||`, and `&&` all bind tighter than the
+/// conditional operator, so `get() ?? a ? b : c` would otherwise reparse
+/// as `(get() ?? a) ? b : c` and silently change semantics.
+#[test]
+fn private_field_nullish_assign_parenthesizes_conditional_rhs() {
+    let source = "class Cls {\n  #privateProp: number | undefined;\n  problem() {\n    this.#privateProp ??= false ? noop() : 20;\n  }\n}\nfunction noop(): number { return 0; }\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("?? (false ? noop() : 20)"),
+        "Conditional RHS of `??=` must be parenthesized to preserve precedence.\nOutput:\n{output}"
+    );
+}
+
+/// `||=` on a private field follows the same lowering shape as `??=`.
+/// Locks in coverage so a future refactor of the compound-assignment
+/// list can't regress one operator while leaving the others working.
+#[test]
+fn private_field_logical_or_assign_lowers_to_set_get_or_rhs() {
+    let source =
+        "class Cls {\n  #flag: boolean = false;\n  toggle() {\n    this.#flag ||= true;\n  }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("__classPrivateFieldSet(this, _Cls_flag, __classPrivateFieldGet(this, _Cls_flag, \"f\") || true, \"f\")"),
+        "Private-field `||=` must lower to set(get() || rhs).\nOutput:\n{output}"
+    );
+}
+
+/// `&&=` on a private field follows the same lowering shape as `??=`.
+#[test]
+fn private_field_logical_and_assign_lowers_to_set_get_and_rhs() {
+    let source =
+        "class Cls {\n  #flag: boolean = true;\n  guard() {\n    this.#flag &&= false;\n  }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("__classPrivateFieldSet(this, _Cls_flag, __classPrivateFieldGet(this, _Cls_flag, \"f\") && false, \"f\")"),
+        "Private-field `&&=` must lower to set(get() && rhs).\nOutput:\n{output}"
+    );
+}
+
+/// Regression: a nested namespace's name lives in the parent IIFE's
+/// function scope, not at file scope. So a *file-scope* namespace with
+/// the same name must still receive its own `var` declaration. The
+/// lowering pass tracks `declared_names` to suppress duplicate `var`
+/// emits, but the set must reset when entering and exiting a namespace
+/// body: names declared inside a nested IIFE don't leak out.
+#[test]
+fn nested_namespace_name_does_not_suppress_outer_var_declaration() {
+    let source = "namespace m1 {\n    namespace m2 {\n        export var p = 1;\n    }\n}\nnamespace m2 {\n    export var q = 2;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    // Both the m1.m2 IIFE and the file-scope m2 IIFE need their own
+    // `var m2;` preamble because each lives in a distinct scope.
+    let var_count = output.matches("var m2;").count();
+    assert_eq!(
+        var_count, 2,
+        "Each scope-local `m2` namespace needs its own `var m2;`. Found {var_count}.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: same-named namespace *reopened* at the same scope must
+/// declare `var` only once. (Standard merging.)
+#[test]
+fn reopened_same_scope_namespace_declares_var_only_once() {
+    let source =
+        "namespace m1 {\n    export var p = 1;\n}\nnamespace m1 {\n    export var q = 2;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    let var_count = output.matches("var m1;").count();
+    assert_eq!(
+        var_count, 1,
+        "Reopened namespace at same scope should declare `var m1;` once. Found {var_count}.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: a same-named inner declaration that is `declare`-ambient is
+/// erased at emit, so it must not trigger renaming of the namespace IIFE
+/// parameter. tsc emits `(function (M) { ... })`, not `(function (M_1) { ... })`,
+/// for `namespace M { export declare namespace M { } }`.
+#[test]
+fn namespace_iife_param_not_renamed_when_inner_same_name_is_declare() {
+    let source = "namespace M {\n    export declare var x;\n    export declare function f();\n    export declare class C { }\n    export declare enum E { }\n    export declare namespace M { }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("(function (M) {"),
+        "Declare-only inner `M` must not trigger IIFE param renaming.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (M_1)"),
+        "IIFE param must not be renamed to `M_1` when the only same-name binding is ambient.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: a *concrete* inner declaration with the same name DOES
+/// require IIFE-param renaming (so the outer-name reference and inner-name
+/// reference don't collide).
+#[test]
+fn namespace_iife_param_renamed_when_inner_same_name_is_concrete() {
+    let source = "namespace M {\n    export class M { foo() {} }\n}\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("M_1") || !output.contains("(function (M) {"),
+        "Concrete same-name inner declaration must rename IIFE param.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `export var [a, b] = init;` inside a namespace must lower
+/// to a temp + indexed comma assignments — `var _a; _a = init, M.a =
+/// _a[0], M.b = _a[1];`. The pre-fix emit was `M.a = init, M.b = init`
+/// which evaluates the initializer twice and assigns the whole array
+/// to each member.
+#[test]
+fn namespace_exported_array_destructuring_lowers_to_temp_and_indices() {
+    let source = "namespace M {\n    export var [a, b] = [1, 2];\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a;"),
+        "Destructuring lowering must declare a temp `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [1, 2], M.a = _a[0], M.b = _a[1];"),
+        "Array destructuring lowering must assign init once, then index.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("M.a = [1, 2], M.b = [1, 2];"),
+        "Pre-fix shape (initializer evaluated per binding) must not appear.\nOutput:\n{output}"
+    );
+}
+
+/// Object-pattern counterpart: keys are accessed by name, not index.
+#[test]
+fn namespace_exported_object_destructuring_lowers_to_temp_and_keys() {
+    let source = "function f() { return { a4: 1, b4: 2, c4: 3 }; }\nnamespace m {\n    export var { a4, b4, c4 } = f();\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a;"),
+        "Destructuring lowering must declare a temp `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = f(), m.a4 = _a.a4, m.b4 = _a.b4, m.c4 = _a.c4;"),
+        "Object destructuring lowering must assign init once, then access by key.\nOutput:\n{output}"
+    );
+}
+
+/// Object-pattern with rename: `{ x: a }` → key `x`, target `M.a`.
+#[test]
+fn namespace_exported_object_destructuring_rename_uses_property_name() {
+    let source =
+        "function f() { return { x: 1 }; }\nnamespace m {\n    export var { x: a } = f();\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("_a = f(), m.a = _a.x;"),
+        "Renamed object binding must read source key but assign to renamed target.\nOutput:\n{output}"
+    );
+}
+
+/// Instantiation expressions strip the type arguments and wrap the
+/// expression in parens (`fx<T>` → `(fx)`). The empty-arg parser-recovery
+/// shape `fx<>` has no real arguments, so tsc emits the bare expression
+/// without parens (`fx<>` → `fx`).
+#[test]
+fn instantiation_expression_with_args_wraps_in_parens() {
+    let source = "declare function fx<T>(x: T): T;\nfunction f1() {\n    let f1 = fx<string>;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let f1 = (fx);"),
+        "Non-empty instantiation expression must wrap the expression in parens.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn instantiation_expression_with_empty_args_emits_bare() {
+    let source = "declare function fx<T>(x: T): T;\nfunction f1() {\n    let f0 = fx<>;\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let f0 = fx;"),
+        "Empty type-argument list must emit the bare expression with no parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("let f0 = (fx);"),
+        "Empty type-argument list must not retain the wrapping parens.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `(({}) as any).foo` was emitting `(({}).foo)` — wrapping
+/// the entire property access in extra outer parens because the
+/// "object-literal access" emitter unconditionally wrote `(` and `)`
+/// even when the inner emit was already producing `({})` (from the
+/// nested `ParenthesizedExpression`). tsc emits `({}).foo`.
+#[test]
+fn property_access_on_paren_cast_paren_object_literal_emits_single_paren() {
+    let source = "interface T {}\n(({}) as any as T).foo;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("({}).foo"),
+        "Receiver should be `({{}})` with `.foo` suffix outside the parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(({}).foo)"),
+        "Outer parens around the property access are redundant when the receiver is already parenthesized.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `export default (X as T)` where `X` is a class or function
+/// expression. The parens only existed to delimit the type cast; after
+/// erasure they look removable, but stripping them silently changes the
+/// export from "default-export an expression" to "default-export a
+/// declaration". tsc preserves the parens.
+#[test]
+fn export_default_paren_class_expression_with_cast_keeps_parens() {
+    let source = "export default (class Foo {} as any);\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("export default (class Foo {"),
+        "Parens around the class expression must be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default class Foo {"),
+        "Stripping parens would change the export shape from expression to declaration.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: `export default class Foo {}` (no parens, no cast) is a
+/// class declaration export and stays unchanged.
+#[test]
+fn export_default_class_declaration_unchanged() {
+    let source = "export default class Foo {}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("export default class Foo"),
+        "Bare default-class export should not gain parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default (class Foo"),
+        "Bare default-class export must not be wrapped in parens.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: `({ foo, bar } = foo)` reassigns the same identifier on
+/// both sides. Inlining as `(foo = foo.foo, bar = foo.bar)` reads
+/// `foo.bar` AFTER `foo` has been clobbered. tsc captures the RHS in a
+/// temp first: `_a = foo, foo = _a.foo, bar = _a.bar`.
+#[test]
+fn es5_assignment_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, bar: 2 };\nvar bar: any;\n({ foo, bar } = foo);\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("(_a = foo, foo = _a.foo, bar = _a.bar);"),
+        "RHS reassigned by LHS must capture in `_a` first.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(foo = foo.foo, bar = foo.bar);"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}
+
+/// Same hazard for `var { foo, baz } = foo;` — must lower to
+/// `var _a = foo, foo = _a.foo, baz = _a.baz;`.
+#[test]
+fn es5_var_destructuring_reassigning_rhs_uses_temp() {
+    let source = "var foo: any = { foo: 1, baz: 2 };\nvar { foo, baz } = foo;\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a = foo, foo = _a.foo, baz = _a.baz;"),
+        "Var declaration whose pattern reassigns the RHS identifier must capture in a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var foo = foo.foo, baz = foo.baz;"),
+        "Direct inline reads the clobbered `foo` for the second access.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: classes inside a namespace IIFE were missing
+/// `__metadata("design:type", T)` calls under `--emitDecoratorMetadata`.
+/// The namespace transformer instantiated an `ES5ClassTransformer` but
+/// never forwarded the metadata flag, so decorator arrays only contained
+/// the bare decorator without the type metadata.
+#[test]
+fn namespace_es5_class_emits_decorator_metadata() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "namespace M {\n    export function inject(t: any, k: string): void {}\n    export class Leg {}\n    export class Person {\n        @inject leftLeg: Leg;\n    }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("__metadata(\"design:type\", Leg)"),
+        "Decorator metadata for the property type must emit inside the namespace IIFE.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: ESM `--importHelpers` was not aliasing helper imports
+/// when the helper name collides with a local declaration. tsc emits
+/// `import { __decorate as __decorate_1 } from "tslib";` and uses
+/// `__decorate_1(...)` at call sites to avoid shadowing.
+#[test]
+fn esm_import_helpers_aliases_when_helper_name_shadowed() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any, __decorate: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        import_helpers: true,
+        legacy_decorators: true,
+        emit_decorator_metadata: false,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { __decorate as __decorate_1 } from \"tslib\";"),
+        "Local `__decorate` shadowing must trigger import alias rename.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__decorate_1("),
+        "Decorator call site must use the renamed alias.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: no local collision means no alias renaming.
+#[test]
+fn esm_import_helpers_no_alias_when_no_collision() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        import_helpers: true,
+        legacy_decorators: true,
+        emit_decorator_metadata: false,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { __decorate } from \"tslib\";"),
+        "No local collision: import name should stay unaliased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("as __decorate_1"),
+        "Don't rename when there's no local shadowing.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: a single-line `// comment` between two class members of an
+/// ES5-lowered namespace IIFE was being dropped. The trailing-standalone
+/// comment extraction was skipped for class-like members on the (now
+/// incorrect) assumption that the class sub-emitter would handle them, so
+/// comments after the class's `}` but before the next member fell through
+/// the cracks. tsc preserves them on their own line.
+#[test]
+fn namespace_es5_iife_preserves_line_comment_between_classes() {
+    let source =
+        "namespace m {\n    export class b {}\n\n    // class d\n    export class d {}\n}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("// class d"),
+        "Single-line comment between sibling classes in a namespace IIFE must survive ES5 lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_marker_strings_do_not_trigger_missing_arrow_fixture_recovery() {
+    let source = r#"namespace missingCurliesWithArrow {
+  const a = "namespace withStatement";
+  const b = "namespace withoutStatement";
+  const c = "=> var k = 10;";
+  const d = "=> };";
+
+  export const actual = 1;
+}
+
+console.log(missingCurliesWithArrow.actual);
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es6()
+        },
+    );
+
+    assert!(
+        output.contains("missingCurliesWithArrow.actual = 1;"),
+        "Valid namespace body should be emitted instead of fixture recovery output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const a = \"namespace withStatement\";"),
+        "String marker declarations should remain in the namespace body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var a = () => { var k = 10; };") && !output.contains("var a = () => ;"),
+        "Hardcoded missingCurliesWithArrow fixture output must not be emitted.\nOutput:\n{output}"
+    );
 }

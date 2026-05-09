@@ -177,18 +177,72 @@ impl<'a> CheckerState<'a> {
             };
 
             if names_share_scope {
+                let has_same_scope_function_conflict = self
+                    .ctx
+                    .binder
+                    .symbols
+                    .find_all_by_name(var_name)
+                    .iter()
+                    .any(|&candidate_id| {
+                        self.ctx
+                            .binder
+                            .get_symbol(candidate_id)
+                            .is_some_and(|candidate| {
+                                candidate.has_any_flags(symbol_flags::FUNCTION)
+                                    && candidate.declarations.iter().any(|&fn_decl_idx| {
+                                        let fn_name_idx = self
+                                            .get_declaration_name_node(fn_decl_idx)
+                                            .unwrap_or(fn_decl_idx);
+                                        self.ctx
+                                            .binder
+                                            .find_enclosing_scope(self.ctx.arena, fn_name_idx)
+                                            == Some(found_scope_id)
+                                    })
+                            })
+                    });
+                if has_same_scope_function_conflict {
+                    continue;
+                }
+
                 // The var hoists to the same scope as the let/const.
                 // tsc uses TS2300 ("Duplicate identifier") when the var declaration
                 // appears before the block-scoped declaration, and TS2451 ("Cannot
                 // redeclare block-scoped variable") when the block-scoped declaration
                 // comes first.
+                let found_scope_is_function_body_block = scope_kind
+                    == tsz_binder::ContainerKind::Block
+                    && self
+                        .ctx
+                        .binder
+                        .scopes
+                        .get(found_scope_id.0 as usize)
+                        .and_then(|s| {
+                            self.ctx
+                                .arena
+                                .get_extended(s.container_node)
+                                .map(|ext| ext.parent)
+                        })
+                        .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                        .is_some_and(|parent_node| {
+                            use tsz_parser::parser::syntax_kind_ext;
+                            matches!(
+                                parent_node.kind,
+                                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                                    || k == syntax_kind_ext::METHOD_DECLARATION
+                                    || k == syntax_kind_ext::CONSTRUCTOR
+                                    || k == syntax_kind_ext::GET_ACCESSOR
+                                    || k == syntax_kind_ext::SET_ACCESSOR
+                                    || k == syntax_kind_ext::ARROW_FUNCTION
+                            )
+                        });
 
                 // When the var declaration is in the SAME syntactic scope as the
                 // block-scoped declaration (e.g., `let x; var x;` at the same level),
                 // check_duplicate_identifiers() already handles the conflict with TS2300.
                 // Only emit here when the var is in a NESTED scope that hoists up
                 // (e.g., `let x; { var x; }`).
-                if start_scope_id == found_scope_id {
+                if start_scope_id == found_scope_id && !found_scope_is_function_body_block {
                     continue;
                 }
 
@@ -437,6 +491,16 @@ impl<'a> CheckerState<'a> {
             return self.widen_initializer_type_for_mutable_binding(fallback_type);
         }
 
+        if fallback_type == TypeId::ANY
+            && init_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(init_node)
+            && binary.operator_token == SyntaxKind::PlusToken as u16
+            && (self.expression_is_string_syntax(binary.left)
+                || self.expression_is_string_syntax(binary.right))
+        {
+            return TypeId::STRING;
+        }
+
         // Handle bare enum identifier: `var x = E`
         if init_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(init_sym_id) = self.resolve_identifier_symbol(init_idx)
@@ -477,6 +541,14 @@ impl<'a> CheckerState<'a> {
         fallback_type
     }
 
+    fn expression_is_string_syntax(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        })
+    }
+
     /// For TS2403, when the type annotation is `typeof EnumSymbol`, resolve
     /// to the enum object type.
     pub(crate) fn annotation_ts2403_type(
@@ -489,6 +561,22 @@ impl<'a> CheckerState<'a> {
         let Some(ann_node) = self.ctx.arena.get(annotation_idx) else {
             return fallback_type;
         };
+
+        if ann_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(ann_node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+            && matches!(name_ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
+            && let Some(args) = &type_ref.type_arguments
+            && let Some(&first_arg) = args.nodes.first()
+        {
+            let elem_type = self.get_type_from_type_node(first_arg);
+            let array_type = self.ctx.types.array(elem_type);
+            if name_ident.escaped_text.as_str() == "ReadonlyArray" {
+                return self.ctx.types.readonly_type(array_type);
+            }
+            return array_type;
+        }
 
         if ann_node.kind != syntax_kind_ext::TYPE_QUERY {
             return fallback_type;
@@ -544,15 +632,8 @@ impl<'a> CheckerState<'a> {
         let name_ident = self.ctx.arena.get_identifier(name_node)?;
         let prop_name = name_ident.escaped_text.as_str();
 
-        // Resolve the expression (left side) to a symbol
-        let expr_sym_id = self.resolve_identifier_symbol(access_data.expression)?;
-        let expr_symbol = self.ctx.binder.get_symbol(expr_sym_id)?;
-
-        // Look for the property name in the symbol's exports (for namespaces/modules)
-        let enum_sym_id = expr_symbol
-            .exports
-            .as_ref()
-            .and_then(|exports| exports.get(prop_name))?;
+        let expr_sym_id = self.resolve_property_access_left_symbol(access_data.expression)?;
+        let enum_sym_id = self.resolve_exported_member_symbol(expr_sym_id, prop_name)?;
 
         // Check if it's an enum (not an enum member)
         let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
@@ -584,22 +665,8 @@ impl<'a> CheckerState<'a> {
         let right_ident = self.ctx.arena.get_identifier(right_node)?;
         let prop_name = right_ident.escaped_text.as_str();
 
-        // Resolve the left side to a symbol
-        let left_node = self.ctx.arena.get(qname_data.left)?;
-        let left_sym_id = if left_node.kind == SyntaxKind::Identifier as u16 {
-            self.resolve_identifier_symbol(qname_data.left)?
-        } else {
-            // Nested qualified names not handled for now
-            return None;
-        };
-
-        let left_symbol = self.ctx.binder.get_symbol(left_sym_id)?;
-
-        // Look for the property name in the symbol's exports
-        let enum_sym_id = left_symbol
-            .exports
-            .as_ref()
-            .and_then(|exports| exports.get(prop_name))?;
+        let left_sym_id = self.resolve_qualified_name_left_symbol(qname_data.left)?;
+        let enum_sym_id = self.resolve_exported_member_symbol(left_sym_id, prop_name)?;
 
         // Check if it's an enum (not an enum member)
         let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
@@ -615,6 +682,58 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(enum_obj, def_id);
         Some(enum_obj)
+    }
+
+    fn resolve_exported_member_symbol(
+        &self,
+        container_sym_id: SymbolId,
+        prop_name: &str,
+    ) -> Option<SymbolId> {
+        let container_symbol = self.ctx.binder.get_symbol(container_sym_id)?;
+        container_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(prop_name))
+    }
+
+    fn resolve_qualified_name_left_symbol(&mut self, name_idx: NodeIndex) -> Option<SymbolId> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol(name_idx);
+        }
+
+        if name_node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return None;
+        }
+
+        let qname_data = self.ctx.arena.get_qualified_name(name_node)?;
+        let right_name = self
+            .ctx
+            .arena
+            .get_identifier_text(qname_data.right)?
+            .to_owned();
+        let left_sym_id = self.resolve_qualified_name_left_symbol(qname_data.left)?;
+        self.resolve_exported_member_symbol(left_sym_id, &right_name)
+    }
+
+    fn resolve_property_access_left_symbol(&mut self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol(expr_idx);
+        }
+
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access_data = self.ctx.arena.get_access_expr(expr_node)?;
+        let right_name = self
+            .ctx
+            .arena
+            .get_identifier_text(access_data.name_or_argument)?
+            .to_owned();
+        let left_sym_id = self.resolve_property_access_left_symbol(access_data.expression)?;
+        self.resolve_exported_member_symbol(left_sym_id, &right_name)
     }
 
     pub(crate) fn is_bare_var_declaration_node(&self, decl_idx: NodeIndex) -> bool {
@@ -994,22 +1113,48 @@ impl<'a> CheckerState<'a> {
     ///
     /// Used for TS4094: only class expressions need declaration-emit type literals,
     /// so only they require the private/protected member check.
-    pub(crate) fn instance_type_is_from_anonymous_class(&self, instance_type: TypeId) -> bool {
+    pub(crate) fn instance_type_is_from_anonymous_class(&mut self, instance_type: TypeId) -> bool {
+        self.instance_type_is_from_anonymous_class_inner(instance_type, &mut FxHashSet::default())
+    }
+
+    fn instance_type_is_from_anonymous_class_inner(
+        &mut self,
+        instance_type: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        let resolved = self.resolve_lazy_type(instance_type);
+        if !visited.insert(resolved) {
+            return false;
+        }
         let db = self.ctx.types.as_type_database();
+        if let Some(members) = crate::query_boundaries::common::intersection_members(db, resolved) {
+            return members
+                .into_iter()
+                .any(|member| self.instance_type_is_from_anonymous_class_inner(member, visited));
+        }
+
         let Some(shape) =
-            crate::query_boundaries::checkers::generic::get_object_shape(db, instance_type)
+            crate::query_boundaries::checkers::generic::get_object_shape(db, resolved)
         else {
             return false;
         };
         let Some(sym_id) = shape.symbol else {
-            return false;
+            // Mixin instantiation can materialize an anonymous-class instance as
+            // a merged object shape without preserving the original class symbol.
+            // The formatter still carries that provenance for declaration-emit
+            // display, so use it as a narrow TS4094 fallback.
+            return self.format_type(resolved).contains("(Anonymous class)");
         };
-        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
             return false;
         };
         let decl = symbol.value_declaration;
-        self.ctx
-            .arena
+        let arena = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .unwrap_or(self.ctx.arena);
+        arena
             .get(decl)
             .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
     }
@@ -1024,27 +1169,57 @@ impl<'a> CheckerState<'a> {
         instance_type: TypeId,
     ) {
         use crate::diagnostics::diagnostic_codes;
-        use tsz_common::common::Visibility;
 
-        let shape = {
-            let db = self.ctx.types.as_type_database();
-            crate::query_boundaries::checkers::generic::get_object_shape(db, instance_type)
-        };
-        let Some(shape) = shape else {
-            return;
-        };
-        let mut names: Vec<String> = shape
-            .properties
-            .iter()
-            .filter(|p| matches!(p.visibility, Visibility::Private | Visibility::Protected))
-            .map(|p| self.ctx.types.resolve_atom(p.name))
-            .collect();
+        let mut names = Vec::new();
+        self.collect_instance_private_member_names(
+            instance_type,
+            &mut FxHashSet::default(),
+            &mut names,
+        );
         names.sort();
+        names.dedup();
         for name in &names {
             self.error_at_node_msg(
                 report_at,
                 diagnostic_codes::PROPERTY_OF_EXPORTED_ANONYMOUS_CLASS_TYPE_MAY_NOT_BE_PRIVATE_OR_PROTECTED,
                 &[name.as_str()],
+            );
+        }
+    }
+
+    fn collect_instance_private_member_names(
+        &mut self,
+        instance_type: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+        names: &mut Vec<String>,
+    ) {
+        use tsz_common::common::Visibility;
+
+        let resolved = self.resolve_lazy_type(instance_type);
+        if !visited.insert(resolved) {
+            return;
+        }
+
+        if let Some(members) = crate::query_boundaries::common::intersection_members(
+            self.ctx.types.as_type_database(),
+            resolved,
+        ) {
+            for member in members {
+                self.collect_instance_private_member_names(member, visited, names);
+            }
+        }
+
+        let shape = {
+            let db = self.ctx.types.as_type_database();
+            crate::query_boundaries::checkers::generic::get_object_shape(db, resolved)
+        };
+        if let Some(shape) = shape {
+            names.extend(
+                shape
+                    .properties
+                    .iter()
+                    .filter(|p| matches!(p.visibility, Visibility::Private | Visibility::Protected))
+                    .map(|p| self.ctx.types.resolve_atom(p.name)),
             );
         }
     }
@@ -1059,6 +1234,22 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
             return;
         }
+
+        let initializer_is_object_assign = self
+            .ctx
+            .arena
+            .get(initializer)
+            .and_then(|node| self.ctx.arena.get_call_expr(node))
+            .and_then(|call| self.ctx.arena.get(call.expression))
+            .and_then(|callee| self.ctx.arena.get_access_expr(callee))
+            .is_some_and(|access| {
+                self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
+                    && self.ctx.arena.get_identifier_text(access.name_or_argument) == Some("assign")
+            });
+        if initializer_is_object_assign {
+            return;
+        }
+
         if name == "globalThis"
             && initializer.is_some()
             && let Some(init_sym_id) = self.exported_variable_initializer_symbol(initializer)

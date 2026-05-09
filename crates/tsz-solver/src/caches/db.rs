@@ -30,6 +30,9 @@ use tsz_common::interner::Atom;
 pub trait TypeDatabase {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
+        None
+    }
     fn intern_string(&self, s: &str) -> Atom;
     fn resolve_atom(&self, atom: Atom) -> String;
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str>;
@@ -177,6 +180,14 @@ pub trait TypeDatabase {
     /// See `TypeInterner::store_union_origin` for the full contract.
     fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
 
+    /// Replace display-origin members for a union in a diagnostic-specific context.
+    fn replace_union_origin_for_display(
+        &self,
+        _union_type_id: TypeId,
+        _origin_members: Vec<TypeId>,
+    ) {
+    }
+
     /// Look up the as-written origin members for a flattened Union TypeId.
     fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
         None
@@ -189,6 +200,12 @@ pub trait TypeDatabase {
     fn take_union_too_complex(&self) -> bool {
         false
     }
+
+    /// Mark the current operation as having produced a too-complex union.
+    ///
+    /// This mirrors `take_union_too_complex` for solver paths that discover the
+    /// complexity limit during evaluation rather than initial construction.
+    fn mark_union_too_complex(&self) {}
 
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
@@ -295,6 +312,10 @@ impl TypeDatabase for TypeInterner {
 
     fn lookup(&self, id: TypeId) -> Option<TypeData> {
         Self::lookup(self, id)
+    }
+
+    fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+        Self::lookup_alloc_order(self, id)
     }
 
     fn intern_string(&self, s: &str) -> Atom {
@@ -578,12 +599,20 @@ impl TypeDatabase for TypeInterner {
         Self::store_union_origin(self, union_type_id, origin_members);
     }
 
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        Self::replace_union_origin_for_display(self, union_type_id, origin_members);
+    }
+
     fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
         Self::get_union_origin(self, type_id)
     }
 
     fn take_union_too_complex(&self) -> bool {
         Self::take_union_too_complex(self)
+    }
+
+    fn mark_union_too_complex(&self) {
+        self.set_union_too_complex();
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
@@ -1068,6 +1097,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Returns the variance of each type parameter for the given `DefId`.
     /// Returns None if the `DefId` is not a generic type or variance cannot be determined.
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>>;
+
+    /// Store a resolver-computed variance mask for reuse by later relation checks.
+    fn insert_type_param_variance(&self, _def_id: DefId, _variance: Arc<[Variance]>) {}
 }
 
 impl QueryDatabase for TypeInterner {

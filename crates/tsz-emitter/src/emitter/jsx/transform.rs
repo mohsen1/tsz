@@ -6,8 +6,16 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> Printer<'a> {
+    fn write_jsx_assign_helper(&mut self) {
+        if self.ctx.target_es5 {
+            self.write_helper("__assign");
+        } else {
+            self.write("Object.assign");
+        }
+    }
+
     /// Emit classic spread attrs: handles mixes of spread and named attrs.
-    /// Uses `Object.assign` when there are spreads mixed with named props.
+    /// Uses `__assign`/`Object.assign` when there are spreads mixed with named props.
     pub(in super::super) fn emit_jsx_spread_attrs_classic(&mut self, attrs: &[JsxAttrInfo]) {
         // Group consecutive named attrs and emit them as object literals,
         // interleaved with spread expressions.
@@ -87,8 +95,9 @@ impl<'a> Printer<'a> {
             }
             self.write(" }");
         } else {
-            // ES2015-ES2017: Object.assign
-            self.write("Object.assign(");
+            // ES5: __assign helper; ES2015-ES2017: Object.assign.
+            self.write_jsx_assign_helper();
+            self.write("(");
             for (i, group) in groups.iter().enumerate() {
                 if i > 0 {
                     self.write(", ");
@@ -258,7 +267,8 @@ impl<'a> Printer<'a> {
             }
         }
 
-        self.write("Object.assign(");
+        self.write_jsx_assign_helper();
+        self.write("(");
 
         // If first segment is a Spread (or no segments), start with empty object
         let starts_with_spread = matches!(segments.first(), Some(Segment::Spread(_)));
@@ -362,7 +372,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // JSX attribute names are property keys on the synthesized props
+        // object, not value references — they must not pick up the
+        // commonjs-named-import substitution (`css` → `react_1.css`),
+        // namespace qualification, or the inline-export `exports.X`
+        // rewrite that `emit_identifier` applies to value identifiers.
+        let prev_ns = self.suppress_ns_qualification;
+        let prev_import = self.suppress_commonjs_named_import_substitution;
+        self.suppress_ns_qualification = true;
+        self.suppress_commonjs_named_import_substitution = true;
         self.emit(attr.name);
+        self.suppress_ns_qualification = prev_ns;
+        self.suppress_commonjs_named_import_substitution = prev_import;
+
         if attr.initializer.is_some() {
             self.write("=");
             self.emit(attr.initializer);
@@ -384,6 +406,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let closing_brace_pos = self.find_jsx_expression_closing_brace(node);
+
         self.write("{");
         if expr.dot_dot_dot_token {
             self.write("...");
@@ -395,7 +419,7 @@ impl<'a> Printer<'a> {
             // parent JSX element as trailing comments.
             self.increase_indent();
             let (has_comment, last_comment_end, last_comment_has_newline) =
-                self.emit_comments_in_range(node.pos + 1, node.end, false, true);
+                self.emit_comments_in_range(node.pos + 1, closing_brace_pos, false, true);
             if has_comment && last_comment_has_newline {
                 // When the last comment had a trailing newline, the writer is at
                 // line-start and will use ensure_indent() for the closing `}`.
@@ -408,7 +432,7 @@ impl<'a> Printer<'a> {
             if has_comment
                 && self.should_emit_space_before_closing_jsx_brace(
                     node.pos + 1,
-                    node.end,
+                    closing_brace_pos,
                     last_comment_end,
                 )
             {
@@ -417,14 +441,75 @@ impl<'a> Printer<'a> {
         } else if let Some(expr_node) = self.arena.get(expr.expression) {
             // Emit comments between `{` and the expression, such as `{
             // /* comment */ expr }` in JSX context.
-            self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, false);
+            self.increase_indent();
+            self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, true);
             self.emit(expr.expression);
 
             // Emit comments between the expression and the closing brace.
             let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
-            self.emit_comments_in_range(expr_token_end, node.end, true, false);
+            self.emit_comments_in_range(expr_token_end, closing_brace_pos, true, false);
+            self.decrease_indent();
         }
         self.write("}");
+    }
+
+    fn find_jsx_expression_closing_brace(&self, node: &Node) -> u32 {
+        let Some(text) = self.source_text else {
+            return node.end;
+        };
+        let bytes = text.as_bytes();
+        let end = (node.end as usize).min(bytes.len());
+        let mut pos = node.pos as usize;
+        let mut depth = 0i32;
+
+        while pos < end {
+            match bytes[pos] {
+                b'{' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return pos as u32;
+                    }
+                    pos += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < end {
+                        if bytes[pos] == b'\\' {
+                            pos = (pos + 2).min(end);
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        node.end
     }
 
     fn should_emit_space_before_closing_jsx_brace(
@@ -449,6 +534,10 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        if pos == end {
+            return true;
+        }
+
         while pos < end {
             match bytes[pos] {
                 b' ' | b'\t' => pos += 1,
@@ -466,6 +555,18 @@ impl<'a> Printer<'a> {
         };
 
         self.write(&text.text);
+        self.skip_comments_for_jsx_text(node);
+    }
+
+    fn skip_comments_for_jsx_text(&mut self, node: &Node) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= node.pos && comment.end <= node.end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
     }
 
     pub(in super::super) fn emit_jsx_namespaced_name(&mut self, node: &Node) {
@@ -483,20 +584,26 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     /// Compute 1-based (line, column) from a raw source position.
+    ///
+    /// Columns are reported in UTF-16 code units to match TypeScript's
+    /// `react-jsxdev` source metadata, which is consumed by the runtime as
+    /// JavaScript string indices.
     pub(in super::super) fn source_line_col_pos(&self, pos: u32) -> (u32, u32) {
         let Some(text) = self.source_text else {
             return (1, 1);
         };
-        let bytes = text.as_bytes();
-        let pos = (pos as usize).min(bytes.len());
+        let pos = (pos as usize).min(text.len());
         let mut line = 1u32;
         let mut col = 1u32;
-        for &b in &bytes[..pos] {
-            if b == b'\n' {
+        for (i, ch) in text.char_indices() {
+            if i >= pos {
+                break;
+            }
+            if ch == '\n' {
                 line += 1;
                 col = 1;
-            } else if b != b'\r' {
-                col += 1;
+            } else if ch != '\r' {
+                col += ch.len_utf16() as u32;
             }
         }
         (line, col)
@@ -508,18 +615,39 @@ impl<'a> Printer<'a> {
 
     /// Get the CJS variable name for the JSX runtime module import.
     /// e.g., "react/jsx-runtime" -> "`jsx_runtime_1`", "react/jsx-dev-runtime" -> "`jsx_dev_runtime_1`"
+    ///
+    /// Issue #3090: when the file already declares an identifier matching the
+    /// default name (e.g. a user `const jsx_runtime_1 = ...`), tsc picks the
+    /// next available suffix (`_2`, `_3`, …). Same hygiene applies here.
     pub(in super::super) fn jsx_cjs_runtime_var(&self) -> String {
+        if let Some(var_name) = self.jsx_legacy_cjs_runtime_var.as_ref() {
+            return var_name.clone();
+        }
+
         let suffix = match self.ctx.options.jsx {
             JsxEmit::ReactJsxDev => "jsx-dev-runtime",
             _ => "jsx-runtime",
         };
         let sanitized = crate::transforms::emit_utils::sanitize_module_name(suffix);
-        format!("{sanitized}_1")
+        let base = format!("{sanitized}_1");
+        match self.source_text {
+            Some(text) => crate::transforms::emit_utils::hygienic_temp_name(&base, text),
+            None => base,
+        }
+    }
+
+    pub(in super::super) fn jsx_dev_file_name_text(&self) -> Option<String> {
+        self.jsx_dev_file_name
+            .as_deref()
+            .map(|f| format!("const _jsxFileName = \"{f}\";\n"))
     }
 
     /// Get the CJS variable name for the base JSX module import.
     /// Used for createElement fallback when key appears after spread.
     /// e.g., "react" -> "`react_1`", "preact" -> "`preact_1`"
+    ///
+    /// Issue #3090: hygienic against existing file bindings — bumps the
+    /// suffix when the user already declared a same-named identifier.
     pub(in super::super) fn jsx_cjs_base_var(&self) -> String {
         let pragma_source = self.extract_jsx_import_source_pragma();
         let source = pragma_source
@@ -527,7 +655,11 @@ impl<'a> Printer<'a> {
             .or(self.ctx.options.jsx_import_source.as_deref())
             .unwrap_or("react");
         let sanitized = crate::transforms::emit_utils::sanitize_module_name(source);
-        format!("{sanitized}_1")
+        let base = format!("{sanitized}_1");
+        match self.source_text {
+            Some(text) => crate::transforms::emit_utils::hygienic_temp_name(&base, text),
+            None => base,
+        }
     }
 
     /// Extract `@jsxImportSource <package>` pragma from the file's leading comments.
@@ -535,6 +667,20 @@ impl<'a> Printer<'a> {
     pub(in super::super) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
         let text = self.source_text?;
         extract_jsx_import_source(text)
+    }
+
+    /// Extract `@jsx <factory>` pragma (classic JSX) from the file's leading
+    /// comments. Issue #4010.
+    pub(in super::super) fn extract_jsx_factory_pragma(&self) -> Option<String> {
+        let text = self.source_text?;
+        super::extract_jsx_factory(text)
+    }
+
+    /// Extract `@jsxFrag <factory>` pragma (classic JSX) from the file's
+    /// leading comments. Issue #4010.
+    pub(in super::super) fn extract_jsx_fragment_factory_pragma(&self) -> Option<String> {
+        let text = self.source_text?;
+        super::extract_jsx_fragment_factory(text)
     }
 
     /// Check if the file needs JSX runtime auto-imports and return the import text.
@@ -611,11 +757,7 @@ impl<'a> Printer<'a> {
                 {
                     return None;
                 }
-                let file_name_line = self
-                    .jsx_dev_file_name
-                    .as_deref()
-                    .map(|f| format!("const _jsxFileName = \"{f}\";\n"))
-                    .unwrap_or_default();
+                let file_name_line = self.jsx_dev_file_name_text().unwrap_or_default();
                 if is_cjs {
                     let mut text = String::new();
                     // Base module import for createElement fallback (key-after-spread)

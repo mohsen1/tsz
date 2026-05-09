@@ -41,6 +41,32 @@ use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
+fn strip_stray_export_lines(output: &str) -> String {
+    let lines: Vec<&str> = output.lines().collect();
+    let mut cleaned: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() == "export" {
+            if let (Some(prev), Some(next)) = (cleaned.last(), lines.get(i + 1))
+                && prev.trim() == next.trim()
+                && (next.trim_start().starts_with("//") || next.trim_start().starts_with("/*"))
+            {
+                cleaned.pop();
+            }
+            i += 1;
+            continue;
+        }
+        cleaned.push(lines[i]);
+        i += 1;
+    }
+
+    if output.ends_with('\n') {
+        format!("{}\n", cleaned.join("\n"))
+    } else {
+        cleaned.join("\n")
+    }
+}
+
 /// Namespace ES5 emitter
 ///
 /// This is a thin wrapper around `NamespaceES5Transformer` and `IRPrinter`
@@ -123,6 +149,12 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_legacy_decorators(enabled);
     }
 
+    /// Set whether `__metadata` calls should be emitted in `__decorate`
+    /// arrays for classes nested in this namespace.
+    pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
+        self.transformer.set_emit_decorator_metadata(enabled);
+    }
+
     /// Set exported variable names from prior blocks of the same namespace.
     pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
         self.transformer.set_prior_exported_vars(vars);
@@ -142,6 +174,7 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     /// Emit a namespace declaration
     pub fn emit_namespace(&mut self, ns_idx: NodeIndex) -> String {
+        let ast_qualification = self.transformer.collect_namespace_rewrite_var_names(ns_idx);
         let ir = self
             .transformer
             .transform_namespace_with_var_flag(ns_idx, self.should_declare_var);
@@ -158,14 +191,18 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
         printer.set_remove_comments(self.remove_comments);
+        if let Some((namespace, names)) = ast_qualification {
+            printer.set_namespace_ast_qualification(namespace, names);
+        }
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
-        printer.emit(&ir).to_string()
+        strip_stray_export_lines(printer.emit(&ir))
     }
 
     /// Emit an exported namespace declaration (`CommonJS` attach-to-exports form).
     pub fn emit_exported_namespace(&mut self, ns_idx: NodeIndex) -> String {
+        let ast_qualification = self.transformer.collect_namespace_rewrite_var_names(ns_idx);
         let ir = self
             .transformer
             .transform_exported_namespace_with_var_flag(ns_idx, self.should_declare_var);
@@ -182,10 +219,13 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
         printer.set_remove_comments(self.remove_comments);
+        if let Some((namespace, names)) = ast_qualification {
+            printer.set_namespace_ast_qualification(namespace, names);
+        }
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
-        printer.emit(&ir).to_string()
+        strip_stray_export_lines(printer.emit(&ir))
     }
 
     /// Set the indent level for output

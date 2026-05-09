@@ -15,7 +15,8 @@
 //! boundaries where the emitter's value-usage decision changes.
 
 use super::{
-    contains_identifier_occurrence, strip_type_declaration_lines, strip_type_only_content,
+    contains_identifier_occurrence, name_appears_in_decorator_metadata_type,
+    strip_qualified_accesses_for_names, strip_type_declaration_lines, strip_type_only_content,
 };
 
 // ----------------------------------------------------------------------
@@ -76,6 +77,26 @@ fn contains_identifier_occurrence_at_string_boundaries() {
     assert!(contains_identifier_occurrence("bar foo", "foo"));
     // Identifier alone.
     assert!(contains_identifier_occurrence("foo", "foo"));
+}
+
+#[test]
+fn strip_qualified_accesses_for_names_removes_member_reads() {
+    let names = rustc_hash::FxHashSet::from_iter(["Enum".to_string(), "Alias".to_string()]);
+    let stripped = strip_qualified_accesses_for_names(
+        "Enum.Foo; Alias[\"Bar\"]; Other.Baz; EnumValue;",
+        &names,
+    );
+    assert!(!contains_identifier_occurrence(&stripped, "Enum"));
+    assert!(!contains_identifier_occurrence(&stripped, "Alias"));
+    assert!(contains_identifier_occurrence(&stripped, "Other"));
+    assert!(contains_identifier_occurrence(&stripped, "EnumValue"));
+}
+
+#[test]
+fn strip_qualified_accesses_for_names_keeps_plain_value_reads() {
+    let names = rustc_hash::FxHashSet::from_iter(["Enum".to_string()]);
+    let stripped = strip_qualified_accesses_for_names("Enum.Foo; use(Enum);", &names);
+    assert!(contains_identifier_occurrence(&stripped, "Enum"));
 }
 
 // ----------------------------------------------------------------------
@@ -257,15 +278,6 @@ fn strip_type_only_content_keeps_object_literal_value_after_colon() {
 }
 
 #[test]
-fn strip_type_only_content_keeps_string_literals_intact() {
-    // `:` inside string literals must not be misread as a type annotation.
-    let src = "const x = \"a:b:Foo\";\n";
-    let stripped = strip_type_only_content(src);
-    // The string content is preserved verbatim, including `Foo`.
-    assert!(stripped.contains("\"a:b:Foo\""));
-}
-
-#[test]
 fn strip_type_only_content_strips_var_decl_without_initializer() {
     // `let x: T;` — no `=`, the colon IS a type annotation.
     let src = "let x: Foo;\n";
@@ -281,6 +293,45 @@ fn strip_type_only_content_skips_line_comments() {
     let stripped = strip_type_only_content(src);
     assert!(!contains_identifier_occurrence(&stripped, "Foo"));
     assert!(contains_identifier_occurrence(&stripped, "x"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_string_literal_identifier_text() {
+    let src = "const x = \"a:b:Foo\";\nconst y = 'Foo';\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
+    assert!(contains_identifier_occurrence(&stripped, "x"));
+    assert!(contains_identifier_occurrence(&stripped, "y"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_block_comment_identifier_text() {
+    let src = "/* Foo */\nconst x = 1;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
+    assert!(contains_identifier_occurrence(&stripped, "x"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_multiline_block_comment_identifier_text() {
+    let src = "/*\nFoo\n*/\nconst x = 1;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
+    assert!(contains_identifier_occurrence(&stripped, "x"));
+}
+
+#[test]
+fn strip_type_only_content_keeps_template_expression_identifier_text() {
+    let src = "const x = `${Foo}`;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(contains_identifier_occurrence(&stripped, "Foo"));
+}
+
+#[test]
+fn strip_type_only_content_ignores_template_literal_text() {
+    let src = "const x = `Foo`;\n";
+    let stripped = strip_type_only_content(src);
+    assert!(!contains_identifier_occurrence(&stripped, "Foo"));
 }
 
 // ----------------------------------------------------------------------
@@ -339,4 +390,66 @@ fn strip_type_declaration_lines_drops_export_declare_block() {
     let stripped = strip_type_declaration_lines(src);
     assert!(!contains_identifier_occurrence(&stripped, "Foo"));
     assert!(contains_identifier_occurrence(&stripped, "z"));
+}
+
+// ----------------------------------------------------------------------
+// name_appears_in_decorator_metadata_type
+// ----------------------------------------------------------------------
+
+#[test]
+fn metadata_type_finds_decorated_property_annotation() {
+    let src = r"
+class Test {
+    @whatever
+    declare prop: Observable<string>;
+}
+";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+    // A name that doesn't appear in any annotation should not match.
+    assert!(!name_appears_in_decorator_metadata_type(src, "Unrelated"));
+}
+
+#[test]
+fn metadata_type_skips_undecorated_property() {
+    // No decorator, so the type-only annotation must NOT be reported as a
+    // value usage. This is the exact case the standard type-strip already
+    // catches; the helper must agree.
+    let src = "class Test { prop: Observable<string>; }\n";
+    assert!(!name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_walks_chained_decorators() {
+    // Two decorators on the same member; the helper must walk past both.
+    let src = "class T { @a @b prop: Observable<string>; }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_walks_decorator_with_args() {
+    // `@dec(arg)` — paren args must be skipped.
+    let src = "class T { @inject('token') prop: Observable<string>; }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_handles_method_param_annotations() {
+    // For methods, parameter annotations are also `design:paramtypes`
+    // metadata. The current helper only matches the first `:` after a
+    // decorator (the return type or first param) — covering the common
+    // property-decorator case.
+    let src = "class T { @dec method(p: Observable<string>): void {} }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_handles_parameter_decorated_method_return_type() {
+    let src = "class T { method(@dec p: string): Observable<string> {} }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
+}
+
+#[test]
+fn metadata_type_handles_parameter_decorated_method_param_type() {
+    let src = "class T { method(@dec p: Observable<string>): void {} }\n";
+    assert!(name_appears_in_decorator_metadata_type(src, "Observable"));
 }

@@ -4,7 +4,7 @@
 //! marker carries an implicit `| undefined` for assignability purposes,
 //! independent of whether the source slot is itself optional or required.
 //!
-//! Two failure surfaces share this rule and both are exercised here:
+//! Three failure surfaces share this rule and are exercised here:
 //! 1. Direct tuple-to-tuple assignment (subtype rule in
 //!    `tsz-solver/src/relations/subtype/rules/tuples.rs`).
 //! 2. Array-literal initializer with contextual tuple type
@@ -14,8 +14,8 @@
 //! 3. Variadic rest argument into a generic tuple-typed rest param
 //!    (e.g. `f<U extends unknown[]>(cb: (...args: U) => T, ...args: U)`
 //!    called with an `undefined` trailing arg) — handled by the
-//!    `param_is_optional_for_arg_index` helper in
-//!    `tsz-solver/src/operations/call_args.rs`.
+//!    instantiated contextual parameter types used during generic call
+//!    inference in `tsz-checker/src/types/computation/call_inference.rs`.
 
 use tsz_checker::test_utils::check_source_diagnostics;
 
@@ -116,7 +116,7 @@ tryCb((foo: string, bar?: number) => "result", "foo", undefined);
 
 /// Anti-hardcoding (§25): re-run the variadic rest test with a different
 /// type-parameter name (`Args` instead of `U`). The fix lives in inference
-/// and call-arg helpers, not in any name-based rule.
+/// and contextual-parameter helpers, not in any name-based rule.
 #[test]
 fn variadic_rest_undefined_into_inferred_optional_tuple_slot_alt_name() {
     let source = r#"
@@ -130,7 +130,29 @@ tryCb((p1: string, p2?: number) => 0, "ok", undefined);
     assert_eq!(
         count(&diags, 2345),
         0,
-        "with alt-name type params; got: {:?}",
+        "with alt-name type params must not emit TS2345; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Negative companion for generic rest inference: a required tuple slot must
+/// not gain `undefined` just because optional slots do.
+#[test]
+fn variadic_rest_required_tuple_slot_still_rejects_undefined() {
+    let source = r#"
+declare function tryCb<T, U extends unknown[]>(
+    callbackFn: (...args: U) => T,
+    ...args: U
+): T;
+tryCb((foo: string, bar: number) => "result", "foo", undefined);
+"#;
+    let diags = check_source_diagnostics(source);
+    assert!(
+        count(&diags, 2345) >= 1,
+        "required inferred tuple slot must still reject undefined; got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))

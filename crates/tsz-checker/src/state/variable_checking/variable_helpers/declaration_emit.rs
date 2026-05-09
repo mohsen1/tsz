@@ -7,6 +7,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
+use tsz_common::comments::is_jsdoc_comment;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -330,6 +331,10 @@ impl<'a> CheckerState<'a> {
             return Some(info);
         }
 
+        if self.type_has_public_surface_reference_with_portable_arguments(inferred_type) {
+            return None;
+        }
+
         if let Some(shape) = query::callable_shape(self.ctx.types, inferred_type) {
             for sig in &shape.call_signatures {
                 for param in &sig.params {
@@ -361,6 +366,80 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn type_has_public_surface_reference_with_portable_arguments(&self, type_id: TypeId) -> bool {
+        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && alias != type_id
+            && self.type_has_public_surface_reference_with_portable_arguments(alias)
+        {
+            return true;
+        }
+
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        if !self.type_id_is_public_package_export_surface(base) {
+            return false;
+        }
+        args.iter()
+            .copied()
+            .all(|arg| self.first_non_portable_type_reference(arg).is_none())
+    }
+
+    fn type_id_is_public_package_export_surface(&self, type_id: TypeId) -> bool {
+        let Some(def_id) = lazy_def_id(self.ctx.types, type_id) else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
+            return false;
+        };
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+        let Some(source_path) = self.symbol_source_path(sym_id) else {
+            return false;
+        };
+        if !source_path.contains("/node_modules/") && !source_path.contains("\\node_modules\\") {
+            return false;
+        }
+        if Self::node_modules_segment_count(&source_path) >= 2 {
+            return false;
+        }
+
+        let name = symbol.escaped_name.as_str();
+        let mut binders: Vec<&tsz_binder::BinderState> = vec![self.ctx.binder];
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            binders.extend(all_binders.iter().map(std::convert::AsRef::as_ref));
+        }
+
+        binders.into_iter().any(|binder| {
+            binder.module_exports.iter().any(|(_, exports)| {
+                exports.get(name).is_some_and(|exported| {
+                    exported == sym_id
+                        || binder.resolve_import_symbol(exported) == Some(sym_id)
+                        || self.ctx.binder.resolve_import_symbol(exported) == Some(sym_id)
+                        || self.resolve_alias_symbol(exported, &mut AliasCycleTracker::new())
+                            == Some(sym_id)
+                })
+            })
+        })
+    }
+
+    fn node_modules_segment_count(path: &str) -> usize {
+        use std::path::{Component, Path};
+
+        Path::new(path)
+            .components()
+            .filter(|component| {
+                matches!(
+                    component,
+                    Component::Normal(part) if part.to_str() == Some("node_modules")
+                )
+            })
+            .count()
     }
 
     pub(crate) fn first_private_name_from_external_module_reference(
@@ -655,59 +734,65 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let mut search_start = 0usize;
-        while let Some(rel) = source_text[search_start..].find("import(") {
-            let abs = search_start + rel + "import(".len();
-            // Skip optional whitespace
-            let bytes = source_text.as_bytes();
-            let mut cursor = abs;
-            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                cursor += 1;
-            }
-            // Expect a quoted specifier; skip non-string forms (unsupported here).
-            if cursor >= bytes.len() {
-                break;
-            }
-            let quote = bytes[cursor];
-            if quote != b'"' && quote != b'\'' {
-                search_start = abs;
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
-            cursor += 1;
-            let start = cursor;
-            while cursor < bytes.len() && bytes[cursor] != quote {
+            let comment_text = comment.get_text(source_text);
+            let mut search_start = 0usize;
+            while let Some(rel) = comment_text[search_start..].find("import(") {
+                let abs = search_start + rel + "import(".len();
+                // Skip optional whitespace
+                let bytes = comment_text.as_bytes();
+                let mut cursor = abs;
+                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                    cursor += 1;
+                }
+                // Expect a quoted specifier; skip non-string forms (unsupported here).
+                if cursor >= bytes.len() {
+                    break;
+                }
+                let quote = bytes[cursor];
+                if quote != b'"' && quote != b'\'' {
+                    search_start = abs;
+                    continue;
+                }
                 cursor += 1;
-            }
-            if cursor >= bytes.len() {
-                break;
-            }
-            let specifier = &source_text[start..cursor];
-            search_start = cursor + 1;
+                let start = cursor;
+                while cursor < bytes.len() && bytes[cursor] != quote {
+                    cursor += 1;
+                }
+                if cursor >= bytes.len() {
+                    break;
+                }
+                let specifier = &comment_text[start..cursor];
+                search_start = cursor + 1;
 
-            // Match the JSDoc TS2307 check: rooted specifiers (starting with
-            // `/`) are unresolvable per tsc unless an ambient module declares
-            // them. Plain relative/non-rooted forms are out of scope here —
-            // they go through the standard resolution-error pipeline.
-            if !specifier.starts_with('/') {
-                continue;
-            }
-            let has_ambient_module = self
-                .ctx
-                .declared_modules_contains(self.ctx.binder, specifier)
-                || self
+                // Match the JSDoc TS2307 check: rooted specifiers (starting with
+                // `/`) are unresolvable per tsc unless an ambient module declares
+                // them. Plain relative/non-rooted forms are out of scope here —
+                // they go through the standard resolution-error pipeline.
+                if !specifier.starts_with('/') {
+                    continue;
+                }
+                let has_ambient_module = self
                     .ctx
-                    .binder
-                    .shorthand_ambient_modules
-                    .contains(specifier);
-            if has_ambient_module {
-                continue;
-            }
-            let resolved = self
-                .ctx
-                .resolve_import_target_from_file(self.ctx.current_file_idx, specifier)
-                .or_else(|| self.ctx.resolve_import_target(specifier));
-            if resolved.map(|idx| idx as u32) == Some(target_file_idx) {
-                return true;
+                    .declared_modules_contains(self.ctx.binder, specifier)
+                    || self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(specifier);
+                if has_ambient_module {
+                    continue;
+                }
+                let resolved = self
+                    .ctx
+                    .resolve_import_target_from_file(self.ctx.current_file_idx, specifier)
+                    .or_else(|| self.ctx.resolve_import_target(specifier));
+                if resolved.map(|idx| idx as u32) == Some(target_file_idx) {
+                    return true;
+                }
             }
         }
 

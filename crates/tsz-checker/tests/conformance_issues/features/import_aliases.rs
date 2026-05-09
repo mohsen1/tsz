@@ -322,6 +322,39 @@ type TestType<C extends string | ComponentType<any>> =
 }
 
 #[test]
+fn test_module_local_function_alias_does_not_satisfy_callable_conditional_constraint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[(
+            "index.ts",
+            r#"
+export {};
+
+type Function = { tag: string };
+
+type CallableBox<T extends (...args: never[]) => unknown> = T;
+
+type Result<T extends Function> =
+  T extends Function ? CallableBox<T> : never;
+
+declare const result: Result<{ tag: string }>;
+result.tag;
+"#,
+        )],
+        "index.ts",
+        CheckerOptions {
+            no_lib: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Expected TS2344 because the module-local Function alias is not callable. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts1062_self_referencing_promise_in_await() {
     if !lib_files_available() {
         return;
@@ -455,6 +488,46 @@ function blah() {
     assert!(
         codes.contains(&1184),
         "Expected TS1184 (modifiers cannot appear here for export class). Got codes: {codes:?}"
+    );
+}
+
+/// In a bare block, tsc still performs module-specifier semantic checks after
+/// emitting the wrong-context grammar diagnostics.
+#[test]
+fn module_elements_in_bare_block_still_check_module_specifiers() {
+    let source = r#"
+{
+    declare module "ambient" {
+    }
+
+    export { baz as b } from "ambient";
+    import I2 = require("foo");
+    import { baz } from "ambient";
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    let ts2305_count = codes.iter().filter(|&&code| code == 2305).count();
+    let module_not_found_count = codes
+        .iter()
+        .filter(|&&code| code == 2307 || code == 2792)
+        .count();
+
+    assert!(
+        codes.contains(&1232),
+        "Expected TS1232 for imports in a bare block. Got: {diagnostics:#?}"
+    );
+    assert!(
+        codes.contains(&1233),
+        "Expected TS1233 for re-export in a bare block. Got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2305_count, 2,
+        "Expected TS2305 for both missing ambient named exports. Got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        module_not_found_count, 1,
+        "Expected one module-not-found diagnostic for the unresolved require import. Got: {diagnostics:#?}"
     );
 }
 
@@ -638,6 +711,40 @@ new Foo2();
 }
 
 #[test]
+fn test_esm_module_exports_named_import_uses_default_hint_over_hidden_local_suggestion() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"
+export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+                "#,
+            ),
+            ("importer.cts", r#"import { Oops } from "./exporter.mjs";"#),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2614).count(),
+        1,
+        "Expected TS2614 for named import from a Node20 module.exports interop binding. Got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2724).count(),
+        0,
+        "Hidden module.exports locals should not produce TS2724 spelling suggestions. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2339_on_generic_class_computed_property_self_reference() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -653,7 +760,40 @@ declare class RC<T extends "a" | "b"> {
         !has_error(&diagnostics, 2339),
         "TS2339 should not be emitted for property access on a generic class \
          used in its own computed property name. The property 'x' exists on \
-         the class instance type. Got diagnostics: {diagnostics:?}"
+        the class instance type. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2339_on_module_generic_class_computed_property_self_reference() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("module.ts", r#"export const marker = "a";"#),
+            (
+                "main.ts",
+                r#"
+import { marker } from "./module";
+marker;
+declare const rC: RC<"a">;
+rC.x
+declare class RC<T extends "a" | "b"> {
+    x: T;
+    [rC.x]: "b";
+}
+                "#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::CommonJS,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "module-mode forward class self-reference should not emit TS2339. \
+         Got diagnostics: {diagnostics:?}"
     );
 }
 
@@ -715,6 +855,39 @@ create({
          The state parameter should be inferred as {{ bar2: number }} from \
          the sibling state() method, not fall back to 'unknown' from the \
          Record<string, unknown> constraint. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts18046_union_state_function_infers_top_level_state() {
+    // `state?: State | (() => State) | { (): State }` still contributes
+    // return-type evidence for State. The callable union arms are the inference
+    // sources; the naked State arm must not force fallback to the constraint.
+    let source = r#"
+type StateFunction<State> = (s: State, ...args: any[]) => any;
+
+type Options<State> = {
+  state?: State | (() => State) | { (): State };
+  mutations?: Record<string, StateFunction<State>>;
+};
+
+declare function create<State extends Record<string, unknown>>(options: Options<State>): void;
+
+create({
+  state() {
+    return { bar2: 1 };
+  },
+  mutations: {
+    inc: (state123) => state123.bar2++,
+  },
+});
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 18046),
+        "TS18046 should not be emitted for top-level mutation callbacks. \
+         State should be inferred from the callable union arm of state(), not \
+         fall back to Record<string, unknown>. Got: {diagnostics:?}"
     );
 }
 
@@ -900,5 +1073,79 @@ export { zzz as default };
         ts2300_count, 0,
         "External module files should not emit false TS2300 for cross-file \
          default import aliases. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_named_import_typo_prefers_spelling_over_default_hint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "provider.ts",
+                r#"
+export default function defaultThing() {}
+export const ExistingName = 1;
+                "#,
+            ),
+            (
+                "consumer.ts",
+                r#"import { ExistingNam } from "./provider";"#,
+            ),
+        ],
+        "consumer.ts",
+        CheckerOptions::default(),
+    );
+
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2724).count(),
+        1,
+        "Expected TS2724 when a nearby misspelling exists, even with a default export. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2614).count(),
+        0,
+        "TS2614 should not preempt TS2724 for misspelled named imports with a default export. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2305).count(),
+        0,
+        "TS2305 should not emit when spelling suggestion or default-export hint applies. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_named_re_export_typo_prefers_spelling_over_default_hint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options_and_import_reporting(
+        &[
+            (
+                "provider.ts",
+                r#"
+export default function defaultThing() {}
+export const ExistingName = 1;
+                "#,
+            ),
+            (
+                "consumer.ts",
+                r#"export { ExistingNam } from "./provider";"#,
+            ),
+        ],
+        "consumer.ts",
+        CheckerOptions::default(),
+        true,
+    );
+
+    assert!(
+        diagnostics.iter().filter(|(code, _)| *code == 2724).count() >= 1,
+        "Expected TS2724 for misspelled re-exported member even when a default export exists. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2614).count(),
+        0,
+        "TS2614 should not preempt TS2724 for misspelled re-exported members with default export. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2305).count(),
+        0,
+        "TS2305 should not emit when spelling suggestion or default-export hint applies. Got: {diagnostics:?}"
     );
 }

@@ -422,9 +422,17 @@ impl<'a> CheckerState<'a> {
                 if crate::query_boundaries::common::is_callable_type(self.ctx.types, member) {
                     return Some(member);
                 }
+                let had_prior_complexity = self.ctx.types.take_union_too_complex();
                 let evaluated = self.evaluate_type_with_env(member);
                 let evaluated = self.resolve_lazy_type(evaluated);
                 let evaluated = self.evaluate_application_type(evaluated);
+                let produced_complexity = self.ctx.types.take_union_too_complex();
+                if had_prior_complexity || produced_complexity {
+                    self.ctx.types.mark_union_too_complex();
+                }
+                if produced_complexity {
+                    return None;
+                }
                 crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
                     .then_some(evaluated)
             })
@@ -496,7 +504,9 @@ impl<'a> CheckerState<'a> {
             } = self.resolve_property_access_with_env(contextual_type, property_name)
             && let Some(type_id) = self.precise_callable_context_type(type_id)
         {
-            return Some(type_id);
+            return self
+                .prefer_more_specific_contextual_property_type(Some(type_id), property_context_type)
+                .or(Some(type_id));
         }
 
         if self
@@ -934,6 +944,13 @@ impl<'a> CheckerState<'a> {
                 .prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
+        if let Some(env_property_type) = env_property_type {
+            best_property_type = self.prefer_more_specific_contextual_property_type(
+                best_property_type,
+                env_property_type,
+            );
+        }
+
         if let Some(property_type) = self
             .ctx
             .types
@@ -952,13 +969,6 @@ impl<'a> CheckerState<'a> {
                 best_property_type = self.prefer_more_specific_contextual_property_type(
                     best_property_type,
                     property_type,
-                );
-            }
-
-            if let Some(env_property_type) = env_property_type {
-                best_property_type = self.prefer_more_specific_contextual_property_type(
-                    best_property_type,
-                    env_property_type,
                 );
             }
         }
@@ -1193,13 +1203,31 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(key_type, constraint_resolved)
             || self.is_assignable_to(key_type, constraint_evaluated)
         {
-            return Some(template);
+            let mut substitution = tsz_solver::TypeSubstitution::new();
+            substitution.insert(mapped.type_param.name, key_type);
+            let instantiated = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                template,
+                &substitution,
+            );
+            let evaluated = self.evaluate_type_with_env(instantiated);
+            let evaluated = self.resolve_lazy_type(evaluated);
+            return Some(self.evaluate_application_type(evaluated));
         }
 
         if numeric_key.is_some()
             && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, constraint)
         {
-            return Some(template);
+            let mut substitution = tsz_solver::TypeSubstitution::new();
+            substitution.insert(mapped.type_param.name, key_type);
+            let instantiated = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                template,
+                &substitution,
+            );
+            let evaluated = self.evaluate_type_with_env(instantiated);
+            let evaluated = self.resolve_lazy_type(evaluated);
+            return Some(self.evaluate_application_type(evaluated));
         }
 
         None
@@ -1232,6 +1260,28 @@ impl<'a> CheckerState<'a> {
         }
         if matches!(candidate, TypeId::ANY | TypeId::UNKNOWN)
             && !matches!(current, TypeId::ANY | TypeId::UNKNOWN)
+        {
+            return Some(current);
+        }
+
+        if crate::query_boundaries::common::union_members(self.ctx.types, current)
+            .is_some_and(|members| members.contains(&candidate))
+        {
+            return Some(candidate);
+        }
+        if crate::query_boundaries::common::union_members(self.ctx.types, candidate)
+            .is_some_and(|members| members.contains(&current))
+        {
+            return Some(current);
+        }
+
+        if crate::query_boundaries::common::intersection_members(self.ctx.types, current)
+            .is_some_and(|members| members.contains(&candidate))
+        {
+            return Some(candidate);
+        }
+        if crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+            .is_some_and(|members| members.contains(&current))
         {
             return Some(current);
         }
@@ -1353,6 +1403,7 @@ impl<'a> CheckerState<'a> {
         else {
             return ctx_type;
         };
+        let raw_members = crate::query_boundaries::common::union_members(self.ctx.types, ctx_type);
 
         if members.len() < 2 {
             return ctx_type;
@@ -1456,7 +1507,7 @@ impl<'a> CheckerState<'a> {
         // For each union member, check if all discriminant values are compatible
         // AND no present property maps to `never` in that member.
         let mut matching_members: Vec<TypeId> = Vec::new();
-        for &member in &members {
+        for (member_index, &member) in members.iter().enumerate() {
             let lazy_member = self.resolve_lazy_type(member);
             let resolved_member = self.resolve_type_for_property_access(lazy_member);
             let evaluated_member = self.evaluate_contextual_type(resolved_member);
@@ -1553,6 +1604,49 @@ impl<'a> CheckerState<'a> {
                         if present_property_names.contains(&prop_name_str) {
                             continue;
                         }
+                        let member_is_array_like = member_candidates.iter().any(|&candidate| {
+                            crate::query_boundaries::common::array_element_type(
+                                self.ctx.types,
+                                candidate,
+                            )
+                            .is_some()
+                                || crate::query_boundaries::common::tuple_elements(
+                                    self.ctx.types,
+                                    candidate,
+                                )
+                                .is_some()
+                                || crate::query_boundaries::common::object_shape_for_type(
+                                    self.ctx.types,
+                                    candidate,
+                                )
+                                .is_some_and(|shape| {
+                                    shape.number_index.is_some() || {
+                                        let has_length = shape.properties.iter().any(|prop| {
+                                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
+                                                == "length"
+                                        });
+                                        let has_array_method =
+                                            shape.properties.iter().any(|prop| {
+                                                matches!(
+                                                    self.ctx
+                                                        .types
+                                                        .resolve_atom_ref(prop.name)
+                                                        .as_ref(),
+                                                    "push" | "pop" | "concat" | "slice"
+                                                )
+                                            });
+                                        has_length && has_array_method
+                                    }
+                                })
+                        });
+                        if !member_is_array_like
+                            && !crate::query_boundaries::common::is_unit_type(
+                                self.ctx.types,
+                                prop.type_id,
+                            )
+                        {
+                            continue;
+                        }
                         // This member requires a property that the literal doesn't have.
                         // Check if at least one other member doesn't require it (optional or absent).
                         let some_other_doesnt_require = members.iter().any(|&other| {
@@ -1586,7 +1680,12 @@ impl<'a> CheckerState<'a> {
             };
 
             if unit_match && never_match && absent_required_match {
-                matching_members.push(member);
+                let raw_member = raw_members
+                    .as_ref()
+                    .and_then(|members| members.get(member_index))
+                    .copied()
+                    .unwrap_or(member);
+                matching_members.push(raw_member);
             }
         }
 

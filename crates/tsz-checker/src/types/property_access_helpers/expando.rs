@@ -206,9 +206,72 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && self.variable_declaration_has_jsdoc_type_annotation(decl_idx)
+        {
+            return false;
+        }
+
         init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+    }
+
+    fn root_symbol_supports_js_direct_expando_write(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+
+        if symbol.has_any_flags(
+            symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE,
+        ) {
+            return true;
+        }
+
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
+            return false;
+        }
+
+        let decl_idx = symbol.value_declaration;
+        let file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        let Some(init_node) = arena.get(var_decl.initializer) else {
+            return false;
+        };
+
+        init_node.is_function_expression_or_arrow()
+            || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+    }
+
+    fn variable_declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {
+        let Some(source_file) = self.source_file_data_for_node(decl_idx) else {
+            return false;
+        };
+        if source_file.comments.is_empty() || !source_file.comments.iter().any(|c| c.is_multi_line)
+        {
+            return false;
+        }
+        let source_text = source_file.text.to_string();
+        let comments = source_file.comments.clone();
+        self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
+            .as_deref()
+            .and_then(Self::extract_jsdoc_type_expression)
+            .is_some()
     }
 
     fn expando_root_js_file_idx(&self, object_expr_idx: NodeIndex) -> Option<usize> {
@@ -390,13 +453,6 @@ impl<'a> CheckerState<'a> {
 
             for root_key in root_keys {
                 let expected_key = format!("{root_key}.{property_name}");
-                if !self.js_file_has_expando_assignment_for_keys(
-                    file_idx,
-                    std::slice::from_ref(root_key),
-                    property_name,
-                ) {
-                    continue;
-                }
                 if let Some(ty) =
                     self.cross_file_expando_property_read_type(file_idx, &expected_key)
                 {
@@ -406,65 +462,6 @@ impl<'a> CheckerState<'a> {
         }
 
         None
-    }
-
-    pub(in crate::types_domain) fn synthesized_array_iterator_method_type(
-        &mut self,
-        object_type: TypeId,
-        property_name: &str,
-    ) -> Option<TypeId> {
-        if !matches!(property_name, "values" | "keys" | "entries") {
-            return None;
-        }
-
-        let element_type =
-            crate::query_boundaries::common::array_element_type(self.ctx.types, object_type)
-                .or_else(|| {
-                    crate::query_boundaries::common::get_tuple_element_type_union(
-                        self.ctx.types,
-                        object_type,
-                    )
-                })?;
-
-        let iterator_base = self
-            .resolve_entity_name_text_to_def_id_for_lowering("ArrayIterator")
-            .map(|def_id| self.ctx.types.lazy(def_id))
-            .or_else(|| {
-                self.resolve_entity_name_text_to_def_id_for_lowering("IterableIterator")
-                    .map(|def_id| self.ctx.types.lazy(def_id))
-            })?;
-
-        let return_arg = match property_name {
-            "values" => element_type,
-            "keys" => TypeId::NUMBER,
-            "entries" => self.ctx.types.tuple(vec![
-                tsz_solver::TupleElement {
-                    type_id: TypeId::NUMBER,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                },
-                tsz_solver::TupleElement {
-                    type_id: element_type,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                },
-            ]),
-            _ => return None,
-        };
-
-        let return_type = self.ctx.types.application(iterator_base, vec![return_arg]);
-
-        Some(self.ctx.types.function(tsz_solver::FunctionShape {
-            type_params: Vec::new(),
-            params: Vec::new(),
-            this_type: None,
-            return_type,
-            type_predicate: None,
-            is_constructor: false,
-            is_method: true,
-        }))
     }
 
     pub(in crate::types_domain) fn prior_js_prototype_object_literal_assignment_node(
@@ -509,6 +506,133 @@ impl<'a> CheckerState<'a> {
         }
 
         latest_match.map(|(_, rhs_idx)| rhs_idx)
+    }
+
+    pub(in crate::types_domain) fn prior_js_prototype_object_literal_assignment_display(
+        &mut self,
+        prototype_root_expr: NodeIndex,
+        read_pos: u32,
+    ) -> Option<String> {
+        let rhs_idx =
+            self.prior_js_prototype_object_literal_assignment_node(prototype_root_expr, read_pos)?;
+        self.prototype_object_literal_display(rhs_idx)
+    }
+
+    fn prototype_object_literal_display(&mut self, object_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(object_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let obj_lit = self.ctx.arena.get_literal_expr(node)?;
+        let mut parts = Vec::new();
+
+        for elem_idx in obj_lit.elements.nodes.clone() {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.prototype_object_literal_display_name(prop.name) else {
+                        continue;
+                    };
+                    let Some(value_node) = self.ctx.arena.get(prop.initializer) else {
+                        continue;
+                    };
+                    let value_display = if value_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION {
+                        self.prototype_callable_display(prop.initializer)
+                    } else {
+                        let value_type = self.get_type_of_node(prop.initializer);
+                        self.format_type_for_assignability_message(value_type)
+                    };
+                    parts.push(format!("{name}: {value_display}"));
+                }
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(elem_node) else {
+                        continue;
+                    };
+                    let Some(name) = self.prototype_object_literal_display_name(method.name) else {
+                        continue;
+                    };
+                    let method_display = self.prototype_callable_display(elem_idx);
+                    parts.push(Self::prototype_method_display(&name, &method_display));
+                }
+                _ => {}
+            }
+        }
+
+        Some(if parts.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{ {}; }}", parts.join("; "))
+        })
+    }
+
+    fn prototype_callable_display(&mut self, callable_idx: NodeIndex) -> String {
+        let callable_type = self.shallow_object_literal_callable_type(callable_idx);
+        let display = self.format_type_for_assignability_message(callable_type);
+        if self.prototype_callable_has_no_value_return(callable_idx)
+            && let Some(prefix) = display.strip_suffix(" => any")
+        {
+            return format!("{prefix} => void");
+        }
+
+        display
+    }
+
+    fn prototype_callable_has_no_value_return(&self, callable_idx: NodeIndex) -> bool {
+        let Some(callable_node) = self.ctx.arena.get(callable_idx) else {
+            return false;
+        };
+        let body = self
+            .ctx
+            .arena
+            .get_method_decl(callable_node)
+            .map(|method| method.body)
+            .or_else(|| {
+                self.ctx
+                    .arena
+                    .get_function(callable_node)
+                    .map(|func| func.body)
+            });
+        body.is_some_and(|body| !self.body_has_return_with_value(body))
+    }
+
+    fn prototype_object_literal_display_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone()),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx
+                    .arena
+                    .get_literal(name_node)
+                    .map(|lit| format!("\"{}\"", lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .ctx
+                .arena
+                .get_literal(name_node)
+                .map(|lit| lit.text.clone()),
+            _ => self.get_property_name(name_idx),
+        }
+    }
+
+    fn prototype_method_display(name: &str, function_display: &str) -> String {
+        if let Some(signature) = function_display.strip_prefix('(')
+            && let Some((params, return_type)) = signature.split_once(") => ")
+        {
+            return format!("{name}({params}): {return_type}");
+        }
+
+        format!("{name}: {function_display}")
     }
 
     pub(in crate::types_domain) fn prior_js_prototype_object_literal_declares_property(
@@ -943,11 +1067,28 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.is_expando_property_read(object_expr_idx, property_name)
-            || (self.property_access_is_direct_write_target(property_access_idx)
-                && self
-                    .current_file_commonjs_export_member_name(property_access_idx)
-                    .is_some())
+        if self.is_expando_property_read(object_expr_idx, property_name) {
+            return true;
+        }
+
+        if self.property_access_is_direct_write_target(property_access_idx) {
+            if self
+                .current_file_commonjs_export_member_name(property_access_idx)
+                .is_some()
+            {
+                return true;
+            }
+
+            if let Some(obj_key) =
+                Self::property_access_chain_in_arena(self.ctx.arena, object_expr_idx)
+                && !self.class_has_instance_member(&obj_key, property_name)
+                && let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
+            {
+                return self.root_symbol_supports_js_direct_expando_write(sym_id);
+            }
+        }
+
+        false
     }
 
     /// Check if a property access reads an expando property assigned via `X.prop = value`.
@@ -1037,6 +1178,7 @@ impl<'a> CheckerState<'a> {
                 };
             let is_declared_function_or_class =
                 (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            let is_declared_class = (symbol.flags & symbol_flags::CLASS) != 0;
 
             let declaration_is_function_value_in_arena =
                 |arena: &tsz_parser::parser::node::NodeArena, decl_idx: NodeIndex| -> bool {
@@ -1157,6 +1299,7 @@ impl<'a> CheckerState<'a> {
                         || declaration_is_function_value(decl_idx)
                 });
             if has_callable_decl
+                && !is_declared_class
                 && (has_mixed_non_callable_declaration || !has_expando_declaration_pattern)
             {
                 return false;
@@ -1167,6 +1310,12 @@ impl<'a> CheckerState<'a> {
         // already declare in their semantic shape. Those writes should not opt the
         // property into the expando-forward-read path.
         if self.object_literal_root_declares_property(object_expr_idx, property_name) {
+            return false;
+        }
+
+        if let Some(sym_id) = self.root_symbol_for_expando_read(object_expr_idx)
+            && !self.root_symbol_supports_js_expando_read(sym_id)
+        {
             return false;
         }
 
@@ -1481,7 +1630,11 @@ impl<'a> CheckerState<'a> {
             // not a meaningful type assignment. Skip it so the property type doesn't
             // become `undefined`, which would cause spurious TS18048 diagnostics.
             if !self.js_assignment_rhs_is_void_zero(binary.right) {
-                let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
+                let rhs_idx = Self::checked_js_constructor_initializer_expression(
+                    self.ctx.arena,
+                    binary.left,
+                )
+                .unwrap_or_else(|| self.terminal_expando_assignment_rhs(binary.right));
                 let rhs_type = self.get_type_of_node(rhs_idx);
                 if rhs_type != TypeId::ANY
                     && rhs_type != TypeId::ERROR
@@ -1503,7 +1656,19 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn expando_assignment_access_key(&self, idx: NodeIndex) -> Option<String> {
+    fn terminal_expando_assignment_rhs(&self, idx: NodeIndex) -> NodeIndex {
+        let idx = self.ctx.arena.skip_parenthesized(idx);
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.terminal_expando_assignment_rhs(binary.right);
+        }
+        idx
+    }
+
+    fn expando_assignment_access_key(&mut self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => self
@@ -1520,10 +1685,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
                 let left = self.expando_assignment_access_key(access.expression)?;
-                let right = static_element_access_key_text_in_arena(
-                    self.ctx.arena,
-                    access.name_or_argument,
-                )?;
+                let right = self.expando_element_key_name(access.name_or_argument)?;
                 Some(format!("{left}.{right}"))
             }
             _ => None,
@@ -1627,19 +1789,16 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_current_file_commonjs_export_base_syntax(&self, idx: NodeIndex) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text == "exports")
-                && self
-                    .resolve_identifier_symbol_without_tracking(idx)
-                    .is_none();
+            return self.is_unshadowed_commonjs_exports_identifier(idx);
         }
 
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -1649,18 +1808,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        let module_is_unshadowed = !self
-            .resolve_identifier_symbol_without_tracking(access.expression)
-            .is_some_and(|sym_id| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
-            });
-        self.ctx
-            .arena
-            .get_identifier_at(access.expression)
-            .is_some_and(|ident| ident.escaped_text == "module" && module_is_unshadowed)
+        self.is_unshadowed_commonjs_module_identifier(access.expression)
             && self
                 .ctx
                 .arena

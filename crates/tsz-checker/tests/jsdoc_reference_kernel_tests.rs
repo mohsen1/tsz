@@ -14,61 +14,33 @@
 use tsz_checker::context::CheckerOptions;
 
 fn check_js(source: &str) -> Vec<u32> {
-    let options = CheckerOptions {
-        check_js: true,
-        ..CheckerOptions::default()
-    };
-
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 fn check_js_strict(source: &str) -> Vec<u32> {
-    let options = CheckerOptions {
-        check_js: true,
-        strict: true,
-        strict_null_checks: true,
-        ..CheckerOptions::default()
-    };
-
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 // =============================================================================
@@ -95,6 +67,55 @@ var n = config.name;
     assert!(
         !codes.contains(&2339),
         "Expected no TS2339 for typedef property access, got: {codes:?}"
+    );
+}
+
+/// A @typedef may put the alias name on the line after the braced type.
+#[test]
+fn typedef_name_on_following_line_resolves_for_param_tags() {
+    let codes = check_js(
+        r#"
+/**
+ * @typedef {function(string): boolean}
+ * Predicate
+ */
+
+/**
+ * @param {Predicate} fn
+ */
+function use(fn) {
+    return fn("ok");
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2304),
+        "Expected wrapped typedef name to resolve without TS2304, got: {codes:?}"
+    );
+}
+
+/// A @typedef braced function type may wrap before the alias name.
+#[test]
+fn typedef_wrapped_function_type_resolves_for_param_tags() {
+    let codes = check_js(
+        r#"
+/**
+ * @typedef {function(boolean, string,
+ *    number):
+ *    (string|number)} StringOrNumber
+ */
+
+/**
+ * @param {StringOrNumber} fn
+ */
+function use(fn) {
+    return fn(true, "ok", 1);
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2304),
+        "Expected multiline typedef function type to resolve without TS2304, got: {codes:?}"
     );
 }
 
@@ -190,6 +211,10 @@ foo({});
     assert!(
         !codes.contains(&2315),
         "Funcs<A, B> must not emit TS2315 when templates are after @typedef, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2304),
+        "Funcs<A, B> must not be reported as one unresolved JSDoc name, got: {codes:?}"
     );
 }
 

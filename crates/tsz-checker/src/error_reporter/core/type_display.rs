@@ -4,7 +4,7 @@ use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
-use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -122,13 +122,33 @@ impl<'a> CheckerState<'a> {
             return ty;
         };
 
+        if let Some(narrowed) = self.narrow_excess_function_param_by_property_key(prop_name, ty) {
+            return narrowed;
+        }
+
         if let Some(shape) = query::function_shape(self.ctx.types, ty) {
             let params: Vec<_> = shape
                 .params
                 .iter()
                 .map(|param| {
-                    let normalized = self.normalize_excess_display_type(param.type_id);
+                    let normalized = crate::query_boundaries::common::evaluate_type(
+                        self.ctx.types,
+                        param.type_id,
+                    );
+                    let normalized = self
+                        .narrow_excess_function_param_by_property_key(prop_name, normalized)
+                        .unwrap_or(normalized);
                     let type_id = if self.param_matches_property_key_literal(prop_name, normalized)
+                        || crate::query_boundaries::common::type_application(
+                            self.ctx.types,
+                            normalized,
+                        )
+                        .is_some()
+                        || crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            normalized,
+                        )
+                        .is_some()
                     {
                         normalized
                     } else {
@@ -1157,10 +1177,7 @@ impl<'a> CheckerState<'a> {
                     let evaluated =
                         crate::query_boundaries::common::evaluate_type(self.ctx.types, **member);
                     !crate::query_boundaries::common::is_primitive_type(self.ctx.types, evaluated)
-                        && !crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            evaluated,
-                        )
+                        && !self.is_generic_excess_union_member(**member, evaluated)
                 })
                 .map(|(i, member)| {
                     // Use original (pre-evaluation) member if available for display
@@ -1293,19 +1310,22 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_excess_property_target_type(&mut self, ty: TypeId) -> String {
-        // If the type is a named alias (e.g., `type ExoticAnimal = CatDog | ManBearPig`),
-        // tsc shows the alias name in excess property messages. Check for Lazy(DefId)
-        // references before evaluation strips the name. The formatter handles Lazy types
-        // by resolving to the definition name.
+        // Preserve named aliases before evaluation strips the Lazy(DefId).
         if crate::query_boundaries::common::is_lazy_type(self.ctx.types, ty) {
             return self.format_type_diagnostic_widened(ty);
         }
 
-        // Generic Application target (e.g., `Record<Keys, unknown>`): tsc shows
-        // the Application form in excess-property messages. Either the type is
-        // an Application directly, or it's the evaluated result carrying a
-        // display_alias back to the Application. In both cases, route through
-        // the standard diagnostic formatter so the Application syntax is used.
+        // TS2353 displays the object-like branch that rejected the property, not
+        // the optional `undefined | ...` wrapper that often appears on contextual
+        // object properties. Do this before union/intersection formatting so a
+        // single remaining intersection can use the specialized object display path.
+        let ty = self.strip_non_object_union_members_for_excess_display(ty);
+
+        if let Some(display) = self.format_intersection_union_for_excess_display(ty) {
+            return display;
+        }
+
+        // Preserve generic Application syntax in excess-property messages.
         let is_application =
             crate::query_boundaries::common::type_application(self.ctx.types, ty).is_some();
         let evaluated_application = if is_application {
@@ -1379,6 +1399,7 @@ impl<'a> CheckerState<'a> {
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
         let display_ty = self.strip_top_level_readonly_for_excess_display(display_ty);
+        let display_ty = self.normalize_nested_excess_display_type(display_ty);
         self.format_type_diagnostic_widened(display_ty)
     }
 
@@ -1416,6 +1437,7 @@ impl<'a> CheckerState<'a> {
         // Normalize `{prop: type}` to `{ prop: type; }` — tsc always adds
         // spaces inside braces and trailing semicolons for inline object types.
         // Handle both standalone `{...}` and intersection parts `& {...}`.
+        formatted = Self::normalize_annotation_literal_property_display_text(&formatted);
         formatted = Self::normalize_inline_object_braces(&formatted);
         // Prefer Array<T> shorthand conversion in annotation text, but preserve
         // generic constraint surface syntax (`<T extends Array<U>>`) where tsc
@@ -1429,7 +1451,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Do not normalize when the generic array appears directly in a type
     /// parameter `extends` clause; tsc preserves `Array<T>` there.
-    fn normalize_array_generic_to_shorthand(text: &str) -> String {
+    pub(crate) fn normalize_array_generic_to_shorthand(text: &str) -> String {
         if !text.contains("Array<") {
             return text.to_string();
         }
@@ -1497,7 +1519,7 @@ impl<'a> CheckerState<'a> {
     /// Extract content between balanced angle brackets starting at `pos`.
     /// `pos` should point to the character right after the opening `<`.
     /// Returns the inner content (without brackets) if balanced.
-    fn extract_balanced_angle_bracket_content(text: &str, pos: usize) -> Option<String> {
+    pub(crate) fn extract_balanced_angle_bracket_content(text: &str, pos: usize) -> Option<String> {
         let bytes = text.as_bytes();
         let mut depth = 1;
         let mut i = pos;
@@ -1546,14 +1568,16 @@ impl<'a> CheckerState<'a> {
                 if trimmed.is_empty() {
                     result.push_str("{}");
                 } else {
+                    let normalized_inner =
+                        super::annotation_text::normalize_inline_object_member_separators(trimmed);
                     // Ensure `{ ... }` spacing
                     let needs_space_start =
                         !trimmed.is_empty() && (i + 1 >= len || chars[i + 1] != ' ');
-                    let needs_semicolon = !trimmed.ends_with(';')
-                        && !trimmed.ends_with("};")
-                        && trimmed.contains(':');
+                    let needs_semicolon = !normalized_inner.ends_with(';')
+                        && !normalized_inner.ends_with("};")
+                        && normalized_inner.contains(':');
                     result.push_str("{ ");
-                    result.push_str(trimmed);
+                    result.push_str(&normalized_inner);
                     if needs_semicolon {
                         result.push(';');
                     }
@@ -1567,39 +1591,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         result
-    }
-
-    pub(crate) fn excess_property_target_annotation_text_for_site(
-        &self,
-        idx: NodeIndex,
-    ) -> Option<String> {
-        let mut current = idx;
-        loop {
-            let info = self.ctx.arena.node_info(current)?;
-            let parent_idx = info.parent;
-            let parent = self.ctx.arena.get(parent_idx)?;
-            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                let grandparent_idx = self.ctx.arena.node_info(parent_idx)?.parent;
-                let grandparent = self.ctx.arena.get(grandparent_idx)?;
-                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
-                    && var_decl.initializer == parent_idx
-                    && var_decl.type_annotation.is_some()
-                {
-                    return self.node_text(var_decl.type_annotation).and_then(|text| {
-                        self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                    });
-                }
-                // Check for inline JSDoc @satisfies annotation on the object literal
-                // e.g. `/** @satisfies {Record<Keys, unknown>} */ ({ x: 1 })`
-                if let Some(jsdoc_satisfies_text) =
-                    self.jsdoc_satisfies_type_text_for_node(parent_idx)
-                {
-                    return Some(jsdoc_satisfies_text);
-                }
-                return None;
-            }
-            current = parent_idx;
-        }
     }
 
     pub(in crate::error_reporter) fn should_use_evaluated_assignability_display(
@@ -1969,7 +1960,6 @@ impl<'a> CheckerState<'a> {
             if guard > 256 {
                 break;
             }
-
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
@@ -1990,7 +1980,6 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-
             current = ext.parent;
         }
 

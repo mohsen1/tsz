@@ -81,6 +81,18 @@ fn is_lib_diagnostic(fp: &DiagnosticFingerprint) -> bool {
         || fp.message_key.contains(".lib/")
 }
 
+fn is_typescript_builtin_lib_path(path: &str) -> bool {
+    let normalized = path.trim().replace('\\', "/").to_ascii_lowercase();
+    if !normalized.ends_with(".d.ts") {
+        return false;
+    }
+    normalized.starts_with("node_modules/typescript/lib/lib.")
+        || normalized.contains("/node_modules/typescript/lib/lib.")
+        || normalized.starts_with("typescript/lib/lib.")
+        || normalized.contains("/typescript/lib/lib.")
+        || normalized.starts_with("lib.")
+}
+
 fn filter_lib_diagnostics_tsz(
     mut result: tsz_wrapper::CompilationResult,
 ) -> tsz_wrapper::CompilationResult {
@@ -108,6 +120,48 @@ fn filter_lib_diagnostics_tsz(
         .diagnostic_fingerprints
         .retain(|fp| !is_lib_diagnostic(fp));
     result.error_codes.retain(|c| !lib_only_codes.contains(c));
+    result
+}
+
+/// Filter bundled TypeScript lib diagnostics that are unique to tsz.
+///
+/// `tsz` can report diagnostics from `node_modules/typescript/lib/lib.*.d.ts`
+/// or `TypeScript/lib/lib.*.d.ts` while checking a conformance program. Those
+/// are false positives only when TSC did not report the same bundled-lib code
+/// for the test. Some passing tests legitimately compare bundled-lib
+/// diagnostics, so this must not drop every such fingerprint unconditionally.
+fn filter_extra_typescript_builtin_lib_diagnostics_tsz(
+    mut result: tsz_wrapper::CompilationResult,
+    tsc_fps: &[DiagnosticFingerprint],
+) -> tsz_wrapper::CompilationResult {
+    let expected_builtin_lib_codes: std::collections::HashSet<u32> = tsc_fps
+        .iter()
+        .filter(|fp| is_typescript_builtin_lib_path(&fp.file))
+        .map(|fp| fp.code)
+        .collect();
+    let removable_codes: std::collections::HashSet<u32> = result
+        .diagnostic_fingerprints
+        .iter()
+        .filter(|fp| {
+            is_typescript_builtin_lib_path(&fp.file)
+                && !expected_builtin_lib_codes.contains(&fp.code)
+        })
+        .map(|fp| fp.code)
+        .collect();
+    if removable_codes.is_empty() {
+        return result;
+    }
+    result.diagnostic_fingerprints.retain(|fp| {
+        !(is_typescript_builtin_lib_path(&fp.file) && removable_codes.contains(&fp.code))
+    });
+    let remaining_codes: std::collections::HashSet<u32> = result
+        .diagnostic_fingerprints
+        .iter()
+        .map(|fp| fp.code)
+        .collect();
+    result
+        .error_codes
+        .retain(|code| !removable_codes.contains(code) || remaining_codes.contains(code));
     result
 }
 
@@ -291,8 +345,6 @@ const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
 // Periodically prune patterns whose only matches now PASS — entries below
 // are the live set as of 2026-05-02.
 const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
-    "expandoFunctionSymbolPropertyJs",
-    "inferTypePredicates",
     "recursiveConditionalTypes",
     "moduleAugmentationDoesNamespaceEnumMergeOfReexport",
     "jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne",
@@ -306,7 +358,6 @@ const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
     "mixinAccessModifiers",
     "typeFromPropertyAssignment39",
     "promiseTry",
-    "defaultPropertyAssignedClassWithPrototype",
 ];
 
 fn known_conformance_debt_reason(test_key: &str) -> Option<&'static str> {
@@ -1186,6 +1237,7 @@ impl Runner {
         let bytes = tokio::fs::read(path).await?;
         let key =
             cache::cache_key(path, test_dir).unwrap_or_else(|| path.to_string_lossy().to_string());
+        let ts_tests_lib_dir = tsz_wrapper::tests_lib_dir_for_cases_dir(test_dir);
 
         // Build file preview if requested (printed atomically by caller)
         let mut file_preview: Option<String> = None;
@@ -1299,15 +1351,17 @@ impl Runner {
                             let ext_clone = original_ext.clone();
                             let key_order = parsed.directives.option_order.clone();
                             let expected_error_codes = tsc_result.error_codes.clone();
+                            let ts_tests_lib_dir = ts_tests_lib_dir.clone();
 
                             let prepared = tokio::task::spawn_blocking(move || {
-                                tsz_wrapper::prepare_test_dir(
+                                tsz_wrapper::prepare_test_dir_with_lib_dir(
                                     &content_clone,
                                     &filenames,
                                     &variant_clone,
                                     ext_clone.as_deref(),
                                     &key_order,
                                     Some(&expected_error_codes),
+                                    Some(&ts_tests_lib_dir),
                                 )
                             })
                             .await??;
@@ -1472,6 +1526,10 @@ impl Runner {
                     // Filter .lib/ diagnostics (see filter functions for explanation)
                     let mut compile_result = filter_lib_diagnostics_tsz(compile_result);
                     let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
+                        compile_result,
+                        &tsc_fps,
+                    );
 
                     // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
@@ -1605,14 +1663,16 @@ impl Runner {
                         let options = options.clone();
                         let ext = original_ext.clone();
                         let key_order = key_order.clone();
+                        let ts_tests_lib_dir = ts_tests_lib_dir.clone();
                         move || {
-                            tsz_wrapper::prepare_test_dir(
+                            tsz_wrapper::prepare_test_dir_with_lib_dir(
                                 &text,
                                 &filenames,
                                 &options,
                                 ext.as_deref(),
                                 &key_order,
                                 Some(&expected_error_codes),
+                                Some(&ts_tests_lib_dir),
                             )
                         }
                     })
@@ -1685,6 +1745,10 @@ impl Runner {
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
                     let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
+                        compile_result,
+                        &tsc_fps,
+                    );
 
                     // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
@@ -1817,6 +1881,10 @@ impl Runner {
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
                     let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
+                        compile_result,
+                        &tsc_fps,
+                    );
 
                     // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
@@ -2003,6 +2071,16 @@ mod tests {
             "File '/.lib/react.d.ts' not found."
         )));
         assert!(!is_lib_diagnostic(&fp(
+            2344,
+            "scripts/node_modules/typescript/lib/lib.dom.d.ts",
+            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'."
+        )));
+        assert!(!is_lib_diagnostic(&fp(
+            2344,
+            "TypeScript/lib/lib.dom.d.ts",
+            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'."
+        )));
+        assert!(!is_lib_diagnostic(&fp(
             2322,
             "test.ts",
             "Type 'A' is not assignable to type 'B'."
@@ -2024,6 +2102,69 @@ mod tests {
         assert_eq!(filtered.error_codes, vec![2322]);
         assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
         assert_eq!(filtered.diagnostic_fingerprints[0].code, 2322);
+    }
+
+    #[test]
+    fn filter_tsz_preserves_builtin_lib_only_codes_for_later_comparison_filter() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![2344, 2304],
+            diagnostic_fingerprints: vec![
+                fp(
+                    2344,
+                    "TypeScript/lib/lib.dom.d.ts",
+                    "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
+                ),
+                fp(2304, "test.ts", "Cannot find name 'missing'."),
+            ],
+            crashed: false,
+            options: Default::default(),
+        };
+        let filtered = filter_lib_diagnostics_tsz(result);
+        assert_eq!(filtered.error_codes, vec![2344, 2304]);
+        assert_eq!(filtered.diagnostic_fingerprints.len(), 2);
+    }
+
+    #[test]
+    fn filter_tsz_removes_extra_builtin_lib_only_codes() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![2344, 2304],
+            diagnostic_fingerprints: vec![
+                fp(
+                    2344,
+                    "TypeScript/lib/lib.dom.d.ts",
+                    "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
+                ),
+                fp(2304, "test.ts", "Cannot find name 'missing'."),
+            ],
+            crashed: false,
+            options: Default::default(),
+        };
+        let filtered = filter_extra_typescript_builtin_lib_diagnostics_tsz(result, &[]);
+        assert_eq!(filtered.error_codes, vec![2304]);
+        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
+        assert_eq!(filtered.diagnostic_fingerprints[0].code, 2304);
+    }
+
+    #[test]
+    fn filter_tsz_preserves_builtin_lib_code_expected_by_tsc() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![2344],
+            diagnostic_fingerprints: vec![fp(
+                2344,
+                "TypeScript/lib/lib.dom.d.ts",
+                "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
+            )],
+            crashed: false,
+            options: Default::default(),
+        };
+        let tsc_fps = vec![fp(
+            2344,
+            "lib.dom.d.ts",
+            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
+        )];
+        let filtered = filter_extra_typescript_builtin_lib_diagnostics_tsz(result, &tsc_fps);
+        assert_eq!(filtered.error_codes, vec![2344]);
+        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
     }
 
     #[test]

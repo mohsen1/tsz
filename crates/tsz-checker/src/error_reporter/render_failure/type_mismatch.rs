@@ -1,4 +1,5 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -62,7 +63,9 @@ impl<'a> CheckerState<'a> {
             self.format_assignability_type_for_message(target, source)
         };
         if depth == 0 {
-            if let Some(display) = self.evaluated_literal_alias_source_display(source) {
+            if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
+                && let Some(display) = self.evaluated_literal_alias_source_display(source)
+            {
                 source_str = self.canonicalize_assignment_numeric_literal_union_display(display);
             }
             if let Some(display) = self.evaluated_literal_alias_source_display(target) {
@@ -71,10 +74,14 @@ impl<'a> CheckerState<'a> {
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 source, target, source_str,
             );
-            let has_declared_target_annotation = self
-                .assignment_target_expression(idx)
-                .and_then(|expr| self.declared_type_annotation_text_for_expression(expr))
-                .is_some();
+            let has_declared_target_annotation =
+                self.assignment_target_expression(idx).is_some_and(|expr| {
+                    self.declared_type_annotation_text_for_expression(expr)
+                        .is_some()
+                        || self
+                            .declared_intersection_annotation_display_for_expression(expr)
+                            .is_some()
+                });
             if !has_declared_target_annotation {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
@@ -87,6 +94,13 @@ impl<'a> CheckerState<'a> {
             ) {
                 source_str = widened;
             }
+        }
+        if let Some(display) = self.object_literal_property_literal_union_alias_target_display(
+            target,
+            &target_str,
+            idx,
+        ) {
+            target_str = display;
         }
         source_str = self.normalize_template_placeholder_spacing_for_display(&source_str);
         target_str = self.normalize_template_placeholder_spacing_for_display(&target_str);
@@ -174,7 +188,7 @@ impl<'a> CheckerState<'a> {
             && let Some(property_name) = self.missing_single_required_property(source, target)
         {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            if prop_name.starts_with("__private_brand") {
+            if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 let (source_display, target_display) = self
                     .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = self
@@ -268,10 +282,102 @@ impl<'a> CheckerState<'a> {
             return Diagnostic::error(file_name, start, length, message, code);
         }
 
+        if depth == 0
+            && !target_is_intersection_for_mismatch
+            && source_str == "object"
+            && crate::query_boundaries::common::union_members(self.ctx.types, source).is_some_and(
+                |members| {
+                    members
+                        .iter()
+                        .any(|member| self.is_object_intrinsic_for_missing_properties(*member))
+                },
+            )
+        {
+            let target_candidates = [
+                target,
+                self.resolve_type_for_property_access(target),
+                self.judge_evaluate(target),
+                self.evaluate_type_with_env(target),
+                self.evaluate_type_for_assignability(target),
+            ];
+            if let Some(target_with_shape) = target_candidates.into_iter().find(|candidate| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *candidate)
+                    .is_some()
+            }) {
+                let target_shape = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    target_with_shape,
+                )
+                .expect("target candidate was checked for an object shape");
+                let mut missing_with_order: Vec<_> = target_shape
+                    .properties
+                    .iter()
+                    .filter(|prop| !prop.optional)
+                    .filter(|prop| {
+                        let name = self.ctx.types.resolve_atom_ref(prop.name);
+                        !is_object_prototype_method(name)
+                    })
+                    .map(|prop| (prop.declaration_order, prop.name))
+                    .collect();
+                missing_with_order.sort_by_key(|(order, _)| *order);
+                let missing_props: Vec<_> = missing_with_order
+                    .into_iter()
+                    .map(|(_, name)| name)
+                    .collect();
+                if missing_props.len() > 1 {
+                    let ordered_names =
+                        self.sort_missing_property_names_for_display(target, &missing_props);
+                    let is_truncated = ordered_names.len() > 5;
+                    let display_count = if is_truncated { 4 } else { 5 };
+                    let prop_list: Vec<String> = ordered_names
+                        .iter()
+                        .take(display_count)
+                        .map(|name| self.missing_property_name_for_display(*name, target))
+                        .collect();
+                    let props_joined = prop_list.join(", ");
+                    let message = if is_truncated {
+                        let more_count = (ordered_names.len() - display_count).to_string();
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                            &["{}", &target_str, &props_joined, &more_count],
+                        )
+                    } else {
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                            &["{}", &target_str, &props_joined],
+                        )
+                    };
+                    let code = if is_truncated {
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                    } else {
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    };
+                    return Diagnostic::error(file_name, start, length, message, code);
+                }
+            }
+        }
+
         source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+            if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
+                && let Some(unfolded) = self.ts2739_alias_of_application_source_display(source)
+            {
+                source_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+                target_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(display) = self.static_schema_array_structural_display(source, target) {
+                source_str = display;
+            }
+            if let Some(display) = self.static_schema_array_structural_display(target, source) {
+                target_str = display;
+            }
+            if let Some(display) = self.type_query_static_array_structural_display(&source_str) {
+                source_str = display;
+            }
         }
 
         let base = format_message(
@@ -309,16 +415,11 @@ impl<'a> CheckerState<'a> {
                 self.find_string_literal_spelling_suggestion(source, evaluated_target_for_ts2820)
             });
         if let Some(suggestion) = ts2820_suggestion {
-            // TSC uses the expanded union form (not the alias name) when emitting TS2820.
-            let expanded_target_str = self.format_type_diagnostic(evaluated_target_for_ts2820);
-            let display_target_str = if expanded_target_str != target_str {
-                &expanded_target_str
-            } else {
-                &target_str
-            };
+            let display_target_str =
+                self.format_ts2820_target_display(target, evaluated_target_for_ts2820, &target_str);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                &[&source_str, display_target_str, &suggestion],
+                &[&source_str, &display_target_str, &suggestion],
             );
             return Diagnostic::error(
                 file_name,
@@ -340,6 +441,12 @@ impl<'a> CheckerState<'a> {
         // equal the source's primitive display.
         if source_str == target_str
             && !crate::error_reporter::assignability::is_primitive_type_name(&source_str)
+            // Literal-value displays (`"foo"`, `42`, `true`, etc.) have no
+            // nominal identity. Identical literal displays always mean
+            // identical types, so emitting TS2719 with messages like
+            // `Type '"foo"' is not assignable to type '"foo"'` is misleading.
+            // Fall through to TS2322.
+            && !crate::error_reporter::assignability::display_is_literal_value(&source_str)
         {
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
@@ -361,5 +468,19 @@ impl<'a> CheckerState<'a> {
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         )
+    }
+
+    pub(in crate::error_reporter) fn ts2739_alias_target_display(
+        &self,
+        target: TypeId,
+        target_display: &str,
+    ) -> Option<TypeId> {
+        if target_display.starts_with('[')
+            && crate::query_boundaries::common::is_tuple_type(self.ctx.types, target)
+        {
+            None
+        } else {
+            self.ts2739_alias_of_application_source_display(target)
+        }
     }
 }

@@ -9,6 +9,13 @@ pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter
 pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
 
+pub(crate) fn rest_type_needs_aggregate_argument_check(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::rest_type_needs_aggregate_argument_check(db, type_id)
+}
+
 pub(crate) fn get_contextual_signature(
     db: &dyn QueryDatabase,
     type_id: TypeId,
@@ -78,6 +85,20 @@ pub(crate) fn get_call_signature(
 
 pub(crate) fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
     tsz_solver::type_queries::get_function_parameter_types(db, type_id)
+}
+
+pub(crate) fn contains_index_access_with_type_parameter_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_index_access_with_type_parameter_object(db, type_id)
+}
+
+pub(crate) fn contains_index_access_with_variadic_tuple_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_index_access_with_variadic_tuple_object(db, type_id)
 }
 
 pub(crate) fn stable_call_recovery_return_type(
@@ -182,6 +203,29 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
         force_bivariant_callbacks,
         contextual_type,
         actual_this_type,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve_call_with_arg_sources<C: AssignabilityChecker>(
+    db: &dyn QueryDatabase,
+    checker: &mut C,
+    func_type: TypeId,
+    arg_types: &[TypeId],
+    force_bivariant_callbacks: bool,
+    contextual_type: Option<TypeId>,
+    actual_this_type: Option<TypeId>,
+    arg_source_is_type_annotation: &[bool],
+) -> tsz_solver::operations::CallWithCheckerResult {
+    tsz_solver::operations::resolve_call_with_checker_and_arg_sources(
+        db,
+        checker,
+        func_type,
+        arg_types,
+        force_bivariant_callbacks,
+        contextual_type,
+        actual_this_type,
+        arg_source_is_type_annotation,
     )
 }
 

@@ -5,11 +5,7 @@
 //! (not the concrete declaring class type).  This enables fluent method chaining
 //! on subclass instances.
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::context::CheckerOptions;
 
 /// Helper to compile TypeScript and get diagnostics
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -20,28 +16,9 @@ fn compile_and_get_diagnostics_with_options(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
+    tsz_checker::test_utils::check_with_options(source, options)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
         .collect()
 }
 
@@ -55,6 +32,10 @@ fn errors_with_code(diagnostics: &[(u32, String)], code: u32) -> Vec<&str> {
         .filter(|(c, _)| *c == code)
         .map(|(_, msg)| msg.as_str())
         .collect()
+}
+
+fn messages(diagnostics: &[(u32, String)]) -> Vec<&str> {
+    diagnostics.iter().map(|(_, msg)| msg.as_str()).collect()
 }
 
 /// Fluent method chaining: `c.foo().bar().baz()` where foo/bar/baz are defined
@@ -207,7 +188,6 @@ class Base {
         this[prop] = value;
     }
 }
-
 class Person extends Base {
     parts: number;
     constructor(parts: number) {
@@ -229,5 +209,196 @@ class Person extends Base {
     assert!(
         !has_error(&diagnostics, 2322),
         "Base-class generic this-index assignment should not emit TS2322: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_keyof_this_call_arguments_do_not_reuse_other_class_key_cache() {
+    let source = r#"
+function getProperty<T, K extends keyof T>(obj: T, key: K) {
+    return obj[key];
+}
+
+function setProperty<T, K extends keyof T>(obj: T, key: K, value: T[K]) {
+    obj[key] = value;
+}
+
+class C1 {
+    x: number;
+    get<K extends keyof this>(key: K) {
+        return this[key];
+    }
+    set<K extends keyof this>(key: K, value: this[K]) {
+        this[key] = value;
+    }
+    foo() {
+        this.get("x");
+        getProperty(this, "x");
+        this.set("x", 42);
+        setProperty(this, "x", 42);
+    }
+}
+
+class OtherPerson {
+    parts: number;
+    constructor(parts: number) {
+        setProperty(this, "parts", parts);
+    }
+    getParts() {
+        return getProperty(this, "parts");
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            strict_null_checks: true,
+            strict_property_initialization: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "`keyof this` evaluation must stay class-context-sensitive and not \
+         reuse another class's cached keys: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_property_access_preserves_polymorphic_this_in_class_members() {
+    let source = r#"
+class C {
+    self = this;
+    c = new C();
+    foo() {
+        return this;
+    }
+    f2() {
+        var a: C[];
+        var a = [this, this.c];
+        var b: this[];
+        var b = [this, this.self, null, undefined];
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2403 = errors_with_code(&diagnostics, 2403);
+
+    assert!(
+        ts2403.len() == 1,
+        "Expected only the this[] duplicate declaration to emit TS2403: {diagnostics:?}"
+    );
+    assert!(
+        ts2403[0].contains(
+            "Variable 'b' must be of type 'this[]', but here has type '(this | null | undefined)[]'."
+        ),
+        "Expected duplicate declaration message to preserve this[]: {ts2403:?}"
+    );
+}
+
+#[test]
+fn test_this_type_relationship_assignment_diagnostics_use_nominal_class_names() {
+    let source = r#"
+class C {
+    self = this;
+    c = new C();
+    foo() {
+        return this;
+    }
+}
+
+class D extends C {
+    self1 = this;
+    self2 = this.self;
+    self3 = this.foo();
+    d = new D();
+    bar() {
+        this.d = this.self;
+        this.d = this.c;
+        this.self = this.d;
+        this.c = this.d;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let all_messages = messages(&diagnostics);
+
+    assert!(
+        all_messages.contains(&"Type 'C' is missing the following properties from type 'D': self1, self2, self3, d, bar"),
+        "Expected C-to-D TS2739 message, got: {diagnostics:?}"
+    );
+    assert!(
+        all_messages.contains(&"Type 'D' is not assignable to type 'this'."),
+        "Expected D-to-this TS2322 message, got: {diagnostics:?}"
+    );
+    assert!(
+        !all_messages.iter().any(|msg| msg.contains("{ self:")),
+        "Class instance diagnostics should not expand to anonymous object shapes: {diagnostics:?}"
+    );
+}
+
+/// Regression: assigning a polymorphic-this call result to a base class variable
+/// must not emit TS2322. `derived.clone()` returns `Derived` (the polymorphic
+/// this), which IS assignable to `Base`. tsc accepts this without error.
+/// See: <https://github.com/mohsen1/tsz/issues/3135>
+#[test]
+fn test_polymorphic_this_subtype_assignment_no_false_ts2322() {
+    let source = r#"
+class Base {
+    clone(): this {
+        return this;
+    }
+}
+
+class Derived extends Base {
+    derivedOnly = 1;
+}
+
+const derived = new Derived();
+const base: Base = derived.clone();
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Polymorphic-this call result assigned to base type must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Variant: multiple levels of inheritance must not emit TS2322 for
+/// polymorphic-this assignments to any ancestor type.
+#[test]
+fn test_polymorphic_this_multi_level_subtype_assignment_no_false_ts2322() {
+    let source = r#"
+class A {
+    clone(): this { return this; }
+}
+class B extends A { bProp = 1; }
+class C extends B { cProp = 2; }
+
+const c = new C();
+const b: B = c.clone();
+const a: A = c.clone();
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Multi-level polymorphic-this subtype assignment must not emit TS2322: {diagnostics:?}"
     );
 }

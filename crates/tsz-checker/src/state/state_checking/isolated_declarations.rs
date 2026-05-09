@@ -201,11 +201,19 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Object literals with non-simple computed property names get
-                // per-property TS9038 diagnostics (and may also report TS9010 on
-                // referenced helper variables) instead of a generic TS9010 on the
-                // exported variable itself.
-                if self.report_isolated_decl_computed_property_names(decl_idx, decl.initializer) {
+                // Non-const object literals with non-simple computed property
+                // names get per-property TS9038 diagnostics (and may also
+                // report TS9010 on referenced helper variables) instead of a
+                // generic TS9010 on the exported variable itself. Const object
+                // literals mostly follow tsc's literal inference path, but
+                // property-access computed names that are not enum members still
+                // need per-property TS9038 because the declaration emitter can't
+                // infer a stable name from the emitted value expression.
+                if self.report_isolated_decl_computed_property_names(
+                    decl_idx,
+                    decl.initializer,
+                    is_const,
+                ) {
                     continue;
                 }
 
@@ -356,9 +364,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Issue #3709: tsc emits TS9011 for *any* unannotated parameter
+            // in an exported function under `--isolatedDeclarations`, not
+            // just when an initializer is present. The previous gate only
+            // covered the initializer-needs-explicit-type case and let the
+            // bare `function f(x) { ... }` shape pass silently.
+            //
+            // Skip the `this` parameter (it is not part of the runtime
+            // signature and tsc accepts unannotated `this`), and skip
+            // simple-default initializers that the existing helper already
+            // recognises as inferrable for declaration emit.
+            let is_this_param = self.is_this_parameter_name(param.name);
             if param.type_annotation.is_none()
-                && param.initializer.is_some()
-                && !self.is_isolated_decl_simple_param_default(param.initializer)
+                && !is_this_param
+                && !(param.initializer.is_some()
+                    && self.is_isolated_decl_simple_param_default(param.initializer))
             {
                 let error_node = self.isolated_decl_param_annotation_target(param);
                 self.error_at_node(

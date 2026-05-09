@@ -114,14 +114,8 @@ impl<'a> CheckerState<'a> {
         let mut export_default_indices: Vec<NodeIndex> = Vec::new();
         let mut has_other_exports = false;
 
-        // Check if we're in a declaration file (implicitly ambient)
-        let is_declaration_file = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .is_some_and(|sf| sf.is_declaration_file)
-            || self.ctx.file_name.contains(".d.");
+        // Check if the current source file is a declaration file (implicitly ambient).
+        let is_declaration_file = self.ctx.is_declaration_file();
 
         for &stmt_idx in statements {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -222,17 +216,35 @@ impl<'a> CheckerState<'a> {
                                 && !self.ctx.is_declaration_file()
                             {
                                 let resolved_type = self.resolve_lazy_type(expr_type);
-                                if let Some((from_path, type_name)) = self
+                                let object_assign_reference = self
                                     .first_non_portable_object_assign_object_literal_reference(
                                         export_data.expression,
-                                    )
-                                    .or_else(|| self.first_non_portable_type_reference(expr_type))
-                                    .or_else(|| {
-                                        self.first_non_portable_type_reference(resolved_type)
+                                    );
+                                let diagnostic_node = if object_assign_reference.is_some() {
+                                    stmt_idx
+                                } else {
+                                    export_data.expression
+                                };
+                                let expression_is_call =
+                                    self.ctx.arena.get(export_data.expression).is_some_and(
+                                        |node| node.kind == syntax_kind_ext::CALL_EXPRESSION,
+                                    );
+                                let inferred_reference = (!expression_is_call)
+                                    .then(|| {
+                                        self.first_non_portable_type_reference(expr_type).or_else(
+                                            || {
+                                                self.first_non_portable_type_reference(
+                                                    resolved_type,
+                                                )
+                                            },
+                                        )
                                     })
+                                    .flatten();
+                                if let Some((from_path, type_name)) =
+                                    object_assign_reference.or(inferred_reference)
                                 {
                                     self.error_at_node_msg(
-                                        export_data.expression,
+                                        diagnostic_node,
                                         crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
                                         &["default", &type_name, &from_path],
                                     );

@@ -359,6 +359,7 @@ impl<'a> CheckerState<'a> {
         );
 
         // First try the binder's resolver which checks scope chain and file_locals
+        let identifier_is_type_position_for_first = self.is_identifier_in_type_position(idx);
         let result = self.ctx.binder.resolve_identifier_with_filter(
             self.ctx.arena,
             idx,
@@ -377,6 +378,39 @@ impl<'a> CheckerState<'a> {
                             decl_idx != owner_idx
                                 && self.node_is_within_decorator_owner(decl_idx, owner_idx)
                         })
+                    {
+                        return false;
+                    }
+                    // Reject cross-module values that the consuming file
+                    // never imports — bare-identifier resolution must not
+                    // pick up another module's exports as if they were
+                    // globals (#3504). Class-member symbols continue to
+                    // be filtered by the dedicated class-member branch
+                    // below; type-position references are handled by the
+                    // post-resolution filter further down.
+                    let is_cross_module_private = !self.ctx.symbol_is_from_lib(sym_id)
+                        && !symbol.is_umd_export
+                        && symbol.decl_file_idx != u32::MAX
+                        && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+                        && self
+                            .ctx
+                            .get_binder_for_file(symbol.decl_file_idx as usize)
+                            .is_some_and(|binder| {
+                                binder.is_external_module()
+                                    && !binder
+                                        .global_augmentations
+                                        .contains_key(symbol.escaped_name.as_str())
+                            })
+                        && !self
+                            .ctx
+                            .get_arena_for_file(symbol.decl_file_idx)
+                            .source_files
+                            .first()
+                            .is_some_and(|sf| sf.is_declaration_file);
+                    if !identifier_is_type_position_for_first
+                        && symbol.has_any_flags(symbol_flags::VALUE)
+                        && is_cross_module_private
+                        && !Self::is_class_member_symbol(symbol.flags)
                     {
                         return false;
                     }
@@ -489,11 +523,7 @@ impl<'a> CheckerState<'a> {
         // boundary so the policy is co-located.
         if result.is_none() && !ignore_libs {
             // Get the identifier name
-            let name = if let Some(ident) = self.ctx.arena.get_identifier_at(idx) {
-                ident.escaped_text.as_str()
-            } else {
-                return None;
-            };
+            let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
             // Check lib_contexts directly for global symbols
             for (lib_idx, lib_ctx) in self.ctx.lib_contexts.iter().enumerate() {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
@@ -547,6 +577,12 @@ impl<'a> CheckerState<'a> {
             && result.is_none()
         {
             let name = ident.escaped_text.as_str();
+            // These identifiers have intrinsic fallback semantics when unbound.
+            // A same-file declaration may shadow them, but an export from another
+            // external module must not become a bare lexical binding here.
+            if matches!(name, "undefined" | "NaN" | "Infinity") {
+                return None;
+            }
             if let Some(sym_id) =
                 self.resolve_identifier_symbol_from_all_binders(name, |sym_id, symbol| {
                     if should_skip_lib_symbol(sym_id) {
@@ -581,14 +617,18 @@ impl<'a> CheckerState<'a> {
                     let is_private_external_module_type = identifier_is_type_position
                         && !symbol.has_any_flags(symbol_flags::VALUE)
                         && is_cross_module_private;
-                    // For value position, downstream diagnostic paths (e.g. the
-                    // class initializer TS2663 detector) rely on resolving
-                    // exported cross-module values here so they can emit a
-                    // more specific diagnostic. Only reject truly private
-                    // (non-exported) cross-module values.
+                    // Reject cross-module values that the consuming file
+                    // never imports — exported or not. tsc emits TS2304
+                    // for `leaked.toFixed()` in `b.ts` when `b.ts` does
+                    // not import `leaked` from `a.ts`, regardless of
+                    // whether `a.ts` exports `leaked` (#3504). The class
+                    // member fallthrough below preserves the
+                    // class-instance-member detector path (TS2663
+                    // "Did you mean 'this.X'?") for inherited fields,
+                    // because that branch resolves through the class
+                    // hierarchy rather than this raw cross-file lookup.
                     let is_private_external_module_value = !identifier_is_type_position
                         && symbol.has_any_flags(symbol_flags::VALUE)
-                        && !symbol.is_exported
                         && is_cross_module_private;
                     if is_private_external_module_type || is_private_external_module_value {
                         return false;
@@ -679,8 +719,25 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) -> Option<SymbolId> {
         let lib_binders = self.get_lib_binders();
+        let name = self
+            .ctx
+            .arena
+            .get_identifier_at(idx)
+            .map(|ident| ident.escaped_text.as_str());
         match self.resolve_identifier_symbol_in_type_position(idx) {
             TypeSymbolResolution::Type(sym_id) => {
+                if let Some(name) = name
+                    && let Some(local_namespace_sym_id) = self
+                        .ctx
+                        .local_namespace_symbol_for_conflicted_namespace_import(
+                            idx,
+                            name,
+                            sym_id,
+                            &lib_binders,
+                        )
+                {
+                    return Some(local_namespace_sym_id);
+                }
                 let mut visited_aliases = AliasCycleTracker::new();
                 Some(
                     self.resolve_alias_symbol(sym_id, &mut visited_aliases)
@@ -690,6 +747,18 @@ impl<'a> CheckerState<'a> {
             TypeSymbolResolution::ValueOnly(sym_id)
                 if self.is_import_equals_type_anchor(sym_id, &lib_binders) =>
             {
+                if let Some(name) = name
+                    && let Some(local_namespace_sym_id) = self
+                        .ctx
+                        .local_namespace_symbol_for_conflicted_namespace_import(
+                            idx,
+                            name,
+                            sym_id,
+                            &lib_binders,
+                        )
+                {
+                    return Some(local_namespace_sym_id);
+                }
                 self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
                 Some(sym_id)
             }
@@ -723,9 +792,8 @@ impl<'a> CheckerState<'a> {
 
         let ignore_libs = !self.ctx.has_lib_loaded();
         // Collect lib binders for cross-arena symbol lookup
-        let empty_binders: Arc<Vec<Arc<tsz_binder::BinderState>>> = Arc::new(Vec::new());
         let lib_binders = if ignore_libs {
-            empty_binders
+            Arc::new(Vec::new())
         } else {
             self.get_lib_binders()
         };
@@ -745,7 +813,11 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|found_sym_id| {
                     // Check if this symbol is different from the file_locals symbol.
                     // If it's different, it was found in a more local scope (namespace, etc.)
-                    self.ctx.binder.file_locals.get(name) != Some(found_sym_id)
+                    let found_in_file_locals =
+                        self.ctx.binder.file_locals.get(name) == Some(found_sym_id);
+                    !found_in_file_locals
+                        || (self.ctx.binder.is_external_module()
+                            && !self.ctx.symbol_is_from_lib(found_sym_id))
                 })
         } else {
             false
@@ -1115,6 +1187,17 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
                 && symbol.has_any_flags(symbol_flags::ALIAS)
             {
+                if let Some(local_namespace_sym_id) = self
+                    .ctx
+                    .local_namespace_symbol_for_conflicted_namespace_import(
+                        idx,
+                        name,
+                        local_sym_id,
+                        &lib_binders,
+                    )
+                {
+                    return TypeSymbolResolution::Type(local_namespace_sym_id);
+                }
                 if let Some(type_alias_id) = self
                     .ctx
                     .alias_partner_reverse(self.ctx.binder, local_sym_id)
@@ -1205,6 +1288,17 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                 && symbol.has_any_flags(symbol_flags::ALIAS)
             {
+                if let Some(local_namespace_sym_id) = self
+                    .ctx
+                    .local_namespace_symbol_for_conflicted_namespace_import(
+                        idx,
+                        name,
+                        sym_id,
+                        &lib_binders,
+                    )
+                {
+                    return TypeSymbolResolution::Type(local_namespace_sym_id);
+                }
                 if should_preserve_alias_symbol_in_type_position(sym_id) {
                     return TypeSymbolResolution::Type(sym_id);
                 }
@@ -1333,7 +1427,23 @@ impl<'a> CheckerState<'a> {
             .get(name)
             .copied()
         {
-            return cached;
+            // A miss recorded before lib contexts were attached is not stable
+            // for child/cross-arena checkers. Retry once libs are available so
+            // imported declaration files can resolve globals like `Error`.
+            //
+            // Likewise, a `None` cached for a qualified name like
+            // `util.OmitKeys` may have been recorded by an earlier checker
+            // state whose binder couldn't see the imported namespace
+            // member yet. Retry such misses so a later checker state with
+            // the merged binder graph can recover the correct `DefId`.
+            // Without this retry, the first failed lookup poisons the cache
+            // and silently strands the alias body's downstream consumers
+            // (object spread, intersection reduction) on
+            // `UnresolvedTypeName`.
+            let retry_dotted_miss = cached.is_none() && name.contains('.');
+            if cached.is_some() || (!self.ctx.has_lib_loaded() && !retry_dotted_miss) {
+                return cached;
+            }
         }
 
         let mut segments = name.split('.');
@@ -1508,7 +1618,20 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(node)
         {
             if is_compiler_managed_type(ident.escaped_text.as_str()) {
-                return None;
+                let shadows_compiler_managed_type =
+                    matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
+                        && self
+                            .ctx
+                            .binder
+                            .file_locals
+                            .get(ident.escaped_text.as_str())
+                            .is_some_and(|sym_id| {
+                                !self.ctx.symbol_is_from_actual_lib(sym_id)
+                                    && self.symbol_has_declared_type_meaning(sym_id)
+                            });
+                if !shadows_compiler_managed_type {
+                    return None;
+                }
             }
             if node.kind == SyntaxKind::Identifier as u16
                 && let TypeSymbolResolution::Type(sym_id) =

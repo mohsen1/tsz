@@ -310,12 +310,22 @@ type X<T> = T[keyof T]["foo"];
 fn test_unknown_control_flow_generic_keyspace_and_overlap_regression() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
+function ff1<T>(t: T, k: keyof T) {
+    t[k];
+}
+function ff2<T>(t: T & {}, k: keyof T) {
+    t[k];
+}
 function ff3<T>(t: T, k: keyof (T & {})) {
     t[k];
 }
 function ff4<T>(t: T & {}, k: keyof (T & {})) {
     t[k];
 }
+ff1(null, 'foo');
+ff2(null, 'foo');
+ff3(null, 'foo');
+ff4(null, 'foo');
 function fx2<T extends {}>(value: T & ({} | null)) {
     if (value === 42) {}
 }
@@ -331,18 +341,20 @@ function fx4<T extends {} | null>(value: T & ({} | null)) {
         .cloned()
         .collect();
     let ts2536_count = relevant.iter().filter(|(code, _)| *code == 2536).count();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
     let ts2367_count = relevant.iter().filter(|(code, _)| *code == 2367).count();
 
     assert_eq!(
         ts2536_count, 1,
         "Expected exactly one TS2536 for indexing raw T with keyof (T & {{}}), got: {relevant:#?}"
     );
-    // `T extends {}` and `T extends {} | null` can both be instantiated with
-    // a number literal (since `{}` includes primitives), so there IS potential
-    // overlap with `42`. tsc does NOT emit TS2367 for these; we must not either.
     assert_eq!(
-        ts2367_count, 0,
-        "Expected no TS2367 for T extends {{}} comparisons ({{}} includes primitives), got: {relevant:#?}"
+        ts2345_count, 3,
+        "Expected TS2345 for ff1, ff2, and ff4 only; ff3(null, 'foo') is valid because keyof never is PropertyKey. Got: {relevant:#?}"
+    );
+    assert_eq!(
+        ts2367_count, 2,
+        "Expected TS2367 for the T extends {{}} and T extends {{}} | null comparisons, got: {relevant:#?}"
     );
 }
 
@@ -662,6 +674,43 @@ foo = new Foo();
 }
 
 #[test]
+fn test_jsdoc_constructor_overload_prefix_tag_does_not_emit_ts2394() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "overloadTagPrefix.js",
+        r#"
+// @checkJs: true
+// @allowJs: true
+// @target: esnext
+// @strict: true
+// @noEmit: true
+
+export class Foo {
+    /**
+     * @constructor
+     * @overloadx
+     * @param {string} a
+     * @param {number} b
+     */
+    /**
+     * @constructor
+     * @param {number | string} a
+     */
+    constructor(a, b) {
+        this.a = a;
+        this.b = b;
+    }
+}
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2394),
+        "Did not expect TS2394 for a non-overload JSDoc tag prefix. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 #[ignore = "lib-backed JS overload diagnostic is currently red in direct unit CI"]
 fn test_check_js_global_tostring_overload_reports_ts2394_with_libs() {
     if !lib_files_available() {
@@ -862,14 +911,17 @@ export const useCsvParser = () => {
         diagnostics.iter().any(|(code, _)| *code == 2345),
         "Expected TS2345 for null passed to typeof import(\"csv-parse\") ref. Actual diagnostics: {diagnostics:#?}"
     );
-    // tsc preserves the original module specifier (`"csv-parse"`) in
-    // `typeof import("...")` output, not the resolved
-    // `node_modules/<pkg>/<entry>` path. Match tsc parity.
+    // tsc renders bare imports that resolve to a `.d.ts` typings file
+    // inside `node_modules/` with the resolved-path form
+    // (`typeof import("p1/node_modules/csv-parse/lib/index")`). The
+    // virtual-root-prefix trimming preserves the project segment that
+    // precedes `node_modules/`.
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345 && message.contains("typeof import(\"csv-parse\")")
+            *code == 2345
+                && message.contains("typeof import(\"p1/node_modules/csv-parse/lib/index\")")
         }),
-        "Expected TS2345 message to preserve the bare module specifier. Actual diagnostics: {diagnostics:#?}"
+        "Expected TS2345 message to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1170,19 +1222,21 @@ mdast2.default;
         .map(|d| (d.code, d.message_text.clone()))
         .collect();
 
-    // tsc preserves the original bare module specifier
-    // (`"mdast-util-to-string"`) in `typeof import("...")` output, not the
-    // resolved `node_modules/<pkg>/index` path. Match tsc parity.
+    // tsc renders bare imports that resolve to a `.d.ts` typings file
+    // inside `node_modules/` with the resolved-path form
+    // (`typeof import("node_modules/<pkg>/<path>")`), not the original
+    // specifier — see `conformance/compiler/esmNoSynthesizedDefault.ts`.
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 1192 && message.contains("\"mdast-util-to-string\"")
+            *code == 1192 && message.contains("\"node_modules/mdast-util-to-string/index\"")
         }),
-        "Expected TS1192 to use the bare module specifier. Actual diagnostics: {diagnostics:#?}"
+        "Expected TS1192 to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2339 && message.contains("typeof import(\"mdast-util-to-string\")")
+            *code == 2339
+                && message.contains("typeof import(\"node_modules/mdast-util-to-string/index\")")
         }),
-        "Expected TS2339 to use the bare module specifier. Actual diagnostics: {diagnostics:#?}"
+        "Expected TS2339 to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
     );
 }

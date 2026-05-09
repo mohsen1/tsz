@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::args::{CliArgs, Module, ModuleDetection};
+use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, NewLine, Target};
 use crate::config::{
-    ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
-    load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
+    CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, TsConfig,
+    checker_target_from_emitter, load_tsconfig, load_tsconfig_with_diagnostics,
+    parse_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
     resolve_lib_files, resolve_lib_files_with_options, resolve_lib_files_with_options_transitive,
 };
 use tsz::binder::BinderOptions;
@@ -26,17 +27,25 @@ use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
+use tsz_common::file_extensions::{
+    JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_json_file,
+};
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
-use super::emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
+use super::emit::{
+    EmitOutputsContext, OutputFile, emit_outputs, normalize_root_dirs, normalize_type_roots,
+    write_outputs,
+};
 pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
 use super::resolution::{
     ModuleResolutionCache, build_duplicate_package_redirects, canonicalize_or_owned,
     collect_export_binding_nodes, collect_import_bindings, collect_module_specifiers,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
-    is_declaration_file, normalize_path, normalize_resolved_path, resolve_module_specifier,
+    implied_resolution_mode_for_file_with_cache, is_declaration_file,
+    json_type_attribute_enables_json_module, module_specifier_has_type_json_import_attribute,
+    normalize_path, normalize_resolved_path, resolve_module_specifier,
 };
-use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
+use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file, is_ts_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
 #[cfg(test)]
@@ -71,13 +80,21 @@ fn diagnostic_source_line<'a>(
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileInclusionReason {
-    /// File specified as a root file (CLI argument or files list)
+    /// File specified as a CLI argument (`tsz a.ts`)
     RootFile,
+    /// File listed in tsconfig's `files` array. tsc spells this out
+    /// distinctly from `include`-pattern matches.
+    FilesListEntry,
     /// File matched by include pattern in tsconfig
     IncludePattern(String),
     /// File imported from another file
     ImportedFrom(PathBuf),
-    /// File is a lib file (e.g., lib.es2020.d.ts)
+    /// File is a default library for the configured target (e.g.
+    /// `lib.es2020.d.ts`). The target string matches tsc's display
+    /// (`es2018`, `esnext`, ...).
+    DefaultLibrary(String),
+    /// File is a lib file with no specific target attribution (e.g.
+    /// pulled in via `/// <reference lib="..." />` or `--lib`).
     LibFile,
 }
 
@@ -85,12 +102,14 @@ impl std::fmt::Display for FileInclusionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RootFile => write!(f, "Root file specified"),
+            Self::FilesListEntry => write!(f, "Part of 'files' list in tsconfig.json"),
             Self::IncludePattern(pattern) => {
                 write!(f, "Matched by include pattern '{pattern}'")
             }
             Self::ImportedFrom(path) => {
                 write!(f, "Imported from '{}'", path.display())
             }
+            Self::DefaultLibrary(target) => write!(f, "Default library for target '{target}'"),
             Self::LibFile => write!(f, "Library file"),
         }
     }
@@ -144,6 +163,12 @@ pub struct CompilationResult {
     pub files_read: Vec<PathBuf>,
     /// Files with their inclusion reasons (for --explainFiles)
     pub file_infos: Vec<FileInfo>,
+    /// Resolved `noEmit` option (merged from tsconfig.json + CLI overrides).
+    /// Used by the CLI to pick the correct exit code: tsc returns
+    /// `DiagnosticsPresent_OutputsGenerated` (2) for `--noEmit` regardless of
+    /// where the option originated, since emit was disabled by configuration
+    /// rather than skipped due to errors.
+    pub no_emit: bool,
     pub request_cache_counters: tsz::checker::context::RequestCacheCounters,
     /// Number of interned types in the shared `TypeInterner` after checking.
     pub interned_types_count: usize,
@@ -413,7 +438,7 @@ fn compilation_cache_to_build_info(
 ) -> BuildInfo {
     use crate::incremental::{
         BuildInfoOptions, CachedDiagnostic, CachedRelatedInformation, EmitSignature,
-        FileInfo as IncrementalFileInfo,
+        FileInfo as IncrementalFileInfo, compute_file_version,
     };
     use std::collections::BTreeMap;
 
@@ -429,8 +454,9 @@ fn compilation_cache_to_build_info(
             .to_string_lossy()
             .replace('\\', "/");
 
-        // Create file info with version (hash) and signature
-        let version = format!("{hash:016x}");
+        // `version` is compared against the source file content on the next
+        // build, while `signature` tracks the exported API shape.
+        let version = compute_file_version(path).unwrap_or_else(|_| format!("{hash:016x}"));
         let signature = Some(format!("{hash:016x}"));
         file_infos.insert(
             relative_path.clone(),
@@ -647,7 +673,12 @@ fn get_build_info_path(
     // Use tsconfig path to determine default buildinfo location
     let config_path = tsconfig_path?;
     let out_dir = options.out_dir.as_ref().map(|od| base_dir.join(od));
-    Some(default_build_info_path(config_path, out_dir.as_deref()))
+    let root_dir = options.root_dir.as_ref().map(|rd| base_dir.join(rd));
+    Some(default_build_info_path(
+        config_path,
+        out_dir.as_deref(),
+        root_dir.as_deref(),
+    ))
 }
 
 fn format_file_write_error_for_diagnostic(path: &Path, err: &anyhow::Error) -> String {
@@ -831,6 +862,10 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         || matches!(code, 2458 | 2754)
 }
 
+fn remove_deprecation_diagnostics(diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.retain(|d| !is_deprecation_diagnostic_code(d.code));
+}
+
 fn collect_parse_only_no_check_diagnostics(
     parse_results: &[parallel::ParseResult],
     options: &ResolvedCompilerOptions,
@@ -876,6 +911,32 @@ fn collect_parse_only_no_check_diagnostics(
     }
 }
 
+fn no_lib_core_global_type_diagnostics() -> Vec<Diagnostic> {
+    [
+        "Array",
+        "Boolean",
+        "Function",
+        "IArguments",
+        "Number",
+        "Object",
+        "RegExp",
+        "String",
+        "CallableFunction",
+        "NewableFunction",
+    ]
+    .into_iter()
+    .map(|name| {
+        Diagnostic::error(
+            String::new(),
+            0,
+            0,
+            format!("Cannot find global type '{name}'."),
+            diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE,
+        )
+    })
+    .collect()
+}
+
 fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
@@ -899,6 +960,13 @@ fn compile_inner(
     };
 
     let cwd = normalize_path(cwd);
+    let ignored_config_path_for_no_input = if args.ignore_config && args.files.is_empty() {
+        resolve_tsconfig_path(&cwd, args.project.as_deref())
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let tsconfig_path = if args.ignore_config {
         // --ignoreConfig: skip tsconfig.json discovery and loading entirely
         None
@@ -908,17 +976,38 @@ fn compile_inner(
         match resolve_tsconfig_path(&cwd, args.project.as_deref()) {
             Ok(path) => path,
             Err(err) => {
-                return Ok(config_error_result(
-                    None,
-                    err.to_string(),
-                    diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY,
-                ));
+                let code = match err {
+                    ResolveTsconfigError::NoConfigInDirectory(_) => {
+                        diagnostic_codes::CANNOT_FIND_A_TSCONFIG_JSON_FILE_AT_THE_SPECIFIED_DIRECTORY
+                    }
+                    ResolveTsconfigError::PathDoesNotExist(_)
+                    | ResolveTsconfigError::NotAFile(_) => {
+                        diagnostic_codes::THE_SPECIFIED_PATH_DOES_NOT_EXIST
+                    }
+                };
+                return Ok(config_error_result(None, err.to_string(), code));
             }
         }
     };
     let loaded = load_config_with_diagnostics(tsconfig_path.as_deref())?;
     let config = loaded.config;
     let mut config_diagnostics = loaded.diagnostics;
+    if cli_ignore_deprecations_silences_6_0(args) {
+        config_diagnostics.retain(|d| !is_deprecation_diagnostic_code(d.code));
+    }
+    config_diagnostics.extend(validate_cli_compiler_option_diagnostics(
+        args,
+        config.as_ref(),
+    )?);
+    if args.source_map || args.declaration_map {
+        config_diagnostics.retain(|d| {
+            !(d.code
+                == diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+                && d.message_text.contains("mapRoot")
+                && d.message_text.contains("sourceMap")
+                && d.message_text.contains("declarationMap"))
+        });
+    }
 
     // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
     // in tsc: they stop compilation and report only config-level errors.
@@ -928,12 +1017,15 @@ fn compile_inner(
             || d.code == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || d.code
                 == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
     }) {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            no_emit: args.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -947,12 +1039,9 @@ fn compile_inner(
     }
 
     // Track whether TS5107/TS5101 deprecation diagnostics exist for handling below.
-    let has_deprecation_diagnostics = config_diagnostics.iter().any(|d| {
-        d.code
-            == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-            || d.code
-                == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-    });
+    let has_deprecation_diagnostics = config_diagnostics
+        .iter()
+        .any(|d| is_deprecation_diagnostic_code(d.code));
 
     let mut resolved = match resolve_compiler_options(
         config
@@ -970,6 +1059,7 @@ fn compile_inner(
                     emitted_files: Vec::new(),
                     files_read: Vec::new(),
                     file_infos: Vec::new(),
+                    no_emit: args.no_emit,
                     request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
                     interned_types_count: 0,
                     interner_estimated_bytes: 0,
@@ -984,8 +1074,15 @@ fn compile_inner(
             return Err(e);
         }
     };
-    apply_cli_overrides(&mut resolved, args)?;
-
+    apply_cli_overrides_with_config_options(
+        &mut resolved,
+        args,
+        config
+            .as_ref()
+            .and_then(|cfg| cfg.compiler_options.as_ref()),
+    )?;
+    let positional_no_config_no_emit =
+        tsconfig_path.is_none() && !args.files.is_empty() && resolved.no_emit;
     // Wire removed-but-honored suppress flags from config
     if loaded.suppress_excess_property_errors {
         resolved.checker.suppress_excess_property_errors = true;
@@ -1003,21 +1100,6 @@ fn compile_inner(
         resolved.checker.rewrite_relative_import_extensions = true;
         resolved.printer.rewrite_relative_import_extensions = true;
     }
-    if config.is_none()
-        && args.module.is_none()
-        && matches!(resolved.printer.module, ModuleKind::None)
-    {
-        // When no tsconfig is present, align with tsc's computed module default:
-        // ES2015+ targets -> ES2015 modules, older targets -> CommonJS.
-        let default_module = if resolved.printer.target.supports_es2015() {
-            ModuleKind::ES2015
-        } else {
-            ModuleKind::CommonJS
-        };
-        resolved.printer.module = default_module;
-        resolved.checker.module = default_module;
-    }
-
     let base_dir = config_base_dir(&cwd, tsconfig_path.as_deref());
     let base_dir = if resolved.preserve_symlinks {
         normalize_path(&base_dir)
@@ -1029,11 +1111,42 @@ fn compile_inner(
     let out_dir = normalize_output_dir(&base_dir, resolved.out_dir.clone());
     let declaration_dir = normalize_output_dir(&base_dir, resolved.declaration_dir.clone());
     let base_url = normalize_base_url(&base_dir, resolved.base_url.clone());
+    let root_dirs = normalize_root_dirs(&base_dir, resolved.root_dirs.clone());
     resolved.root_dir = root_dir.clone();
     resolved.out_dir = out_dir.clone();
     resolved.declaration_dir = declaration_dir.clone();
     resolved.base_url = base_url;
+    resolved.root_dirs = root_dirs;
     resolved.type_roots = normalize_type_roots(&base_dir, resolved.type_roots.clone());
+
+    if args.ignore_config
+        && args.files.is_empty()
+        && let Some(config_path) = ignored_config_path_for_no_input.as_deref()
+    {
+        let diagnostics = no_input_diagnostics_for_config(
+            config_diagnostics,
+            Some(config_path),
+            None,
+            None,
+            resolved.allow_js,
+        );
+        return Ok(CompilationResult {
+            diagnostics,
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+            no_emit: resolved.no_emit,
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            interner_estimated_bytes: 0,
+            query_cache_stats: None,
+            def_store_stats: None,
+            phase_timings: PhaseTimings::default(),
+            residency_stats: None,
+            module_dep_stats: None,
+            invalidation_summaries: Vec::new(),
+        });
+    }
 
     let discovery = build_discovery_options(
         args,
@@ -1044,6 +1157,7 @@ fn compile_inner(
         &resolved,
     )?;
     let mut file_paths = discover_ts_files(&discovery)?;
+    config_diagnostics.extend(unsupported_explicit_file_diagnostics(&discovery));
 
     // If config validation already emitted TS5110 (module/moduleResolution mismatch),
     // or TS5090 (`paths` substitutions require `baseUrl`), bail out early.
@@ -1073,6 +1187,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            no_emit: resolved.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1149,6 +1264,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
+            no_emit: resolved.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1176,18 +1292,10 @@ fn compile_inner(
     }
 
     let root_file_paths = file_paths.clone();
-    let source_directive_no_types_and_symbols = if resolved.checker.no_types_and_symbols {
-        true
-    } else {
-        file_paths.iter().any(|path| match read_source_file(path) {
-            FileReadResult::Text(text) => sources::has_no_types_and_symbols_directive(&text),
-            FileReadResult::Binary { text, .. } => {
-                sources::has_no_types_and_symbols_directive(&text)
-            }
-            FileReadResult::Error(_) => false,
-        })
-    };
-    resolved.checker.no_types_and_symbols = source_directive_no_types_and_symbols;
+    // `@noTypesAndSymbols` is a TypeScript test-corpus pragma, not a real
+    // compiler directive. Honor only the explicit value coming from
+    // tsconfig/CLI; never let an ordinary source comment override the
+    // project's type-root resolution. See issue #3014.
 
     let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
 
@@ -1269,6 +1377,28 @@ fn compile_inner(
                 diagnostic_codes::FILE_IS_NOT_UNDER_ROOTDIR_ROOTDIR_IS_EXPECTED_TO_CONTAIN_ALL_SOURCE_FILES,
             ));
         }
+    } else if !resolved.no_emit
+        && (out_dir.is_some() || declaration_dir.is_some())
+        && let Some(tsconfig) = tsconfig_path.as_deref()
+    {
+        // TS5011: outDir/declarationDir is set without rootDir, and the inferred
+        // common source directory differs from the tsconfig directory, so emit
+        // would land in an unexpected layout. tsc reports this so the user can
+        // pin rootDir explicitly.
+        if let Some(common) = implicit_common_source_directory(&root_file_paths, &base_dir, &cwd) {
+            let tsconfig_display = display_relative_to_dir(tsconfig, &cwd);
+            let common_display = display_relative_to_dir(&common, &base_dir);
+            let message = format!(
+                "The common source directory of '{tsconfig_display}' is '{common_display}'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout."
+            );
+            config_diagnostics.push(Diagnostic::error(
+                tsconfig.to_string_lossy().into_owned(),
+                0,
+                0,
+                message,
+                diagnostic_codes::THE_COMMON_SOURCE_DIRECTORY_OF_IS_THE_ROOTDIR_SETTING_MUST_BE_EXPLICITLY_SET_TO,
+            ));
+        }
     }
 
     // Update dependencies in the cache
@@ -1338,7 +1468,14 @@ fn compile_inner(
     user_files_read.sort();
 
     // Build file info with inclusion reasons
-    let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
+    let file_infos = build_file_infos(
+        &sources,
+        &file_paths,
+        args,
+        config.as_ref(),
+        &base_dir,
+        resolved.printer.target,
+    );
 
     if resolved.no_check && resolved.no_emit && !resolved.emit_declarations {
         let parse_start = Instant::now();
@@ -1354,6 +1491,9 @@ fn compile_inner(
         perf_log_phase("parse_no_check", parse_start);
 
         let mut diagnostics = collect_parse_only_no_check_diagnostics(&parse_results, &resolved);
+        if positional_no_config_no_emit && resolved.checker.no_lib {
+            diagnostics.extend(no_lib_core_global_type_diagnostics());
+        }
 
         if !binary_file_names_to_suppress.is_empty() {
             diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
@@ -1365,12 +1505,7 @@ fn compile_inner(
                 .any(|d| is_grammar_error_for_deprecation_priority(d.code));
 
             if has_grammar_errors {
-                config_diagnostics.retain(|d| {
-                    d.code
-                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-                    && d.code
-                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-                });
+                remove_deprecation_diagnostics(&mut config_diagnostics);
             } else {
                 diagnostics.retain(|d| {
                     (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
@@ -1393,6 +1528,7 @@ fn compile_inner(
             emitted_files: Vec::new(),
             files_read: user_files_read,
             file_infos,
+            no_emit: resolved.no_emit,
             request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
             interned_types_count: 0,
             interner_estimated_bytes: 0,
@@ -1411,10 +1547,15 @@ fn compile_inner(
     }
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
-    resolved.checker.no_types_and_symbols =
-        resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
+    // `@noTypesAndSymbols` source comments must not override the project's
+    // resolved compiler options here either. The tsc `/// <reference no-default-lib />`
+    // directive above is a real TypeScript directive and stays.
     let lib_paths =
         resolve_effective_lib_paths(&resolved, &sources, &base_dir, disable_default_libs)?;
+    config_diagnostics.extend(collect_source_reference_lib_diagnostics(
+        &sources,
+        resolved.checker.no_lib,
+    ));
     let typescript_dom_replacement_globals = scan_typescript_dom_replacement_globals(&lib_paths);
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
 
@@ -1450,7 +1591,7 @@ fn compile_inner(
 
     let build_program_start = Instant::now();
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
-        let result = build_program_with_cache(sources, c, &lib_files);
+        let result = build_program_with_cache(sources, c, &lib_files, resolved.checker.target);
         (result.program, Some(result.dirty_paths))
     } else {
         let compile_inputs: Vec<(String, String)> = sources
@@ -1464,7 +1605,11 @@ fn compile_inner(
                 (source.path.to_string_lossy().into_owned(), text)
             })
             .collect();
-        let bind_results = parallel::parse_and_bind_parallel_with_libs(compile_inputs, &lib_files);
+        let bind_results = parallel::parse_and_bind_parallel_with_libs_and_target(
+            compile_inputs,
+            &lib_files,
+            resolved.checker.target,
+        );
         (parallel::merge_bind_results(bind_results), None)
     };
     let parse_bind_duration = build_program_start.elapsed();
@@ -1540,12 +1685,7 @@ fn compile_inner(
 
         if has_grammar_errors {
             // Grammar errors take precedence - suppress TS5107/TS5101
-            config_diagnostics.retain(|d| {
-                d.code
-                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
-                    && d.code
-                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
-            });
+            remove_deprecation_diagnostics(&mut config_diagnostics);
         } else {
             // TS5107 takes priority (fatal) - suppress most file-level diagnostics.
             // Preserve only global-level TS2318 ("Cannot find global type") and
@@ -1664,7 +1804,21 @@ fn compile_inner(
         })?;
         diagnostics.extend(emit_diags);
         if should_emit {
-            write_outputs(&outputs)?
+            let blocked_declaration_sources = declaration_emit_blocking_source_files(&diagnostics);
+            if blocked_declaration_sources.is_empty() {
+                write_outputs(&outputs, resolved.emit_bom)?
+            } else {
+                let filtered_outputs: Vec<_> = outputs
+                    .into_iter()
+                    .filter(|output| {
+                        should_write_output_after_declaration_diagnostics(
+                            output,
+                            &blocked_declaration_sources,
+                        )
+                    })
+                    .collect();
+                write_outputs(&filtered_outputs, resolved.emit_bom)?
+            }
         } else {
             // Declaration emit ran for diagnostics only (--noEmit with --declaration)
             Vec::new()
@@ -1763,6 +1917,7 @@ fn compile_inner(
         emitted_files,
         files_read,
         file_infos,
+        no_emit: resolved.no_emit,
         request_cache_counters: collected.request_cache_counters,
         interned_types_count: program.type_interner.len(),
         interner_estimated_bytes: program.type_interner.estimated_size_bytes(),
@@ -1784,6 +1939,50 @@ fn compile_inner(
         module_dep_stats: collected.module_dep_stats,
         invalidation_summaries: Vec::new(),
     })
+}
+
+fn declaration_emit_blocking_source_files(diagnostics: &[Diagnostic]) -> FxHashSet<PathBuf> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.category == DiagnosticCategory::Error
+                && is_declaration_emit_blocking_diagnostic_code(diagnostic.code)
+                && !diagnostic.file.is_empty()
+        })
+        .map(|diagnostic| normalize_path(Path::new(&diagnostic.file)))
+        .collect()
+}
+
+const fn is_declaration_emit_blocking_diagnostic_code(code: u32) -> bool {
+    // TS9007–TS9039 are the `--isolatedDeclarations` family. tsc refuses to
+    // emit a `.d.ts` for any source whose isolated-declaration constraints
+    // were violated, regardless of `--noCheck` (#3709 follow-up). TS4020
+    // (existing entry) blocks emit when an exported name leaks an external
+    // module-private symbol that can't be re-exported.
+    matches!(
+        code,
+        diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED
+            | 9007..=9039,
+    )
+}
+
+fn should_write_output_after_declaration_diagnostics(
+    output: &OutputFile,
+    blocked_sources: &FxHashSet<PathBuf>,
+) -> bool {
+    if !is_declaration_output_path(&output.path) {
+        return true;
+    }
+
+    let Some(source_path) = output.source_path.as_ref() else {
+        return blocked_sources.is_empty();
+    };
+    !blocked_sources.contains(&normalize_path(source_path))
+}
+
+fn is_declaration_output_path(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.ends_with(".d.ts") || path.ends_with(".d.ts.map")
 }
 
 fn normalize_ts2883_diagnostics_in_place(
@@ -1903,6 +2102,7 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         emitted_files: Vec::new(),
         files_read: Vec::new(),
         file_infos: Vec::new(),
+        no_emit: false,
         request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
         interned_types_count: 0,
         interner_estimated_bytes: 0,
@@ -1955,6 +2155,64 @@ pub(super) fn no_input_diagnostics_for_config(
     // tsc emits TS18003 without file position (file="", pos=0).
     config_diagnostics.push(Diagnostic::error(String::new(), 0, 0, message, 18003));
     config_diagnostics
+}
+
+fn unsupported_explicit_file_diagnostics(discovery: &FileDiscoveryOptions) -> Vec<Diagnostic> {
+    if discovery.files.is_empty() {
+        return Vec::new();
+    }
+
+    discovery
+        .files
+        .iter()
+        .filter_map(|file| {
+            let path = if file.is_absolute() {
+                file.clone()
+            } else {
+                discovery.base_dir.join(file)
+            };
+            if is_ts_file(&path)
+                || is_js_file(&path)
+                || (discovery.resolve_json_module && is_json_file(&path))
+            {
+                return None;
+            }
+
+            let supported_extensions = supported_extensions_display(discovery);
+            let path_display = path.to_string_lossy().to_string();
+            Some(
+                Diagnostic::from_code(
+                    diagnostic_codes::FILE_HAS_AN_UNSUPPORTED_EXTENSION_THE_ONLY_SUPPORTED_EXTENSIONS_ARE,
+                    String::new(),
+                    0,
+                    0,
+                    &[&path_display, &supported_extensions],
+                )
+                .with_related(
+                    String::new(),
+                    0,
+                    0,
+                    "The file is in the program because:\n  Part of 'files' list in tsconfig.json",
+                ),
+            )
+        })
+        .collect()
+}
+
+fn supported_extensions_display(discovery: &FileDiscoveryOptions) -> String {
+    let mut extensions: Vec<&str> = TS_FAMILY_EXTENSIONS.to_vec();
+    if discovery.allow_js {
+        extensions.extend(JS_FAMILY_EXTENSIONS);
+    }
+    if discovery.resolve_json_module {
+        extensions.push(JSON_EXTENSION);
+    }
+
+    extensions
+        .iter()
+        .map(|ext| format!("'{ext}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -2023,15 +2281,35 @@ fn build_file_infos(
     root_file_paths: &[PathBuf],
     args: &CliArgs,
     config: Option<&crate::config::TsConfig>,
-    _base_dir: &Path,
+    base_dir: &Path,
+    target: ScriptTarget,
 ) -> Vec<FileInfo> {
     let root_set: FxHashSet<_> = root_file_paths.iter().collect();
     let cli_files: FxHashSet<_> = args.files.iter().collect();
+
+    // Resolve `tsconfig.files` entries to absolute paths so we can attribute
+    // each compiled source back to a specific entry. tsc renders these as
+    // `Part of 'files' list in tsconfig.json`, distinct from `include`-pattern
+    // matches (#3901).
+    let tsconfig_files_set: FxHashSet<PathBuf> = config
+        .and_then(|c| c.files.as_ref())
+        .map(|files| {
+            files
+                .iter()
+                .map(|f| {
+                    let p = PathBuf::from(f);
+                    if p.is_absolute() { p } else { base_dir.join(p) }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Get include patterns if available
     let include_patterns = config
         .and_then(|c| c.include.as_ref())
         .map_or_else(|| "**/*".to_string(), |patterns| patterns.join(", "));
+
+    let target_display = script_target_display_for_explain_files(target).to_string();
 
     sources
         .iter()
@@ -2042,9 +2320,20 @@ fn build_file_infos(
             if cli_files.iter().any(|f| source.path.ends_with(f)) {
                 reasons.push(FileInclusionReason::RootFile);
             }
-            // Check if it's a lib file (based on filename pattern)
+            // tsc surfaces lib files with the configured target, not just
+            // `Library file`. Default-target libs (`lib.es2018.full.d.ts`)
+            // get the precise reason; explicit `--lib`/reference-pulled libs
+            // fall through to the generic LibFile.
             else if is_lib_file(&source.path) {
-                reasons.push(FileInclusionReason::LibFile);
+                if is_default_lib_for_target(&source.path, target) {
+                    reasons.push(FileInclusionReason::DefaultLibrary(target_display.clone()));
+                } else {
+                    reasons.push(FileInclusionReason::LibFile);
+                }
+            }
+            // tsconfig `files` list — distinct from `include` matches.
+            else if tsconfig_files_set.contains(&source.path) {
+                reasons.push(FileInclusionReason::FilesListEntry);
             }
             // Check if it's a root file from discovery
             else if root_set.contains(&source.path) {
@@ -2063,6 +2352,43 @@ fn build_file_infos(
             }
         })
         .collect()
+}
+
+/// Format a `ScriptTarget` the way tsc does in `--explainFiles` reasons:
+/// lowercase ECMAScript revision names (`es2018`, `esnext`).
+const fn script_target_display_for_explain_files(target: ScriptTarget) -> &'static str {
+    match target {
+        ScriptTarget::ES3 => "es3",
+        ScriptTarget::ES5 => "es5",
+        ScriptTarget::ES2015 => "es2015",
+        ScriptTarget::ES2016 => "es2016",
+        ScriptTarget::ES2017 => "es2017",
+        ScriptTarget::ES2018 => "es2018",
+        ScriptTarget::ES2019 => "es2019",
+        ScriptTarget::ES2020 => "es2020",
+        ScriptTarget::ES2021 => "es2021",
+        ScriptTarget::ES2022 => "es2022",
+        ScriptTarget::ES2023 => "es2023",
+        ScriptTarget::ES2024 => "es2024",
+        ScriptTarget::ES2025 => "es2025",
+        ScriptTarget::ESNext => "esnext",
+    }
+}
+
+/// Identify whether a lib file is the *default* lib for the configured
+/// target (e.g. `lib.es2018.full.d.ts` when `target` is `es2018`). tsc
+/// distinguishes the target-driven default libs from libs pulled in via
+/// `--lib` or triple-slash references.
+fn is_default_lib_for_target(path: &Path, target: ScriptTarget) -> bool {
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let target_name = script_target_display_for_explain_files(target);
+    matches!(
+        file_name,
+        f if f == format!("lib.{target_name}.full.d.ts")
+            || f == format!("lib.{target_name}.d.ts")
+    )
 }
 
 /// Check if a file is a TypeScript library file
@@ -2097,7 +2423,9 @@ fn resolve_effective_lib_paths(
             // Source-file `/// <reference lib="..." />` directives may name libs
             // that no longer exist in this TS version (e.g. rxjs references
             // `esnext.asynciterable`, since folded into `es2018.asynciterable`).
-            // Match tsc's behavior and silently skip unknown ones.
+            // The transitive resolver silently skips unknown names at this
+            // layer; user-facing TS2726 for invalid initial names is emitted
+            // separately by `collect_source_reference_lib_diagnostics`.
             let expanded_source_paths =
                 resolve_lib_files_with_options_transitive(&source_reference_libs, true)?;
             append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
@@ -2131,6 +2459,50 @@ fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {
         append_unique_lib_names(&mut lib_names, refs);
     }
     lib_names
+}
+
+/// Emit `TS2726` for user-authored source-file `/// <reference lib="..." />`
+/// directives whose value is empty or names a lib that does not exist.
+///
+/// `tsc` reports invalid initial lib names from user source files as
+/// `TS2726 Cannot find lib definition for '<name>'.` anchored at the lib
+/// attribute value. Transitive lib-to-lib references *inside* lib files
+/// remain silently skipped — that policy lives in the resolver in
+/// `tsz-core::config::resolve_lib_files_with_options_transitive`.
+///
+/// `no_lib` mirrors `--noLib`: when set, `tsc` ignores all lib references,
+/// so we skip diagnostic emission too.
+fn collect_source_reference_lib_diagnostics(
+    sources: &[SourceEntry],
+    no_lib: bool,
+) -> Vec<Diagnostic> {
+    if no_lib {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for source in sources {
+        let positioned = if let Some(text) = source.text.as_deref() {
+            tsz::config::extract_lib_references_with_positions(text)
+        } else {
+            std::fs::read_to_string(&source.path)
+                .map(|text| tsz::config::extract_lib_references_with_positions(&text))
+                .unwrap_or_default()
+        };
+        for reference in positioned {
+            if tsz::config::is_known_lib_name(&reference.raw) {
+                continue;
+            }
+            let message = format!("Cannot find lib definition for '{}'.", reference.raw.trim());
+            diagnostics.push(Diagnostic::error(
+                source.path.to_string_lossy().into_owned(),
+                reference.start,
+                reference.length,
+                message,
+                diagnostic_codes::CANNOT_FIND_LIB_DEFINITION_FOR,
+            ));
+        }
+    }
+    diagnostics
 }
 
 fn append_unique_lib_names(target: &mut Vec<String>, additional: Vec<String>) {
@@ -2274,6 +2646,7 @@ fn build_program_with_cache(
     sources: Vec<SourceEntry>,
     cache: &mut CompilationCache,
     lib_files: &[Arc<LibFile>],
+    language_version: ScriptTarget,
 ) -> BuildProgramResult {
     let mut meta = Vec::with_capacity(sources.len());
     let mut to_parse = Vec::new();
@@ -2283,7 +2656,7 @@ fn build_program_with_cache(
         let file_name = source.path.to_string_lossy().into_owned();
         let (hash, cached_ok) = match source.text {
             Some(text) => {
-                let hash = hash_text(&text);
+                let hash = hash_text_with_language_version(&text, language_version);
                 let cached_ok = cache
                     .bind_cache
                     .get(&source.path)
@@ -2317,7 +2690,11 @@ fn build_program_with_cache(
         // This ensures global symbols like console, Array, Promise are available
         // during binding, which prevents "Any poisoning" where unresolved symbols
         // default to Any type instead of emitting TS2304 errors.
-        parallel::parse_and_bind_parallel_with_libs(to_parse, lib_files)
+        parallel::parse_and_bind_parallel_with_libs_and_target(
+            to_parse,
+            lib_files,
+            language_version,
+        )
     };
 
     let mut parsed_map: FxHashMap<String, BindResult> = parsed_results
@@ -2501,23 +2878,23 @@ fn update_import_symbol_ids(
     cache.star_export_dependencies = star_export_dependencies;
 }
 
-fn hash_text(text: &str) -> u64 {
+fn hash_text_with_language_version(text: &str, language_version: ScriptTarget) -> u64 {
     let mut hasher = FxHasher::default();
     text.hash(&mut hasher);
+    language_version.ts_numeric_value().hash(&mut hasher);
     hasher.finish()
 }
 
 #[path = "sources.rs"]
 mod sources;
-#[cfg(test)]
-pub(crate) use sources::has_no_types_and_symbols_directive;
-pub use sources::{FileReadResult, read_source_file};
+pub use sources::{FileReadResult, find_tsconfig, read_source_file};
+pub(crate) use sources::{
+    ResolveTsconfigError, config_base_dir, load_config, load_config_with_diagnostics,
+    resolve_tsconfig_path,
+};
 use sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
-    read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
-};
-pub(crate) use sources::{
-    config_base_dir, load_config, load_config_with_diagnostics, resolve_tsconfig_path,
+    read_source_files, sources_have_no_default_lib,
 };
 
 #[path = "check.rs"]
@@ -2527,9 +2904,23 @@ mod check_utils;
 use check::{collect_diagnostics, load_checker_libs};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
+    apply_cli_overrides_with_config_options(options, args, None)
+}
+
+fn apply_cli_overrides_with_config_options(
+    options: &mut ResolvedCompilerOptions,
+    args: &CliArgs,
+    config_options: Option<&CompilerOptions>,
+) -> Result<()> {
     if let Some(target) = args.target {
         options.printer.target = target.to_script_target();
         options.checker.target = checker_target_from_emitter(options.printer.target);
+    }
+    if let Some(new_line) = args.new_line {
+        options.printer.new_line = match new_line {
+            NewLine::Lf => NewLineKind::LineFeed,
+            NewLine::Crlf => NewLineKind::CarriageReturnLineFeed,
+        };
     }
     if let Some(module) = args.module {
         options.printer.module = module.to_module_kind();
@@ -2539,6 +2930,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(module_resolution) = args.module_resolution {
         options.module_resolution = Some(module_resolution.to_module_resolution_kind());
     }
+    apply_module_resolution_derived_options(options, args, config_options);
     if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
         options.resolve_package_json_exports = resolve_package_json_exports;
     }
@@ -2550,6 +2942,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.resolve_json_module {
         options.resolve_json_module = true;
+        options.checker.resolve_json_module = true;
     }
     if args.allow_arbitrary_extensions {
         options.allow_arbitrary_extensions = true;
@@ -2559,7 +2952,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(use_define_for_class_fields) = args.use_define_for_class_fields {
         options.printer.use_define_for_class_fields = use_define_for_class_fields;
-    } else {
+    } else if config_options.is_none_or(|options| options.use_define_for_class_fields.is_none()) {
         // Default: true for target >= ES2022, false otherwise (matches tsc behavior)
         options.printer.use_define_for_class_fields =
             (options.printer.target as u32) >= (tsz::emitter::ScriptTarget::ES2022 as u32);
@@ -2567,6 +2960,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.rewrite_relative_import_extensions {
         options.rewrite_relative_import_extensions = true;
         options.printer.rewrite_relative_import_extensions = true;
+    }
+    if args.trace_resolution {
+        options.trace_resolution = true;
     }
     if let Some(custom_conditions) = args.custom_conditions.as_ref() {
         options.custom_conditions = custom_conditions.clone();
@@ -2576,6 +2972,22 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(root_dir) = args.root_dir.as_ref() {
         options.root_dir = Some(root_dir.clone());
+    }
+    if let Some(base_url) = args.base_url.as_ref() {
+        options.base_url = Some(base_url.clone());
+    }
+    if let Some(root_dirs) = args.root_dirs.as_ref() {
+        options.root_dirs = root_dirs.clone();
+    }
+    if let Some(declaration_dir) = args.declaration_dir.as_ref() {
+        options.declaration_dir = Some(declaration_dir.clone());
+    }
+    if let Some(types) = args.types.as_ref() {
+        options.types = Some(types.clone());
+        options.checker.types_explicitly_set = true;
+    }
+    if let Some(type_roots) = args.type_roots.as_ref() {
+        options.type_roots = Some(type_roots.clone());
     }
     if args.composite {
         options.composite = true;
@@ -2588,11 +3000,20 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.emit_declarations = true;
         options.checker.emit_declarations = true;
     }
+    if args.emit_declaration_only {
+        options.emit_declaration_only = true;
+    }
     if args.declaration_map {
         options.declaration_map = true;
     }
     if args.source_map {
         options.source_map = true;
+    }
+    if args.inline_source_map {
+        options.inline_source_map = true;
+    }
+    if args.emit_bom {
+        options.emit_bom = true;
     }
     if let Some(out_file) = args.out_file.as_ref() {
         options.out_file = Some(out_file.clone());
@@ -2620,8 +3041,32 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.checker.strict_property_initialization = true;
         options.checker.no_implicit_this = true;
         options.checker.use_unknown_in_catch_variables = true;
+        options.checker.strict_builtin_iterator_return = true;
         options.checker.always_strict = true;
         options.printer.always_strict = true;
+    } else if args
+        .explicitly_disabled_bool_flags
+        .iter()
+        .any(|name| name == "strict")
+    {
+        // Mirror config loader's strict-disable expansion: explicit
+        // `--strict false` (forwarded by `preprocess_args` through the hidden
+        // side-channel) flips a config `strict: true` plus its expansion to
+        // `false`. Must run before the individual `Option<bool>` family
+        // overrides below so that `--strict false --strictNullChecks=true`
+        // still keeps `strict_null_checks = true` (issue #3861).
+        options.checker.strict = false;
+        options.checker.no_implicit_any = false;
+        options.checker.no_implicit_returns = false;
+        options.checker.strict_null_checks = false;
+        options.checker.strict_function_types = false;
+        options.checker.strict_bind_call_apply = false;
+        options.checker.strict_property_initialization = false;
+        options.checker.no_implicit_this = false;
+        options.checker.use_unknown_in_catch_variables = false;
+        options.checker.strict_builtin_iterator_return = false;
+        options.checker.always_strict = false;
+        options.printer.always_strict = false;
     }
     // Individual strict flag overrides (must come after --strict expansion)
     if let Some(val) = args.strict_null_checks {
@@ -2645,8 +3090,14 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(val) = args.use_unknown_in_catch_variables {
         options.checker.use_unknown_in_catch_variables = val;
     }
+    if let Some(val) = args.strict_builtin_iterator_return {
+        options.checker.strict_builtin_iterator_return = val;
+    }
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
+    }
+    if args.no_unchecked_side_effect_imports {
+        options.checker.no_unchecked_side_effect_imports = true;
     }
     if args.exact_optional_property_types {
         options.checker.exact_optional_property_types = true;
@@ -2660,6 +3111,11 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(val) = args.always_strict {
         options.checker.always_strict = val;
         options.printer.always_strict = val;
+    }
+    if let Some(ref id) = args.ignore_deprecations
+        && (id == "5.0" || id == "6.0")
+    {
+        options.checker.ignore_deprecations = true;
     }
     if let Some(val) = args.allow_unreachable_code {
         options.checker.allow_unreachable_code = Some(val);
@@ -2712,6 +3168,10 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.allow_synthetic_default_imports = true;
         options.checker.allow_synthetic_default_imports = true;
     }
+    if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
+        options.allow_synthetic_default_imports = allow_synthetic_default_imports;
+        options.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
@@ -2721,6 +3181,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_resolve {
         options.no_resolve = true;
         options.checker.no_resolve = true;
+    }
+    if args.allow_umd_global_access {
+        options.checker.allow_umd_global_access = true;
     }
     if args.preserve_symlinks {
         options.preserve_symlinks = true;
@@ -2741,6 +3204,14 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.check_js {
         options.check_js = true;
         options.checker.check_js = true;
+        if !args
+            .explicitly_disabled_bool_flags
+            .iter()
+            .any(|name| name == "allowJs")
+        {
+            options.allow_js = true;
+            options.checker.allow_js = true;
+        }
     }
     if let Some(depth) = args.max_node_module_js_depth {
         options.max_node_module_js_depth = depth;
@@ -2782,10 +3253,16 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     match args.module_detection {
         Some(ModuleDetection::Force) => {
             options.printer.module_detection_force = true;
+            options.printer.module_detection_legacy = false;
         }
-        Some(ModuleDetection::Auto | ModuleDetection::Legacy) => {
+        Some(ModuleDetection::Legacy) => {
+            options.printer.module_detection_force = false;
+            options.printer.module_detection_legacy = true;
+        }
+        Some(ModuleDetection::Auto) => {
             // Explicitly opting out of force mode
             options.printer.module_detection_force = false;
+            options.printer.module_detection_legacy = false;
         }
         None => {
             // When module detection is not set via CLI, check if the CLI also overrides
@@ -2831,12 +3308,23 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.jsx = Some(jsx_emit);
     }
     if let Some(ref factory) = args.jsx_factory {
+        // tsc preserves `jsxFactory` verbatim — even when invalid (e.g.
+        // `my-React-Lib.createElement` from `--reactNamespace`). The TS5067
+        // / TS5059 diagnostics are surfaced separately during config
+        // validation; emit uses whatever was configured.
         options.checker.jsx_factory = factory.clone();
         options.checker.jsx_factory_from_config = true;
     }
     if let Some(ref frag) = args.jsx_fragment_factory {
-        options.checker.jsx_fragment_factory = frag.clone();
-        options.checker.jsx_fragment_factory_from_config = true;
+        // tsc validates `jsxFragmentFactory` at emit time and falls back to
+        // `React.Fragment` when the value is not a dot-separated identifier
+        // chain (e.g. `--jsxFragmentFactory 234`). This is asymmetric with
+        // `jsxFactory`, which is preserved verbatim.
+        if is_valid_jsx_factory_expression(frag) {
+            options.checker.jsx_fragment_factory = frag.clone();
+            options.checker.jsx_fragment_factory_from_config = true;
+        }
+        // else: keep default `React.Fragment`
     }
     if let Some(ref source) = args.jsx_import_source {
         options.checker.jsx_import_source = source.clone();
@@ -2859,7 +3347,530 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.checker.suppress_implicit_any_index_errors = true;
     }
 
+    apply_explicitly_disabled_bool_flags(options, args);
+
     Ok(())
+}
+
+/// Apply `--flag false` overrides for plain `bool` compiler-option flags.
+///
+/// `preprocess_args` collects each `--flag false` pair for plain bool flags
+/// into `args.explicitly_disabled_bool_flags` (the value is the canonical
+/// camelCase compiler-option name, e.g. `"strict"`, `"noEmit"`). The earlier
+/// override blocks only set options to `true` when the corresponding `bool`
+/// arg is `true`, so without this pass an explicit CLI `false` cannot override
+/// a `true` value loaded from `tsconfig.json`. tsc treats `--flag false` as an
+/// explicit disable, so each entry here flips the matching option(s) back to
+/// `false` after config + CLI true-overrides have been applied.
+#[allow(clippy::match_same_arms)]
+fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, args: &CliArgs) {
+    if args.explicitly_disabled_bool_flags.is_empty() {
+        return;
+    }
+    for name in &args.explicitly_disabled_bool_flags {
+        if matches!(
+            name.as_str(),
+            // `strict` is handled earlier (just after the `--strict` true
+            // expansion) so the strict-family `Option<bool>` overrides that
+            // run between can still win over the disable. See the
+            // `else if` branch on `args.strict` above.
+            "strict"
+                // CLI-only display flag; no compiler option to toggle.
+                | "noErrorTruncation"
+                // `inlineSources` has no corresponding `ResolvedCompilerOptions`
+                // field (the CLI flag is parsed for parity but never applied today).
+                | "inlineSources"
+                // Display / build-graph / watch / diagnostic-mode flags don't
+                // round-trip through compiler options; the CLI consumer reads
+                // `args.<field>` directly, so no override is needed here.
+                | "diagnostics"
+                | "extendedDiagnostics"
+                | "explainFiles"
+                | "listFiles"
+                | "listEmittedFiles"
+                | "traceResolution"
+                | "traceDependencies"
+                | "preserveWatchOutput"
+                | "synchronousWatchDirectory"
+                | "watch"
+                | "build"
+                | "build-verbose"
+                | "dry"
+                | "force"
+                | "clean"
+                | "stopBuildOnErrors"
+                | "assumeChangesOnlyAffectDirectDependencies"
+                | "disableReferencedProjectLoad"
+                | "disableSolutionSearching"
+                | "disableSourceOfProjectReferenceRedirect"
+                | "disableSizeLimit"
+                | "init"
+                | "all"
+                | "showConfig"
+                | "ignoreConfig"
+                | "listFilesOnly"
+                | "batch"
+                // Removed/unsupported legacy flags; silently ignore so a leftover
+                // `--foo false` doesn't break compilation.
+                | "keyofStringsOnly"
+                | "noStrictGenericChecks"
+                | "preserveValueImports"
+        ) {
+            continue;
+        }
+
+        match name.as_str() {
+            "noEmit" => options.no_emit = false,
+            "noEmitOnError" => options.no_emit_on_error = false,
+            "noEmitHelpers" => options.printer.no_emit_helpers = false,
+            "noCheck" => options.no_check = false,
+            "noResolve" => {
+                options.no_resolve = false;
+                options.checker.no_resolve = false;
+            }
+            "noLib" => options.checker.no_lib = false,
+            "noUnusedLocals" => options.checker.no_unused_locals = false,
+            "noUnusedParameters" => options.checker.no_unused_parameters = false,
+            "noImplicitReturns" => options.checker.no_implicit_returns = false,
+            "noFallthroughCasesInSwitch" => options.checker.no_fallthrough_cases_in_switch = false,
+            "noImplicitOverride" => options.checker.no_implicit_override = false,
+            "noPropertyAccessFromIndexSignature" => {
+                options.checker.no_property_access_from_index_signature = false
+            }
+            "noUncheckedIndexedAccess" => options.checker.no_unchecked_indexed_access = false,
+            "noUncheckedSideEffectImports" => {
+                options.checker.no_unchecked_side_effect_imports = false
+            }
+            "noImplicitUseStrict" => options.checker.no_implicit_use_strict = false,
+            "exactOptionalPropertyTypes" => options.checker.exact_optional_property_types = false,
+            "erasableSyntaxOnly" => options.checker.erasable_syntax_only = false,
+            "sound" => options.checker.sound_mode = false,
+            "experimentalDecorators" => {
+                options.checker.experimental_decorators = false;
+                options.printer.legacy_decorators = false;
+            }
+            "emitDecoratorMetadata" => options.printer.emit_decorator_metadata = false,
+            "esModuleInterop" => {
+                options.es_module_interop = false;
+                options.checker.es_module_interop = false;
+                options.printer.es_module_interop = false;
+            }
+            "isolatedModules" => {
+                options.checker.isolated_modules = false;
+                options.printer.preserve_const_enums = false;
+                options.printer.no_const_enum_inlining = false;
+            }
+            "isolatedDeclarations" => {
+                options.isolated_declarations = false;
+                options.checker.isolated_declarations = false;
+            }
+            "verbatimModuleSyntax" => {
+                options.checker.verbatim_module_syntax = false;
+                options.printer.verbatim_module_syntax = false;
+                options.printer.preserve_const_enums = false;
+                options.printer.no_const_enum_inlining = false;
+            }
+            "preserveSymlinks" => options.preserve_symlinks = false,
+            "preserveConstEnums" => options.printer.preserve_const_enums = false,
+            "stripInternal" => options.strip_internal = false,
+            "removeComments" => options.printer.remove_comments = false,
+            "emitBOM" => options.emit_bom = false,
+            "downlevelIteration" => options.printer.downlevel_iteration = false,
+            "importHelpers" => {
+                options.import_helpers = false;
+                options.printer.import_helpers = false;
+                options.printer.no_emit_helpers = false;
+            }
+            "declaration" => {
+                options.emit_declarations = false;
+                options.checker.emit_declarations = false;
+            }
+            "declarationMap" => options.declaration_map = false,
+            "emitDeclarationOnly" => options.emit_declaration_only = false,
+            "sourceMap" => options.source_map = false,
+            "inlineSourceMap" => options.inline_source_map = false,
+            "composite" => options.composite = false,
+            "incremental" => options.incremental = false,
+            "skipLibCheck" => options.skip_lib_check = false,
+            "skipDefaultLibCheck" => options.skip_default_lib_check = false,
+            "allowJs" => {
+                options.allow_js = false;
+                options.checker.allow_js = false;
+            }
+            "checkJs" => {
+                options.check_js = false;
+                options.checker.check_js = false;
+            }
+            "allowUmdGlobalAccess" => options.checker.allow_umd_global_access = false,
+            "allowArbitraryExtensions" => options.allow_arbitrary_extensions = false,
+            "allowImportingTsExtensions" => options.allow_importing_ts_extensions = false,
+            "rewriteRelativeImportExtensions" => {
+                options.rewrite_relative_import_extensions = false;
+                options.printer.rewrite_relative_import_extensions = false;
+            }
+            "resolveJsonModule" => {
+                options.resolve_json_module = false;
+                options.checker.resolve_json_module = false;
+            }
+            "libReplacement" => options.lib_replacement = false,
+            "suppressExcessPropertyErrors" => {
+                options.checker.suppress_excess_property_errors = false
+            }
+            "suppressImplicitAnyIndexErrors" => {
+                options.checker.suppress_implicit_any_index_errors = false
+            }
+            _ => {
+                // Unknown name: leave compilation unchanged. The flag is
+                // already validated as a known bool flag in preprocess_args
+                // before being recorded here.
+            }
+        }
+    }
+}
+
+fn apply_module_resolution_derived_options(
+    options: &mut ResolvedCompilerOptions,
+    args: &CliArgs,
+    config_options: Option<&CompilerOptions>,
+) {
+    let effective_resolution = options.effective_module_resolution();
+    options.checker.implied_classic_resolution =
+        matches!(effective_resolution, ModuleResolutionKind::Classic);
+
+    let config_has_resolve_package_json_exports =
+        config_options.is_some_and(|options| options.resolve_package_json_exports.is_some());
+    if args.resolve_package_json_exports.is_none() && !config_has_resolve_package_json_exports {
+        options.resolve_package_json_exports = matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        );
+    }
+
+    let config_has_resolve_package_json_imports =
+        config_options.is_some_and(|options| options.resolve_package_json_imports.is_some());
+    if args.resolve_package_json_imports.is_none() && !config_has_resolve_package_json_imports {
+        options.resolve_package_json_imports = matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node
+                | ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        );
+    }
+
+    let config_has_resolve_json_module =
+        config_options.is_some_and(|options| options.resolve_json_module.is_some());
+    if !args.resolve_json_module && !config_has_resolve_json_module {
+        let resolve_json_module = matches!(effective_resolution, ModuleResolutionKind::Bundler);
+        options.resolve_json_module = resolve_json_module;
+        options.checker.resolve_json_module = resolve_json_module;
+    }
+}
+
+fn validate_cli_compiler_option_diagnostics(
+    args: &CliArgs,
+    config: Option<&TsConfig>,
+) -> Result<Vec<Diagnostic>> {
+    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
+
+    let mut diagnostics = Vec::new();
+    for key in ["paths", "plugins"] {
+        let provided = match key {
+            "paths" => cli_config_only_option_has_non_null_value(args.paths.as_ref()),
+            "plugins" => cli_config_only_option_has_non_null_value(args.plugins.as_ref()),
+            _ => false,
+        };
+        if provided {
+            diagnostics.push(Diagnostic::error(
+                String::new(),
+                0,
+                0,
+                format_message(
+                    diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+                    &[key],
+                ),
+                diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+            ));
+        }
+    }
+
+    let mut compiler_options = serde_json::Map::new();
+
+    if let Some(target) = args.target {
+        compiler_options.insert("target".to_string(), cli_target_value(target).into());
+    }
+    if let Some(module) = args.module {
+        compiler_options.insert("module".to_string(), cli_module_value(module).into());
+    }
+    if let Some(module_resolution) = args.module_resolution {
+        compiler_options.insert(
+            "moduleResolution".to_string(),
+            cli_module_resolution_value(module_resolution).into(),
+        );
+    }
+    let config_options = config.and_then(|cfg| cfg.compiler_options.as_ref());
+    let cli_package_resolution_option = args.custom_conditions.is_some()
+        || args.resolve_package_json_exports == Some(true)
+        || args.resolve_package_json_imports == Some(true);
+    if cli_package_resolution_option {
+        if args.module_resolution.is_none()
+            && let Some(module_resolution) =
+                config_options.and_then(|options| options.module_resolution.as_ref())
+        {
+            compiler_options.insert(
+                "moduleResolution".to_string(),
+                module_resolution.clone().into(),
+            );
+        }
+        if args.module.is_none()
+            && let Some(module) = config_options.and_then(|options| options.module.as_ref())
+        {
+            compiler_options.insert("module".to_string(), module.clone().into());
+        }
+    }
+    if let Some(always_strict) = args.always_strict {
+        compiler_options.insert("alwaysStrict".to_string(), always_strict.into());
+    }
+    if let Some(allow_synthetic_default_imports) = args.allow_synthetic_default_imports {
+        compiler_options.insert(
+            "allowSyntheticDefaultImports".to_string(),
+            allow_synthetic_default_imports.into(),
+        );
+    }
+    if let Some(ignore_deprecations) =
+        effective_ignore_deprecations_for_cli_validation(args, config)
+    {
+        compiler_options.insert("ignoreDeprecations".to_string(), ignore_deprecations.into());
+    }
+    if let Some(base_url) = args.base_url.as_ref() {
+        compiler_options.insert(
+            "baseUrl".to_string(),
+            base_url.to_string_lossy().into_owned().into(),
+        );
+    }
+    if let Some(out_file) = args.out_file.as_ref() {
+        compiler_options.insert(
+            "outFile".to_string(),
+            out_file.to_string_lossy().into_owned().into(),
+        );
+    }
+    let config_bool = |get: fn(&CompilerOptions) -> Option<bool>| -> bool {
+        config_options.and_then(get).unwrap_or(false)
+    };
+    // Group-1 TS5069 triggers (`emitDeclarationOnly`, `declarationMap`,
+    // `isolatedDeclarations`) require `declaration` or `composite`. When any of
+    // them is set on the CLI, inherit the config-level `declaration`/`composite`
+    // so the validator sees the merged effective options instead of the bare
+    // CLI snapshot.
+    let triggers_decl_or_composite_check =
+        args.emit_declaration_only || args.declaration_map || args.isolated_declarations;
+    if args.declaration
+        || (triggers_decl_or_composite_check && config_bool(|options| options.declaration))
+    {
+        compiler_options.insert("declaration".to_string(), true.into());
+    }
+    if args.composite
+        || (triggers_decl_or_composite_check && config_bool(|options| options.composite))
+    {
+        compiler_options.insert("composite".to_string(), true.into());
+    }
+    if args.no_emit
+        || (args.allow_importing_ts_extensions && config_bool(|options| options.no_emit))
+    {
+        compiler_options.insert("noEmit".to_string(), true.into());
+    }
+    if args.emit_declaration_only
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.emit_declaration_only))
+    {
+        compiler_options.insert("emitDeclarationOnly".to_string(), true.into());
+    }
+    if args.declaration_map {
+        compiler_options.insert("declarationMap".to_string(), true.into());
+    }
+    if args.allow_js {
+        compiler_options.insert("allowJs".to_string(), true.into());
+    }
+    if args.experimental_decorators {
+        compiler_options.insert("experimentalDecorators".to_string(), true.into());
+    }
+    if args.emit_decorator_metadata {
+        compiler_options.insert("emitDecoratorMetadata".to_string(), true.into());
+    }
+    if args.isolated_declarations {
+        compiler_options.insert("isolatedDeclarations".to_string(), true.into());
+    }
+    if args.verbatim_module_syntax {
+        compiler_options.insert("verbatimModuleSyntax".to_string(), true.into());
+    }
+    if args.allow_importing_ts_extensions {
+        compiler_options.insert("allowImportingTsExtensions".to_string(), true.into());
+    }
+    if args.rewrite_relative_import_extensions
+        || (args.allow_importing_ts_extensions
+            && config_bool(|options| options.rewrite_relative_import_extensions))
+    {
+        compiler_options.insert("rewriteRelativeImportExtensions".to_string(), true.into());
+    }
+    if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
+        compiler_options.insert(
+            "resolvePackageJsonExports".to_string(),
+            resolve_package_json_exports.into(),
+        );
+    }
+    if let Some(resolve_package_json_imports) = args.resolve_package_json_imports {
+        compiler_options.insert(
+            "resolvePackageJsonImports".to_string(),
+            resolve_package_json_imports.into(),
+        );
+    }
+    if let Some(custom_conditions) = args.custom_conditions.as_ref() {
+        compiler_options.insert(
+            "customConditions".to_string(),
+            serde_json::Value::Array(
+                custom_conditions
+                    .iter()
+                    .map(|condition| serde_json::Value::String(condition.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    if args.downlevel_iteration {
+        compiler_options.insert("downlevelIteration".to_string(), true.into());
+    }
+
+    // Removed compiler-option flags accepted by clap should still surface
+    // TS5102 (Option has been removed) the same way they do from a tsconfig.
+    // Synthesize the keys here so the shared `parse_tsconfig_with_diagnostics`
+    // pass below catches them via `removed_compiler_option`. See #3558.
+    if args.no_implicit_use_strict {
+        compiler_options.insert("noImplicitUseStrict".to_string(), true.into());
+    }
+    if args.keyof_strings_only {
+        compiler_options.insert("keyofStringsOnly".to_string(), true.into());
+    }
+    if args.suppress_excess_property_errors {
+        compiler_options.insert("suppressExcessPropertyErrors".to_string(), true.into());
+    }
+    if args.suppress_implicit_any_index_errors {
+        compiler_options.insert("suppressImplicitAnyIndexErrors".to_string(), true.into());
+    }
+    if args.no_strict_generic_checks {
+        compiler_options.insert("noStrictGenericChecks".to_string(), true.into());
+    }
+    if args.preserve_value_imports {
+        compiler_options.insert("preserveValueImports".to_string(), true.into());
+    }
+    if let Some(charset) = args.charset.as_deref() {
+        compiler_options.insert("charset".to_string(), charset.to_string().into());
+    }
+    if let Some(imports_not_used_as_values) = args.imports_not_used_as_values {
+        let value = match imports_not_used_as_values {
+            crate::args::ImportsNotUsedAsValues::Remove => "remove",
+            crate::args::ImportsNotUsedAsValues::Preserve => "preserve",
+            crate::args::ImportsNotUsedAsValues::Error => "error",
+        };
+        compiler_options.insert(
+            "importsNotUsedAsValues".to_string(),
+            value.to_string().into(),
+        );
+    }
+    if let Some(out) = args.out.as_ref() {
+        compiler_options.insert("out".to_string(), out.to_string_lossy().into_owned().into());
+    }
+
+    if compiler_options.is_empty() {
+        return Ok(diagnostics);
+    }
+
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "compilerOptions".to_string(),
+        serde_json::Value::Object(compiler_options),
+    );
+    let source = serde_json::Value::Object(root).to_string();
+    let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
+    diagnostics.extend(parsed.diagnostics);
+    Ok(diagnostics)
+}
+
+fn cli_config_only_option_has_non_null_value(values: Option<&Vec<String>>) -> bool {
+    values.is_some_and(|values| !(values.len() == 1 && values[0].eq_ignore_ascii_case("null")))
+}
+
+fn effective_ignore_deprecations_for_cli_validation<'a>(
+    args: &'a CliArgs,
+    config: Option<&'a TsConfig>,
+) -> Option<&'a str> {
+    if let Some(ignore_deprecations) = args.ignore_deprecations.as_deref() {
+        return Some(ignore_deprecations);
+    }
+
+    config
+        .and_then(|cfg| cfg.compiler_options.as_ref())
+        .and_then(|compiler_options| compiler_options.ignore_deprecations.as_deref())
+        .filter(|value| *value == "5.0" || *value == "6.0")
+}
+
+fn cli_ignore_deprecations_silences_6_0(args: &CliArgs) -> bool {
+    matches!(args.ignore_deprecations.as_deref(), Some("6.0"))
+}
+
+const fn is_deprecation_diagnostic_code(code: u32) -> bool {
+    code
+        == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+        || code
+            == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+}
+
+const fn cli_target_value(target: Target) -> &'static str {
+    match target {
+        Target::Es3 => "es3",
+        Target::Es5 => "es5",
+        Target::Es2015 => "es2015",
+        Target::Es2016 => "es2016",
+        Target::Es2017 => "es2017",
+        Target::Es2018 => "es2018",
+        Target::Es2019 => "es2019",
+        Target::Es2020 => "es2020",
+        Target::Es2021 => "es2021",
+        Target::Es2022 => "es2022",
+        Target::Es2023 => "es2023",
+        Target::Es2024 => "es2024",
+        Target::Es2025 => "es2025",
+        Target::EsNext => "esnext",
+    }
+}
+
+const fn cli_module_value(module: Module) -> &'static str {
+    match module {
+        Module::None => "none",
+        Module::CommonJs => "commonjs",
+        Module::Amd => "amd",
+        Module::Umd => "umd",
+        Module::System => "system",
+        Module::Es2015 => "es2015",
+        Module::Es2020 => "es2020",
+        Module::Es2022 => "es2022",
+        Module::EsNext => "esnext",
+        Module::Node16 => "node16",
+        Module::Node18 => "node18",
+        Module::Node20 => "node20",
+        Module::NodeNext => "nodenext",
+        Module::Preserve => "preserve",
+    }
+}
+
+const fn cli_module_resolution_value(module_resolution: ModuleResolution) -> &'static str {
+    match module_resolution {
+        ModuleResolution::Classic => "classic",
+        ModuleResolution::Node10 => "node10",
+        ModuleResolution::Node16 => "node16",
+        ModuleResolution::NodeNext => "nodenext",
+        ModuleResolution::Bundler => "bundler",
+    }
 }
 
 /// Find the most recent .d.ts file from a list of emitted files
@@ -2893,6 +3904,172 @@ fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<St
     }
 }
 
+/// Validate that a `jsxFactory` / `jsxFragmentFactory` value is a
+/// dot-separated identifier chain (e.g. `h`, `React.createElement`).
+/// Empty segments, leading/trailing dots, and any non-identifier
+/// character (digits leading a segment, dashes, whitespace) fail
+/// validation. Mirrors tsc's "`EntityName` + identifier check" used to
+/// drive the TS5067 diagnostic and the runtime fallback.
+fn is_valid_jsx_factory_expression(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    s.split('.').all(|seg| {
+        let mut chars = seg.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first == '_' || first == '$' || first.is_alphabetic()) {
+            return false;
+        }
+        chars.all(|c| c == '_' || c == '$' || c.is_alphanumeric())
+    })
+}
+
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+/// Compute the implicit common source directory for emit-eligible source
+/// files when `rootDir` is not set. Returns `Some(canonical_dir)` only when
+/// the inferred common directory differs from the tsconfig directory; in
+/// that case TS5011 should fire because `outDir` would land output in a
+/// layout the user did not anchor explicitly. Returns `None` when there are
+/// no emit-eligible files or when the inferred common directory equals the
+/// tsconfig directory.
+fn implicit_common_source_directory(
+    file_paths: &[PathBuf],
+    base_dir: &Path,
+    cwd: &Path,
+) -> Option<PathBuf> {
+    let mut file_dirs: Vec<PathBuf> = file_paths
+        .iter()
+        .filter(|p| !is_declaration_file(p))
+        .map(|p| {
+            let abs = if p.is_absolute() {
+                p.clone()
+            } else {
+                cwd.join(p)
+            };
+            canonicalize_or_owned(&abs)
+        })
+        .filter_map(|p| p.parent().map(Path::to_path_buf))
+        .collect();
+
+    if file_dirs.is_empty() {
+        return None;
+    }
+
+    file_dirs.sort();
+    let mut common = file_dirs[0].clone();
+    for dir in &file_dirs[1..] {
+        common = longest_common_directory(&common, dir);
+        if common.as_os_str().is_empty() {
+            return None;
+        }
+    }
+
+    let canonical_base = canonicalize_or_owned(base_dir);
+    if common == canonical_base {
+        None
+    } else {
+        Some(common)
+    }
+}
+
+fn longest_common_directory(a: &Path, b: &Path) -> PathBuf {
+    let a_components: Vec<_> = a.components().collect();
+    let b_components: Vec<_> = b.components().collect();
+    let common_len = a_components
+        .iter()
+        .zip(b_components.iter())
+        .take_while(|(ac, bc)| ac == bc)
+        .count();
+    a_components[..common_len].iter().collect()
+}
+
+/// Format `path` for display relative to `dir`, using forward slashes and a
+/// leading `./` when the result is a non-parent relative path. Falls back to
+/// the path's own string representation when it cannot be expressed under
+/// `dir`.
+fn display_relative_to_dir(path: &Path, dir: &Path) -> String {
+    let rel = path.strip_prefix(dir).map(Path::to_path_buf).or_else(|_| {
+        let cdir = canonicalize_or_owned(dir);
+        let cpath = canonicalize_or_owned(path);
+        cpath.strip_prefix(&cdir).map(Path::to_path_buf)
+    });
+
+    match rel {
+        Ok(rel) if rel.as_os_str().is_empty() => "./".to_string(),
+        Ok(rel) => {
+            let s = rel.to_string_lossy().replace('\\', "/");
+            if s.starts_with("./") || s.starts_with("../") {
+                s
+            } else {
+                format!("./{s}")
+            }
+        }
+        Err(_) => path.to_string_lossy().replace('\\', "/"),
+    }
+}
+
+#[cfg(test)]
+mod explain_files_reason_tests {
+    use super::*;
+
+    /// Issue #3901: tsc surfaces tsconfig `files` entries with a distinct
+    /// reason from `include` matches.
+    #[test]
+    fn files_list_entry_renders_tsc_phrasing() {
+        assert_eq!(
+            FileInclusionReason::FilesListEntry.to_string(),
+            "Part of 'files' list in tsconfig.json"
+        );
+    }
+
+    /// Default-lib reasons must mention the configured target so users
+    /// can attribute the lib pull. tsc renders the lowercase ECMAScript
+    /// revision name.
+    #[test]
+    fn default_library_reason_includes_target() {
+        assert_eq!(
+            FileInclusionReason::DefaultLibrary("es2018".to_string()).to_string(),
+            "Default library for target 'es2018'"
+        );
+    }
+
+    /// `is_default_lib_for_target` matches both the `lib.<target>.full.d.ts`
+    /// and `lib.<target>.d.ts` shapes that the lib resolver produces.
+    #[test]
+    fn default_lib_matches_full_and_bare_for_target() {
+        let full = PathBuf::from("/usr/typescript/lib.es2018.full.d.ts");
+        let bare = PathBuf::from("/usr/typescript/lib.es2018.d.ts");
+        let other_target = PathBuf::from("/usr/typescript/lib.es2020.full.d.ts");
+        let unrelated = PathBuf::from("/usr/typescript/lib.dom.d.ts");
+
+        assert!(is_default_lib_for_target(&full, ScriptTarget::ES2018));
+        assert!(is_default_lib_for_target(&bare, ScriptTarget::ES2018));
+        assert!(!is_default_lib_for_target(
+            &other_target,
+            ScriptTarget::ES2018
+        ));
+        assert!(!is_default_lib_for_target(&unrelated, ScriptTarget::ES2018));
+    }
+
+    /// Locks the lowercase target spelling for the explainFiles surface.
+    #[test]
+    fn target_display_for_explain_files_lowercase() {
+        assert_eq!(
+            script_target_display_for_explain_files(ScriptTarget::ES5),
+            "es5"
+        );
+        assert_eq!(
+            script_target_display_for_explain_files(ScriptTarget::ES2018),
+            "es2018"
+        );
+        assert_eq!(
+            script_target_display_for_explain_files(ScriptTarget::ESNext),
+            "esnext"
+        );
+    }
+}

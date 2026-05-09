@@ -35,6 +35,10 @@ var r8 = foo3(1, function (a) { return ''; }, 1);
         !msg.contains("parameter of type '\"\"'"),
         "Error should not be about y=1 vs empty string; got: {msg}",
     );
+    assert!(
+        msg.contains("parameter of type '(a: number) => 1'"),
+        "Expected direct literal inference to preserve callback target return display; got: {msg}",
+    );
 }
 
 /// When there is NO conflicting direct argument, callback return type infers U

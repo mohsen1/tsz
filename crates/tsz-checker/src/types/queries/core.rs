@@ -6,7 +6,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, keyword_to_text_static};
 use tsz_solver::TypeId;
 
 /// Extract a property name from a non-computed property name node.
@@ -18,6 +18,11 @@ use tsz_solver::TypeId;
 /// when symbol resolution or special formatting is needed.
 pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<String> {
     let name_node = arena.get(name_idx)?;
+
+    if let Some(keyword) = SyntaxKind::try_from_u16(name_node.kind).and_then(keyword_to_text_static)
+    {
+        return Some(keyword.to_string());
+    }
 
     // Identifier
     if let Some(ident) = arena.get_identifier(name_node) {
@@ -818,7 +823,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a node is a `globalThis` identifier expression.
+    /// Check if a node is a `globalThis` identifier expression that resolves
+    /// to the built-in global `globalThis` (a lib symbol or unresolved). A
+    /// same-file local declaration named `globalThis` (e.g. `const globalThis
+    /// = ...`) shadows the global and must not be treated as the global object.
     pub(crate) fn is_global_this_expression(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -826,7 +834,17 @@ impl<'a> CheckerState<'a> {
         let Some(ident) = self.ctx.arena.get_identifier(node) else {
             return false;
         };
-        ident.escaped_text == "globalThis"
+        if ident.escaped_text != "globalThis" {
+            return false;
+        }
+
+        if let Some(sym_id) = self.resolve_identifier_symbol(idx)
+            && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+        {
+            return false;
+        }
+
+        true
     }
 
     /// Check if a node is an ambient global object alias that should resolve through
@@ -875,6 +893,34 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.binder.get_symbol(global_sym_id).is_some()
+    }
+
+    pub(crate) fn is_window_and_global_this_declared_expression(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+        let Some(annotation_idx) =
+            crate::types_domain::window_global_this_annotation::declared_type_annotation_for_symbol(
+                &self.ctx, sym_id,
+            )
+        else {
+            return false;
+        };
+        self.is_window_and_typeof_global_this_type_node(annotation_idx)
+    }
+
+    pub(crate) fn is_window_and_typeof_global_this_type_node(&self, idx: NodeIndex) -> bool {
+        crate::types_domain::window_global_this_annotation::is_window_and_typeof_global_this_type_node(
+            self.ctx.arena,
+            idx,
+        )
     }
 
     /// Check if a name is a known global value (e.g., console, Math, JSON).
@@ -1205,6 +1251,17 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
+    }
+
+    pub(crate) fn is_symbol_property_name(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        self.get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
     }
 
     /// For an identifier expression, trace back to the variable's declaration
@@ -1794,13 +1851,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Try to get the name if the expression is an identifier
-        // Use specific error codes (TS18047/18048/18049) when name is available
+        // Use specific error codes (TS18047/18048/18049) when tsc would name
+        // the nullish receiver. Element access can report on a property access
+        // receiver, e.g. `matchResult.groups["x"]` reports
+        // `'matchResult.groups' is possibly 'undefined'.`
         let name = self.ctx.arena.get(idx).and_then(|node| {
             self.ctx
                 .arena
                 .get_identifier(node)
                 .map(|ident| ident.escaped_text.clone())
+                .or_else(|| {
+                    (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+                        .then(|| self.expression_text(idx))
+                        .flatten()
+                })
                 .or_else(|| {
                     (node.kind == SyntaxKind::ThisKeyword as u16).then(|| "this".to_string())
                 })

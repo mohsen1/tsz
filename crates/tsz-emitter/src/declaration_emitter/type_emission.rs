@@ -16,15 +16,13 @@ use tsz_scanner::SyntaxKind;
 /// to a real newline.  This function converts them back to escape sequences.
 fn escape_template_literal_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
         match ch {
             '\\' => out.push_str("\\\\"),
             '`' => out.push_str("\\`"),
-            '$' => {
-                // Only escape $ when followed by { (but we don't have lookahead here,
-                // so just push as-is; actual ${...} is handled structurally)
-                out.push('$');
-            }
+            '$' if chars.peek() == Some(&'{') => out.push_str("\\$"),
+            '$' => out.push('$'),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
@@ -179,8 +177,43 @@ impl<'a> DeclarationEmitter<'a> {
             // Intersection type
             k if k == syntax_kind_ext::INTERSECTION_TYPE => {
                 if let Some(inter) = self.arena.get_composite_type(type_node) {
+                    // Drop intersection arms whose source slice contains an
+                    // import-attribute object literal that the parser
+                    // recovered with non-property entries (e.g.
+                    // `{ with: {1234, "resolution-mode": "import"} }` —
+                    // the bare numeric literal as a "key"). tsc treats
+                    // those import-types as unrecoverable and elides the
+                    // entire arm. Scan the AST source slice for the
+                    // recognised broken pattern, since the arm's
+                    // ObjectLiteral node has been emptied during parse
+                    // recovery and the broken text only survives in the
+                    // raw source span.
+                    let usable: Vec<NodeIndex> = inter
+                        .types
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&type_idx| {
+                            !self.intersection_arm_source_has_broken_import_attrs(type_idx)
+                        })
+                        .collect();
+                    let arms: Vec<NodeIndex> = if usable.is_empty() {
+                        // Every arm is unrecoverable — tsc emits just the
+                        // first arm (which the parser already cleaned up
+                        // attribute-side) and drops the rest. Mirror that
+                        // by keeping only the first arm.
+                        inter
+                            .types
+                            .nodes
+                            .first()
+                            .copied()
+                            .map(|first_arm| vec![first_arm])
+                            .unwrap_or_default()
+                    } else {
+                        usable
+                    };
                     let mut first = true;
-                    for &type_idx in &inter.types.nodes {
+                    for type_idx in arms {
                         if !first {
                             self.write(" & ");
                         }
@@ -209,16 +242,29 @@ impl<'a> DeclarationEmitter<'a> {
             // Tuple type
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 if let Some(tuple) = self.arena.get_tuple_type(type_node) {
-                    self.write("[");
-                    let mut first = true;
-                    for &elem_idx in &tuple.elements.nodes {
-                        if !first {
-                            self.write(", ");
+                    // tsc preserves JSDoc comments inline before tuple
+                    // members (commonly seen on named tuple types like
+                    // `[/** size */ length: number, /** count */ count:
+                    // number]`) by emitting the tuple in multi-line form.
+                    // Only switch to multi-line when at least one element
+                    // has a leading JSDoc comment — otherwise tsc's
+                    // d.ts keeps the compact one-line shape.
+                    if self
+                        .tuple_type_has_jsdoc_leading_member(type_node.pos, &tuple.elements.nodes)
+                    {
+                        self.emit_tuple_type_multiline(type_idx);
+                    } else {
+                        self.write("[");
+                        let mut first = true;
+                        for &elem_idx in &tuple.elements.nodes {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
+                            self.emit_type(elem_idx);
                         }
-                        first = false;
-                        self.emit_type(elem_idx);
+                        self.write("]");
                     }
-                    self.write("]");
                 }
             }
 
@@ -484,6 +530,11 @@ impl<'a> DeclarationEmitter<'a> {
             //       [P in keyof T]: Type;
             //   }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
+                if let Some(expanded) = self.expand_mapped_type_to_portable_properties(type_idx) {
+                    self.write(&expanded);
+                    return;
+                }
+
                 if let Some(mapped_type) = self.arena.get_mapped_type(type_node) {
                     self.write("{");
                     self.write_line();
@@ -526,8 +577,7 @@ impl<'a> DeclarationEmitter<'a> {
 
                     // Handle the optional 'as' clause (key remapping)
                     if mapped_type.name_type.is_some() {
-                        self.write(" as ");
-                        self.emit_mapped_type_name_type(mapped_type.name_type);
+                        self.emit_mapped_type_as_clause(mapped_type.name_type);
                     }
 
                     self.write("]");
@@ -590,27 +640,18 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write(" extends ");
 
-                    // extends_type needs parens for conditional types.
-                    // Function/constructor types also need parens when their return
-                    // type is a conditional (the inner `extends` would be mis-parsed
-                    // as the outer conditional's extends clause). The parser doesn't
-                    // create PARENTHESIZED_TYPE nodes, so we must add parens here.
-                    let extends_needs_parens =
-                        if let Some(node) = self.arena.get(conditional.extends_type) {
-                            if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
-                                true
-                            } else if node.kind == syntax_kind_ext::FUNCTION_TYPE
-                                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            {
-                                // Only parenthesize function/constructor types whose
-                                // return type is itself a conditional (contains `extends`)
-                                self.function_type_has_conditional_return(node)
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
+                    // extends_type needs parens for nested conditional
+                    // types only.  tsc does *not* parenthesise
+                    // `FUNCTION_TYPE`/`CONSTRUCTOR_TYPE` here, even when
+                    // their body contains a conditional — the outer
+                    // conditional's `?`/`:` always terminates the
+                    // function body's greedy parse, so adding parens
+                    // diverges from tsc's d.ts (e.g. round-tripping
+                    // `(<T>() => …) extends <T>() => T extends Y ? 1 : 2 ? A : B`).
+                    let extends_needs_parens = self
+                        .arena
+                        .get(conditional.extends_type)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_TYPE);
 
                     if extends_needs_parens {
                         self.write("(");
@@ -708,6 +749,102 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    /// Emit any JSDoc comments preceding a tuple element, each on its
+    /// own indented line.  Used by `emit_tuple_type_multiline` so the
+    /// `[/** … */ length: number, …]` shape survives d.ts emit.
+    /// `lower_bound` excludes comments before the previous element's
+    /// end so a leading comment on element 0 doesn't get duplicated on
+    /// element 1.
+    fn emit_tuple_member_jsdoc_comments(&mut self, lower_bound: u32, elem_pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(text) = self.source_file_text.as_ref().map(|s| s.clone()) else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = elem_pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start_u32 = actual_start as u32;
+        let mut comments: Vec<(u32, u32)> = Vec::new();
+        for comment in &self.all_comments {
+            if comment.pos < lower_bound
+                || comment.end > actual_start_u32
+                || comment.pos >= elem_pos
+            {
+                continue;
+            }
+            let raw = &text[comment.pos as usize..comment.end as usize];
+            if raw.starts_with("/**") && raw != "/**/" {
+                comments.push((comment.pos, comment.end));
+            }
+        }
+        for (c_pos, c_end) in comments {
+            self.write_indent();
+            let raw = &text[c_pos as usize..c_end as usize];
+            // Re-indent multi-line JSDoc bodies to align with the current
+            // output indentation, mirroring how parameter/property
+            // JSDoc blocks are re-emitted elsewhere in the d.ts pipeline.
+            // Trim trailing whitespace from each emitted line so source-
+            // style `/** ` (with trailing space before the newline)
+            // collapses to `/**`, matching tsc's d.ts output.
+            let mut first = true;
+            for line in raw.split('\n') {
+                if !first {
+                    self.write_line();
+                    self.write_indent();
+                    let trimmed = line.trim_start().trim_end();
+                    if !trimmed.is_empty() {
+                        self.write(" ");
+                        self.write(trimmed);
+                    }
+                } else {
+                    self.write(line.trim_start().trim_end());
+                    first = false;
+                }
+            }
+            self.write_line();
+        }
+    }
+
+    /// Whether any element of a tuple type has a JSDoc comment
+    /// immediately preceding it.  Used to switch the `TUPLE_TYPE` printer
+    /// into the multi-line shape so the comments survive d.ts emit.
+    /// `tuple_pos` lower-bounds the comment search so unrelated JSDoc
+    /// blocks earlier in the source file aren't mis-attributed.
+    fn tuple_type_has_jsdoc_leading_member(&self, tuple_pos: u32, elements: &[NodeIndex]) -> bool {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        elements.iter().copied().any(|elem_idx| {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                return false;
+            };
+            let mut actual_start = elem_node.pos as usize;
+            while actual_start < bytes.len()
+                && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+            {
+                actual_start += 1;
+            }
+            let actual_start_u32 = actual_start as u32;
+            self.all_comments.iter().any(|comment| {
+                if comment.pos < tuple_pos
+                    || comment.end > actual_start_u32
+                    || comment.pos >= elem_node.pos
+                {
+                    return false;
+                }
+                let raw = &text[comment.pos as usize..comment.end as usize];
+                raw.starts_with("/**") && raw != "/**/"
+            })
+        })
+    }
+
     fn tuple_type_should_break_multiline(&self, tuple_idx: NodeIndex) -> bool {
         self.arena
             .get(tuple_idx)
@@ -735,13 +872,28 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("[");
         self.write_line();
         self.increase_indent();
+        let mut previous_elem_end: u32 = tuple_node.pos;
         for (index, &elem_idx) in tuple.elements.nodes.iter().enumerate() {
+            // Emit any JSDoc comment that precedes this tuple element on
+            // its own indented line(s) before the element itself.  Done
+            // up-front (rather than via the parameter inline path) so the
+            // comment shape is preserved as tsc renders it: each comment
+            // on its own line, followed by the element.  Scope the
+            // search to comments that come *after* the previous
+            // element's end so a leading comment on element 0 isn't
+            // re-attributed to element 1.
+            if let Some(elem_node) = self.arena.get(elem_idx) {
+                self.emit_tuple_member_jsdoc_comments(previous_elem_end, elem_node.pos);
+            }
             self.write_indent();
             self.emit_type(elem_idx);
             if index + 1 < tuple.elements.nodes.len() {
                 self.write(",");
             }
             self.write_line();
+            if let Some(elem_node) = self.arena.get(elem_idx) {
+                previous_elem_end = elem_node.end;
+            }
         }
         self.decrease_indent();
         self.write_indent();
@@ -853,6 +1005,51 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Detect whether an intersection arm's source slice contains an
+    /// import-attribute object literal where the parser recovered with
+    /// non-property entries (e.g. a bare numeric literal as a "key" like
+    /// `{1234, "resolution-mode": "import"}`). The broken object's AST
+    /// elements list is emptied during parse recovery, so the only
+    /// surviving evidence is in the raw source span. Scan the slice for
+    /// `with:` followed by `{` followed by a numeric literal at the
+    /// recovered key position — that is the recognised parser-recovery
+    /// shape.
+    fn intersection_arm_source_has_broken_import_attrs(&self, type_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        let Some(slice) = self.get_source_slice(node.pos, node.end) else {
+            return false;
+        };
+        if !slice.contains("import(") || !slice.contains("with") {
+            return false;
+        }
+        let bytes = slice.as_bytes();
+        let mut i = 0;
+        while i + 5 < bytes.len() {
+            if &bytes[i..i + 5] == b"with:" || &bytes[i..i + 5] == b"with " {
+                // Skip the `with` keyword and its colon, plus surrounding
+                // whitespace.
+                let mut j = i + 4;
+                while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b':') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'{' {
+                    // First non-whitespace inside the attribute object.
+                    let mut k = j + 1;
+                    while k < bytes.len() && (bytes[k] as char).is_ascii_whitespace() {
+                        k += 1;
+                    }
+                    if k < bytes.len() && (bytes[k] as char).is_ascii_digit() {
+                        return true;
+                    }
+                }
+            }
+            i += 1;
+        }
+        false
+    }
+
     fn entity_name_contains_import_call(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(node_idx) else {
             return false;
@@ -877,19 +1074,6 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_some_and(|type_ref| self.entity_name_contains_import_call(type_ref.type_name)),
             _ => false,
         }
-    }
-
-    /// Check if a function type has a conditional type as its return type.
-    fn function_type_has_conditional_return(
-        &self,
-        func_node: &tsz_parser::parser::node::Node,
-    ) -> bool {
-        let Some(func) = self.arena.get_function_type(func_node) else {
-            return false;
-        };
-        self.arena
-            .get(func.type_annotation)
-            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_TYPE)
     }
 
     fn emit_import_type_argument(&mut self, arg_idx: NodeIndex) {
@@ -992,19 +1176,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(inner_node) {
-                    if lit.text.contains('_') {
-                        if let Some(v) = lit.value {
-                            if v.fract() == 0.0 && v.abs() < 1e20 {
-                                self.write(&format!("{}", v as i64));
-                            } else {
-                                self.write(&v.to_string());
-                            }
-                        } else {
-                            self.write(&lit.text.replace('_', ""));
-                        }
-                    } else {
-                        self.write(&lit.text);
-                    }
+                    self.write(&Self::declaration_numeric_literal_text(
+                        &lit.text, lit.value,
+                    ));
                 }
             }
             k if k == SyntaxKind::BigIntLiteral as u16 => {
@@ -1074,6 +1248,10 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn type_operator_operand_and_parens(&self, type_idx: NodeIndex) -> (NodeIndex, bool) {
+        let source_was_parenthesized = self
+            .arena
+            .get(type_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
         let mut operand = type_idx;
         if let Some(node) = self.arena.get(operand)
             && node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
@@ -1096,7 +1274,21 @@ impl<'a> DeclarationEmitter<'a> {
                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
         });
 
-        (operand, needs_parens)
+        // tsc retains user-written parens around generic type references
+        // (e.g. `keyof (Record<T, any>)`). Indexed-access operands keep
+        // their stripping behavior since tsc renders `keyof A["a"]` (no
+        // parens) regardless of source.
+        let preserve_source_parens = source_was_parenthesized
+            && self.arena.get(operand).is_some_and(|n| {
+                n.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && self.arena.get_type_ref(n).is_some_and(|tr| {
+                        tr.type_arguments
+                            .as_ref()
+                            .is_some_and(|args| !args.nodes.is_empty())
+                    })
+            });
+
+        (operand, needs_parens || preserve_source_parens)
     }
 
     fn emit_mapped_type_value_type(&mut self, type_idx: NodeIndex) {
@@ -1117,14 +1309,27 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_type(type_idx);
     }
 
-    fn emit_mapped_type_constraint(&mut self, constraint_idx: NodeIndex) {
+    fn expand_mapped_type_to_portable_properties(&self, type_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(type_idx)?;
+        let text = self.get_source_slice(node.pos, node.end)?;
+        let trimmed = text.trim().trim_end_matches(';').trim();
+        let inner = trimmed
+            .strip_prefix('{')
+            .and_then(|text| text.strip_suffix('}'))
+            .map(str::trim)
+            .unwrap_or(trimmed);
+
+        self.expand_portable_mapped_object_text(self.arena, inner)
+    }
+
+    pub(in crate::declaration_emitter) fn emit_mapped_type_constraint(
+        &mut self,
+        constraint_idx: NodeIndex,
+    ) {
         if let Some(node) = self.arena.get(constraint_idx)
             && let Some(text) = self.get_source_slice(node.pos, node.end)
         {
-            let text = text.trim();
-            let text = text.split_once(" as ").map_or(text, |(before, _)| before);
-            let text = text.strip_suffix(" as").unwrap_or(text).trim_end();
-            let text = text.strip_suffix(']').unwrap_or(text).trim_end();
+            let text = Self::mapped_type_constraint_source_text(&text);
             if !text.is_empty() {
                 self.write(text);
                 return;
@@ -1134,13 +1339,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_type(constraint_idx);
     }
 
-    fn emit_mapped_type_name_type(&mut self, name_type_idx: NodeIndex) {
+    pub(in crate::declaration_emitter) fn emit_mapped_type_name_type(
+        &mut self,
+        name_type_idx: NodeIndex,
+    ) {
         if let Some(node) = self.arena.get(name_type_idx)
             && let Some(text) = self.get_source_slice(node.pos, node.end)
         {
-            let text = text.trim();
-            let text = text.strip_prefix("as ").unwrap_or(text).trim_start();
-            let text = text.strip_suffix(']').unwrap_or(text).trim_end();
+            let text = Self::mapped_type_name_source_text(&text);
             if !text.is_empty() {
                 self.write(text);
                 return;
@@ -1148,5 +1354,233 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_type(name_type_idx);
+    }
+
+    pub(in crate::declaration_emitter) fn emit_mapped_type_as_clause(
+        &mut self,
+        name_type_idx: NodeIndex,
+    ) {
+        self.write(" as ");
+
+        if let Some(node) = self.arena.get(name_type_idx)
+            && let Some(text) = self.get_source_slice(node.pos, node.end)
+        {
+            let text = Self::mapped_type_name_source_text(&text);
+            if !text.is_empty() {
+                self.write(text);
+                return;
+            }
+        }
+
+        let start = self.writer.len();
+        self.emit_mapped_type_name_type(name_type_idx);
+        let emitted = self.writer.get_output()[start..].to_string();
+        let normalized = Self::mapped_type_name_source_text(&emitted);
+        if normalized != emitted.trim() {
+            let normalized = normalized.to_string();
+            self.writer.truncate(start);
+            self.write(&normalized);
+        }
+    }
+
+    fn mapped_type_constraint_source_text(text: &str) -> &str {
+        let text = text.trim();
+        let text = Self::split_mapped_as_clause(text)
+            .map(|(before, _)| before.trim_end())
+            .unwrap_or_else(|| Self::trim_trailing_mapped_as_keyword(text));
+        Self::trim_unbalanced_closing_bracket(text)
+    }
+
+    fn mapped_type_name_source_text(text: &str) -> &str {
+        let text = text.trim();
+        let text = Self::split_mapped_as_clause(text)
+            .map(|(_, after)| after.trim_start())
+            .unwrap_or_else(|| Self::trim_leading_mapped_as_keyword(text));
+        Self::trim_unbalanced_closing_bracket(text)
+    }
+
+    fn trim_leading_mapped_as_keyword(text: &str) -> &str {
+        let mut trimmed = text.trim_start();
+        while let Some(after_as) = trimmed.strip_prefix("as") {
+            let has_boundary = after_as
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+            if !has_boundary {
+                break;
+            }
+            trimmed = after_as.trim_start();
+        }
+        trimmed
+    }
+
+    fn split_mapped_as_clause(text: &str) -> Option<(&str, &str)> {
+        let mut string_quote: Option<char> = None;
+        let mut escaped = false;
+        let mut angle_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut paren_depth = 0u32;
+
+        for (idx, ch) in text.char_indices() {
+            if let Some(quote) = string_quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == quote {
+                    string_quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' | '`' => {
+                    string_quote = Some(ch);
+                    continue;
+                }
+                '<' => {
+                    angle_depth += 1;
+                    continue;
+                }
+                '>' => {
+                    angle_depth = angle_depth.saturating_sub(1);
+                    continue;
+                }
+                '{' => {
+                    brace_depth += 1;
+                    continue;
+                }
+                '}' => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                    continue;
+                }
+                '[' => {
+                    bracket_depth += 1;
+                    continue;
+                }
+                ']' => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                    continue;
+                }
+                '(' => {
+                    paren_depth += 1;
+                    continue;
+                }
+                ')' => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                    continue;
+                }
+                _ => {}
+            }
+
+            if ch != 'a'
+                || !text[idx..].starts_with("as")
+                || angle_depth != 0
+                || brace_depth != 0
+                || bracket_depth != 0
+                || paren_depth != 0
+            {
+                continue;
+            }
+
+            let before = &text[..idx];
+            let after = &text[idx + 2..];
+            let before_boundary = before
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+            let after_boundary = after
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+            if before_boundary && after_boundary {
+                return Some((before, after));
+            }
+        }
+        None
+    }
+
+    fn trim_trailing_mapped_as_keyword(text: &str) -> &str {
+        let trimmed = text.trim_end();
+        let Some(before_as) = trimmed.strip_suffix("as") else {
+            return trimmed;
+        };
+        let had_separator = before_as
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace);
+        let before_as = before_as.trim_end();
+        let has_boundary = before_as
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
+        if had_separator || has_boundary {
+            before_as
+        } else {
+            trimmed
+        }
+    }
+
+    fn trim_unbalanced_closing_bracket(text: &str) -> &str {
+        let trimmed = text.trim_end();
+        if !trimmed.ends_with(']') {
+            return trimmed;
+        }
+
+        let opens = trimmed.chars().filter(|&ch| ch == '[').count();
+        let closes = trimmed.chars().filter(|&ch| ch == ']').count();
+        if closes > opens {
+            trimmed[..trimmed.len() - 1].trim_end()
+        } else {
+            trimmed
+        }
+    }
+
+    const fn is_identifier_part(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeclarationEmitter;
+
+    #[test]
+    fn mapped_type_source_text_splits_compact_as_clause_after_indexed_access() {
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("T[number]as Item[Attr]"),
+            "T[number]"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("T[number] as"),
+            "T[number]"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("keyof T as"),
+            "keyof T"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text("T[number]as Item[Attr]"),
+            "Item[Attr]"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text("as `get${Capitalize<string & K>}`"),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text(
+                "as as `get${Capitalize<string & K>}`"
+            ),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_name_source_text("asserts T"),
+            "asserts T"
+        );
+        assert_eq!(
+            DeclarationEmitter::mapped_type_constraint_source_text("keyof T]"),
+            "keyof T"
+        );
     }
 }

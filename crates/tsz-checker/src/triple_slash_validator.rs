@@ -11,6 +11,7 @@ use std::path::Path;
 pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
     let mut references = Vec::new();
     let mut in_block_comment = false;
+    let mut past_prologue = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -39,13 +40,21 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
             continue;
         }
 
-        // Check if line starts with ///
-        if !trimmed.starts_with("///") {
+        if is_initial_shebang(line_num, trimmed) {
             continue;
         }
 
-        // Check if it contains <reference path=
-        if !trimmed.contains("<reference") || !trimmed.contains("path=") {
+        // Triple-slash directives are only valid before any executable statement.
+        // A non-empty line that is not a comment ends the directive prologue.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+        if past_prologue {
+            continue;
+        }
+
+        // Check if it is an exact <reference> tag with a path attribute.
+        if !is_triple_slash_directive_tag(trimmed, "reference") {
             continue;
         }
 
@@ -68,6 +77,7 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
     let mut references = Vec::new();
     let mut in_block_comment = false;
     let mut byte_offset = 0usize;
+    let mut past_prologue = false;
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -89,9 +99,18 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
             continue;
         }
 
-        if trimmed.starts_with("///")
-            && trimmed.contains("<reference")
-            && trimmed.contains("types=")
+        if is_initial_shebang(byte_offset, trimmed) {
+            byte_offset += line.len() + 1;
+            continue;
+        }
+
+        // Triple-slash directives are only valid before any executable statement.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+
+        if !past_prologue
+            && is_triple_slash_directive_tag(trimmed, "reference")
             && let Some((name, value_offset_in_line)) =
                 extract_quoted_attr_with_offset(line, "types")
         {
@@ -114,6 +133,7 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
 pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
     let mut amd_modules = Vec::new();
     let mut in_block_comment = false;
+    let mut past_prologue = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -132,13 +152,20 @@ pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
             continue;
         }
 
-        // Check if line starts with ///
-        if !trimmed.starts_with("///") {
+        if is_initial_shebang(line_num, trimmed) {
             continue;
         }
 
-        // Check if it contains <amd-module name=
-        if !trimmed.contains("<amd-module") || !trimmed.contains("name=") {
+        // Triple-slash directives are only valid before any executable statement.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+        if past_prologue {
+            continue;
+        }
+
+        // Check if it is an exact <amd-module> tag with a name attribute.
+        if !is_triple_slash_directive_tag(trimmed, "amd-module") {
             continue;
         }
 
@@ -160,6 +187,7 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
     let mut malformed = Vec::new();
     let mut in_block_comment = false;
     let mut byte_offset = 0usize;
+    let mut past_prologue = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
@@ -180,15 +208,24 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
             continue;
         }
 
-        // Must start with /// and contain <reference
-        if trimmed.starts_with("///") && trimmed.contains("<reference") {
+        if is_initial_shebang(byte_offset, trimmed) {
+            byte_offset += line.len() + 1;
+            continue;
+        }
+
+        // Triple-slash directives are only valid before any executable statement.
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            past_prologue = true;
+        }
+
+        // Must be an exact <reference> tag and still be in the prologue.
+        if !past_prologue && is_triple_slash_directive_tag(trimmed, "reference") {
             // Check if it's a well-formed directive:
             // Valid forms: path="...", types="...", lib="...", no-default-lib="true"
             let has_valid_path = extract_quoted_attr(trimmed, "path").is_some();
             let has_valid_types = extract_quoted_attr(trimmed, "types").is_some();
             let has_valid_lib = extract_quoted_attr(trimmed, "lib").is_some();
-            let has_valid_no_default = trimmed.contains("no-default-lib=")
-                && extract_quoted_attr(trimmed, "no-default-lib").is_some();
+            let has_valid_no_default = extract_quoted_attr(trimmed, "no-default-lib").is_some();
 
             if !has_valid_path && !has_valid_types && !has_valid_lib && !has_valid_no_default {
                 // It looks like a reference directive but has invalid syntax
@@ -204,9 +241,36 @@ pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> 
     malformed
 }
 
+fn is_initial_shebang(position: usize, trimmed: &str) -> bool {
+    position == 0 && trimmed.starts_with("#!")
+}
+
+fn is_triple_slash_directive_tag(trimmed: &str, tag: &str) -> bool {
+    let Some(after_slashes) = trimmed.strip_prefix("///") else {
+        return false;
+    };
+    let Some(after_open) = after_slashes.trim_start().strip_prefix('<') else {
+        return false;
+    };
+    let Some(rest) = after_open.strip_prefix(tag) else {
+        return false;
+    };
+
+    if rest.is_empty() {
+        return true;
+    }
+
+    let bytes = rest.as_bytes();
+    match bytes[0] {
+        b'>' => true,
+        b'/' => bytes.len() == 1 || bytes.get(1) == Some(&b'>'),
+        ch => ch.is_ascii_whitespace(),
+    }
+}
+
 /// Extract the value of a named attribute from a reference directive line.
 fn extract_quoted_attr(line: &str, attr: &str) -> Option<String> {
-    let idx = line.find(attr)?;
+    let idx = find_directive_attr_assignment(line, attr)?;
     let after_attr = &line[idx + attr.len()..];
 
     let eq_idx = after_attr.find('=')?;
@@ -231,7 +295,7 @@ fn extract_quoted_path_with_offset(line: &str) -> Option<(String, usize)> {
 
 /// Extract the value and byte offset of the value start (after the opening quote).
 fn extract_quoted_attr_with_offset(line: &str, attr: &str) -> Option<(String, usize)> {
-    let attr_idx = line.find(attr)?;
+    let attr_idx = find_directive_attr_assignment(line, attr)?;
     let after_attr = &line[attr_idx + attr.len()..];
 
     let eq_idx = after_attr.find('=')?;
@@ -252,13 +316,40 @@ fn extract_quoted_attr_with_offset(line: &str, attr: &str) -> Option<(String, us
     Some((after_open_quote[..end_pos].to_string(), value_offset))
 }
 
+fn find_directive_attr_assignment(line: &str, attr: &str) -> Option<usize> {
+    for (idx, _) in line.match_indices(attr) {
+        let prev_is_attr_name = line[..idx]
+            .chars()
+            .next_back()
+            .is_some_and(is_directive_attr_name_char);
+        if prev_is_attr_name {
+            continue;
+        }
+
+        let after_attr = &line[idx + attr.len()..];
+        let leading_ws = after_attr.len() - after_attr.trim_start().len();
+        if after_attr[leading_ws..].starts_with('=') {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+const fn is_directive_attr_name_char(ch: char) -> bool {
+    ch == '-' || ch == '_' || ch.is_ascii_alphanumeric()
+}
+
 /// Check if a referenced file exists relative to the source file
 ///
 /// Returns true if the file exists, false otherwise.
 /// Follows TypeScript's resolution strategy:
 /// 1. Try exact path first
-/// 2. If no extension or not found, try .ts, .tsx, .d.ts extensions
-pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool {
+/// 2. If no extension or not found, try source extensions supported by options.
+pub fn validate_reference_path(source_file: &Path, reference_path: &str, allow_js: bool) -> bool {
+    if reference_path.is_empty() {
+        return false;
+    }
+
     if let Some(parent) = source_file.parent() {
         let base_path = parent.join(reference_path);
 
@@ -278,9 +369,7 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool
             return false;
         }
 
-        // Try TypeScript extensions in order: .ts, .tsx, .d.ts
-        let extensions = [".ts", ".tsx", ".d.ts"];
-        for ext in &extensions {
+        for ext in reference_path_probe_extensions(allow_js) {
             let path_with_ext = parent.join(format!("{reference_path}{ext}"));
             if path_with_ext.exists() {
                 return true;
@@ -290,6 +379,14 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool
         false
     } else {
         false
+    }
+}
+
+pub const fn reference_path_probe_extensions(allow_js: bool) -> &'static [&'static str] {
+    if allow_js {
+        &[".ts", ".tsx", ".d.ts", ".js", ".jsx"]
+    } else {
+        &[".ts", ".tsx", ".d.ts"]
     }
 }
 

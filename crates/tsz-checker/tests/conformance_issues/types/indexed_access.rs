@@ -15,6 +15,37 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
 }
 
 #[test]
+fn circular_interface_access_type_args_do_not_stack_overflow() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Mxs = Mx<'list', Mxs['p1']>;
+
+interface Mx<T, K> {
+  p1: T;
+  p2: K;
+}
+
+type ArrElem = ['list', ArrElem[number][0]][];
+
+type TupleElem = [['list', TupleElem[0][0]]];
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 4109),
+        "Expected TS4109 for circular type argument access.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 4110),
+        "Expected TS4110 for circular tuple element access.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2589),
+        "Should not recover the circularity as TS2589.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_constrained_type_param_no_false_ts2304() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -136,6 +167,10 @@ class C1 {
         ts2502_count, 3,
         "Expected TS2502 for self-indexed type literal, interface, and class properties.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2564),
+        "Self-indexed class property should not also emit TS2564.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -198,6 +233,202 @@ function g<T, U extends T, K extends keyof U>(x: T, y: U, k: K) {
     assert!(
         ts2536_count >= 4,
         "Expected TS2536 for mismatched generic key source in element access.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_indexed_write_keeps_declared_rhs_read_surface() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+function f<T, U extends T>(x: T, y: U, k: keyof T) {
+    x[k] = y[k];
+    y[k] = x[k];
+}
+
+function g<T, U extends T, K extends keyof T>(x: T, y: U, k: K) {
+    x[k] = y[k];
+    y[k] = x[k];
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'T[keyof T]' is not assignable to type 'U[keyof T]'")),
+        "Expected TS2322 for assigning declared T[keyof T] read surface back to U[keyof T].\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'T[K]' is not assignable to type 'U[K]'")),
+        "Expected TS2322 for assigning declared T[K] read surface back to U[K].\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(_, message)| message.contains("Two different types with this name exist")),
+        "Generic indexed writes should not degrade into duplicate-name TS2719 diagnostics.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_indexed_write_respects_key_constraint_direction() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+function f<T, K extends Extract<keyof T, string>, U extends T, J extends K>(
+    tk: T[K], tj: T[J], uj: U[J]): void {
+    tk = tj;
+    tj = tk;
+    tk = uj;
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'T[K]' is not assignable to type 'T[J]'")),
+        "Expected TS2322 for writing wider T[K] into narrower T[J].\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'U[J]' is not assignable to type 'T[K]'")),
+        "Did not expect TS2322 for writing U[J] into wider T[K].\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_partial_indexed_read_preserves_homomorphic_source_display() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+
+function f<T>(x: T, y: MyPartial<T>, k: keyof T) {
+    x[k] = y[k];
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message
+                .contains("Type 'T[keyof T] | undefined' is not assignable to type 'T[keyof T]'")),
+        "Expected TS2322 to display the homomorphic indexed source as T[keyof T] | undefined.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_old_omit_keyof_never_filter_preserves_filtered_property_access() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface TextChannel {
+    id: string;
+    type: 'text';
+    phoneNumber: string;
+}
+
+interface EmailChannel {
+    id: string;
+    type: 'email';
+    addres: string;
+}
+
+type Channel = TextChannel | EmailChannel;
+type ChannelType = Channel extends { type: infer R } ? R : never;
+
+type OldOmit<T, K extends keyof T> = Pick<
+    T,
+    ({ [P in keyof T]: P } & { [P in K]: never } & { [x: string]: never })[keyof T]
+>;
+
+type ChannelOfType<T extends ChannelType, A = Channel> = A extends { type: T }
+    ? A
+    : never;
+
+type NewChannel<T extends Channel> = Pick<T, 'type'> &
+    Partial<OldOmit<T, 'type' | 'id'>> & { localChannelId: string };
+
+declare const directTextChannel: NewChannel<ChannelOfType<'text'>>;
+directTextChannel.phoneNumber = '613-555-1234';
+
+declare function makeNewChannel<T extends ChannelType>(type: T): NewChannel<ChannelOfType<T>>;
+
+const newTextChannel = makeNewChannel('text');
+newTextChannel.phoneNumber = '613-555-1234';
+"#,
+        CheckerOptions {
+            strict: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Old Omit/keyof-never filtering should preserve the selected channel's properties after generic call instantiation.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_key_constraint_relationship_is_directional() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+function f<T, K extends keyof T>(
+    x: { [P in K]: T[P] },
+    y: { [P in keyof T]: T[P] },
+) {
+    x = y;
+    y = x;
+}
+        ",
+    ));
+
+    let ts2322_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        1,
+        "Expected only the narrower-key mapped type to wider-key mapped type assignment to fail.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages[0].contains(
+            "Type '{ [P in K]: T[P]; }' is not assignable to type '{ [P in keyof T]: T[P]; }'"
+        ),
+        "Expected directional mapped key-space diagnostic for K versus keyof T.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_same_base_mapped_application_to_constrained_type_param_reports_ts2322() {
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics(
+        r"
+type Thing = { a: string, b: string };
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+
+function f<T extends Thing>(x: MyPartial<Thing>, y: MyPartial<T>) {
+    y = x;
+}
+
+function g<T extends Thing>(x: MyReadonly<Thing>, y: MyReadonly<T>) {
+    y = x;
+}
+        ",
+    ));
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message
+                .contains("Type 'MyPartial<Thing>' is not assignable to type 'MyPartial<T>'")),
+        "Expected TS2322 for MyPartial<Thing> assigned to MyPartial<T>.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message
+                .contains("Type 'MyReadonly<Thing>' is not assignable to type 'MyReadonly<T>'")),
+        "Expected TS2322 for MyReadonly<Thing> assigned to MyReadonly<T>.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -878,6 +1109,33 @@ type _DeepReadonlyObject<T> = {
     assert!(
         !has_error(&diagnostics, 2310),
         "ReadonlyArray heritage should not report TS2310 through conditional element aliases. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_recursive_partial_array_index_assignment_does_not_runaway() {
+    let started = std::time::Instant::now();
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type RecursivePartial<T> = {
+  [P in keyof T]?: T[P] extends any[] ? { [index: number]: RecursivePartial<T[P][0]> } :
+    T[P] extends object ? RecursivePartial<T[P]> : T[P];
+};
+
+declare function assign<T>(o: T, a: RecursivePartial<T>): void;
+
+var a = { o: 1, b: 2, c: [{ a: 1, c: '213' }] };
+assign(a, { o: 2, c: { 0: { a: 2, c: '213123' } } });
+        ",
+    );
+
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "Recursive mapped/indexed access property collection should complete quickly. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2589),
+        "Recursive mapped/indexed access property collection should not report TS2589. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

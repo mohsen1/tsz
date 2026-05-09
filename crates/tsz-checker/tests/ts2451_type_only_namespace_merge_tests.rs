@@ -16,65 +16,17 @@
 //! value-instantiating and emitted a duplicate-identifier error against
 //! both the const and the namespace.
 
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn load_lib_files() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.d.ts"),
-    ];
-    lib_paths
-        .iter()
-        .filter_map(|p| {
-            if p.exists() {
-                let content = std::fs::read_to_string(p).ok()?;
-                let name = p.file_name()?.to_string_lossy().to_string();
-                Some(Arc::new(LibFile::from_source(name, content)))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
 
 fn check(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let lib_files = load_lib_files();
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    let lib_files =
+        tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.es2015.d.ts"]);
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
         CheckerOptions::default(),
-    );
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+        &lib_files,
+    )
 }
 
 fn ts2451_diagnostics(

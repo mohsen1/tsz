@@ -51,6 +51,28 @@ function test<P extends Props>(props: Readonly<P>) {
 }
 
 #[test]
+fn test_unwitnessed_recursive_type_parameter_variance_no_ts2322() {
+    let source = r#"
+type A<T> = B<T>;
+
+interface B<T> {
+    prop: A<T>;
+}
+
+declare let a: A<number>;
+declare let b: A<3>;
+
+b = a;
+"#;
+
+    let diags = crate::test_utils::check_source_strict(source);
+    assert!(
+        diags.iter().all(|d| d.code != 2322),
+        "unwitnessed recursive type parameter assignment should not emit TS2322; got {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_with_default_type_parameter() {
     let source = r#"
 function foo<T = string>(x: T): T {
@@ -169,6 +191,34 @@ type Paths = CreateTypeOptions<PathsOptions, BadDefaultPathsOptions>;
 }
 
 #[test]
+fn test_user_defined_required_with_unrelated_shape_does_not_skip_constraint() {
+    // Issue #3061: a user-defined `type Required<T> = { marker: string }`
+    // must NOT trigger the lib-`Required<T>` mapped-utility shortcut. With
+    // the shortcut, `T extends Required<Source>` was satisfied by `Source`
+    // itself even though the user's `Required` requires a `marker`
+    // property. Gating the shortcut on the symbol coming from a lib file
+    // makes the user redeclaration fall through to the regular constraint
+    // check, which correctly emits TS2344.
+    let source = r#"
+type Required<T> = { marker: string };
+
+interface Source {
+  a: number;
+}
+
+type Box<T extends Required<Source>> = T;
+
+type Bad = Box<Source>;
+"#;
+    let codes = crate::test_utils::check_source_codes(source);
+
+    assert!(
+        codes.contains(&2344),
+        "Expected TS2344 for `Box<Source>` against unrelated user-defined `Required<Source>`, got {codes:?}"
+    );
+}
+
+#[test]
 fn test_type_alias_type_parameter_constraint_used_for_nested_type_arguments() {
     let source = r#"
 type Partial<T> = { [K in keyof T]?: T[K] };
@@ -200,6 +250,38 @@ type Paths<OverridePathOptions extends Partial<PathsOptions> = {}> =
     assert!(
         !codes.contains(&2344),
         "Expected no TS2344 when a type alias type parameter carries the matching Partial constraint, got {codes:?}"
+    );
+}
+
+#[test]
+fn test_module_local_partial_default_constraint_uses_local_alias() {
+    let source = r#"
+export {};
+
+type Partial<T> = {
+  required: T;
+};
+
+type Box<T extends Partial<{ value: number }> = {}> = T;
+
+type Result = Box;
+"#;
+    let diagnostics = crate::test_utils::check_source_diagnostics(source);
+    let ts2344 = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2344)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Expected exactly one TS2344 for the local Partial alias constraint. Got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2344[0]
+            .message_text
+            .contains("Type '{}' does not satisfy the constraint 'Partial<{ value: number; }>'."),
+        "Expected TS2344 to reference the local Partial constraint. Actual diagnostic: {ts2344:#?}"
     );
 }
 
@@ -388,6 +470,84 @@ function foo<S extends Foo<S>>() {}
         ts2313_count,
         0,
         "Expected 0 TS2313 errors for non-circular constraint Foo<S>, got {ts2313_count}. Diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2313_no_false_positive_for_double_mixin_conditional_base_class() {
+    let source = r#"
+// @target: es2015
+type Constructor = new (...args: any[]) => {};
+
+const Mixin1 = <C extends Constructor>(Base: C) => class extends Base { private _fooPrivate: {}; }
+
+type FooConstructor = typeof Mixin1 extends (a: Constructor) => infer Cls ? Cls : never;
+const Mixin2 = <C extends FooConstructor>(Base: C) => class extends Base {};
+
+class C extends Mixin2(Mixin1(Object)) {}
+"#;
+    let libs = crate::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+    let diags = crate::test_utils::check_source_with_libs(
+        source,
+        "doubleMixinConditionalTypeBaseClassWorks.ts",
+        tsz_checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+        &libs,
+    );
+
+    let ts2313_count = diags.iter().filter(|d| d.code == 2313).count();
+    assert_eq!(
+        ts2313_count,
+        0,
+        "Expected no TS2313 for conditional mixin base class, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2564),
+        "Expected the conformance baseline TS2564 to remain, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2313_no_false_positive_for_applied_generic_class_with_output_default() {
+    let source = r"
+export interface TypeDef {}
+export type BoxedAny = Boxed<any, any, any>;
+export type Unbox<T extends Boxed<any, any, any>> = T['_output'];
+export abstract class Boxed<Output, Def extends TypeDef = TypeDef, Input = Output> {
+    readonly _output!: Output;
+    readonly _input!: Input;
+    readonly _def!: Def;
+    optional(): OptionalBox<this> {
+        return null as any;
+    }
+    or<T extends BoxedAny>(option: T): UnionBox<[this, T]> {
+        return null as any;
+    }
+}
+export class OptionalBox<T extends BoxedAny> extends Boxed<T['_output'] | undefined> {}
+export class UnionBox<T extends [BoxedAny, ...BoxedAny[]]> extends Boxed<T[number]['_output']> {}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts2313_count = diags.iter().filter(|d| d.code == 2313).count();
+    assert_eq!(
+        ts2313_count,
+        0,
+        "Expected 0 TS2313 errors for applied generic class constraint, got {ts2313_count}. Diagnostics: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))

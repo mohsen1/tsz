@@ -3,7 +3,7 @@
 //! These tests verify that the `EnvironmentCapabilities` model correctly
 //! routes diagnostics for:
 //! - TS2318: Missing global types (lib availability)
-//! - TS2591: Node.js globals (known-global classification)
+//! - TS2580/TS2591: Node.js globals (known-global classification)
 //! - TS2583: ES2015+ type suggestions (known-global classification)
 //! - TS2584: DOM globals (known-global classification)
 //! - TS2823: Import attributes module option check (feature gate)
@@ -29,23 +29,27 @@ fn check_no_lib(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
 }
 
 // =============================================================================
-// TS2591: Node.js globals routed through capabilities
+// TS2580/TS2591: Node.js globals routed through capabilities
 // =============================================================================
 
 #[test]
-fn test_node_global_require_emits_ts2591() {
+fn test_node_global_require_without_explicit_types_emits_ts2591() {
+    // tsc emits TS2591 ("install @types/node and add 'node' to the types
+    // field") in the missing-global identifier path. TS2580 is reserved for
+    // separate module-resolution cases where the unresolved name is a module
+    // specifier rather than a global identifier.
     let diags = check_no_lib("const x = require('fs');");
     let ts2591: Vec<_> = diags.iter().filter(|d| d.code == 2591).collect();
     assert!(
         !ts2591.is_empty(),
-        "Expected TS2591 for 'require' (Node global), got: {diags:?}"
+        "Expected TS2591 for 'require' (Node global, no explicit types), got: {diags:?}"
     );
 }
 
 #[test]
 fn test_node_global_process_classified_correctly() {
     // Verify the capability boundary classifies 'process' as a Node global.
-    // Full checker integration (TS2591 emission) depends on the identifier reaching
+    // Full checker integration depends on the identifier reaching
     // the name resolution error path, which requires the identifier to be used
     // in a value expression context that doesn't short-circuit.
     use tsz_checker::query_boundaries::capabilities::{EnvironmentCapabilities, MissingGlobalKind};
@@ -436,7 +440,7 @@ fn test_capability_diagnostic_node_global_availability() {
 
     let caps = EnvironmentCapabilities::from_options(&CheckerOptions::default(), true);
 
-    // Node globals produce TS2591 via diagnose_missing_name
+    // Node globals produce the missing-node-global diagnostic via diagnose_missing_name.
     for name in &["require", "process", "Buffer", "__filename", "__dirname"] {
         let diag = caps.diagnose_missing_name(name);
         assert!(
@@ -948,6 +952,63 @@ fn test_top_level_await_gate_supported() {
             "TopLevelAwait should be supported with {module:?}"
         );
     }
+}
+
+#[test]
+fn test_top_level_await_in_supported_script_emits_ts1375() {
+    let diagnostics = check_with_options(
+        "await 1;",
+        CheckerOptions {
+            module: ModuleKind::ES2022,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1375),
+        "Expected TS1375 for top-level await in a script file, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_top_level_await_in_supported_external_module_no_ts1375() {
+    let diagnostics = check_with_options(
+        "export {};\nawait 1;",
+        CheckerOptions {
+            module: ModuleKind::ES2022,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&1375),
+        "Expected no TS1375 for top-level await in an external module, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_top_level_await_in_checked_js_script_emits_ts1375() {
+    let diagnostics = check_source(
+        "await 1;",
+        "test.js",
+        CheckerOptions {
+            module: ModuleKind::ES2022,
+            target: ScriptTarget::ES2017,
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1375),
+        "Expected TS1375 for top-level await in a checked JS script file, got: {codes:?}"
+    );
 }
 
 // =============================================================================

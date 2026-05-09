@@ -431,9 +431,13 @@ pub fn check_application_variance<R: TypeResolver>(
         .get_type_param_variance(def_id)
         .or_else(|| query_db.and_then(|qdb| QueryDatabase::get_type_param_variance(qdb, def_id)))
         .or_else(|| {
-            crate::relations::variance::compute_type_param_variances_with_resolver(
+            let computed = crate::relations::variance::compute_type_param_variances_with_resolver(
                 db, resolver, def_id,
-            )
+            );
+            if let (Some(qdb), Some(variances)) = (query_db, computed.as_ref()) {
+                qdb.insert_type_param_variance(def_id, variances.clone());
+            }
+            computed
         });
 
     let variances = variances?;
@@ -493,18 +497,6 @@ pub fn check_application_variance<R: TypeResolver>(
         } else if variance.is_contravariant() {
             any_checked = true;
             if !checker.is_assignable(t_arg, s_arg) {
-                all_ok = false;
-                break;
-            }
-        } else if variance.is_independent() {
-            // Independent variance means the type parameter is not used in any
-            // variance position (covariant or contravariant). This is often the case
-            // for phantom type parameters. However, we should still check if the type
-            // arguments are assignable to catch cases where different unconstrained
-            // type parameters (e.g., T vs U) should not be assignable.
-            // We do an invariant check (both directions) to be safe.
-            any_checked = true;
-            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
                 all_ok = false;
                 break;
             }

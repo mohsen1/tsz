@@ -17,7 +17,32 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.emit_expression(tagged.tag);
+        // When the tag is a bare identifier whose CJS-named-import
+        // substitution turns it into a property access (`css` →
+        // `react_1.css`), wrap the substituted expression in `(0, …)` so
+        // the tagged-template invocation does not bind `this` to the
+        // module namespace object. Mirrors the call-expression path in
+        // `expressions/call.rs` and tsc's `inlineJsxFactoryDeclarations` /
+        // `jsxImportSourceNonPragmaComment` baselines.
+        let cjs_subst = if !self.suppress_commonjs_named_import_substitution
+            && !self.in_system_execute_body
+            && let Some(tag_node) = self.arena.get(tagged.tag)
+            && let Some(ident) = self.arena.get_identifier(tag_node)
+        {
+            self.commonjs_named_import_substitutions
+                .get(&ident.escaped_text)
+                .cloned()
+        } else {
+            None
+        };
+
+        if let Some(subst) = cjs_subst {
+            self.write("(0, ");
+            self.write(&subst);
+            self.write(")");
+        } else {
+            self.emit_expression(tagged.tag);
+        }
 
         // When the tag is `super` with type arguments (which are stripped),
         // tsc emits `super. ` to preserve the intent of a property access.
@@ -68,6 +93,7 @@ impl<'a> Printer<'a> {
         self.write("${");
         self.emit_template_span_leading_comments(span);
         self.emit(span.expression);
+        self.emit_template_span_trailing_comments(span);
         if self.template_span_has_closing_brace(span) {
             self.write("}");
         }
@@ -132,10 +158,38 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if gap.contains('\n') || gap.contains('\r') {
-            self.write_line();
+        let (emitted, last_comment_end, had_trailing_newline) = self.emit_comments_in_range(
+            open_end as u32,
+            expr_node.pos,
+            false,
+            gap.starts_with('\n') || gap.starts_with('\r'),
+        );
+        if emitted
+            && !had_trailing_newline
+            && let Some(trailing) = text.get(last_comment_end as usize..expr_pos)
+            && trailing.bytes().any(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            self.write_space();
         }
-        self.emit_unemitted_comments_between(open_end as u32, expr_node.pos);
+    }
+
+    fn emit_template_span_trailing_comments(
+        &mut self,
+        span: &tsz_parser::parser::node::TemplateSpanData,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(expr_node) = self.arena.get(span.expression) else {
+            return;
+        };
+        let Some(lit_node) = self.arena.get(span.literal) else {
+            return;
+        };
+
+        let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, lit_node.pos);
+        self.emit_comments_in_range(expr_token_end, lit_node.pos, true, true);
     }
 
     fn find_template_substitution_open(text: &str, expr_pos: usize) -> Option<usize> {
@@ -390,6 +444,22 @@ mod tests {
             output.trim(),
             "`hello`;",
             "terminated template should have closing backtick"
+        );
+    }
+
+    #[test]
+    fn template_span_comments_stay_inside_substitution() {
+        let output = emit(
+            "`head${ // single line comment\n10\n}\nmiddle${\n/* Multi-\n * line\n */\n 20\n // closing comment\n}\ntail`;",
+        );
+
+        assert!(
+            output.contains("`head${ // single line comment\n10}\n"),
+            "Line comment after template substitution open should stay on the `${{` line.\nGot: {output}"
+        );
+        assert!(
+            output.contains("20\n// closing comment\n}\ntail`;"),
+            "Trailing comments before template substitution close should stay before `}}`.\nGot: {output}"
         );
     }
 

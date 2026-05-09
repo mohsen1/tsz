@@ -205,6 +205,190 @@ sum(1, "two", 3);  // Should emit TS2345
 }
 
 #[test]
+fn test_tuple_union_rest_accepts_matching_tuple_spreads() {
+    let source = r#"
+declare let f1: (x: string, ...args: [string] | [number, boolean]) => void;
+declare const t1: [string] | [number, boolean];
+declare const t2: readonly [string] | [number, boolean];
+declare const t3: [string] | readonly [number, boolean];
+declare const t4: readonly [string] | readonly [number, boolean];
+
+f1("foo", ...t1);
+f1("foo", ...t2);
+f1("foo", ...t3);
+f1("foo", ...t4);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Expected tuple-union rest spreads to be accepted, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tuple_union_rest_rejects_aggregate_rest_arguments() {
+    let source = r#"
+declare let f1: (x: string, ...args: [string] | [number, boolean]) => void;
+
+f1("foo", 10);
+f1("foo");
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 2,
+        "Expected aggregate rest argument mismatches for tuple-union rest, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2345 && d.message_text.contains("[10]")),
+        "Expected literal tuple display for aggregate rest mismatch, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_array_like_rest_rejects_aggregate_rest_arguments() {
+    let source = r#"
+interface Array<E> {
+    length: number;
+    [n: number]: E;
+}
+
+interface CoolArray<E> extends Array<E> {
+    hello: number;
+}
+
+function bar<T extends any[]>(...args: T): T {
+    return args;
+}
+
+let b = bar<CoolArray<number>>(10, 20);
+
+declare function baz<T>(...args: CoolArray<T>): void;
+
+baz();
+baz(1);
+baz(1, 2);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[10, 20]")
+                && d.message_text.contains("CoolArray<number>")
+        }),
+        "Expected aggregate TS2345 for explicit CoolArray rest type argument, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[]")
+                && d.message_text.contains("CoolArray<never>")
+        }),
+        "Expected empty aggregate rest mismatch to infer CoolArray<never>, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[number]")
+                && d.message_text.contains("CoolArray<unknown>")
+        }),
+        "Expected direct scalar aggregate rest mismatch to widen to [number] vs CoolArray<unknown>, got diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains("[number, number]")
+                && d.message_text.contains("CoolArray<unknown>")
+        }),
+        "Expected multi-arg aggregate rest mismatch to widen to [number, number] vs CoolArray<unknown>, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_spread_rest_does_not_report_tuple_tail_mismatch() {
+    let source = r#"
+declare function f10<T extends unknown[]>(...args: T): T;
+declare function f11<T extends (string | number | boolean)[]>(...args: T): T;
+
+function g10<U extends string[], V extends [number, number]>(u: U, v: V) {
+    f10(...u);
+    f10(...u, ...v);
+}
+
+function g11<U extends string[], V extends [number, number]>(u: U, v: V) {
+    f11(...u);
+    f11(...u, ...v);
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count, 0,
+        "Expected generic spread arguments to remain assignable to inferred generic rest tuples, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn generic_rest_tuple_inference_satisfies_array_constraint() {
+    let source = r#"
+export {}
+export interface Option<T> {
+    zip1<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray1<O>]>;
+    zip2<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray2<O>]>;
+    zip3<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray3<O>]>;
+}
+
+type UnzipOption<T> = T extends Option<infer V> ? V : never;
+type UnzipOptionArray1<T> = { [k in keyof T]: T[k] extends Option<any> ? UnzipOption<T[k]> : never };
+type UnzipOptionArray2<T> = { [k in keyof T]: UnzipOption<T[k]> };
+type UnzipOptionArray3<T> = { [k in keyof T]: T[k] extends Option<infer V> ? V : never };
+
+declare const opt1: Option<number>;
+declare const opt2: Option<string>;
+declare const opt3: Option<boolean>;
+
+const zipped1 = opt1.zip1(opt2, opt3);
+const zipped2 = opt1.zip2(opt2, opt3);
+const zipped3 = opt1.zip3(opt2, opt3);
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Expected inferred rest tuples to satisfy Array<Option<any>> constraints, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tuple_union_rest_method_overloads_cover_variants() {
+    let source = r#"
+declare class MySettable implements Settable {
+    set(option: { [key: string]: unknown }): void;
+    set(name: string, value: unknown): void;
+}
+
+interface Settable {
+    set(...args: [option: { [key: string]: unknown }] | [name: string, value: unknown] | [name: string]): void;
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2416_count = diagnostics.iter().filter(|d| d.code == 2416).count();
+    assert_eq!(
+        ts2416_count, 0,
+        "Expected method overloads to satisfy tuple-union rest surface without TS2416, got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_array_destructuring_with_rest() {
     let source = r"
 const arr = [1, 2, 3, 4, 5];
@@ -462,6 +646,54 @@ const person: Person = { ...partial, age: 30 };
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for object spread with contextual type, got {ts2322_count}"
+    );
+}
+
+#[test]
+fn test_object_spread_from_any_preserves_any_type() {
+    let source = r#"
+interface Target {
+    x: number;
+    y: string;
+}
+declare const source: any;
+const value: Target = { x: 1, ...source };
+const inferred = { x: 1, ...source };
+const x: string = inferred.x;
+const y: number = inferred.y;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 2741))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Object spread from any should preserve any-ness, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_spread_from_this_any_options_has_no_false_missing_or_overwrite() {
+    let source = r#"
+interface Target {
+    x: number;
+    y: string;
+}
+function build(this: any): Target {
+    return { x: 1, ...this.options.foo };
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 2741 | 2783))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Object spread from this:any options should not emit TS2741/TS2783, got: {diagnostics:?}"
     );
 }
 
@@ -1212,6 +1444,22 @@ type T2 = [...Array<string>, ...number[]];
     );
 }
 
+#[test]
+fn test_ts1265_rest_after_rest_array_type_references() {
+    let source = r#"
+type T1 = [...string[], ...number[]];
+type T2 = [...string[], ...Array<number>];
+type T3 = [...Array<string>, ...number[]];
+type T4 = [...Array<string>, ...Array<number>];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    assert_eq!(
+        ts1265_count, 4,
+        "Expected TS1265 for every concrete rest after rest, got {ts1265_count}: {diagnostics:?}"
+    );
+}
+
 /// TS1265 should NOT fire for variadic type parameter spreads like [...T, ...U, ...V].
 #[test]
 fn test_ts1265_not_emitted_for_variadic_type_param_spreads() {
@@ -1371,6 +1619,116 @@ create({
     assert!(
         ts2783_count >= 1,
         "Expected TS2783 for spread from this.options overwriting explicit property, got {ts2783_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2783_spread_overwrites_from_inferred_this_options_member() {
+    // Regression for thislessFunctionsNotContextSensitive3.ts: the spread source
+    // type is a lazily evaluated member of the contextual `this.options` type.
+    let source = r#"
+declare class Editor {
+  private _editor;
+}
+
+declare class Plugin {
+  private _plugin;
+}
+
+type Partial<T> = {
+  [P in keyof T]?: T[P];
+};
+type Required<T> = {
+  [P in keyof T]-?: T[P];
+};
+type Parameters<T> = T extends (...args: infer P) => any ? P : never;
+type ReturnType<T> = T extends (...args: any) => infer R ? R : any;
+
+type ParentConfig<T> = Partial<{
+  [P in keyof T]: Required<T>[P] extends (...args: any) => any
+    ? (...args: Parameters<Required<T>[P]>) => ReturnType<Required<T>[P]>
+    : T[P];
+}>;
+
+interface ExtendableConfig<
+  Options = any,
+  Config extends
+    | ExtensionConfig<Options>
+    | ExtendableConfig<Options> = ExtendableConfig<Options, any>,
+> {
+  name: string;
+  addOptions?: (this: {
+    name: string;
+    parent: ParentConfig<Config>["addOptions"];
+  }) => Options;
+  addProseMirrorPlugins?: (this: {
+    options: Options;
+    editor: Editor;
+  }) => Plugin[];
+}
+
+interface ExtensionConfig<Options = any>
+  extends ExtendableConfig<Options, ExtensionConfig<Options>> {}
+
+declare class Extension<Options = any> {
+  static create<O = any>(config: Partial<ExtensionConfig<O>>): Extension<O>;
+}
+
+interface SuggestionOptions {
+  editor: Editor;
+  char?: string;
+}
+
+declare function Suggestion(options: SuggestionOptions): Plugin;
+
+Extension.create({
+  name: "slash-command",
+  addOptions() {
+    return {
+      suggestion: {
+        char: "/",
+      } as SuggestionOptions,
+    };
+  },
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+
+Extension.create({
+  name: "slash-command",
+  addOptions: () => {
+    return {
+      suggestion: {
+        char: "/",
+      } as SuggestionOptions,
+    };
+  },
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    assert_eq!(
+        ts2783_count,
+        2,
+        "Expected one TS2783 for each overwritten `editor` property, got {ts2783_count}. Diagnostics: {:?}",
         diagnostics
             .iter()
             .map(|d| (d.code, &d.message_text))

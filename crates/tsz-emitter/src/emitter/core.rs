@@ -39,9 +39,6 @@ pub(crate) struct PrivateMemberInfo {
     pub fn_ref: Option<String>,
     /// For accessors: the setter variable name (e.g., `_C_prop_set`).
     pub setter_ref: Option<String>,
-    /// Whether this is a static member.
-    /// Used to replace receiver class-name references with the class alias.
-    pub is_static: bool,
     /// The WeakSet/class-alias variable used as the `state` argument.
     /// For instance methods/accessors: `_ClassName_instances`.
     /// For static members: the class alias variable.
@@ -122,10 +119,20 @@ pub struct PrinterOptions {
     pub legacy_decorators: bool,
     /// Emit design-type metadata for decorated declarations (`__metadata` style)
     pub emit_decorator_metadata: bool,
+    /// True when emitting without default library declarations.
+    pub no_lib: bool,
+    /// True when `--isolatedModules` is enabled.
+    pub isolated_modules: bool,
     /// Emit interop helpers (`__importStar`, `__importDefault`) for CJS/ESM interop
     pub es_module_interop: bool,
     /// When true, treat all non-declaration files as modules (moduleDetection=force)
     pub module_detection_force: bool,
+    /// When true, only files with explicit import/export syntax are treated as
+    /// modules (moduleDetection=legacy). Notably, JSX usage in `react-jsx` /
+    /// `react-jsxdev` mode does NOT auto-promote a script to a module under
+    /// legacy — tsc emits the `_jsx` calls inline without adding the
+    /// `react/jsx-runtime` import.
+    pub module_detection_legacy: bool,
     /// When true, this file was resolved from Node16/NodeNext to ESM based on
     /// file extension (.mts) or package.json "type":"module". Such files are
     /// definitively ES modules regardless of import/export content.
@@ -141,6 +148,13 @@ pub struct PrinterOptions {
     /// cross-file const enum inlining. Note: `--preserveConstEnums` alone
     /// preserves declarations but still inlines values.
     pub no_const_enum_inlining: bool,
+    /// Const enum values resolved outside the current source file, keyed by the
+    /// local binding name used in this file.
+    pub external_const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
+    /// Local binding names that refer to external const enums.
+    pub external_const_enum_bindings: FxHashSet<String>,
+    /// External ambient modules whose `export =` target is type-only.
+    pub type_only_export_equals_modules: FxHashSet<String>,
     /// Import helpers from tslib instead of inlining them
     pub import_helpers: bool,
     /// JSX emit mode
@@ -151,6 +165,8 @@ pub struct PrinterOptions {
     pub jsx_fragment_factory: Option<String>,
     /// Module specifier for automatic JSX runtime (e.g. "react")
     pub jsx_import_source: Option<String>,
+    /// Module name to use for AMD/System outFile bundles.
+    pub bundled_module_name: Option<String>,
     /// When true, suppress "use strict" emission even if module kind is CJS.
     /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
     pub suppress_use_strict: bool,
@@ -187,17 +203,24 @@ impl Default for PrinterOptions {
             use_define_for_class_fields: false,
             legacy_decorators: false,
             emit_decorator_metadata: false,
+            no_lib: false,
+            isolated_modules: false,
             es_module_interop: false,
             module_detection_force: false,
+            module_detection_legacy: false,
             resolved_node_module_to_esm: false,
             resolved_node_module_to_cjs: false,
             preserve_const_enums: false,
             no_const_enum_inlining: false,
+            external_const_enum_values: FxHashMap::default(),
+            external_const_enum_bindings: FxHashSet::default(),
+            type_only_export_equals_modules: FxHashSet::default(),
             import_helpers: false,
             jsx: JsxEmit::Preserve,
             jsx_factory: None,
             jsx_fragment_factory: None,
             jsx_import_source: None,
+            bundled_module_name: None,
             suppress_use_strict: false,
             strict_null_checks: false,
             verbatim_module_syntax: false,
@@ -223,6 +246,8 @@ pub(crate) struct TempScopeState {
     pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
     pub(crate) hoisted_assignment_temps: Vec<String>,
+    pub(crate) block_scoped_private_temps: Vec<String>,
+    pub(crate) hoisted_for_of_temps: Vec<String>,
 }
 
 impl ParamTransformPlan {
@@ -254,8 +279,11 @@ pub(crate) struct TemplateParts {
 // Printer
 // =============================================================================
 
-/// Maximum recursion depth for emit to prevent infinite loops
-const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
+/// Maximum recursion depth for emit to prevent infinite loops.
+///
+/// Valid TypeScript inputs include generated left-associative expression chains
+/// thousands of nodes deep, such as the binder binary expression stress case.
+const MAX_EMIT_RECURSION_DEPTH: u32 = 10_000;
 
 /// Printer that works with `NodeArena`.
 ///
@@ -307,6 +335,15 @@ pub struct Printer<'a> {
     /// Mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
     pub(crate) file_identifiers: FxHashSet<String>,
 
+    /// Map from a tslib helper name (`__decorate`) to its renamed import alias
+    /// (`__decorate_1`) when the helper name collides with a local identifier.
+    /// Populated on ESM with `--importHelpers`; consulted by `write_helper`.
+    pub(crate) helper_import_aliases: FxHashMap<String, String>,
+
+    /// CommonJS `tslib` helper import binding for `--importHelpers`.
+    /// Defaults to `tslib_1`, but is allocated per file to avoid user bindings.
+    pub(crate) commonjs_tslib_import_binding: String,
+
     /// Set of generated temp names (_a, _b, etc.) to avoid collisions.
     /// Tracks ALL generated temp names across destructuring and for-of lowering.
     pub(crate) generated_temp_names: FxHashSet<String>,
@@ -319,6 +356,11 @@ pub struct Printer<'a> {
 
     /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
     pub(crate) in_namespace_iife: bool,
+
+    /// Block nesting where parser recovery can leave invalid module syntax.
+    /// tsc preserves most of that syntax verbatim instead of applying normal
+    /// import/export elision or transforms.
+    pub(crate) recovered_module_syntax_block_depth: u32,
 
     /// End position of the current namespace body in source text.
     /// Used to scope reference searches for namespace-scoped import aliases.
@@ -336,16 +378,33 @@ pub struct Printer<'a> {
     /// Marker that the next block emission is a function body.
     pub(crate) emitting_function_body_block: bool,
 
+    /// Parameter nodes for the next function body block.
+    ///
+    /// ES5 block-scoped lowering needs parameters in the function's scope map
+    /// before body declarations are emitted, so `let x` can become `var x_1`
+    /// when it would otherwise collide with parameter `x`.
+    pub(crate) pending_function_body_parameters: Vec<NodeIndex>,
+
     /// The name of the current namespace we're emitting inside (if any).
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(crate) current_namespace_name: Option<String>,
     /// Parent namespace name for scope-qualified `namespace_prior_exports` keys.
     /// Used to distinguish same-named nested namespaces (e.g., `m1.m2` vs `m4.m2`).
     pub(crate) parent_namespace_name: Option<String>,
+    /// Dotted source namespace path for the current IIFE. This preserves the
+    /// original namespace path when the emitted IIFE parameter is renamed.
+    pub(crate) current_namespace_source_path: Option<String>,
 
     /// Override name for anonymous default exports (e.g., "`default_1`").
     /// When set, class/function emitters use this instead of leaving the name blank.
     pub(crate) anonymous_default_export_name: Option<String>,
+
+    /// Counter incremented for each anonymous `export default` declaration
+    /// emitted in CommonJS mode. Multiple anonymous defaults can appear when
+    /// the source is in error recovery (`exportDefaultInterfaceAndTwoFunctions`);
+    /// they need distinct synthetic names (`default_1`, `default_2`, ...) so
+    /// `exports.default = default_N;` and the declaration name match per-pair.
+    pub(crate) next_anonymous_default_index: u32,
 
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
@@ -377,7 +436,7 @@ pub struct Printer<'a> {
 
     /// For CommonJS class exports, emit `exports.X = X;` immediately after class
     /// declaration and before post-class lowered statements (static fields/blocks).
-    pub(crate) pending_commonjs_class_export_name: Option<String>,
+    pub(crate) pending_commonjs_class_export_name: Option<(NodeIndex, String)>,
 
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(crate) declared_namespace_names: FxHashSet<String>,
@@ -404,6 +463,10 @@ pub struct Printer<'a> {
     pub(crate) namespace_prior_class_fn_enum_exports:
         FxHashMap<String, std::collections::HashSet<String>>,
 
+    /// All exported names collected by dotted namespace source path before
+    /// emission. Used to recover parent exports across renamed namespace IIFEs.
+    pub(crate) namespace_all_exported_names: FxHashMap<String, FxHashSet<String>>,
+
     /// Exported variable/function/class names in the current namespace IIFE.
     /// Used to qualify identifier references: `foo` → `ns.foo`.
     pub(crate) namespace_exported_names: FxHashSet<String>,
@@ -411,10 +474,22 @@ pub struct Printer<'a> {
     /// Used for dotted namespaces like `namespace foo.Baz { Bar.f() }`, where
     /// sibling namespace `Bar` must emit as `foo.Bar`.
     pub(crate) namespace_parent_exported_names: FxHashSet<String>,
+    /// Exported names inherited from ancestor namespaces, mapped to the namespace
+    /// object that should qualify them.
+    pub(crate) namespace_ancestor_export_qualifiers: FxHashMap<String, String>,
+
+    /// Class/function/enum names declared in the current namespace block.
+    /// These local value bindings shadow parent namespace exports while
+    /// qualifying identifiers inside namespace IIFEs.
+    pub(crate) namespace_current_class_fn_enum_names: FxHashSet<String>,
 
     /// Names of variables exported from the current CJS module.
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
     pub(crate) commonjs_exported_var_names: FxHashSet<String>,
+
+    /// Function parameter names that shadow CJS-exported variables in the current
+    /// function scope. These must keep resolving to the local parameter binding.
+    pub(crate) commonjs_exported_var_shadow_stack: Vec<FxHashSet<String>>,
 
     /// Deferred local export bindings active for the current wrapped region.
     /// Maps local variable names to their exported names so nested variable
@@ -462,6 +537,10 @@ pub struct Printer<'a> {
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(crate) hoisted_assignment_temps: Vec<String>,
 
+    /// Private-name backing temps that must be recreated for each block iteration.
+    /// Class expressions in loop bodies use `let` declarations in the loop block.
+    pub(crate) block_scoped_private_temps: Vec<String>,
+
     /// Temp variable names for CJS/AMD exported destructuring patterns.
     /// These are emitted as `var _a, _b;` BEFORE the `__esModule` marker,
     /// matching tsc's placement (between "use strict" and Object.defineProperty).
@@ -505,6 +584,11 @@ pub struct Printer<'a> {
     /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
     pub(crate) function_scope_depth: u32,
 
+    /// Current nesting depth of arrow-function scopes.
+    /// Used with `function_scope_depth` to determine whether an async arrow's
+    /// lexical `this` comes from a non-arrow function or from the top level.
+    pub(crate) arrow_function_scope_depth: u32,
+
     /// Current nesting depth for iterator for-of emission.
     pub(crate) iterator_for_of_depth: usize,
 
@@ -533,6 +617,9 @@ pub struct Printer<'a> {
 
     /// Depth counter for accessor members emitted from object literal syntax.
     object_literal_accessor_depth: u32,
+
+    /// Depth counter for members emitted from class syntax.
+    pub(crate) class_member_emit_depth: u32,
 
     /// Whether the current root source file has a JavaScript-like extension.
     pub(crate) is_current_root_js_source: bool,
@@ -613,6 +700,11 @@ pub struct Printer<'a> {
     /// Source file name for jsx=react-jsxdev mode (e.g., "file.tsx").
     /// Used to emit `const _jsxFileName = "file.tsx";` and source location args.
     pub(crate) jsx_dev_file_name: Option<String>,
+
+    /// Bare JSX runtime alias for `moduleDetection=legacy` CommonJS scripts.
+    /// In this mode tsc suppresses the synthesized `require`, but still emits
+    /// calls like `(0, _a.jsx)(...)`.
+    pub(crate) jsx_legacy_cjs_runtime_var: Option<String>,
 
     /// When true, the current source file is a JavaScript file (.js/.jsx/.cjs/.mjs).
     /// JS files do not undergo import elision since all imports are value imports.
@@ -821,19 +913,26 @@ impl<'a> Printer<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             file_identifiers: FxHashSet::default(),
+            helper_import_aliases: FxHashMap::default(),
+            commonjs_tslib_import_binding: "tslib_1".to_string(),
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
             function_scope_depth: 0,
+            arrow_function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
+            recovered_module_syntax_block_depth: 0,
             namespace_scope_end: u32::MAX,
             enum_namespace_export: None,
             namespace_export_inner: false,
             emitting_function_body_block: false,
+            pending_function_body_parameters: Vec::new(),
             current_namespace_name: None,
             parent_namespace_name: None,
+            current_namespace_source_path: None,
             anonymous_default_export_name: None,
+            next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
             block_using_env: None,
             in_top_level_using_scope: false,
@@ -846,9 +945,13 @@ impl<'a> Printer<'a> {
             namespace_iife_param_counter: FxHashMap::default(),
             namespace_prior_exports: FxHashMap::default(),
             namespace_prior_class_fn_enum_exports: FxHashMap::default(),
+            namespace_all_exported_names: FxHashMap::default(),
             namespace_exported_names: FxHashSet::default(),
             namespace_parent_exported_names: FxHashSet::default(),
+            namespace_ancestor_export_qualifiers: FxHashMap::default(),
+            namespace_current_class_fn_enum_names: FxHashSet::default(),
             commonjs_exported_var_names: FxHashSet::default(),
+            commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
@@ -858,6 +961,7 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
+            block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
             system_empty_binding_temps: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,
@@ -876,6 +980,7 @@ impl<'a> Printer<'a> {
             paren_in_new_callee: false,
             paren_is_direct_call_callee: false,
             object_literal_accessor_depth: 0,
+            class_member_emit_depth: 0,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
@@ -895,6 +1000,7 @@ impl<'a> Printer<'a> {
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
+            jsx_legacy_cjs_runtime_var: None,
             source_is_js_file: false,
             computed_prop_temp_map: FxHashMap::default(),
             scoped_static_this_alias: None,
@@ -2020,7 +2126,9 @@ impl<'a> Printer<'a> {
             // ExpressionWithTypeArguments / instantiation expression:
             // Strip type arguments and wrap the expression in parentheses.
             // tsc wraps the result in parens when erasing type arguments,
-            // e.g. `f<string>` becomes `(f)`.
+            // e.g. `f<string>` becomes `(f)`. An *empty* type argument list
+            // (`f<>` — a parser-recovery shape) doesn't need wrapping; tsc
+            // emits it as the bare expression `f`.
             k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
                 if let Some(data) = self.arena.get_expr_type_args(node) {
                     let expression = data.expression;
@@ -2028,9 +2136,14 @@ impl<'a> Printer<'a> {
                         .type_arguments
                         .as_ref()
                         .map_or_else(Vec::new, |ta| ta.nodes.clone());
-                    self.write("(");
+                    let needs_parens = !type_arg_nodes.is_empty();
+                    if needs_parens {
+                        self.write("(");
+                    }
                     self.emit(expression);
-                    self.write(")");
+                    if needs_parens {
+                        self.write(")");
+                    }
                     // Skip comments inside the erased type arguments so they
                     // don't leak into subsequent output.
                     if !self.ctx.options.remove_comments {

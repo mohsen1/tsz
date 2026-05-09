@@ -5,12 +5,88 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn validate_jsx_intrinsic_type_arguments(&mut self, type_args: &NodeList) {
+        if type_args.has_trailing_comma
+            && let Some(comma_pos) = self.jsx_type_argument_trailing_comma_pos(type_args)
+        {
+            self.error_at_position(
+                comma_pos,
+                1,
+                crate::diagnostics::diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
+                crate::diagnostics::diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
+            );
+        }
+
+        for &arg_idx in &type_args.nodes {
+            self.check_type_node(arg_idx);
+            self.get_type_from_type_node(arg_idx);
+        }
+
+        let Some(&first_arg_idx) = type_args.nodes.first() else {
+            return;
+        };
+        let got = type_args.nodes.len();
+        self.error_at_node_msg(
+            first_arg_idx,
+            crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+            &["0", &got.to_string()],
+        );
+    }
+
+    fn jsx_type_argument_trailing_comma_pos(&self, type_args: &NodeList) -> Option<u32> {
+        let last_arg = self.ctx.arena.get(*type_args.nodes.last()?)?;
+        let source = self.current_jsx_source_text()?;
+        let start = last_arg.end as usize;
+        let tail = source.get(start..source.len().min(start + 32))?;
+        let before_close = tail.split('>').next().unwrap_or(tail);
+        before_close
+            .find(',')
+            .map(|offset| last_arg.end + offset as u32)
+    }
+
+    pub(in crate::checkers_domain::jsx) fn file_has_jsx_unicode_escape_parse_error(&self) -> bool {
+        let Some(source) = self.current_jsx_source_text() else {
+            return false;
+        };
+        let has_parse_diagnostics = self.ctx.has_parse_errors
+            || self.ctx.has_syntax_parse_errors
+            || !self.ctx.all_parse_error_positions.is_empty()
+            || !self.ctx.syntax_parse_error_positions.is_empty();
+        if has_parse_diagnostics
+            && (source.contains("<\\u")
+                || source.contains(".\\u")
+                || source.contains("-\\u")
+                || source.contains(" \\u"))
+        {
+            return true;
+        }
+        self.ctx
+            .all_parse_error_positions
+            .iter()
+            .any(|&pos| Self::jsx_name_recovery_span_contains_unicode_escape(source, pos as usize))
+    }
+
+    fn jsx_name_recovery_span_contains_unicode_escape(source: &str, start: usize) -> bool {
+        let bytes = source.as_bytes();
+        let mut offset = start;
+        while offset < bytes.len() {
+            match bytes[offset] {
+                b'\\' if bytes.get(offset + 1) == Some(&b'u') => return true,
+                b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/' | b'=' | b'"' | b'\'' | b'{' | b'}' => {
+                    return false;
+                }
+                _ => offset += 1,
+            }
+        }
+        false
+    }
+
     pub(in crate::checkers_domain::jsx) fn get_default_instantiated_generic_class_props_type(
         &mut self,
         component_type: TypeId,
@@ -94,6 +170,72 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(managed)
         }
+    }
+
+    fn get_class_component_props_from_construct_return(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )
+        .or_else(|| {
+            let evaluated = self.evaluate_type_with_env(component_type);
+            crate::query_boundaries::common::construct_signatures_for_type(
+                self.ctx.types,
+                evaluated,
+            )
+        })?;
+
+        for sig in sigs.iter().filter(|sig| !sig.params.is_empty()) {
+            let instance_type = sig.return_type;
+            let evaluated_instance = self.evaluate_type_with_env(instance_type);
+            let props_access = match self.resolve_property_access_with_env(instance_type, "props") {
+                success @ PropertyAccessResult::Success { .. } => success,
+                _ => self.resolve_property_access_with_env(evaluated_instance, "props"),
+            };
+            if let PropertyAccessResult::Success { type_id, .. } = props_access
+                && !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+            {
+                return Some(type_id);
+            }
+        }
+
+        None
+    }
+
+    fn compact_jsx_readonly_display(display: String) -> String {
+        let mut out = String::with_capacity(display.len());
+        let mut rest = display.as_str();
+        while let Some(pos) = rest.find("Readonly<") {
+            out.push_str(&rest[..pos]);
+            out.push_str("Readonly<...>");
+            let mut depth = 0i32;
+            let mut end = pos;
+            for (offset, ch) in rest[pos..].char_indices() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = pos + offset + ch.len_utf8();
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if end <= pos {
+                rest = &rest[pos + "Readonly<".len()..];
+            } else {
+                rest = &rest[end..];
+            }
+        }
+        out.push_str(rest);
+        out
     }
 
     pub(in crate::checkers_domain::jsx) fn infer_jsx_generic_class_component_signature(
@@ -181,6 +323,10 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
         children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
     ) -> TypeId {
+        if self.file_has_jsx_unicode_escape_parse_error() {
+            return TypeId::ANY;
+        }
+
         self.check_jsx_factory_in_scope(idx);
         self.check_jsx_import_source(idx);
 
@@ -265,6 +411,9 @@ impl<'a> CheckerState<'a> {
         let effective_tag: Option<&str> = tag_name.or(namespaced_tag_owned.as_deref());
 
         if is_intrinsic {
+            if let Some(type_args) = jsx_opening.type_arguments.as_ref() {
+                self.validate_jsx_intrinsic_type_arguments(type_args);
+            }
             let ie_type = self.get_intrinsic_elements_type();
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
             if let Some(tag) = effective_tag
@@ -426,6 +575,15 @@ impl<'a> CheckerState<'a> {
                 self.get_jsx_component_metadata_type(tag_name_idx, component_type);
             let resolved_component_type =
                 self.normalize_jsx_component_type_for_resolution(component_type);
+            let dynamic_intrinsic_has_known_tag_constraint = self
+                .get_intrinsic_elements_type()
+                .is_some_and(|intrinsic_elements_type| {
+                    self.jsx_dynamic_intrinsic_type_has_known_tag_constraint(
+                        tag_name_idx,
+                        component_type,
+                        intrinsic_elements_type,
+                    )
+                });
             let specific_intrinsic_tag = self.get_jsx_specific_string_literal_component_tag_name(
                 tag_name_idx,
                 resolved_component_type,
@@ -472,11 +630,18 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::common::is_keyof_type(
                     self.ctx.types,
                     resolved_component_type,
-                ))
+                )
+                || dynamic_intrinsic_has_known_tag_constraint)
                 && !tried_specific_intrinsic_lookup
             {
                 let needs_dynamic_intrinsic_props_check =
-                    crate::query_boundaries::common::contains_type_parameters(
+                    crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        component_type,
+                    ) || crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        resolved_component_type,
+                    ) || crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         component_type,
                     ) || crate::query_boundaries::common::contains_type_parameters(
@@ -488,7 +653,7 @@ impl<'a> CheckerState<'a> {
                     ) || crate::query_boundaries::common::is_keyof_type(
                         self.ctx.types,
                         resolved_component_type,
-                    );
+                    ) || dynamic_intrinsic_has_known_tag_constraint;
                 if needs_dynamic_intrinsic_props_check
                     && let Some((props_type, raw_has_type_params, display_target)) = self
                         .get_jsx_dynamic_intrinsic_props_for_component_type(
@@ -599,10 +764,18 @@ impl<'a> CheckerState<'a> {
             let has_multi_construct = self.has_multi_construct_overloads(resolved_component_type)
                 || self.has_multi_construct_overloads(component_type)
                 || self.has_multi_construct_overloads(component_metadata_type);
-            let uses_jsx_overload_resolution = has_multi_construct
-                || (recovered_props.is_none()
-                    && (self.is_overloaded_sfc(resolved_component_type)
-                        || self.has_multi_signature_overloads(resolved_component_type)));
+            let overloaded_sfc_component_type = [
+                resolved_component_type,
+                component_type,
+                component_metadata_type,
+            ]
+            .into_iter()
+            .find(|component_type| {
+                self.is_overloaded_sfc(*component_type)
+                    || self.has_multi_signature_overloads(*component_type)
+            });
+            let has_multi_call = overloaded_sfc_component_type.is_some();
+            let uses_jsx_overload_resolution = has_multi_construct || has_multi_call;
 
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 if has_multi_construct {
@@ -614,9 +787,48 @@ impl<'a> CheckerState<'a> {
                         jsx_opening.tag_name,
                         children_ctx,
                     );
+                    let props_type = self
+                        .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
+                    let preferred_props_display =
+                        self.get_jsx_component_props_display_text(tag_name_idx);
+                    let display_target = self.build_jsx_display_target_with_preferred_props(
+                        props_type,
+                        Some(resolved_component_type),
+                        preferred_props_display.as_deref(),
+                    );
+                    self.check_jsx_generic_spread_attrs_assignability(
+                        jsx_opening.attributes,
+                        props_type,
+                        &display_target,
+                        jsx_opening.tag_name,
+                    );
+                } else if let Some(overload_component_type) = overloaded_sfc_component_type {
+                    // Function components with multiple call signatures must use
+                    // overload resolution even if props extraction recovered a
+                    // union-like props type. A union props check treats unknown
+                    // properties as compatible, which lets JSX body `children`
+                    // incorrectly match an overload that does not declare them.
+                    self.check_jsx_overloaded_sfc(
+                        overload_component_type,
+                        jsx_opening.attributes,
+                        jsx_opening.tag_name,
+                        children_ctx,
+                    );
                 } else {
                     // TS2786: component return type must be valid JSX element
-                    self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                    let class_props_from_construct =
+                        self.get_class_component_props_from_construct_return(component_type);
+                    let skip_react_class_return_check = class_props_from_construct
+                        .as_ref()
+                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
+                    let component_type_is_union = crate::query_boundaries::common::union_members(
+                        self.ctx.types,
+                        resolved_component_type,
+                    )
+                    .is_some();
+                    if !skip_react_class_return_check && !component_type_is_union {
+                        self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                    }
                     let props_type = self
                         .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
                     let preferred_props_display =
@@ -637,6 +849,19 @@ impl<'a> CheckerState<'a> {
                         preferred_props_display.as_deref(),
                         request,
                         children_ctx,
+                    );
+                    let generic_spread_props_type =
+                        class_props_from_construct.unwrap_or(props_type);
+                    let generic_spread_display_target =
+                        Self::compact_jsx_readonly_display(self.build_jsx_display_target(
+                            generic_spread_props_type,
+                            Some(resolved_component_type),
+                        ));
+                    self.check_jsx_generic_spread_attrs_assignability(
+                        jsx_opening.attributes,
+                        generic_spread_props_type,
+                        &generic_spread_display_target,
+                        jsx_opening.tag_name,
                     );
                     // For SFCs whose props type is a bare type parameter (e.g.
                     // `function(props: P)` inside `function test<P>`), also check that each
@@ -703,6 +928,18 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                 );
+                if let Some(props_type) =
+                    self.get_class_component_props_from_construct_return(component_type)
+                {
+                    let display_target =
+                        self.build_jsx_display_target(props_type, Some(resolved_component_type));
+                    self.check_jsx_generic_spread_attrs_assignability(
+                        jsx_opening.attributes,
+                        props_type,
+                        &display_target,
+                        jsx_opening.tag_name,
+                    );
+                }
 
                 // Evaluate attribute values to trigger nested JSX processing and
                 // definite-assignment checks, even when props type is unknown.
@@ -970,7 +1207,9 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        let resolved = if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
+        let resolved = if let Some(jsx_sym) = self.resolve_jsx_namespace_from_import_source() {
+            Some(jsx_sym)
+        } else if let Some(jsx_sym) = self.resolve_jsx_namespace_from_factory() {
             Some(jsx_sym)
         } else if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
             if self.ctx.binder.global_augmentations.contains_key("JSX")
@@ -1019,6 +1258,41 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.jsx_namespace_symbol_cache = Some(resolved);
         resolved
+    }
+
+    fn resolve_jsx_namespace_from_import_source(&mut self) -> Option<SymbolId> {
+        use tsz_common::checker_options::JsxMode;
+
+        let pragma_source = self.extract_jsx_import_source_pragma();
+        let jsx_mode = self.effective_jsx_mode();
+        let runtime_suffix = match jsx_mode {
+            JsxMode::ReactJsx => "jsx-runtime",
+            JsxMode::ReactJsxDev => "jsx-dev-runtime",
+            _ if pragma_source.is_some()
+                || !self.ctx.compiler_options.jsx_import_source.is_empty() =>
+            {
+                "jsx-runtime"
+            }
+            _ => return None,
+        };
+        let source = pragma_source.unwrap_or_else(|| {
+            if self.ctx.compiler_options.jsx_import_source.is_empty() {
+                "react".to_string()
+            } else {
+                self.ctx.compiler_options.jsx_import_source.clone()
+            }
+        });
+        if source.starts_with('/') {
+            return None;
+        }
+
+        let runtime_path = format!("{source}/{runtime_suffix}");
+        self.resolve_cross_file_export_from_file(
+            &runtime_path,
+            "JSX",
+            Some(self.ctx.current_file_idx),
+        )
+        .or_else(|| self.resolve_jsx_runtime_export_fallback(&runtime_path))
     }
 
     pub(in crate::checkers_domain::jsx) fn should_suppress_ts7026_for_import_source(
@@ -1170,14 +1444,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         export_name: &str,
     ) -> Option<SymbolId> {
-        if let Some(sym_id) = self.jsx_export_from_binder(self.ctx.binder, None, export_name) {
+        if let Some(sym_id) = self
+            .jsx_exports_from_binder(self.ctx.binder, None, export_name)
+            .into_iter()
+            .next()
+        {
             return Some(sym_id);
         }
 
         if let Some(all_binders) = self.ctx.all_binders.as_ref().map(std::sync::Arc::clone) {
             for (file_idx, binder) in all_binders.iter().enumerate() {
-                if let Some(sym_id) =
-                    self.jsx_export_from_binder(binder, Some(file_idx), export_name)
+                if let Some(sym_id) = self
+                    .jsx_exports_from_binder(binder, Some(file_idx), export_name)
+                    .into_iter()
+                    .next()
                 {
                     return Some(sym_id);
                 }
@@ -1186,7 +1466,11 @@ impl<'a> CheckerState<'a> {
 
         let lib_binders = self.get_lib_binders();
         for binder in lib_binders.iter() {
-            if let Some(sym_id) = self.jsx_export_from_binder(binder, None, export_name) {
+            if let Some(sym_id) = self
+                .jsx_exports_from_binder(binder, None, export_name)
+                .into_iter()
+                .next()
+            {
                 return Some(sym_id);
             }
         }
@@ -1194,12 +1478,47 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn jsx_export_from_binder(
+    pub(crate) fn get_jsx_namespace_export_symbol_ids(
+        &mut self,
+        export_name: &str,
+    ) -> Vec<SymbolId> {
+        let mut symbols = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+
+        for sym_id in self.jsx_exports_from_binder(self.ctx.binder, None, export_name) {
+            if seen.insert(sym_id) {
+                symbols.push(sym_id);
+            }
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.as_ref().map(std::sync::Arc::clone) {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                for sym_id in self.jsx_exports_from_binder(binder, Some(file_idx), export_name) {
+                    if seen.insert(sym_id) {
+                        symbols.push(sym_id);
+                    }
+                }
+            }
+        }
+
+        let lib_binders = self.get_lib_binders();
+        for binder in lib_binders.iter() {
+            for sym_id in self.jsx_exports_from_binder(binder, None, export_name) {
+                if seen.insert(sym_id) {
+                    symbols.push(sym_id);
+                }
+            }
+        }
+
+        symbols
+    }
+
+    fn jsx_exports_from_binder(
         &self,
         binder: &tsz_binder::BinderState,
         file_idx: Option<usize>,
         export_name: &str,
-    ) -> Option<SymbolId> {
+    ) -> Vec<SymbolId> {
         let mut candidates: Vec<SymbolId> = Vec::new();
         if let Some(augmentations) = binder.global_augmentations.get("JSX") {
             candidates.extend(
@@ -1208,10 +1527,16 @@ impl<'a> CheckerState<'a> {
                 }),
             );
         }
-        if let Some(sym_id) = binder.file_locals.get("JSX") {
+        if let Some(sym_id) = binder.file_locals.get("JSX")
+            && (binder.global_augmentations.contains_key("JSX")
+                || binder.lib_symbol_ids.contains(&sym_id)
+                || !binder.is_external_module())
+        {
             candidates.push(sym_id);
         }
 
+        let mut exports = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
         for jsx_sym_id in candidates {
             let Some(symbol) = binder.get_symbol(jsx_sym_id) else {
                 continue;
@@ -1228,10 +1553,12 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .register_symbol_file_target(export_sym_id, file_idx);
             }
-            return Some(export_sym_id);
+            if seen.insert(export_sym_id) {
+                exports.push(export_sym_id);
+            }
         }
 
-        None
+        exports
     }
 
     pub(in crate::checkers_domain::jsx) fn resolve_jsx_namespace_target_symbol_id(
@@ -1386,11 +1713,35 @@ impl<'a> CheckerState<'a> {
         if let Some(cached) = self.ctx.jsx_intrinsic_elements_type_cache {
             return cached;
         }
-        let resolved = self
-            .get_intrinsic_elements_symbol_id()
-            .map(|intrinsic_elements_sym_id| {
-                self.type_reference_symbol_type(intrinsic_elements_sym_id)
-            });
+        let mut intrinsic_element_symbols = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        if let Some(primary) = self.get_intrinsic_elements_symbol_id()
+            && seen.insert(primary)
+        {
+            intrinsic_element_symbols.push(primary);
+        }
+        for sym_id in self.get_jsx_namespace_export_symbol_ids("IntrinsicElements") {
+            if seen.insert(sym_id) {
+                intrinsic_element_symbols.push(sym_id);
+            }
+        }
+        let resolved = if intrinsic_element_symbols.is_empty() {
+            None
+        } else {
+            let mut merged = TypeId::ERROR;
+            for intrinsic_elements_sym_id in intrinsic_element_symbols {
+                let ty = self.type_reference_symbol_type(intrinsic_elements_sym_id);
+                if matches!(ty, TypeId::ERROR | TypeId::UNKNOWN) {
+                    continue;
+                }
+                merged = if merged == TypeId::ERROR {
+                    ty
+                } else {
+                    self.merge_interface_types(merged, ty)
+                };
+            }
+            (merged != TypeId::ERROR).then_some(merged)
+        };
         self.ctx.jsx_intrinsic_elements_type_cache = Some(resolved);
         resolved
     }
@@ -1622,18 +1973,11 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Instantiate a JSX component type with explicit type arguments.
-    ///
-    /// For function types (SFCs like `<SFC<string>>`), directly instantiates the
-    /// function's type parameters to produce a concrete non-generic function.
-    /// For other types (class components, type aliases), creates an Application type
-    /// for normal evaluation.
     pub(super) fn instantiate_jsx_component_with_type_args(
         &mut self,
         component_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        // Try Function types (single-signature SFCs) - use solver helper
         if let Some(instantiated) =
             crate::query_boundaries::common::instantiate_function_with_type_args(
                 self.ctx.types,

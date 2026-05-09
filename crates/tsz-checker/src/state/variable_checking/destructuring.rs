@@ -1083,6 +1083,41 @@ impl<'a> CheckerState<'a> {
         // Handles: { x }, { x: a }, { 'b': a }, { ['b']: a }, { [ident]: a }.
         let property_name = self.extract_binding_property_name(element_data);
 
+        // Tuple-out-of-bounds check for object binding patterns whose property
+        // name is a numeric literal (`{ 0: a, 3: d }: [T0, T1, T2]`). For
+        // fixed-length tuples — those without a rest element — accessing an
+        // index beyond the declared length is a TS2493. Element-access via
+        // `x[3]` already emits TS2493 in the generic property/element-access
+        // path; the destructuring path needs the same check applied to
+        // numeric property keys.
+        //
+        // Rest-bearing tuples (e.g. `[T, ...T[]]`) accept any non-negative
+        // index by design, so they are not bounds-checked here.
+        if let Some(prop_name_str) = property_name.as_deref()
+            && let Ok(idx) = prop_name_str.parse::<usize>()
+            && let Some(elems) = query::tuple_elements(self.ctx.types, parent_type)
+            && !elems.iter().any(|e| e.rest)
+            && idx >= elems.len()
+        {
+            let tuple_type_str = self.format_type(parent_type);
+            let error_node = if element_data.property_name.is_some() {
+                element_data.property_name
+            } else {
+                element_data.name
+            };
+            self.error_at_node(
+                error_node,
+                &format!(
+                    "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                    tuple_type_str,
+                    elems.len(),
+                    idx
+                ),
+                crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+            );
+            return TypeId::UNDEFINED;
+        }
+
         // Unique symbol keys (e.g. `const s = Symbol(); { [s]: v }`) resolve to
         // `__unique_N` via `get_property_name_resolved`.  Keep them as named
         // properties so normal property resolution can find matching symbol-keyed

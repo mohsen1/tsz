@@ -418,10 +418,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Collect derived interface index signatures across all declarations.
-        // These are checked against base index signatures for TS2430 compatibility.
-        let mut derived_string_index_type: Option<TypeId> = None;
-        let mut derived_number_index_type: Option<TypeId> = None;
+        let mut derived_string_index_type: Option<(TypeId, NodeIndex)> = None;
+        let mut derived_number_index_type: Option<(TypeId, NodeIndex)> = None;
         for &decl_idx in &all_iface_decls {
             let Some(sym_id) = iface_sym_id else {
                 continue;
@@ -461,9 +459,9 @@ impl<'a> CheckerState<'a> {
                             TypeId::ANY
                         };
                         if key_type == TypeId::NUMBER {
-                            derived_number_index_type = Some(value_type);
+                            derived_number_index_type = Some((value_type, member_idx));
                         } else {
-                            derived_string_index_type = Some(value_type);
+                            derived_string_index_type = Some((value_type, member_idx));
                         }
                     }
                 }
@@ -584,6 +582,24 @@ impl<'a> CheckerState<'a> {
                 &base_name_raw,
                 type_arguments,
             );
+            let base_type_for_relation = if let Some(args) = type_arguments {
+                let type_arg_ids: Vec<TypeId> = args
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                    .collect();
+                if !type_arg_ids.is_empty() {
+                    let def_id = self.ctx.get_or_create_def_id(base_sym_id);
+                    let factory = self.ctx.types.factory();
+                    let lazy_type = factory.lazy(def_id);
+                    let app = factory.application(lazy_type, type_arg_ids);
+                    self.evaluate_type_with_env(app)
+                } else {
+                    self.get_type_of_symbol(base_sym_id)
+                }
+            } else {
+                self.get_type_of_symbol(base_sym_id)
+            };
 
             let mut base_iface_indices = Vec::new();
             for &decl_idx in &base_symbol.declarations {
@@ -1411,15 +1427,13 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if base_type != TypeId::ERROR {
-                        // Check: when base has numeric index signature but derived doesn't,
-                        // all derived named properties must be assignable to base's index value type.
-                        // This catches cases like:
-                        //   interface HTMLElement { [index: number]: HTMLElement; }
-                        //   interface HTMLFormElement extends HTMLElement {
-                        //     acceptCharset: string;  // Error: string not assignable to HTMLElement
-                        //   }
-                        if derived_number_index_type.is_none() {
-                            // Check if base has numeric index signature
+                        // Check numeric index signature compatibility. A base
+                        // numeric index signature does not constrain every
+                        // named property on the derived interface; it only
+                        // conflicts when the derived interface contributes its
+                        // own numeric index signature with an incompatible
+                        // value type.
+                        if let Some((derived_index_val, _)) = derived_number_index_type {
                             let base_num_index_value =
                                 crate::query_boundaries::common::object_shape_for_type(
                                     self.ctx.types,
@@ -1430,50 +1444,23 @@ impl<'a> CheckerState<'a> {
                                 });
 
                             if let Some(base_index_val) = base_num_index_value {
-                                // Skip the index signature check when the base index value type
-                                // contains type parameters (e.g., `Array<E>` has `[index: number]: E`).
-                                // When the base is generic, property compatibility depends on the
-                                // actual instantiation and should be deferred.
                                 let base_index_is_generic =
                                     crate::query_boundaries::common::contains_type_parameters(
                                         self.ctx.types.as_type_database(),
                                         base_index_val,
                                     );
-                                if !base_index_is_generic {
-                                    for (
-                                        member_name,
-                                        member_type,
-                                        _derived_member_idx,
-                                        _derived_kind,
-                                        _,
-                                        _,
-                                    ) in &derived_members
-                                    {
-                                        // Extract the derived property's raw type
-                                        let derived_prop_type =
-                                            crate::query_boundaries::common::find_property_by_str(
-                                                self.ctx.types,
-                                                *member_type,
-                                                member_name,
-                                            )
-                                            .map(|p| p.type_id)
-                                            .unwrap_or(*member_type);
-
-                                        // Check if property type is assignable to base index value type
-                                        if !self.is_assignable_to(derived_prop_type, base_index_val)
-                                        {
-                                            self.error_at_node(
+                                if !base_index_is_generic
+                                    && !self.is_assignable_to(derived_index_val, base_index_val)
+                                {
+                                    self.error_at_node(
                                             iface_data.name,
                                             &format!(
                                                 "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                                             ),
                                             diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                         );
-                                            // Don't return — continue checking other bases
-                                            break;
-                                        }
-                                    }
-                                } // end if !base_index_is_generic
+                                    // Don't return — continue checking other bases.
+                                }
                             }
                         }
 
@@ -1544,16 +1531,29 @@ impl<'a> CheckerState<'a> {
                                     base_prop_type_id,
                                     *derived_member_idx,
                                 ) {
+                                    let diagnostic_base_name = self
+                                        .array_or_tuple_alias_target_text_for_name(&base_name)
+                                        .unwrap_or_else(|| base_name.clone());
                                     self.error_at_node(
                                         iface_data.name,
                                         &format!(
-                                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                                            "Interface '{derived_name}' incorrectly extends interface '{diagnostic_base_name}'."
                                         ),
                                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                     );
                                     break; // Report one incompatibility per base type
                                 }
                             }
+                        }
+
+                        if let Some((string_index_value, string_index_node)) =
+                            derived_string_index_type
+                        {
+                            self.check_type_alias_base_properties_against_derived_string_index(
+                                base_type,
+                                string_index_value,
+                                string_index_node,
+                            );
                         }
                     }
                 }
@@ -1841,6 +1841,16 @@ impl<'a> CheckerState<'a> {
                 let mut base_string_index_value: Option<TypeId> = None;
                 let mut base_number_index_value: Option<TypeId> = None;
 
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    base_type_for_relation,
+                ) {
+                    base_string_index_value =
+                        shape.string_index.as_ref().map(|index| index.value_type);
+                    base_number_index_value =
+                        shape.number_index.as_ref().map(|index| index.value_type);
+                }
+
                 for &base_iface_idx in &base_iface_indices {
                     let Some(base_node) = self.ctx.arena.get(base_iface_idx) else {
                         continue;
@@ -1889,8 +1899,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Check string index compatibility
-                if let (Some(derived_val), Some(base_val)) =
+                if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_string_index_type, base_string_index_value)
                     && !self.is_assignable_to(derived_val, base_val)
                 {
@@ -1903,8 +1912,7 @@ impl<'a> CheckerState<'a> {
                         );
                 }
 
-                // Check number index compatibility
-                if let (Some(derived_val), Some(base_val)) =
+                if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_number_index_type, base_number_index_value)
                     && !self.is_assignable_to(derived_val, base_val)
                 {

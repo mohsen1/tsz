@@ -398,8 +398,12 @@ impl<'a> NarrowingContext<'a> {
             if cached != type_id {
                 return cached;
             }
-            if let Some(TypeData::Lazy(_)) = self.db.lookup(type_id) {
+            if matches!(
+                self.db.lookup(type_id),
+                Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+            ) {
                 // Fall through to re-resolve — don't trust stale self-mapping for Lazy
+                // or TypeQuery when a later context has a resolver available.
             } else {
                 return cached;
             }
@@ -408,9 +412,12 @@ impl<'a> NarrowingContext<'a> {
         let result = self.resolve_type_uncached(type_id);
         // Only cache if we actually resolved it — don't cache Lazy → Lazy self-mappings
         // since the TypeEnvironment may be populated later with the real mapping.
-        let is_unresolved_lazy =
-            result == type_id && matches!(self.db.lookup(type_id), Some(TypeData::Lazy(_)));
-        if !is_unresolved_lazy {
+        let is_unresolved_symbolic = result == type_id
+            && matches!(
+                self.db.lookup(type_id),
+                Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+            );
+        if !is_unresolved_symbolic {
             self.cache
                 .resolve_cache
                 .borrow_mut()
@@ -546,13 +553,31 @@ impl<'a> NarrowingContext<'a> {
                     break;
                 }
 
-                // 6. NoInfer — transparent wrapper
+                // 6. TypeQuery — resolve `typeof value` through the checker-owned
+                // value-space type environment when narrowing discriminants.
+                Some(TypeData::TypeQuery(symbol)) => {
+                    if let Some(resolver) = self.resolver
+                        && let Some(resolved) =
+                            resolver.resolve_type_query(symbol, self.db.as_type_database())
+                    {
+                        type_id = resolved;
+                        continue;
+                    }
+                    let evaluated = self.db.evaluate_type(type_id);
+                    if evaluated != type_id {
+                        type_id = evaluated;
+                        continue;
+                    }
+                    break;
+                }
+
+                // 7. NoInfer — transparent wrapper
                 Some(TypeData::NoInfer(inner)) => {
                     type_id = inner;
                     continue;
                 }
 
-                // 7. Intersection types with potentially Lazy members
+                // 8. Intersection types with potentially Lazy members
                 Some(TypeData::Intersection(members_id)) => {
                     let members = self.db.type_list(members_id);
                     let mut changed = false;
@@ -571,7 +596,7 @@ impl<'a> NarrowingContext<'a> {
                     break;
                 }
 
-                // 8. Conditional types — resolve inner Lazy/Application types,
+                // 9. Conditional types — resolve inner Lazy/Application types,
                 // then re-evaluate to allow distribution/simplification.
                 Some(TypeData::Conditional(cond_id)) => {
                     let cond = self.db.get_conditional(cond_id);
@@ -823,6 +848,15 @@ impl<'a> NarrowingContext<'a> {
                 trace!("Narrowing boolean to false");
                 return TypeId::BOOLEAN_FALSE;
             }
+        }
+
+        if resolved_target == TypeId::OBJECT
+            && crate::visitors::visitor_predicates::contains_type_parameters(
+                self.db,
+                resolved_source,
+            )
+        {
+            return self.db.intersection2(source_type, TypeId::OBJECT);
         }
 
         // Check if source is assignable to target using resolved types for comparison

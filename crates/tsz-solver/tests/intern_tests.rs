@@ -41,6 +41,42 @@ fn test_interner_fresh_object_distinct_from_non_fresh() {
 }
 
 #[test]
+fn test_interner_preserves_index_signature_parameter_names_for_display() {
+    let interner = TypeInterner::new();
+    let key_name = interner.intern_string("key");
+    let x_name = interner.intern_string("x");
+
+    let key_object = interner.object_with_index(ObjectShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: Some(key_name),
+        }),
+        ..ObjectShape::default()
+    });
+    let x_object = interner.object_with_index(ObjectShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: Some(x_name),
+        }),
+        ..ObjectShape::default()
+    });
+
+    assert_ne!(key_object, x_object);
+    let Some(TypeData::ObjectWithIndex(shape_id)) = interner.lookup(x_object) else {
+        panic!("expected object with index signature");
+    };
+    let shape = interner.object_shape(shape_id);
+    assert_eq!(
+        shape.string_index.and_then(|idx| idx.param_name),
+        Some(x_name)
+    );
+}
+
+#[test]
 fn widen_freshness_preserves_display_alias() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("p"), TypeId::NUMBER);
@@ -68,6 +104,29 @@ fn test_interner_bigint_literal() {
         }
         _ => panic!("Expected bigint literal, got {key:?}"),
     }
+}
+
+#[test]
+fn test_evaluation_fuel_exhaustion_does_not_poison_interner_storage() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let object_type = interner.object(vec![PropertyInfo::new(prop_name, TypeId::STRING)]);
+
+    assert!(interner.consume_evaluation_fuel(u32::MAX));
+    assert!(interner.is_evaluation_fuel_exhausted());
+
+    assert!(
+        matches!(interner.lookup(object_type), Some(TypeData::Object(_))),
+        "fuel exhaustion should not make existing types opaque"
+    );
+
+    let later_literal = interner.literal_string("after");
+    assert_ne!(
+        later_literal,
+        TypeId::ERROR,
+        "fuel exhaustion should not disable unrelated interning"
+    );
+    assert!(interner.lookup(later_literal).is_some());
 }
 
 #[test]
@@ -123,6 +182,31 @@ fn test_interner_union_dedups_and_flattens() {
     let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     assert_eq!(flattened, expected);
+}
+
+#[test]
+fn test_large_object_union_preserved_without_too_complex_flag() {
+    let interner = TypeInterner::new();
+
+    let mut members = Vec::new();
+    for i in 0..1100u32 {
+        let name = interner.intern_string("name");
+        let value = interner.literal_string(&i.to_string());
+        members.push(interner.object(vec![PropertyInfo::new(name, value)]));
+    }
+
+    let union = interner.union(members);
+
+    assert!(
+        !interner.take_union_too_complex(),
+        "large explicit object unions are representable; skipping subtype reduction must not set TS2590"
+    );
+    match interner.lookup(union) {
+        Some(TypeData::Union(list)) => {
+            assert_eq!(interner.type_list(list).len(), 1100);
+        }
+        other => panic!("expected preserved union, got {other:?}"),
+    }
 }
 
 #[test]
@@ -595,6 +679,7 @@ fn test_intersection_visibility_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -699,6 +784,7 @@ fn test_visibility_interning_distinct_shape_ids() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -743,6 +829,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         parent_id: Some(SymbolId(1)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -758,6 +845,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         parent_id: Some(SymbolId(2)),
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -885,6 +973,7 @@ fn test_partial_object_merging_in_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -900,6 +989,7 @@ fn test_partial_object_merging_in_intersection() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -998,6 +1088,7 @@ fn test_partial_object_and_callable_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1013,6 +1104,7 @@ fn test_partial_object_and_callable_merging() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1076,6 +1168,46 @@ fn test_partial_object_and_callable_merging() {
     }
 
     // NOTE: Object order independence should be tested separately
+}
+
+#[test]
+fn test_mixed_intersection_preserves_callable_object_order() {
+    let interner = TypeInterner::new();
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("func"),
+        TypeId::ANY,
+    )]);
+
+    let inter = interner.intersection(vec![func, obj]);
+    let Some(TypeData::Intersection(members)) = interner.lookup(inter) else {
+        panic!("Expected mixed callable/object intersection");
+    };
+    let member_list = interner.type_list(members);
+    assert_eq!(member_list.len(), 2);
+    assert!(
+        matches!(
+            interner.lookup(member_list[0]),
+            Some(TypeData::Function(_) | TypeData::Callable(_))
+        ),
+        "First member should preserve the source-order callable"
+    );
+    assert!(
+        matches!(
+            interner.lookup(member_list[1]),
+            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+        ),
+        "Second member should preserve the source-order object"
+    );
 }
 
 // Task #47: Template Literal Canonicalization Tests
@@ -1387,6 +1519,33 @@ fn test_union_application_types_sort_by_base_def_id() {
     );
 }
 
+/// Symbol-backed and anonymous object members must keep order-independent identity
+/// without forcing symbol-first display order for object/object pairs.
+#[test]
+fn test_union_object_members_sort_total_with_mixed_symbols() {
+    let interner = TypeInterner::new();
+
+    let named_high = interner.object_type_from_shape(interner.intern_object_shape(ObjectShape {
+        symbol: Some(SymbolId(20)),
+        ..Default::default()
+    }));
+    let anonymous = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
+    let named_low = interner.object_type_from_shape(interner.intern_object_shape(ObjectShape {
+        symbol: Some(SymbolId(10)),
+        ..Default::default()
+    }));
+
+    let union_a = interner.union(vec![named_high, anonymous, named_low]);
+    let union_b = interner.union(vec![anonymous, named_low, named_high]);
+    let union_c = interner.union(vec![named_low, named_high, anonymous]);
+
+    assert_eq!(union_a, union_b);
+    assert_eq!(union_a, union_c);
+}
+
 /// Application types with the same base but different args should sort by args.
 #[test]
 fn test_union_application_types_same_base_sort_by_args() {
@@ -1549,6 +1708,7 @@ fn test_estimated_size_bytes_grows_with_object_shapes() {
             parent_id: None,
             declaration_order: i as u32,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         };
         interner.object(vec![prop]);

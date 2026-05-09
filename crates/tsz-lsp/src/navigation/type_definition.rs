@@ -15,10 +15,10 @@ use tsz_parser::{
     syntax_kind_ext::{
         ARRAY_TYPE, ARROW_FUNCTION, CLASS_DECLARATION, CONDITIONAL_TYPE, ENUM_DECLARATION,
         FUNCTION_DECLARATION, FUNCTION_TYPE, INDEXED_ACCESS_TYPE, INTERFACE_DECLARATION,
-        INTERSECTION_TYPE, LITERAL_TYPE, MAPPED_TYPE, METHOD_DECLARATION, PARAMETER,
-        PARENTHESIZED_TYPE, PROPERTY_DECLARATION, PROPERTY_SIGNATURE, TEMPLATE_LITERAL_TYPE,
-        TUPLE_TYPE, TYPE_ALIAS_DECLARATION, TYPE_LITERAL, TYPE_QUERY, TYPE_REFERENCE, UNION_TYPE,
-        VARIABLE_DECLARATION,
+        INTERSECTION_TYPE, LITERAL_TYPE, MAPPED_TYPE, METHOD_DECLARATION, NEW_EXPRESSION,
+        PARAMETER, PARENTHESIZED_TYPE, PROPERTY_DECLARATION, PROPERTY_SIGNATURE,
+        TEMPLATE_LITERAL_TYPE, TUPLE_TYPE, TYPE_ALIAS_DECLARATION, TYPE_LITERAL, TYPE_QUERY,
+        TYPE_REFERENCE, UNION_TYPE, VARIABLE_DECLARATION,
     },
 };
 use tsz_scanner::SyntaxKind;
@@ -31,6 +31,10 @@ impl<'a> TypeDefinitionProvider<'a> {
     /// Returns the location(s) where the type is defined. For primitive types
     /// (number, string, boolean, etc.), returns None since they have no
     /// user-defined declaration.
+    ///
+    /// Limited inference support is intentionally included for declarationless
+    /// initializers such as `const x = new Foo()`, where we can resolve the
+    /// constructor callee to a type declaration.
     pub fn get_type_definition(
         &self,
         root: NodeIndex,
@@ -105,9 +109,76 @@ impl<'a> TypeDefinitionProvider<'a> {
         root: NodeIndex,
         decl_idx: NodeIndex,
     ) -> Option<Vec<Location>> {
-        // Look for type annotation child
-        let type_node = self.find_type_annotation_child(decl_idx)?;
-        self.resolve_type_to_location(root, type_node)
+        let type_node = self.find_type_annotation_child(decl_idx);
+        if let Some(type_node) = type_node {
+            return self.resolve_type_to_location(root, type_node);
+        }
+
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        if decl.initializer.is_none() {
+            return None;
+        }
+
+        self.resolve_inferred_type_from_expression(root, decl.initializer)
+    }
+
+    /// Resolve types from limited inference, currently focused on `new`
+    /// expression initializers and direct identifier expressions.
+    fn resolve_inferred_type_from_expression(
+        &self,
+        root: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let expr_idx = self.arena.skip_parenthesized(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+
+        let target_expr = if expr_node.kind == NEW_EXPRESSION {
+            self.arena.get_call_expr(expr_node)?.expression
+        } else {
+            expr_idx
+        };
+
+        self.resolve_value_symbol_declarations_as_types(root, target_expr)
+    }
+
+    /// Resolve a value position to declarations that are type-like declarations.
+    fn resolve_value_symbol_declarations_as_types(
+        &self,
+        root: NodeIndex,
+        node_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_node(root, node_idx)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+
+        let locations: Vec<Location> = symbol
+            .declarations
+            .iter()
+            .filter_map(|&decl_idx| {
+                let decl_node = self.arena.get(decl_idx)?;
+
+                if !self.is_type_declaration(decl_node.kind) {
+                    return None;
+                }
+
+                Some(Location {
+                    file_path: self.file_name.clone(),
+                    range: Range::new(
+                        self.line_map
+                            .offset_to_position(decl_node.pos, self.source_text),
+                        self.line_map
+                            .offset_to_position(decl_node.end, self.source_text),
+                    ),
+                })
+            })
+            .collect();
+
+        if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        }
     }
 
     /// Find type from a parameter's type annotation.
@@ -143,7 +214,17 @@ impl<'a> TypeDefinitionProvider<'a> {
 
     /// Find a type annotation child node within a declaration.
     fn find_type_annotation_child(&self, parent_idx: NodeIndex) -> Option<NodeIndex> {
-        // Scan children for type reference nodes
+        self.find_type_annotation_children(parent_idx)
+            .into_iter()
+            .next()
+    }
+
+    /// Find every type-node child of `parent_idx`, in arena order.
+    ///
+    /// Used by union/intersection resolution to enumerate all constituents
+    /// rather than truncating to the first one.
+    fn find_type_annotation_children(&self, parent_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut children = Vec::new();
         for (i, node) in self.arena.nodes.iter().enumerate() {
             let idx = NodeIndex(i as u32);
             let parent = self
@@ -151,15 +232,11 @@ impl<'a> TypeDefinitionProvider<'a> {
                 .get_extended(idx)
                 .map_or(NodeIndex::NONE, |ext| ext.parent);
 
-            // Check if this node is a child of parent
-            if parent == parent_idx {
-                // Check if this is a type node
-                if self.is_type_node(node.kind) {
-                    return Some(idx);
-                }
+            if parent == parent_idx && self.is_type_node(node.kind) {
+                children.push(idx);
             }
         }
-        None
+        children
     }
 
     /// Find a return type child node within a function declaration.
@@ -210,13 +287,34 @@ impl<'a> TypeDefinitionProvider<'a> {
             }
         }
 
-        // For union/intersection, we could return multiple locations
-        // For now, just return the first resolvable type
+        // For union/intersection, surface every constituent's definition.
+        // LSP allows multiple locations in a TypeDefinitionResult, so we
+        // recurse into each member, flatten the results, and dedupe by
+        // (file_path, range) while preserving declaration order.
         if node.kind == UNION_TYPE || node.kind == INTERSECTION_TYPE {
-            // Find first type child and resolve it
-            if let Some(first_type) = self.find_type_annotation_child(type_node) {
-                return self.resolve_type_to_location(root, first_type);
+            let members = self.find_type_annotation_children(type_node);
+            if members.is_empty() {
+                return None;
             }
+
+            let mut locations: Vec<Location> = Vec::new();
+            for member in members {
+                if let Some(member_locations) = self.resolve_type_to_location(root, member) {
+                    for loc in member_locations {
+                        if !locations.iter().any(|existing| {
+                            existing.file_path == loc.file_path && existing.range == loc.range
+                        }) {
+                            locations.push(loc);
+                        }
+                    }
+                }
+            }
+
+            return if locations.is_empty() {
+                None
+            } else {
+                Some(locations)
+            };
         }
 
         None

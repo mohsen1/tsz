@@ -304,7 +304,11 @@ impl<'a> Printer<'a> {
             }
 
             if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                let before_len = self.writer.len();
                 self.emit_exported_import_equals_declaration(clause_node);
+                if self.writer.len() == before_len {
+                    return;
+                }
                 if !self.ctx.module_state.has_export_assignment
                     && let Some(import_decl) = self.arena.get_import_decl(clause_node)
                 {
@@ -358,7 +362,8 @@ impl<'a> Printer<'a> {
                     if !self.ctx.module_state.has_export_assignment {
                         // Try inline form: exports.x = initializer;
                         // TSC emits this for simple single-binding declarations.
-                        if let Some(inline_decls) = self.try_collect_inline_cjs_exports(clause_node)
+                        if let Some(inline_decls) =
+                            self.try_collect_inline_cjs_exports(export.export_clause, clause_node)
                         {
                             let decl_count = inline_decls.len();
                             for (i, (decoded_name, emit_name, init_idx)) in
@@ -428,7 +433,8 @@ impl<'a> Printer<'a> {
                     {
                         // Keep named class export assignment immediately after the class
                         // declaration and before lowered static blocks/IIFEs.
-                        self.pending_commonjs_class_export_name = Some(name);
+                        self.pending_commonjs_class_export_name =
+                            Some((export.export_clause, name));
                         named_export_emitted_with_class = true;
                     }
 
@@ -500,6 +506,9 @@ impl<'a> Printer<'a> {
                                     && self.ctx.is_effectively_commonjs()
                                 {
                                     es5_emitter.set_tslib_prefix(true);
+                                    es5_emitter.set_tslib_import_binding(
+                                        self.commonjs_tslib_import_binding.clone(),
+                                    );
                                 }
                                 es5_emitter.set_use_define_for_class_fields(
                                     self.ctx.options.use_define_for_class_fields,
@@ -772,6 +781,40 @@ impl<'a> Printer<'a> {
                                     .inline_exported_names
                                     .contains(&export_name)
                                 {
+                                    continue;
+                                }
+
+                                if export_name == "undefined" && local_name == "undefined" {
+                                    continue;
+                                }
+
+                                if self.ctx.module_state.runtime_decl_names_computed
+                                    && self
+                                        .ctx
+                                        .module_state
+                                        .value_declaration_names
+                                        .contains(&local_name)
+                                    && !self
+                                        .ctx
+                                        .module_state
+                                        .runtime_declaration_names
+                                        .contains(&local_name)
+                                {
+                                    continue;
+                                }
+
+                                if self
+                                    .deferred_local_export_bindings
+                                    .as_ref()
+                                    .is_some_and(|bindings| bindings.contains_key(&local_name))
+                                {
+                                    continue;
+                                }
+
+                                // For `export { undefined }`, tsc relies on the
+                                // preamble `exports.undefined = void 0;` and does not
+                                // emit a trailing `exports.undefined = undefined;`.
+                                if export_name == "undefined" && local_name == "undefined" {
                                     continue;
                                 }
 

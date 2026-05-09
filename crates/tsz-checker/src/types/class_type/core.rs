@@ -346,7 +346,28 @@ impl<'a> CheckerState<'a> {
                         {
                             dt
                         } else if prop.initializer.is_some() {
-                            TypeId::ANY
+                            let init_node = self.ctx.arena.get(prop.initializer);
+                            if init_node.is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16) {
+                                self.ctx.types.this_type()
+                            } else if let (Some(current_sym), Some(init_node)) =
+                                (current_sym, init_node)
+                                && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                                && self
+                                    .ctx
+                                    .arena
+                                    .get_call_expr(init_node)
+                                    .and_then(|call| {
+                                        self.ctx.arena.get_identifier_at(call.expression)
+                                    })
+                                    .is_some_and(|ident| {
+                                        ident.escaped_text
+                                            == self.get_class_name_from_decl(class_idx)
+                                    })
+                            {
+                                self.ctx.create_lazy_type_ref(current_sym)
+                            } else {
+                                TypeId::ANY
+                            }
                         } else {
                             continue;
                         };
@@ -373,6 +394,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -434,6 +456,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -477,6 +500,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: declaration_order + param_pos as u32 + 1,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             });
                         }
@@ -495,7 +519,11 @@ impl<'a> CheckerState<'a> {
 
             if !prescan_props.is_empty() || base_prescan_type.is_some() {
                 let own_prescan_type = if !prescan_props.is_empty() {
-                    Some(factory.object(prescan_props))
+                    Some(factory.object_with_index(ObjectShape {
+                        properties: prescan_props,
+                        symbol: current_sym,
+                        ..ObjectShape::default()
+                    }))
                 } else {
                     None
                 };
@@ -595,6 +623,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         };
                         let mut partial_props: Vec<PropertyInfo> =
@@ -708,6 +737,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         },
                     );
@@ -830,6 +860,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: declaration_order + param_pos as u32 + 1,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             },
                         );
@@ -920,10 +951,12 @@ impl<'a> CheckerState<'a> {
                         param_name,
                     };
 
-                    if key_type == TypeId::NUMBER {
-                        Self::merge_index_signature(&mut number_index, index);
-                    } else {
-                        Self::merge_index_signature(&mut string_index, index);
+                    if is_valid_index_type {
+                        if key_type == TypeId::NUMBER {
+                            Self::merge_index_signature(&mut number_index, index);
+                        } else {
+                            Self::merge_index_signature(&mut string_index, index);
+                        }
                     }
                 }
                 _ => {}
@@ -1030,10 +1063,13 @@ impl<'a> CheckerState<'a> {
                 partial_method_props.len() + deferred_methods.len() + deferred_accessors.len(),
             );
             partial_props.extend(partial_method_props.values().cloned());
+            let mut partial_prop_names: FxHashSet<Atom> =
+                FxHashSet::with_capacity_and_hasher(partial_props.len(), Default::default());
+            partial_prop_names.extend(partial_props.iter().map(|prop| prop.name));
             for (_, method, declaration_order) in &deferred_methods {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let name_atom = self.ctx.types.intern_string(&name);
-                    if !partial_props.iter().any(|p| p.name == name_atom) {
+                    if partial_prop_names.insert(name_atom) {
                         // For methods with explicit return type annotations, use the
                         // declared return type instead of ANY. This allows other methods
                         // that reference `this.method()` during body inference to get the
@@ -1084,13 +1120,14 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order: *declaration_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
                 }
             }
             for deferred in &deferred_accessors {
-                if !partial_props.iter().any(|p| p.name == deferred.name_atom) {
+                if partial_prop_names.insert(deferred.name_atom) {
                     partial_props.push(PropertyInfo {
                         name: deferred.name_atom,
                         type_id: TypeId::ANY,
@@ -1103,6 +1140,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: deferred.declaration_order,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1277,6 +1315,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -1398,22 +1437,12 @@ impl<'a> CheckerState<'a> {
             if methods.contains_key(&name) {
                 continue;
             }
-            let read_type = accessor.getter.unwrap_or_else(|| {
-                if accessor.setter.is_some() {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::UNKNOWN
-                }
-            });
             // When a setter parameter has no type annotation, its type is UNKNOWN
-            // (sentinel). In tsc, the setter type is inferred from the getter's
-            // return type. Filter out the UNKNOWN sentinel so we fall back to the
-            // getter type, matching tsc behavior for unannotated setters.
-            let write_type = accessor
-                .setter
-                .filter(|&t| t != TypeId::UNKNOWN)
-                .or(accessor.getter)
-                .unwrap_or(read_type);
+            // (sentinel). Filter it out so paired accessors fall back to the
+            // getter type, matching tsc.
+            let setter_type = accessor.setter.filter(|&t| t != TypeId::UNKNOWN);
+            let read_type = accessor.getter.or(setter_type).unwrap_or(TypeId::UNKNOWN);
+            let write_type = setter_type.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
                 name,
@@ -1429,6 +1458,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: accessor.declaration_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1478,6 +1508,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: method.declaration_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1503,6 +1534,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -1573,7 +1605,7 @@ impl<'a> CheckerState<'a> {
                 // alias/default-export symbols while the active resolution set tracks
                 // the declaration symbol; check both to avoid recursion leaks.
                 let canonical_base_sym =
-                    base_class_decl.and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+                    base_class_decl.and_then(|decl_idx| self.class_declaration_symbol(decl_idx));
                 let base_in_resolution_set = self
                     .ctx
                     .class_instance_resolution_set
@@ -1678,7 +1710,7 @@ impl<'a> CheckerState<'a> {
 
                 // CRITICAL: Check global resolution set BEFORE recursing into base class
                 // This prevents infinite recursion when we have forward references in cycles
-                if let Some(base_class_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
+                if let Some(base_class_sym) = self.class_declaration_symbol(base_class_idx) {
                     if self
                         .ctx
                         .class_instance_resolution_set

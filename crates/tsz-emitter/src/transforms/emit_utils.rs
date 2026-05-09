@@ -742,6 +742,123 @@ pub(crate) fn skip_trivia_forward(source_text: Option<&str>, start: u32, end: u3
     pos as u32
 }
 
+/// Returns true when `haystack` contains `needle` as a complete identifier
+/// (not a substring of a longer identifier). Whole-word match against an
+/// ASCII identifier alphabet — used by transforms that need to detect
+/// user bindings before allocating helper-temp names.
+pub(crate) fn contains_identifier_token(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    if needle_bytes.is_empty() || needle_bytes.len() > bytes.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + needle_bytes.len() <= bytes.len() {
+        if &bytes[i..i + needle_bytes.len()] == needle_bytes {
+            let prev_ok = i == 0 || !is_identifier_part(bytes[i - 1]);
+            let next_ok = i + needle_bytes.len() == bytes.len()
+                || !is_identifier_part(bytes[i + needle_bytes.len()]);
+            if prev_ok && next_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+const fn is_identifier_part(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// Pick a temporary name that doesn't collide with any identifier reference
+/// in `source_text`. Returns `base` when the base itself is free, otherwise
+/// `base_1`, `base_2`, … until a free name is found. Mirrors tsc's hygienic
+/// naming pass for transform-introduced locals (e.g. `_classDescriptor_1`,
+/// `react_2`).
+pub(crate) fn hygienic_temp_name(base: &str, source_text: &str) -> String {
+    if !contains_identifier_token(source_text, base) {
+        return base.to_string();
+    }
+    for suffix in 1u32..=100 {
+        let candidate = format!("{base}_{suffix}");
+        if !contains_identifier_token(source_text, &candidate) {
+            return candidate;
+        }
+    }
+    // Should never happen for any real source; fall back to the base name.
+    base.to_string()
+}
+
+/// Walk a function body and collect the property names accessed off `super`
+/// via `super.<identifier>` (issue #3759). Used by the async-method downlevel
+/// transform to build the `_super = Object.create(null, { ... })` capture
+/// block before entering the generator.
+///
+/// Stops recursion at function-like boundaries that re-bind `super` (function
+/// expressions / declarations and class members). Arrow functions inherit
+/// `super` from the enclosing method, so they ARE traversed.
+pub(crate) fn collect_async_method_super_property_names(
+    arena: &NodeArena,
+    body: NodeIndex,
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
+    collect_super_property_names_rec(arena, body, &mut names, &mut visited);
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn collect_super_property_names_rec(
+    arena: &NodeArena,
+    idx: NodeIndex,
+    out: &mut Vec<String>,
+    visited: &mut rustc_hash::FxHashSet<NodeIndex>,
+) {
+    use tsz_parser::parser::node::NodeAccess;
+
+    if idx.is_none() || !visited.insert(idx) {
+        return;
+    }
+    let Some(node) = arena.get(idx) else { return };
+    let kind = node.kind;
+
+    // Stop at function-like boundaries that re-bind `super`. Arrow functions
+    // inherit `super` from their enclosing method, so we walk into them.
+    if kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        || kind == syntax_kind_ext::FUNCTION_DECLARATION
+        || kind == syntax_kind_ext::METHOD_DECLARATION
+        || kind == syntax_kind_ext::CONSTRUCTOR
+        || kind == syntax_kind_ext::GET_ACCESSOR
+        || kind == syntax_kind_ext::SET_ACCESSOR
+        || kind == syntax_kind_ext::CLASS_DECLARATION
+        || kind == syntax_kind_ext::CLASS_EXPRESSION
+    {
+        return;
+    }
+
+    if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        && let Some(access) = arena.get_access_expr(node)
+        && let Some(base) = arena.get(access.expression)
+        && base.kind == SyntaxKind::SuperKeyword as u16
+    {
+        if let Some(name_node) = arena.get(access.name_or_argument)
+            && name_node.kind == SyntaxKind::Identifier as u16
+            && let Some(name) = identifier_text(arena, access.name_or_argument)
+        {
+            out.push(name);
+        }
+        // Walk arguments only — the `super` expression itself has no further
+        // descendants worth visiting.
+        return;
+    }
+
+    for child in arena.get_children(idx) {
+        collect_super_property_names_rec(arena, child, out, visited);
+    }
+}
+
 #[cfg(test)]
 #[path = "../../tests/emit_utils.rs"]
 mod tests;

@@ -10,8 +10,21 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::check_source;
+use tsz_checker::test_utils::{check_source, check_source_with_libs, load_lib_files};
 use tsz_common::common::ScriptTarget;
+
+const LIB_NAMES: &[&str] = &[
+    "es5.d.ts",
+    "es2015.d.ts",
+    "es2015.core.d.ts",
+    "es2015.collection.d.ts",
+    "es2015.iterable.d.ts",
+    "es2015.promise.d.ts",
+    "es2015.proxy.d.ts",
+    "es2015.reflect.d.ts",
+    "es2015.symbol.d.ts",
+    "es2015.symbol.wellknown.d.ts",
+];
 
 fn check_default(source: &str) -> Vec<Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
@@ -19,6 +32,11 @@ fn check_default(source: &str) -> Vec<Diagnostic> {
 
 fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
     check_source(source, "test.ts", options)
+}
+
+fn check_with_libs(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    let libs = load_lib_files(LIB_NAMES);
+    check_source_with_libs(source, "test.ts", options, &libs)
 }
 
 /// Function returning nested array literals with different object shapes should
@@ -93,6 +111,64 @@ f([c1, c2], (value1, value2) => {
     assert!(
         ts2345_errors.is_empty(),
         "Mapped tuple rest spread should not produce false TS2345, got: {ts2345_errors:?}"
+    );
+}
+
+#[test]
+fn proxy_handler_contextual_return_union_does_not_report_outer_ts2322() {
+    let source = r#"
+declare function deprecate<T extends Function>(
+  fn: T,
+  msg: string,
+  code?: string,
+): T;
+
+const soonFrozenObjectDeprecation = <T extends object>(
+  obj: T,
+  name: string,
+  code: string,
+  note = "",
+): T => {
+  const message = `${name} will be frozen in future, all modifications are deprecated.${
+    note && `\n${note}`
+  }`;
+  return new Proxy(obj, {
+    set: deprecate(
+      (target, property, value, receiver) =>
+        Reflect.set(target, property, value, receiver),
+      message,
+      code,
+    ),
+    defineProperty: deprecate(
+      (target, property, descriptor) =>
+        Reflect.defineProperty(target, property, descriptor),
+      message,
+      code,
+    ),
+    deleteProperty: deprecate(
+      (target, property) => Reflect.deleteProperty(target, property),
+      message,
+      code,
+    ),
+    setPrototypeOf: deprecate(
+      (target, proto) => Reflect.setPrototypeOf(target, proto),
+      message,
+      code,
+    ),
+  });
+};
+"#;
+    let diagnostics = check_with_libs(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Proxy handler contextual return fixture should not emit diagnostics, got: {diagnostics:#?}"
     );
 }
 
@@ -208,6 +284,37 @@ var r5b = _.map<number, string>(c2, rf1);
         ts2454_errors.len(),
         8,
         "callbacksDontShareTypes should preserve all TS2454 diagnostics, got: {ts2454_errors:?}"
+    );
+}
+
+#[test]
+fn template_index_signatures_contextualize_matching_object_literal_properties() {
+    let source = r#"
+type Funcs = {
+    [key: `s${string}`]: (x: string) => void,
+    [key: `n${string}`]: (x: number) => void,
+};
+
+const funcs: Funcs = {
+    sfoo: x => { x.length; },
+    nfoo: x => { x.toFixed(); },
+};
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 7006))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Template pattern index signatures should contextually type only matching object literal properties, got: {relevant:?}"
     );
 }
 
@@ -445,6 +552,15 @@ createMachine2({
 "#;
 
     let diagnostics = check_default(source);
+    let assignability_cascades: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect();
+    assert!(
+        assignability_cascades.is_empty(),
+        "Expected no object/call assignability cascades for contextual mapped intersection handlers, got diagnostics={assignability_cascades:?}"
+    );
+
     let mut relevant: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
@@ -574,6 +690,15 @@ createMachine2({
 "#;
 
     let diagnostics = check_default(source);
+    let assignability_cascades: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect();
+    assert!(
+        assignability_cascades.is_empty(),
+        "Expected no object/call assignability cascades in the full contextual mapped intersection sequence, got diagnostics={assignability_cascades:?}"
+    );
+
     let mut relevant: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
@@ -776,6 +901,89 @@ let obj: HasGreet = {
     assert!(
         !ts2339,
         "Expected no TS2339 for 'this.name' with contextual type, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_method_this_type_from_variable_marker() {
+    let source = r#"
+type B = {
+    kind: "b";
+    m(): void;
+} & ThisType<{ b: number }>;
+
+const value: B = {
+    kind: "b",
+    m() {
+        this.b.toFixed();
+        this.a.toUpperCase();
+    },
+};
+"#;
+    let diagnostics = check_with_libs(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_b_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'b'"));
+    let has_a_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'a'"));
+    assert!(
+        !has_b_error,
+        "Expected ThisType payload to allow this.b, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        has_a_error,
+        "Expected TS2339 for this.a against ThisType payload, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_method_this_type_from_discriminated_union_marker() {
+    let source = r#"
+type A = {
+    kind: "a";
+    m(): void;
+} & ThisType<{ a: string }>;
+
+type B = {
+    kind: "b";
+    m(): void;
+} & ThisType<{ b: number }>;
+
+const value: A | B = {
+    kind: "b",
+    m() {
+        this.b.toFixed();
+        this.a.toUpperCase();
+    },
+};
+"#;
+    let diagnostics = check_with_libs(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_b_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'b'"));
+    let has_a_error = diagnostics
+        .iter()
+        .any(|d| d.code == 2339 && d.message_text.contains("'a'"));
+    assert!(
+        !has_b_error,
+        "Expected narrowed ThisType payload to allow this.b, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        has_a_error,
+        "Expected TS2339 for this.a against narrowed ThisType payload, got diagnostics={diagnostics:?}"
     );
 }
 
@@ -1220,6 +1428,28 @@ const r = call((x: number, y: string) => x + y.length, 1, "hello");
     );
 }
 
+#[test]
+fn test_generic_rest_tuple_callback_arity_follows_supplied_rest_args() {
+    let source = r#"
+declare function call<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+
+call((x: string) => x.length, "hello");
+call(() => "ok", "extra");
+call((x: string) => x.length);
+"#;
+
+    let diagnostics = check_default(source);
+    let call_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2554)
+        .collect();
+    assert_eq!(
+        call_errors.len(),
+        2,
+        "Expected one too-many and one too-few arity error for generic rest tuple callbacks, got {diagnostics:?}"
+    );
+}
+
 /// Return-context substitution through array element types.
 /// Exercises the `array_element_type` matching path in `collect_return_context_substitution`.
 #[test]
@@ -1338,10 +1568,10 @@ const r = apply(42, (x: string) => x);
     );
 }
 
-/// Generic call with conditional return in zero-param callback.
-/// Exercises `zero_param_callback_first_conditional_branch` path.
+/// Generic call with conditional return in callback.
+/// Exercises `callback_first_conditional_branch` path.
 #[test]
-fn test_zero_param_callback_conditional_branch() {
+fn test_callback_conditional_branch() {
     let source = r#"
 declare function lazy<T>(fn: () => T): T;
 declare const cond: boolean;
@@ -1351,7 +1581,36 @@ const val: string = lazy(() => cond ? "yes" : "no");
     let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     assert!(
         ts2322.is_empty(),
-        "Expected no TS2322 for conditional return in zero-param callback, got {ts2322:?}"
+        "Expected no TS2322 for conditional return in callback, got {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_intra_expression_conditional_return_seeds_receiver_context() {
+    let source = r#"
+declare const console: { log(value: any): void };
+declare function simplified<T>(props: { generator: () => T, receiver: (t: T) => any }): void;
+declare function withProps<T>(props: { generator: (bob: any) => T, receiver: (t: T) => void }): void;
+declare function withArgs<T>(generator: (bob: any) => T, receiver: (t: T) => void): void;
+
+simplified({ generator: () => 123, receiver: t => console.log(t + 2) });
+withProps({ generator: bob => bob ? 1 : 2, receiver: t => console.log(t + 2) });
+withArgs(bob => bob ? 1 : 2, t => console.log(t + 2));
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let inference_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 18046)
+        .collect();
+    assert!(
+        inference_errors.is_empty(),
+        "Expected conditional callback return to seed receiver context, got {inference_errors:?}"
     );
 }
 
@@ -1745,6 +2004,36 @@ function reversed<T>(array: T[]) {
 }
 
 #[test]
+fn function_type_return_type_query_resolves_parameter_type() {
+    let source = r#"
+type FuncType = (x: <T>(p: T) => T) => typeof x;
+let z: FuncType = x => undefined;
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type '(x: <T>(p: T) => T) => undefined'")
+                && d.related_information.iter().any(|related| {
+                    related
+                        .message_text
+                        .contains("Type 'undefined' is not assignable to type '<T>(p: T) => T'")
+                })
+        }),
+        "`typeof x` in a function type return should resolve to the parameter type, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_conditional_callbacks_preserve_contextual_typing() {
     let source = r#"
 type FuncType = (x: <T>(p: T) => T) => typeof x;
@@ -1764,13 +2053,44 @@ var k = fun((coin < 0.5 ? (x => { x<number>(undefined); return x; }) : (x => und
         source,
         CheckerOptions {
             no_implicit_any: true,
+            strict_null_checks: true,
             ..Default::default()
         },
     );
     let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let outer_conditional_mismatches = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "((x: <T>(p: T) => T) => <T>(p: T) => T) | ((x: <T>(p: T) => T) => undefined)",
+                )
+        })
+        .count();
+    assert_eq!(
+        outer_conditional_mismatches, 2,
+        "Expected TS2345 for each conditional argument with expanded callable union display, got diagnostics={diagnostics:?}"
+    );
+    let contextual_branch_mismatches = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "Argument of type 'undefined' is not assignable to parameter of type 'number'",
+                )
+        })
+        .count();
+    assert!(
+        contextual_branch_mismatches >= 2,
+        "Expected contextual true-branch callbacks to keep TS2345, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&7006),
+        "Expected TS7006 from the later callback after the earlier overload argument mismatch, got diagnostics={diagnostics:?}"
+    );
     assert!(
         codes.contains(&2347),
-        "Expected TS2347 from the uncontextualized conditional branch callback, got diagnostics={diagnostics:?}"
+        "Expected TS2347 from the later callback after the earlier overload argument mismatch, got diagnostics={diagnostics:?}"
     );
     assert!(
         !codes.contains(&2769),

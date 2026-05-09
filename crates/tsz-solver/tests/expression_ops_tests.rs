@@ -69,6 +69,23 @@ fn test_conditional_different_branches() {
 }
 
 #[test]
+fn test_conditional_preserves_unique_symbol_members() {
+    let interner = TypeInterner::new();
+    let left = interner.unique_symbol(crate::types::SymbolRef(1));
+    let right = interner.unique_symbol(crate::types::SymbolRef(2));
+
+    let result = compute_conditional_expression_type(&interner, TypeId::BOOLEAN, left, right);
+    let Some(TypeData::Union(list_id)) = interner.lookup(result) else {
+        panic!("expected unique symbol branches to remain a union, got {result:?}");
+    };
+    let members = interner.type_list(list_id);
+
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&left));
+    assert!(members.contains(&right));
+}
+
+#[test]
 fn test_conditional_error_propagation() {
     let interner = TypeInterner::new();
     // ERROR ? string : number -> ERROR
@@ -172,6 +189,89 @@ fn test_conditional_fresh_object_literals_get_complementary_optional_properties(
         let has_b = shape.properties.iter().any(|p| p.name == b);
         assert!(has_a && has_b, "member should contain both properties");
     }
+}
+
+#[test]
+fn test_normalize_fresh_object_literal_union_members_preserves_source_order_for_empty_member() {
+    // When a fresh-object union has an empty `{}` literal alongside members
+    // that introduce property names, the empty member is normalized to
+    // `{ a?: undefined; b?: undefined; }`. The resulting display order must
+    // follow source order of the *names* — not the Atom-allocation order of
+    // the property name interner. The earlier implementation iterated over
+    // shape.properties (which is Atom-sorted for canonical hashing) when
+    // building the missing-name list, leaking interner-allocation order into
+    // diagnostic display strings.
+    use crate::diagnostics::format::TypeFormatter;
+    use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
+
+    let interner = TypeInterner::new();
+    // Pre-intern `b` BEFORE `a` so Atom(b) < Atom(a) — without the fix this
+    // ordering corrupts the output as `b before a`.
+    let _b_first = interner.intern_string("b");
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    assert!(b.0 < a.0, "test setup expects Atom(b) < Atom(a)");
+
+    let mut prop_a = PropertyInfo::new(a, TypeId::NUMBER);
+    prop_a.declaration_order = 1;
+    let mut prop_b = PropertyInfo::new(b, TypeId::NUMBER);
+    prop_b.declaration_order = 2;
+
+    let m_with_ab = interner.object_with_flags(vec![prop_a, prop_b], ObjectFlags::FRESH_LITERAL);
+    let m_empty = interner.object_with_flags(Vec::new(), ObjectFlags::FRESH_LITERAL);
+
+    let normalized = normalize_fresh_object_literal_union_members(&interner, &[m_with_ab, m_empty])
+        .expect("normalization should succeed for mixed-shape fresh-literal union");
+    assert_eq!(normalized.len(), 2);
+
+    let mut formatter = TypeFormatter::new(&interner).with_display_properties();
+    let printed_empty_norm = formatter.format(normalized[1]).into_owned();
+    assert_eq!(
+        printed_empty_norm, "{ a?: undefined; b?: undefined; }",
+        "normalized empty member must display properties in source order"
+    );
+}
+
+#[test]
+fn test_normalize_fresh_object_literal_union_members_preserves_member_order() {
+    // Ensure the resulting union of normalized fresh object literal members
+    // preserves source-written member order even when the canonical union
+    // sort uses anonymous-shape allocation order. The fix stores the
+    // pre-sort member sequence as a `union_origin` so the formatter can
+    // recover it.
+    use crate::diagnostics::format::TypeFormatter;
+
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+
+    let mut p_a_n = PropertyInfo::new(a, TypeId::NUMBER);
+    p_a_n.declaration_order = 1;
+    let mut p_b_s = PropertyInfo::new(b, TypeId::STRING);
+    p_b_s.declaration_order = 2;
+    let mut p_c_b = PropertyInfo::new(c, TypeId::BOOLEAN);
+    p_c_b.declaration_order = 3;
+
+    // [{ a }, { a, b }, { a, b, c }] — the third member is allocated last as
+    // a shape, but normalization will rebuild the first two so their new
+    // shape ids land *after* the third's, defeating the canonical sort.
+    let m1 = interner.object_with_flags(vec![p_a_n.clone()], ObjectFlags::FRESH_LITERAL);
+    let m2 = interner.object_with_flags(
+        vec![p_a_n.clone(), p_b_s.clone()],
+        ObjectFlags::FRESH_LITERAL,
+    );
+    let m3 = interner.object_with_flags(vec![p_a_n, p_b_s, p_c_b], ObjectFlags::FRESH_LITERAL);
+
+    let result = compute_best_common_type::<NoopResolver>(&interner, &[m1, m2, m3], None);
+
+    let mut formatter = TypeFormatter::new(&interner).with_display_properties();
+    let printed = formatter.format(result).into_owned();
+    assert_eq!(
+        printed,
+        "{ a: number; b?: undefined; c?: undefined; } | { a: number; b: string; c?: undefined; } | { a: number; b: string; c: boolean; }",
+        "normalized union must preserve source-written member order in display"
+    );
 }
 
 // =========================================================================

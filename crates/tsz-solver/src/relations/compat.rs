@@ -3,10 +3,10 @@
 use crate::caches::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeData, TypeId};
+use crate::types::{IntrinsicKind, LiteralValue, MappedType, PropertyInfo, TypeData, TypeId};
 use crate::visitor::{
     TypeVisitor, intrinsic_kind, is_empty_object_type_through_type_constraints, is_error_type,
-    lazy_def_id,
+    keyof_inner_type, lazy_def_id, type_param_info,
 };
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
@@ -847,10 +847,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let source_shape = self.interner.object_shape(source_shape_id);
 
-        let (has_string_index, has_number_index) = self.check_index_signatures(target);
+        let (string_index_types, has_number_index) = self.check_index_signatures(target);
 
-        // If target has string index signature, skip excess property check entirely
-        if has_string_index {
+        // If target has a string index signature that accepts all strings,
+        // skip excess-property checks entirely.
+        if string_index_types
+            .iter()
+            .any(|&key_type| self.subtype.is_subtype_of(TypeId::STRING, key_type))
+        {
             return true;
         }
 
@@ -858,8 +862,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let target_properties = self.collect_target_properties(target);
 
         // TypeScript forgives excess properties when the target type is completely empty
-        // (like `{}`, an empty interface, or an empty class) because it accepts any non-primitive.
-        if target_properties.is_empty() && !has_number_index {
+        // (like `{}`, an empty interface, or an empty class) because it accepts any
+        // non-primitive and has no string-index-style constraints.
+        if target_properties.is_empty() && !has_number_index && string_index_types.is_empty() {
             return true;
         }
 
@@ -870,6 +875,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 if has_number_index {
                     let name_str = self.interner.resolve_atom(prop_info.name);
                     if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
+                if !string_index_types.is_empty() {
+                    let prop_name_type = self.interner.literal_string_atom(prop_info.name);
+                    let matches_string_index = string_index_types
+                        .iter()
+                        .any(|&index_key| self.subtype.is_subtype_of(prop_name_type, index_key));
+
+                    if matches_string_index {
                         continue;
                     }
                 }
@@ -918,10 +933,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             _ => target,
         };
 
-        let (has_string_index, has_number_index) = self.check_index_signatures(resolved_target);
+        let (string_index_types, has_number_index) = self.check_index_signatures(resolved_target);
 
-        // If target has string index signature, skip excess property check entirely
-        if has_string_index {
+        // If target has a string index signature that accepts all strings,
+        // skip excess-property checks entirely.
+        if string_index_types
+            .iter()
+            .any(|&key_type| self.subtype.is_subtype_of(TypeId::STRING, key_type))
+        {
             return None;
         }
 
@@ -929,7 +948,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let target_properties = self.collect_target_properties(resolved_target);
 
         // TypeScript forgives excess properties when the target type is completely empty
-        if target_properties.is_empty() && !has_number_index {
+        // (like `{}`, an empty interface, or an empty class) because it accepts any
+        // non-primitive and has no string-index-style constraints.
+        if target_properties.is_empty() && !has_number_index && string_index_types.is_empty() {
             return None;
         }
 
@@ -940,6 +961,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 if has_number_index {
                     let name_str = self.interner.resolve_atom(prop_info.name);
                     if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
+                if !string_index_types.is_empty() {
+                    let prop_name_type = self.interner.literal_string_atom(prop_info.name);
+                    let matches_string_index = string_index_types
+                        .iter()
+                        .any(|&index_key| self.subtype.is_subtype_of(prop_name_type, index_key));
+
+                    if matches_string_index {
                         continue;
                     }
                 }
@@ -957,32 +988,36 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// This matches tsc's `isKnownProperty` semantics for excess property checking.
     ///
     /// Check if a type or any of its composite members has a string or numeric index signature.
-    /// Returns `(has_string_index, has_number_index)`.
-    fn check_index_signatures(&mut self, type_id: TypeId) -> (bool, bool) {
+    ///
+    /// Returns `(string_index_key_types, has_number_index)` where
+    /// `string_index_key_types` contains the key type(s) for all string index
+    /// signatures discovered in the structure. If empty, there are no string
+    /// index signatures.
+    fn check_index_signatures(&mut self, type_id: TypeId) -> (Vec<TypeId>, bool) {
         if type_id == TypeId::ANY
             || type_id == TypeId::UNKNOWN
             || is_error_type(self.interner, type_id)
         {
-            return (true, true);
+            return (vec![TypeId::STRING], true);
         }
 
         // The `object` type (like `{}`) conceptually accepts any properties —
         // when it appears in a union, excess property checking should be suppressed.
         if type_id == TypeId::OBJECT {
-            return (true, false);
+            return (vec![TypeId::STRING], false);
         }
 
         // The global `Object` interface (capital O from lib.d.ts) also accepts any
         // properties, just like `object`/`{}`. When it appears as a union member
         // (e.g., `Object | string`), excess property checking should be suppressed.
         if self.is_global_object_interface_target(type_id) {
-            return (true, false);
+            return (vec![TypeId::STRING], false);
         }
 
         // Other intrinsics (STRING/NUMBER/BOOLEAN/...) resolve to TypeData::Intrinsic
         // and never have index signatures — skip both dyn lookups below.
         if type_id.is_intrinsic() {
-            return (false, false);
+            return (Vec::new(), false);
         }
 
         let type_id = match self.interner.lookup(type_id) {
@@ -1001,24 +1036,28 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             || type_id == TypeId::UNKNOWN
             || is_error_type(self.interner, type_id)
         {
-            return (true, true);
+            return (vec![TypeId::STRING], true);
         }
 
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                (shape.string_index.is_some(), shape.number_index.is_some())
+                let mut string_index_types = Vec::new();
+                if let Some(string_index) = shape.string_index {
+                    string_index_types.push(string_index.key_type);
+                }
+                (string_index_types, shape.number_index.is_some())
             }
             Some(TypeData::Intersection(members_id)) | Some(TypeData::Union(members_id)) => {
                 let members = self.interner.type_list(members_id);
-                let mut has_str = false;
+                let mut string_index_types = Vec::new();
                 let mut has_num = false;
                 for &member in members.iter() {
                     let (s, n) = self.check_index_signatures(member);
-                    has_str |= s;
+                    string_index_types.extend(s);
                     has_num |= n;
                 }
-                (has_str, has_num)
+                (string_index_types, has_num)
             }
             Some(TypeData::Conditional(cond_id)) => {
                 // For unresolved conditional types, check both branches for index
@@ -1026,9 +1065,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 let cond = self.interner.get_conditional(cond_id);
                 let (ts, tn) = self.check_index_signatures(cond.true_type);
                 let (fs, fn_) = self.check_index_signatures(cond.false_type);
-                (ts || fs, tn || fn_)
+                let string_index_types = ts.into_iter().chain(fs).collect();
+                (string_index_types, tn || fn_)
             }
-            _ => (false, false),
+            _ => (Vec::new(), false),
         }
     }
 
@@ -1260,6 +1300,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             flatten_mapped_chain(self.interner, s_mapped_id),
             flatten_mapped_chain(self.interner, t_mapped_id),
         ) {
+            let constraints_match =
+                self.mapped_key_constraint_covers(s_flat.key_constraint, t_flat.key_constraint);
             let sources_match = if s_flat.source == t_flat.source {
                 true
             } else {
@@ -1267,7 +1309,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 self.subtype.is_subtype_of(s_flat.source, t_flat.source)
             };
 
-            if sources_match {
+            if constraints_match && sources_match {
                 // Source has optional but target doesn't → reject
                 if s_flat.has_optional && !t_flat.has_optional {
                     return Some(false);
@@ -1282,13 +1324,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Both must have the same constraint (e.g., both `keyof T`).
         // First try identity, then evaluate to normalize (e.g., keyof(Readonly<T>) → keyof(T)).
-        let constraints_match = if s_mapped.constraint == t_mapped.constraint {
-            true
-        } else {
-            let s_eval = self.subtype.evaluate_type(s_mapped.constraint);
-            let t_eval = self.subtype.evaluate_type(t_mapped.constraint);
-            s_eval == t_eval
-        };
+        let constraints_match = self
+            .mapped_key_constraint_covers(s_mapped.constraint, t_mapped.constraint)
+            || (self.mapped_name_types_compatible(&s_mapped, &t_mapped)
+                && self
+                    .subtype
+                    .is_subtype_of(t_mapped.constraint, s_mapped.constraint));
 
         if !constraints_match {
             return None;
@@ -1325,6 +1366,62 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Compare templates using the subtype checker
         self.configure_subtype(self.strict_function_types);
         Some(self.subtype.is_subtype_of(source_template, target_template))
+    }
+
+    fn mapped_name_types_compatible(
+        &mut self,
+        source_mapped: &MappedType,
+        target_mapped: &MappedType,
+    ) -> bool {
+        let (Some(source_name), Some(target_name)) =
+            (source_mapped.name_type, target_mapped.name_type)
+        else {
+            return source_mapped.name_type == target_mapped.name_type;
+        };
+
+        let source_param = self.interner.type_param(source_mapped.type_param);
+        let target_param = self.interner.type_param(target_mapped.type_param);
+        let equiv_start = self.subtype.type_param_equivalences.len();
+        self.subtype
+            .type_param_equivalences
+            .push((source_param, target_param));
+        let compatible = self.subtype.is_subtype_of(source_name, target_name)
+            && self.subtype.is_subtype_of(target_name, source_name);
+        self.subtype.type_param_equivalences.truncate(equiv_start);
+        compatible
+    }
+
+    fn mapped_key_constraint_covers(
+        &mut self,
+        source_constraint: TypeId,
+        target_constraint: TypeId,
+    ) -> bool {
+        if source_constraint == target_constraint {
+            return true;
+        }
+        let source_eval = self.subtype.evaluate_type(source_constraint);
+        let target_eval = self.subtype.evaluate_type(target_constraint);
+        if source_eval != source_constraint || target_eval != target_constraint {
+            return self.mapped_key_constraint_covers(source_eval, target_eval);
+        }
+        if let Some(target_param) = type_param_info(self.interner, target_constraint)
+            && let Some(target_bound) = target_param.constraint
+        {
+            return self.mapped_key_constraint_covers(source_constraint, target_bound);
+        }
+        if type_param_info(self.interner, source_constraint).is_some() {
+            return false;
+        }
+        if let (Some(source_obj), Some(target_obj)) = (
+            keyof_inner_type(self.interner, source_constraint),
+            keyof_inner_type(self.interner, target_constraint),
+        ) {
+            self.configure_subtype(self.strict_function_types);
+            return self.subtype.is_subtype_of(source_obj, target_obj);
+        }
+        self.configure_subtype(self.strict_function_types);
+        self.subtype
+            .is_subtype_of(target_constraint, source_constraint)
     }
 
     /// Check fast-path assignability conditions.
@@ -2151,26 +2248,33 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         is_empty_object_type_through_type_constraints(self.interner, target)
     }
 
+    /// Match TSC's `isUnknownLikeUnionType`: a union that contains `{}`,
+    /// `null`, AND `undefined` is semantically equivalent to `unknown`,
+    /// because every other constituent is necessarily a subtype of `{}`
+    /// (or otherwise absorbed by it). Extra union members do not disqualify
+    /// the target — e.g. `{} | { x: string } | null | undefined` is still
+    /// unknown-like.
     fn empty_object_with_nullish_target(&self, target: TypeId) -> Option<(bool, bool)> {
         let TypeData::Union(members) = self.interner.lookup(target)? else {
             return None;
         };
         let members = self.interner.type_list(members);
+        if members.len() < 3 {
+            return None;
+        }
         let mut saw_empty_object = false;
-        let mut allow_null = false;
-        let mut allow_undefined = false;
+        let mut saw_null = false;
+        let mut saw_undefined = false;
         for &member in members.iter() {
-            if self.is_empty_object_target(member) {
+            if member == TypeId::NULL {
+                saw_null = true;
+            } else if member == TypeId::UNDEFINED {
+                saw_undefined = true;
+            } else if self.is_empty_object_target(member) {
                 saw_empty_object = true;
-                continue;
-            }
-            match member {
-                TypeId::NULL => allow_null = true,
-                TypeId::UNDEFINED => allow_undefined = true,
-                _ => return None,
             }
         }
-        (saw_empty_object && allow_null && allow_undefined).then_some((allow_null, allow_undefined))
+        (saw_empty_object && saw_null && saw_undefined).then_some((saw_null, saw_undefined))
     }
 
     fn is_assignable_to_empty_object_or_nullish(

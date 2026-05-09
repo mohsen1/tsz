@@ -26,6 +26,7 @@ impl<'a> Completions<'a> {
             file_name: None,
             strict: false,
             sound_mode: false,
+            checker_options: None,
             lib_contexts: &[],
         }
     }
@@ -48,6 +49,7 @@ impl<'a> Completions<'a> {
             file_name: Some(file_name),
             strict: false,
             sound_mode: false,
+            checker_options: None,
             lib_contexts: &[],
         }
     }
@@ -71,6 +73,7 @@ impl<'a> Completions<'a> {
             file_name: Some(file_name),
             strict,
             sound_mode: false,
+            checker_options: None,
             lib_contexts: &[],
         }
     }
@@ -95,12 +98,13 @@ impl<'a> Completions<'a> {
             file_name: Some(file_name),
             strict,
             sound_mode,
+            checker_options: None,
             lib_contexts: &[],
         }
     }
 
     /// Create a completions provider with explicit options and lib contexts.
-    pub const fn with_options_and_lib_contexts(
+    pub fn with_options_and_lib_contexts(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -118,6 +122,7 @@ impl<'a> Completions<'a> {
             file_name: Some(file_name),
             strict: options.strict,
             sound_mode: options.sound_mode,
+            checker_options: options.checker_options,
             lib_contexts: options.lib_contexts,
         }
     }

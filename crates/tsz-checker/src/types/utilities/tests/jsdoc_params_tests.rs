@@ -504,6 +504,26 @@ fn jsdoc_extract_type_tag_expr_no_closing_brace() {
     assert!(CheckerState::jsdoc_extract_type_tag_expr(jsdoc).is_none());
 }
 
+#[test]
+fn jsdoc_extract_type_tag_expr_object_literal_balances_braces() {
+    // `@type {{ a: T }}` wraps an object literal type — the outer braces
+    // delimit the type expression, the inner braces are the object literal.
+    let jsdoc = "* @type {{ a: number }}";
+    assert_eq!(
+        CheckerState::jsdoc_extract_type_tag_expr(jsdoc),
+        Some("{ a: number }".to_string())
+    );
+}
+
+#[test]
+fn jsdoc_extract_type_tag_expr_nested_object_literal() {
+    let jsdoc = "* @type {{ a: { b: number } }}";
+    assert_eq!(
+        CheckerState::jsdoc_extract_type_tag_expr(jsdoc),
+        Some("{ a: { b: number } }".to_string())
+    );
+}
+
 // =========================================================================
 // jsdoc_template_type_params
 // =========================================================================
@@ -529,10 +549,10 @@ fn jsdoc_template_multiple_comma() {
 }
 
 #[test]
-fn jsdoc_template_multiple_space() {
+fn jsdoc_template_space_does_not_delimit_names() {
     let jsdoc = "* @template T U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
-    assert_eq!(names_only(&params), vec!["T", "U"]);
+    assert_eq!(names_only(&params), vec!["T"]);
 }
 
 #[test]
@@ -568,6 +588,40 @@ fn jsdoc_template_ignores_brace_form_for_binding() {
     let jsdoc = "* @template {T}";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
     assert!(params.is_empty());
+}
+
+#[test]
+fn jsdoc_template_bracket_default_registers_name() {
+    // Issue #4005: `@template [T=string]` declares T with default `string`.
+    // Without unwrapping the brackets, the identifier scanner saw `[` and
+    // skipped the segment, leaving T unbound and producing a spurious
+    // TS2304 at every reference.
+    let jsdoc = "* @template [T=string]";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T"]);
+}
+
+#[test]
+fn jsdoc_template_bracket_default_after_const_modifier() {
+    let jsdoc = "* @template const [T=string]";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].0, "T");
+    assert!(params[0].1); // is_const
+}
+
+#[test]
+fn jsdoc_template_bracket_default_with_comma_separated_names() {
+    let jsdoc = "* @template [T=string], U";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
+}
+
+#[test]
+fn jsdoc_template_constraint_keeps_comma_names() {
+    let jsdoc = "* @template {{ a: number, b: string }} T,U A Comment";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T", "U"]);
 }
 
 #[test]
@@ -916,4 +970,81 @@ const f = (num="0") => num + 42;
         "TS2322 length must equal len(`num`) = 3; got {}",
         diag.length
     );
+}
+
+// =========================================================================
+// Multi-tag JSDoc on a namespace import alias must not emit TS2304/TS2552
+// =========================================================================
+
+/// `import * as s from '...'` binds `s` as an `ALIAS` symbol with
+/// `import_module = Some("...")`. For multi-tag JSDoc comments where a later
+/// tag carries a qualified type expression like `@param {s.X}`, the JSDoc
+/// typedef-base-type diagnostic loop used to emit a generic TS2304 / TS2552
+/// "Cannot find name 's.X'" because (a) `s` is not directly flagged as a
+/// namespace, so the namespace-member validator skipped it, and (b) the
+/// generic identifier name-not-found emitter then fired with the entire
+/// qualified spelling `s.X` as the missing name.
+///
+/// tsc never emits TS2304 with a dotted name there: it either accepts the
+/// reference silently (when `X` is a valid export) or emits TS2694
+/// ("Namespace 's' has no exported member 'X'"). This test pins the fix:
+/// the qualified-root namespace/alias guard suppresses the generic emitter
+/// for any `<root>.<...>` whose root resolves to a (possibly aliased)
+/// namespace, module, or import alias in the current file.
+#[test]
+fn jsdoc_namespace_alias_qualified_param_does_not_emit_cannot_find_name() {
+    let diags = crate::test_utils::check_js_source_diagnostics(
+        r#"// @ts-check
+import * as s from "./missing_module";
+/** @param {s.A} a
+    @param {s.B} b */
+function f(a, b) { return a; }
+"#,
+    );
+    // Whatever diagnostics the missing-module path produces (e.g. TS2307
+    // "Cannot find module"), TS2304 / TS2552 with the dotted name `s.A` or
+    // `s.B` must not appear: the qualified spelling belongs to namespace-
+    // member resolution, not the generic name-not-found emitter.
+    let offending: Vec<_> = diags
+        .iter()
+        .filter(|d| (d.code == 2304 || d.code == 2552) && d.message_text.contains('.'))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "Multi-tag JSDoc on a namespace import alias must not emit TS2304/TS2552 for the qualified name; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Verify the structural rule across multiple bound-variable name choices.
+/// The fix must not depend on a particular alias name; swapping `s` for `lib`
+/// or `mod_` must produce the same diagnostic-suppression behavior.
+#[test]
+fn jsdoc_namespace_alias_qualified_param_is_name_independent() {
+    for alias in ["s", "lib", "mod_"] {
+        let source = format!(
+            r#"// @ts-check
+import * as {alias} from "./missing_module";
+/** @param {{{alias}.First}} a
+    @param {{{alias}.Second}} b */
+function f(a, b) {{ return a; }}
+"#
+        );
+        let diags = crate::test_utils::check_js_source_diagnostics(&source);
+        let offending: Vec<_> = diags
+            .iter()
+            .filter(|d| (d.code == 2304 || d.code == 2552) && d.message_text.contains('.'))
+            .collect();
+        assert!(
+            offending.is_empty(),
+            "alias={alias}: must not emit dotted TS2304/TS2552; got: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
 }

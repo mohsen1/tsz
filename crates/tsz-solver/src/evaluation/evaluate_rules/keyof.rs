@@ -3,6 +3,7 @@
 //! Handles TypeScript's keyof operator: `keyof T`
 
 use crate::TypeDatabase;
+use crate::instantiation::instantiate::instantiate_generic;
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
@@ -74,7 +75,19 @@ impl KeyofKeySet {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
-    fn property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
+    fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
+        let name = prop.name;
+        let name_text = self.interner().resolve_atom_ref(name);
+        if prop.is_symbol_named
+            && let Some(symbol_ref) = name_text.strip_prefix("__unique_")
+            && let Ok(id) = symbol_ref.parse::<u32>()
+        {
+            return self.interner().unique_symbol(crate::types::SymbolRef(id));
+        }
+        self.interner().literal_string_atom(name)
+    }
+
+    fn synthetic_property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
         let name_text = self.interner().resolve_atom_ref(name);
         if let Some(symbol_ref) = name_text.strip_prefix("__unique_")
             && let Ok(id) = symbol_ref.parse::<u32>()
@@ -118,7 +131,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     number_index,
                 } => {
                     for prop in properties {
-                        let source_key = self.property_name_atom_to_key_type(prop.name);
+                        let source_key = self.property_name_to_key_type(&prop);
                         match self.remap_key_type_for_mapped(mapped, source_key) {
                             Ok(Some(remapped_key)) => {
                                 self.push_remapped_key_type(&mut key_types, remapped_key);
@@ -170,7 +183,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut sorted_names: Vec<_> = names.into_iter().collect();
             sorted_names.sort_by_key(|atom| atom.0);
             for name in sorted_names {
-                key_types.push(self.property_name_atom_to_key_type(name));
+                key_types.push(self.synthetic_property_name_atom_to_key_type(name));
             }
         }
 
@@ -240,6 +253,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => {}
         }
 
+        if let Some(keys) = self.try_keyof_mapped_application_constraint(operand) {
+            return keys;
+        }
+
         {
             // For non-union types, evaluate normally
             let evaluated_operand = self.evaluate(operand);
@@ -273,7 +290,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::Mapped(mapped_id) => {
                     let mapped = self.interner().get_mapped(mapped_id);
-                    if mapped.name_type.is_some() {
+                    if let Some(name_type) = mapped.name_type {
+                        let constraint_has_type_params =
+                            crate::type_queries::contains_type_parameters_db(
+                                self.interner(),
+                                mapped.constraint,
+                            );
+                        if !constraint_has_type_params
+                            && let Some(keys) =
+                                self.collect_keyof_for_remapped_mapped_type(mapped_id, &mapped)
+                        {
+                            return keys;
+                        }
+                        if constraint_has_type_params
+                            && let Some(keys) =
+                                self.collect_keyof_for_remapped_mapped_type(mapped_id, &mapped)
+                            && keys != name_type
+                        {
+                            return keys;
+                        }
+                        if constraint_has_type_params
+                            || crate::type_queries::contains_type_parameters_except_name_db(
+                                self.interner(),
+                                name_type,
+                                mapped.type_param.name,
+                            )
+                        {
+                            return self.interner().keyof(evaluated_operand);
+                        }
                         self.collect_keyof_for_remapped_mapped_type(mapped_id, &mapped)
                             .unwrap_or_else(|| {
                                 self.evaluate(mapped.name_type.unwrap_or(TypeId::ERROR))
@@ -342,7 +386,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     props.sort_by_key(|p| p.declaration_order);
                     let key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_atom_to_key_type(p.name))
+                        .map(|p| self.property_name_to_key_type(p))
                         .collect();
                     if key_types.is_empty() {
                         return TypeId::NEVER;
@@ -359,7 +403,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     props.sort_by_key(|p| p.declaration_order);
                     let mut key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_atom_to_key_type(p.name))
+                        .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
                     if shape.string_index.is_some() {
@@ -385,7 +429,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     props.sort_by_key(|p| p.declaration_order);
                     let mut key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_atom_to_key_type(p.name))
+                        .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
                     if shape.string_index.is_some() {
@@ -423,8 +467,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // keyof unknown = never
                         TypeId::NEVER
                     }
-                    IntrinsicKind::Never
-                    | IntrinsicKind::Void
+                    IntrinsicKind::Never => {
+                        // keyof never = string | number | symbol
+                        self.interner()
+                            .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL)
+                    }
+                    IntrinsicKind::Void
                     | IntrinsicKind::Null
                     | IntrinsicKind::Undefined
                     | IntrinsicKind::Object
@@ -495,6 +543,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    fn try_keyof_mapped_application_constraint(&mut self, operand: TypeId) -> Option<TypeId> {
+        let TypeData::Application(app_id) = self.interner().lookup(operand)? else {
+            return None;
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
+            TypeData::UnresolvedTypeName(atom) => {
+                let name = self.interner().resolve_atom(atom);
+                self.resolver().resolve_unresolved_type_name(&name)
+            }
+            _ => None,
+        }?;
+        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        let TypeData::Mapped(mapped_id) = self.interner().lookup(resolved)? else {
+            return None;
+        };
+        let mapped = self.interner().get_mapped(mapped_id);
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        let type_params = self
+            .resolver()
+            .get_lazy_type_params(def_id)
+            .filter(|params| params.len() == app.args.len())
+            .unwrap_or_else(|| self.extract_type_params_from_type(resolved));
+        if type_params.len() != app.args.len() {
+            return None;
+        }
+
+        let instantiated =
+            instantiate_generic(self.interner(), mapped.constraint, &type_params, &app.args);
+        let evaluated = self.evaluate(instantiated);
+        Some(if evaluated == TypeId::ERROR {
+            instantiated
+        } else {
+            evaluated
+        })
+    }
+
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
     pub(crate) fn keyof_intersection(&mut self, members: TypeListId, _operand: TypeId) -> TypeId {
         let members = self.interner().type_list(members).to_vec();
@@ -534,7 +624,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut keys = Vec::with_capacity(base_props.len() + 1);
                 keys.push(TypeId::NUMBER);
                 for prop in base_props {
-                    keys.push(self.property_name_atom_to_key_type(prop.name));
+                    keys.push(self.property_name_to_key_type(&prop));
                 }
                 return keys;
             }
@@ -576,13 +666,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 match self.interner().lookup(element.type_id) {
                     Some(TypeData::Tuple(rest_elements)) => {
                         let rest_elements = self.interner().tuple_list(rest_elements);
-                        match self.append_tuple_indices(&rest_elements, index, out) {
-                            Some(next) => {
-                                index = next;
-                                continue;
-                            }
-                            None => return None,
-                        }
+                        index = self.append_tuple_indices(&rest_elements, index, out)?;
+                        continue;
                     }
                     _ => return None,
                 }

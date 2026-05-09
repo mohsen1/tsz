@@ -498,7 +498,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(String, u32, u32, u32)> {
         let mut params = Vec::new();
         let mut cursor = 0usize;
-        while let Some(rel) = raw_comment[cursor..].find("@template") {
+        while let Some(rel) = Self::jsdoc_tag_offset(&raw_comment[cursor..], "template") {
             let tag_start = cursor + rel;
             let mut idx = cursor + rel + "@template".len();
             while let Some(ch) = raw_comment[idx..].chars().next() {
@@ -731,6 +731,15 @@ impl<'a> CheckerState<'a> {
                     self.collect_infer_params_with_constraints_inner(span.expression, params);
                 }
             }
+            // Type Predicates: `x is infer N` should expose `N` to the
+            // conditional-true-branch scope. Mirror collect_infer_type_parameters_inner.
+            k if k == syntax_kind_ext::TYPE_PREDICATE => {
+                if let Some(predicate) = self.ctx.arena.get_type_predicate(node)
+                    && predicate.type_node != NodeIndex::NONE
+                {
+                    self.collect_infer_params_with_constraints_inner(predicate.type_node, params);
+                }
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE
                 || k == syntax_kind_ext::OPTIONAL_TYPE
                 || k == syntax_kind_ext::REST_TYPE =>
@@ -938,6 +947,18 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
                 if let Some(member) = self.ctx.arena.get_named_tuple_member(node) {
                     self.collect_infer_type_parameters_inner(member.type_node, params);
+                }
+            }
+            // Type Predicates (`x is T` / `asserts x is T`): the predicate's
+            // target type may itself contain `infer X`, e.g.
+            // `F extends (x: any) => x is infer N ? N : never`. Without
+            // recursing here, the inferred name is invisible to the
+            // conditional-true-branch scope and resolves as TS2304.
+            k if k == syntax_kind_ext::TYPE_PREDICATE => {
+                if let Some(predicate) = self.ctx.arena.get_type_predicate(node)
+                    && predicate.type_node != NodeIndex::NONE
+                {
+                    self.collect_infer_type_parameters_inner(predicate.type_node, params);
                 }
             }
             // Type Parameters: check constraint and default for nested infer

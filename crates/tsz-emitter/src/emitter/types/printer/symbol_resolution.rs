@@ -429,6 +429,12 @@ impl<'a> TypePrinter<'a> {
         if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
             && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
         {
+            if !needs_typeof
+                && self.type_param_scope_contains_name(&name)
+                && self.global_class_symbol_can_use_global_this(sym_id)
+            {
+                return Some(format!("globalThis.{name}"));
+            }
             return Some(if needs_typeof {
                 format!("typeof {name}")
             } else {
@@ -513,8 +519,31 @@ impl<'a> TypePrinter<'a> {
             .map(|module_path| format!("typeof import(\"{module_path}\")"))
     }
 
+    fn global_class_symbol_can_use_global_this(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+        symbol.parent == SymbolId::NONE
+            && symbol.has_any_flags(symbol_flags::CLASS)
+            && self.resolve_symbol_module_path(sym_id).is_none()
+            && Self::is_valid_identifier(&symbol.escaped_name)
+    }
+
     /// Convert a `TypeId` to TypeScript syntax string.
     pub fn print_type(&self, type_id: TypeId) -> String {
+        if self.current_depth >= self.max_depth {
+            return "any".to_string();
+        }
+
+        let mut nested = self.clone();
+        nested.current_depth += 1;
+        nested.print_type_inner(type_id)
+    }
+
+    fn print_type_inner(&self, type_id: TypeId) -> String {
         // Fast path: check built-in intrinsics (TypeId < 100)
         if type_id.is_intrinsic() {
             return self.print_intrinsic_type(type_id);
@@ -542,7 +571,7 @@ impl<'a> TypePrinter<'a> {
             return self.print_object_type(shape_id);
         }
         if let Some(type_list_id) = visitor::union_list_id(self.interner, type_id) {
-            return self.print_union(type_list_id);
+            return self.print_union(type_id, type_list_id);
         }
         if let Some(type_list_id) = visitor::intersection_list_id(self.interner, type_id) {
             return self.print_intersection(type_list_id);
@@ -597,6 +626,18 @@ impl<'a> TypePrinter<'a> {
                     result.push_str(&bare.print_type(constraint));
                 }
                 return result;
+            }
+            if !visitor::is_infer_type(self.interner, type_id)
+                && !self.outer_type_param_names.contains(&param_info.name)
+            {
+                let name = self.interner.resolve_atom(param_info.name);
+                if let Some(constraint) = param_info.constraint {
+                    let mut scoped = self.clone();
+                    scoped.outer_type_param_names.push(param_info.name);
+                    let constraint_text = scoped.print_type(constraint);
+                    return Self::replace_type_param_name_with_any(&constraint_text, &name);
+                }
+                return "unknown".to_string();
             }
             return self.print_type_parameter(&param_info);
         }
@@ -667,7 +708,10 @@ impl<'a> TypePrinter<'a> {
             }
             return format!("readonly {inner_str}");
         }
-        if visitor::unique_symbol_ref(self.interner, type_id).is_some() {
+        if let Some(sym_ref) = visitor::unique_symbol_ref(self.interner, type_id) {
+            if let Some(name) = self.print_named_symbol_reference(SymbolId(sym_ref.0), true) {
+                return name;
+            }
             return "unique symbol".to_string();
         }
         if visitor::is_this_type(self.interner, type_id) {
@@ -764,6 +808,11 @@ impl<'a> TypePrinter<'a> {
             && self.can_reference_symbol_by_name(sym_id)
             && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
         {
+            if self.type_param_scope_contains_name(&name)
+                && self.global_class_symbol_can_use_global_this(sym_id)
+            {
+                return format!("globalThis.{name}");
+            }
             return name;
         }
 
@@ -812,9 +861,34 @@ impl<'a> TypePrinter<'a> {
             return "{}".to_string();
         }
 
+        let visible_method_property_names: Vec<_> = shape
+            .properties
+            .iter()
+            .filter(|prop| prop.is_method && !self.property_is_hidden_in_declaration_shape(prop))
+            .map(|prop| prop.name)
+            .collect();
+
         let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
+            let name = self.resolve_atom(prop.name);
+            let redundant_negative_numeric_index_type = shape
+                .number_index
+                .as_ref()
+                .map(|idx| idx.value_type)
+                .or_else(|| shape.string_index.as_ref().map(|idx| idx.value_type));
+            let redundant_negative_numeric =
+                redundant_negative_numeric_index_type.is_some_and(|index_value_type| {
+                    !prop.is_string_named
+                        && name != "-1"
+                        && name.starts_with('-')
+                        && name.parse::<f64>().is_ok()
+                        && self.print_type(index_value_type) == self.print_type(prop.type_id)
+                });
+            let duplicate_method_value_property =
+                !prop.is_method && visible_method_property_names.contains(&prop.name);
             self.property_is_hidden_in_declaration_shape(prop)
-                || matches!(self.resolve_atom(prop.name).as_str(), "" | ":")
+                || redundant_negative_numeric
+                || duplicate_method_value_property
+                || matches!(name.as_str(), "" | ":")
                 || self
                     .declaration_property_name_text(prop)
                     .trim_start()
@@ -843,7 +917,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 line.push_str(&format!(
                     "[{}: string]: {};",
                     param,
@@ -861,7 +939,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 line.push_str(&format!(
                     "[{}: number]: {};",
                     param,
@@ -881,9 +963,23 @@ impl<'a> TypePrinter<'a> {
             } else {
                 &shape.properties
             };
+            let emitted_method_names: Vec<Atom> = props
+                .iter()
+                .filter(|property| {
+                    !should_skip_property(property)
+                        && property.is_method
+                        && !property.readonly
+                        && nested
+                            .print_property_as_method(property, shape.symbol)
+                            .is_some()
+                })
+                .map(|property| property.name)
+                .collect();
 
             for property in props {
-                if should_skip_property(property) {
+                if should_skip_property(property)
+                    || (!property.is_method && emitted_method_names.contains(&property.name))
+                {
                     continue;
                 }
                 let mut line = String::new();
@@ -959,7 +1055,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 member.push_str(&format!(
                     "[{}: string]: {}",
                     param,
@@ -976,7 +1076,11 @@ impl<'a> TypePrinter<'a> {
                     .param_name
                     .map(|a| self.resolve_atom(a))
                     .unwrap_or_else(|| "x".to_string());
-                let widened = self.widen_synthesized_method_return_type(idx.value_type);
+                let widened = if idx.readonly {
+                    idx.value_type
+                } else {
+                    self.widen_synthesized_method_return_type(idx.value_type)
+                };
                 member.push_str(&format!(
                     "[{}: number]: {}",
                     param,
@@ -995,9 +1099,23 @@ impl<'a> TypePrinter<'a> {
             } else {
                 &shape.properties
             };
+            let emitted_method_names_flat: Vec<Atom> = props_flat
+                .iter()
+                .filter(|property| {
+                    !should_skip_property(property)
+                        && property.is_method
+                        && !property.readonly
+                        && self
+                            .print_property_as_method(property, shape.symbol)
+                            .is_some()
+                })
+                .map(|property| property.name)
+                .collect();
 
             for property in props_flat {
-                if should_skip_property(property) {
+                if should_skip_property(property)
+                    || (!property.is_method && emitted_method_names_flat.contains(&property.name))
+                {
                     continue;
                 }
                 let mut member = String::new();
@@ -1136,10 +1254,40 @@ impl<'a> TypePrinter<'a> {
             .get(&computed.expression.0)
             .copied()
             .or_else(|| type_cache.node_types.get(&name_idx.0).copied())
+            .or_else(|| self.computed_name_expression_declared_type(computed.expression))
         else {
             return false;
         };
 
         !tsz_solver::type_queries::is_type_usable_as_property_name(self.interner, key_type)
+    }
+
+    fn computed_name_expression_declared_type(
+        &self,
+        expr_idx: tsz_parser::NodeIndex,
+    ) -> Option<TypeId> {
+        let node_arena = self.node_arena?;
+        let symbol_arena = self.symbol_arena?;
+        let type_cache = self.type_cache?;
+        let expr_node = node_arena.get(expr_idx)?;
+        let ident = node_arena.get_identifier(expr_node)?;
+        let name = node_arena.resolve_identifier_text(ident);
+
+        symbol_arena
+            .find_all_by_name(name)
+            .iter()
+            .filter_map(|sym_id| symbol_arena.get(*sym_id))
+            .flat_map(|symbol| symbol.all_declarations())
+            .find_map(|decl_idx| {
+                let decl_node = node_arena.get(decl_idx)?;
+                let var_decl = node_arena.get_variable_declaration(decl_node)?;
+                if var_decl.type_annotation == tsz_parser::NodeIndex::NONE {
+                    return None;
+                }
+                type_cache
+                    .node_types
+                    .get(&var_decl.type_annotation.0)
+                    .copied()
+            })
     }
 }

@@ -139,6 +139,250 @@ console.log(typeof TruffleContract);
 }
 
 #[test]
+fn checked_js_jsdoc_import_module_specifier_may_contain_from() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "fromage.d.ts",
+                r#"
+export interface Foo {
+  value: string;
+}
+                "#,
+            ),
+            (
+                "caller.js",
+                r#"
+// @ts-check
+/** @import { Foo as LocalFoo } from "./fromage" */
+/** @type {LocalFoo} */
+const value = { value: 123 };
+                "#,
+            ),
+        ],
+        "caller.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Expected LocalFoo to resolve when the module specifier contains `from`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 after resolving LocalFoo to Foo. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_import_alias_accepts_tab_around_as() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "dep.d.ts",
+                r#"
+export interface Foo {
+  value: string;
+}
+                "#,
+            ),
+            (
+                "caller.js",
+                "// @ts-check\n\
+                 /** @import { Foo as\tLocalFoo } from \"./dep\" */\n\
+                 /** @type {LocalFoo} */\n\
+                 const item = { value: 123 };\n",
+            ),
+        ],
+        "caller.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Expected LocalFoo to resolve when `as` is followed by a tab. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 after resolving LocalFoo to Foo. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_import_type_rejects_backtick_module_specifier() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "dep.d.ts",
+                r#"
+export interface Foo {
+  x: string;
+}
+                "#,
+            ),
+            (
+                "index.js",
+                r#"
+// @ts-check
+
+/** @type {import(`./dep`).Foo} */
+const value = { x: "ok" };
+
+value.x.toUpperCase();
+value.y;
+                "#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1141),
+        "Expected TS1141 for backtick JSDoc import type module specifier. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Invalid JSDoc import syntax should not resolve Foo and emit downstream TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_param_string_literal_type_keeps_closing_brace() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @param {"}"} x
+ */
+function takesBrace(x) {}
+
+takesBrace("not-brace");
+            "#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for assigning a different string to @param string-literal brace type. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 8024) && !has_error(&diagnostics, 7006),
+        "JSDoc @param type should not be truncated into a bogus name or any parameter. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_typeof_import_rejects_backtick_module_specifier() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "dep.d.ts",
+                r#"
+export const value: string;
+                "#,
+            ),
+            (
+                "index.js",
+                r#"
+// @ts-check
+
+/** @type {typeof import(`./dep`)} */
+const ns = {};
+
+ns.value;
+                "#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1141),
+        "Expected TS1141 for backtick JSDoc typeof import module specifier. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Invalid JSDoc typeof import syntax should not resolve the module namespace and emit downstream TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_template_whitespace_does_not_declare_second_name() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @template T U
+ * @param {U} y
+ * @returns {U}
+ */
+function f(y) { return y; }
+            "#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2304 && message.contains("'U'")),
+        "Expected whitespace-only @template delimiter to leave U unresolved. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_cross_file_typedef_and_script_globals_duplicate() {
     let files = &[
         ("mod1.js", "/** @typedef {number} Foo */\nclass Bar {}\n"),
@@ -429,8 +673,8 @@ fn checked_js_jsdoc_type_with_unresolvable_module_does_not_emit_ts9006() {
 interface Item {
     x: string;
 }
-declare const items: Item[];
-export = items;
+declare function getItems(): Item[];
+export = getItems;
                 "#,
             ),
             (
@@ -455,6 +699,45 @@ module.exports = items;
     assert!(
         !has_error(&diagnostics, 9006),
         "TS9006 must not be emitted when the JSDoc `typeof import(...)` module specifier is unresolvable (TS2307 already covers the failure). Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_raw_typeof_import_line_comment_text_still_emits_ts9006() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "some-mod.d.ts",
+                r#"
+interface Item {
+    x: string;
+}
+declare function getItems(): Item[];
+export = getItems;
+                "#,
+            ),
+            (
+                "index.js",
+                r#"
+// typeof import("/some-mod")
+const items = require("./some-mod")();
+module.exports = items;
+                "#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            emit_declarations: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 9006),
+        "ordinary line comments must not suppress TS9006. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -493,5 +776,189 @@ function f({ x }) {
     assert!(
         has_error(&diagnostics, 2322),
         "Expected TS2322 because optional [opts.x] should flow as string | undefined into x. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_param_prefix_tag_does_not_report_ts8024() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @paramx {number} value
+ */
+function acceptsAnything(value) {
+  return value;
+}
+
+acceptsAnything("not a number");
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 8024),
+        "Did not expect TS8024 for a non-param JSDoc tag prefix. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 because @paramx should not type the function parameter. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_overload_prefix_tag_does_not_report_ts7012() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @overloadx
+ * @param {string} value
+ */
+function f(value) {
+  return value;
+}
+
+f("ok");
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7012),
+        "Did not expect TS7012 for a non-overload JSDoc tag prefix. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_jsdoc_overload_tag_still_reports_ts7012() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"
+// @ts-check
+
+/**
+ * @overload
+ * @param {string} value
+ */
+function f(value) {
+  return value;
+}
+
+f("ok");
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7012),
+        "Expected TS7012 for a real @overload tag without return type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Regression for issue #3377.
+///
+/// When a JSDoc `@satisfies` tag is malformed because the first non-whitespace
+/// token after the tag is not `{`, the checker must NOT scan forward to a later
+/// braced type and apply that type to the next expression. tsc reports the
+/// malformed tag at the offending token and does not type the following
+/// initializer, so the bogus excess-property diagnostic (TS2353) must not fire.
+#[test]
+fn checked_js_jsdoc_satisfies_malformed_does_not_apply_later_braced_type() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"// @ts-check
+/** @satisfies nope {{ a: number }} */
+const value = { b: 1 };
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1005),
+        "Expected TS1005 for malformed @satisfies tag. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Expected TS2304 (Cannot find name 'nope') for the unexpected token after @satisfies. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2353),
+        "Malformed @satisfies must not type the following expression and emit TS2353 against `{{ a: number; }}`. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Control test paired with `checked_js_jsdoc_satisfies_malformed_does_not_apply_later_braced_type`.
+///
+/// A well-formed `@satisfies {Type}` annotation that the variable initializer
+/// satisfies should produce no diagnostics. This guards against regressing the
+/// malformed fix into rejecting valid `@satisfies` tags too.
+#[test]
+fn checked_js_jsdoc_satisfies_valid_tag_applies_type_without_errors() {
+    let diagnostics = compile_named_files(
+        &[(
+            "index.js",
+            r#"// @ts-check
+/** @satisfies {{ a: number }} */
+const value = { a: 1 };
+"#,
+        )],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 1005),
+        "Did not expect TS1005 for a well-formed @satisfies tag. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Did not expect TS2304 for a well-formed @satisfies tag. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2353),
+        "Did not expect TS2353 when the initializer satisfies the @satisfies type. Actual diagnostics: {diagnostics:#?}"
     );
 }

@@ -479,6 +479,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -540,15 +541,72 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if sigs.is_empty() {
-                // Default construct signature (like the default constructor)
-                sigs.push(CallSignature {
-                    type_params: class_type_params.clone(),
-                    params: Vec::new(),
-                    this_type: None,
-                    return_type: rough_instance_return_type,
-                    type_predicate: None,
-                    is_method: false,
-                });
+                // No own constructor — try to inherit construct signatures from
+                // the base class so that the partial constructor type used by
+                // static-property initializers (`new Derived(...)` inside
+                // Derived's `static create = ...`) reflects the base's arity
+                // instead of the default 0-arg fallback. This is a rough
+                // approximation: we don't yet have a substitution for the
+                // class's type arguments, so the inherited sigs may reference
+                // base type parameters. For arity checking inside static
+                // initializers that's fine — the precise instantiation runs
+                // during the outer `get_class_constructor_type_inner` call.
+                let inherited_rough_sigs: Option<Vec<CallSignature>> = (|| {
+                    let heritage_clauses = class.heritage_clauses.as_ref()?;
+                    for &clause_idx in &heritage_clauses.nodes {
+                        let clause_node = self.ctx.arena.get(clause_idx)?;
+                        let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            continue;
+                        }
+                        let &type_idx = heritage.types.nodes.first()?;
+                        let type_node = self.ctx.arena.get(type_idx)?;
+                        let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            (
+                                expr_type_args.expression,
+                                expr_type_args.type_arguments.as_ref(),
+                            )
+                        } else {
+                            (type_idx, None)
+                        };
+                        let base_constructor_type =
+                            self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
+                        let base_sigs =
+                            construct_signatures_for_type(self.ctx.types, base_constructor_type)?;
+                        if base_sigs.is_empty() {
+                            return None;
+                        }
+                        return Some(
+                            base_sigs
+                                .iter()
+                                .map(|sig| CallSignature {
+                                    type_params: class_type_params.clone(),
+                                    params: sig.params.clone(),
+                                    this_type: sig.this_type,
+                                    return_type: rough_instance_return_type,
+                                    type_predicate: sig.type_predicate,
+                                    is_method: false,
+                                })
+                                .collect(),
+                        );
+                    }
+                    None
+                })();
+                if let Some(inherited) = inherited_rough_sigs {
+                    sigs = inherited;
+                } else {
+                    // Default construct signature (like the default constructor)
+                    sigs.push(CallSignature {
+                        type_params: class_type_params.clone(),
+                        params: Vec::new(),
+                        this_type: None,
+                        return_type: rough_instance_return_type,
+                        type_predicate: None,
+                        is_method: false,
+                    });
+                }
             }
             sigs
         };
@@ -633,6 +691,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             }),
                             &inherited_static_props,
@@ -751,6 +810,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: current_sym,
                                 declaration_order: 0,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             }),
                             &inherited_static_props,
@@ -828,6 +888,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order: 0,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         },
                     );
@@ -1075,10 +1136,12 @@ impl<'a> CheckerState<'a> {
                         param_name,
                     };
 
-                    if key_type == TypeId::NUMBER {
-                        static_number_index = Some(idx_sig);
-                    } else {
-                        static_string_index = Some(idx_sig);
+                    if is_valid_index_type {
+                        if key_type == TypeId::NUMBER {
+                            static_number_index = Some(idx_sig);
+                        } else {
+                            static_string_index = Some(idx_sig);
+                        }
                     }
                 }
                 _ => {}
@@ -1090,20 +1153,11 @@ impl<'a> CheckerState<'a> {
             if methods.contains_key(&name) {
                 continue;
             }
-            let read_type = accessor.getter.unwrap_or_else(|| {
-                if accessor.setter.is_some() {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::UNKNOWN
-                }
-            });
             // When a setter parameter has no type annotation, its type is UNKNOWN
             // (sentinel). Filter out so we fall back to getter type, matching tsc.
-            let write_type = accessor
-                .setter
-                .filter(|&t| t != TypeId::UNKNOWN)
-                .or(accessor.getter)
-                .unwrap_or(read_type);
+            let setter_type = accessor.setter.filter(|&t| t != TypeId::UNKNOWN);
+            let read_type = accessor.getter.or(setter_type).unwrap_or(TypeId::UNKNOWN);
+            let write_type = setter_type.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
                 name,
@@ -1119,6 +1173,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1165,6 +1220,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 },
             );
@@ -1257,6 +1313,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1313,6 +1370,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1383,6 +1441,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
         );
@@ -1989,25 +2048,17 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
 
         for (&name, accessor) in accessors {
-            let read_type = accessor.getter.unwrap_or_else(|| {
-                if accessor.setter.is_some() {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::UNKNOWN
-                }
-            });
             // When a setter parameter has no type annotation, its type is UNKNOWN
             // (sentinel). Filter out so we fall back to getter type, matching tsc.
-            let write_type = accessor
-                .setter
-                .filter(|&t| t != TypeId::UNKNOWN)
-                .or(accessor.getter)
-                .unwrap_or(read_type);
+            let setter_type = accessor.setter.filter(|&t| t != TypeId::UNKNOWN);
+            let read_type = accessor.getter.or(setter_type).unwrap_or(TypeId::UNKNOWN);
+            let write_type = setter_type.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             partial_ctor_props.push(PropertyInfo {
                 name,
@@ -2021,6 +2072,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: current_sym,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -2056,6 +2108,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -2189,11 +2242,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         class_idx: NodeIndex,
     ) -> Vec<(String, Option<TypeId>, bool)> {
-        // If type_parameter_scope already has entries, no need to push
-        if !self.ctx.type_parameter_scope.is_empty() {
-            return Vec::new();
-        }
-
         // Walk up the AST to find the enclosing function
         let mut current = class_idx;
         for _ in 0..20 {
@@ -2215,8 +2263,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(func) = self.ctx.arena.get_function(parent_node)
                     && func.type_parameters.is_some()
                 {
-                    let (_, updates) = self.push_type_parameters(&func.type_parameters);
-                    return updates;
+                    if self.enclosing_function_type_params_already_active(&func.type_parameters) {
+                        return Vec::new();
+                    }
+                    return self.push_enclosing_function_type_param_names(&func.type_parameters);
                 }
                 return Vec::new();
             }
@@ -2224,6 +2274,95 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
         Vec::new()
+    }
+
+    fn push_enclosing_function_type_param_names(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        let Some(type_parameters) = type_parameters else {
+            return Vec::new();
+        };
+        let mut updates = Vec::new();
+        let factory = self.ctx.types.factory();
+
+        for &param_idx in &type_parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+
+            let name = name_ident.escaped_text.clone();
+            let type_id = factory.type_param(tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: None,
+                is_const: false,
+            });
+            if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&param.name.0)
+                && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
+            {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(type_id, def_id);
+            }
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+            updates.push((name, previous, false));
+        }
+
+        updates
+    }
+
+    fn enclosing_function_type_params_already_active(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some(type_parameters) = type_parameters else {
+            return true;
+        };
+        if type_parameters.nodes.is_empty() {
+            return true;
+        }
+
+        type_parameters.nodes.iter().all(|&param_idx| {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                return false;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                return false;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                return false;
+            };
+            let Some(&scoped_type) = self
+                .ctx
+                .type_parameter_scope
+                .get(name_ident.escaped_text.as_str())
+            else {
+                return false;
+            };
+            let Some(&sym_id) = self.ctx.binder.node_symbols.get(&param.name.0) else {
+                return false;
+            };
+            let Some(param_def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0) else {
+                return false;
+            };
+            self.ctx
+                .definition_store
+                .find_def_for_type(scoped_type)
+                .is_some_and(|scoped_def_id| scoped_def_id == param_def_id)
+        })
     }
 
     /// Resolve a parameter symbol's type annotation directly, bypassing

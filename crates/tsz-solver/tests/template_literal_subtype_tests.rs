@@ -109,6 +109,236 @@ fn test_template_to_template_subtype_with_literal_types() {
 }
 
 #[test]
+fn test_constrained_type_parameter_template_projects_to_literal_union_target() {
+    // For T extends "foo" | "bar", `get${Capitalize<T>}` is bounded by
+    // "getFoo" | "getBar" and is therefore assignable to that union.
+    let interner = TypeInterner::new();
+
+    let foo = interner.literal_string("foo");
+    let bar = interner.literal_string("bar");
+    let constraint = interner.union2(foo, bar);
+    let t = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    });
+    let cap_t = interner.string_intrinsic(StringIntrinsicKind::Capitalize, t);
+    let source = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(cap_t),
+    ]);
+    let target = interner.union2(
+        interner.literal_string("getFoo"),
+        interner.literal_string("getBar"),
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, target));
+
+    let too_narrow = interner.literal_string("getFoo");
+    assert!(!checker.is_subtype_of(source, too_narrow));
+}
+
+#[test]
+fn test_numeric_literal_union_template_expands_for_assignability() {
+    let interner = TypeInterner::new();
+
+    let digits = (1..=20)
+        .map(|n| interner.literal_number(n as f64))
+        .collect();
+    let suffixes = interner.union(digits);
+    let spacing = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("s")),
+        TemplateSpan::Type(suffixes),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(interner.literal_string("s12"), spacing));
+}
+
+#[test]
+fn test_literal_union_members_are_not_absorbed_by_unrelated_templates() {
+    let interner = TypeInterner::new();
+
+    let number_px = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("px")),
+    ]);
+    let number_rem = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("rem")),
+    ]);
+    let s12 = interner.literal_string("s12");
+    let spacing = interner.union(vec![number_px, number_rem, s12]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(interner.literal_string("s12"), spacing));
+}
+
+#[test]
+fn test_number_template_does_not_match_prefixed_string_without_digits() {
+    let interner = TypeInterner::new();
+    let number_px = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("px")),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(interner.literal_string("s12"), number_px));
+}
+
+#[test]
+fn test_prefixed_number_template_not_subtype_of_suffixed_number_template() {
+    let interner = TypeInterner::new();
+    let s_number = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("s")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+    let number_rem = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("rem")),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(s_number, number_rem));
+}
+
+#[test]
+fn test_large_template_cross_product_sets_too_complex_flag() {
+    let interner = TypeInterner::new();
+    let digits = (0..=9).map(|n| interner.literal_number(n as f64)).collect();
+    let digits = interner.union(digits);
+
+    let _ = interner.take_union_too_complex();
+    let result = interner.template_literal(vec![
+        TemplateSpan::Type(digits),
+        TemplateSpan::Type(digits),
+        TemplateSpan::Type(digits),
+        TemplateSpan::Type(digits),
+        TemplateSpan::Type(digits),
+    ]);
+
+    assert_eq!(result, TypeId::STRING);
+    assert!(interner.take_union_too_complex());
+}
+
+#[test]
+fn test_large_template_cross_product_sets_flag_after_lazy_resolution() {
+    use crate::def::DefId;
+    use crate::{TypeEnvironment, TypeEvaluator};
+
+    let interner = TypeInterner::new();
+    let digits = (0..=9).map(|n| interner.literal_number(n as f64)).collect();
+    let digits = interner.union(digits);
+
+    let mut env = TypeEnvironment::new();
+    let digits_def = DefId(1);
+    env.insert_def(digits_def, digits);
+    let lazy_digits = interner.lazy(digits_def);
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(lazy_digits),
+        TemplateSpan::Type(lazy_digits),
+        TemplateSpan::Type(lazy_digits),
+        TemplateSpan::Type(lazy_digits),
+        TemplateSpan::Type(lazy_digits),
+    ]);
+
+    let _ = interner.take_union_too_complex();
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(template);
+
+    assert_eq!(result, TypeId::STRING);
+    assert!(interner.take_union_too_complex());
+}
+
+#[test]
+fn test_mixed_template_union_counts_lazy_template_alternatives_for_complexity() {
+    use crate::def::DefId;
+    use crate::{TypeEnvironment, TypeEvaluator};
+
+    let interner = TypeInterner::new();
+    let zero = interner.literal_string("0");
+    let number_px = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("px")),
+    ]);
+    let number_rem = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("rem")),
+    ]);
+    let suffixes = interner.union(
+        (1..=20)
+            .map(|n| interner.literal_number(n as f64))
+            .collect(),
+    );
+    let scaled = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("s")),
+        TemplateSpan::Type(suffixes),
+    ]);
+    let spacing = interner.union(vec![zero, number_px, number_rem, scaled]);
+
+    let mut env = TypeEnvironment::new();
+    let spacing_def = DefId(1);
+    env.insert_def(spacing_def, spacing);
+    let lazy_spacing = interner.lazy(spacing_def);
+    let shorthand = interner.template_literal(vec![
+        TemplateSpan::Type(lazy_spacing),
+        TemplateSpan::Text(interner.intern_string(" ")),
+        TemplateSpan::Type(lazy_spacing),
+        TemplateSpan::Text(interner.intern_string(" ")),
+        TemplateSpan::Type(lazy_spacing),
+        TemplateSpan::Text(interner.intern_string(" ")),
+        TemplateSpan::Type(lazy_spacing),
+    ]);
+
+    let _ = interner.take_union_too_complex();
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(shorthand);
+
+    assert_eq!(result, TypeId::STRING);
+    assert!(interner.take_union_too_complex());
+}
+
+#[test]
+fn test_tuple_spread_cross_product_sets_flag_after_lazy_resolution() {
+    use crate::def::DefId;
+    use crate::{TypeEnvironment, TypeEvaluator};
+
+    let interner = TypeInterner::new();
+    let tuple_members = (0..=9)
+        .map(|n| {
+            interner.tuple(vec![TupleElement {
+                type_id: interner.literal_number(n as f64),
+                name: None,
+                optional: false,
+                rest: false,
+            }])
+        })
+        .collect();
+    let tuple_digits = interner.union(tuple_members);
+
+    let mut env = TypeEnvironment::new();
+    let tuple_digits_def = DefId(1);
+    env.insert_def(tuple_digits_def, tuple_digits);
+    let lazy_tuple_digits = interner.lazy(tuple_digits_def);
+    let spread = TupleElement {
+        type_id: lazy_tuple_digits,
+        name: None,
+        optional: false,
+        rest: true,
+    };
+    let tuple = interner.tuple(vec![spread, spread, spread, spread, spread]);
+
+    let _ = interner.take_union_too_complex();
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(tuple);
+
+    assert_eq!(result, TypeId::ERROR);
+    assert!(interner.take_union_too_complex());
+}
+
+#[test]
 fn test_template_subtype_different_structure_string_absorbs() {
     // `foo_${string}` IS a subtype of `${string}` because `${string}` matches any string
     // and all strings matching `foo_${string}` are also strings.
@@ -426,6 +656,67 @@ fn test_template_literal_hole_accepts_intersection_pattern_prefix() {
     assert!(!checker.is_subtype_of(interner.literal_string("abcTest"), pattern));
 }
 
+#[test]
+fn test_template_literal_union_hole_distributes_over_remaining_pattern() {
+    let interner = TypeInterner::new();
+
+    let protocols = interner.union(vec![
+        interner.literal_string("http"),
+        interner.literal_string("https"),
+        interner.literal_string("ftp"),
+    ]);
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(protocols),
+        TemplateSpan::Text(interner.intern_string("://")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let Some(TypeData::Union(members)) = interner.lookup(pattern) else {
+        panic!("expected finite protocol hole to distribute into a union");
+    };
+    assert_eq!(interner.type_list(members).len(), 3);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(interner.literal_string("http://example.com"), pattern));
+    assert!(!checker.is_subtype_of(interner.literal_string("gopher://example.com"), pattern));
+}
+
+#[test]
+fn test_template_literal_evaluation_preserves_evaluated_pattern_spans() {
+    use crate::def::DefId;
+    use crate::diagnostics::format::TypeFormatter;
+    use crate::{TypeEnvironment, TypeEvaluator};
+
+    let interner = TypeInterner::new();
+    let number_pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+
+    let mut env = TypeEnvironment::new();
+    let alias_def = DefId(1);
+    env.insert_def(alias_def, number_pattern);
+    let alias_ref = interner.lazy(alias_def);
+    let spaced = interner.template_literal(vec![
+        TemplateSpan::Type(alias_ref),
+        TemplateSpan::Text(interner.intern_string(" ")),
+        TemplateSpan::Type(alias_ref),
+    ]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let evaluated = evaluator.evaluate(spaced);
+    let mut formatter = TypeFormatter::new(&interner);
+
+    assert_eq!(formatter.format(evaluated), "`${number} ${number}`");
+}
+
+#[test]
+fn test_union_removes_string_literals_covered_by_template_patterns() {
+    let interner = TypeInterner::new();
+
+    let number_pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let zero = interner.literal_string("0");
+
+    assert_eq!(interner.union(vec![number_pattern, zero]), number_pattern);
+}
+
 // ==========================================================================
 // Hex/Octal/Binary literal matching for ${bigint} and ${number} patterns
 // ==========================================================================
@@ -491,6 +782,20 @@ fn test_binary_literal_matches_number_pattern() {
 }
 
 #[test]
+fn test_non_finite_names_do_not_match_number_pattern() {
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["NaN", "Infinity", "+Infinity", "-Infinity"] {
+        assert!(
+            !checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should not match `${{number}}`"
+        );
+    }
+}
+
+#[test]
 fn test_invalid_hex_does_not_match_bigint_pattern() {
     // "0xGG" should NOT be subtype of `${bigint}` (invalid hex)
     let interner = TypeInterner::new();
@@ -498,4 +803,54 @@ fn test_invalid_hex_does_not_match_bigint_pattern() {
     let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
     let mut checker = SubtypeChecker::new(&interner);
     assert!(!checker.is_subtype_of(literal, pattern));
+}
+
+// ==========================================================================
+// Sign handling for ${bigint} vs ${number} — issue #3173
+// ==========================================================================
+
+#[test]
+fn test_plus_signed_string_does_not_match_bigint_pattern() {
+    // "+1" must NOT be assignable to `${bigint}` — TypeScript rejects it.
+    // (tsc: TS2322 Type '"+" is not assignable to type '`${bigint}`')
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["+1", "+0", "+123", "+999"] {
+        assert!(
+            !checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should not match `${{bigint}}`"
+        );
+    }
+}
+
+#[test]
+fn test_minus_signed_string_matches_bigint_pattern() {
+    // "-1" IS assignable to `${bigint}` — TypeScript accepts it.
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["-1", "-0", "-123"] {
+        assert!(
+            checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should match `${{bigint}}`"
+        );
+    }
+}
+
+#[test]
+fn test_plus_signed_string_matches_number_pattern() {
+    // "+1" IS assignable to `${number}` — TypeScript accepts it.
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["+1", "+0", "+123"] {
+        assert!(
+            checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should match `${{number}}`"
+        );
+    }
 }

@@ -177,6 +177,97 @@ impl DiagnosticRenderRequest {
 }
 
 impl<'a> CheckerState<'a> {
+    fn widen_display_property_literals_for_related_info(&mut self, type_id: TypeId) -> TypeId {
+        if self.ctx.types.get_display_properties(type_id).is_none() {
+            return type_id;
+        }
+        let Some(shape) = query_common::object_shape_for_type(self.ctx.types, type_id) else {
+            return type_id;
+        };
+
+        let mut widened_shape = shape.as_ref().clone();
+        let mut changed = false;
+        for prop in &mut widened_shape.properties {
+            let widened_read = query_common::widen_literal_type(self.ctx.types, prop.type_id);
+            let widened_write = query_common::widen_literal_type(self.ctx.types, prop.write_type);
+            changed |= widened_read != prop.type_id || widened_write != prop.write_type;
+            prop.type_id = widened_read;
+            prop.write_type = widened_write;
+        }
+        if changed {
+            self.ctx.types.factory().object_with_index(widened_shape)
+        } else {
+            type_id
+        }
+    }
+
+    fn widen_anonymous_object_literal_display_text(display: &str) -> String {
+        if !display.starts_with("{ ") || !display.ends_with(" }") {
+            return display.to_string();
+        }
+
+        let bytes = display.as_bytes();
+        let mut out = String::with_capacity(display.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            out.push(bytes[i] as char);
+            if bytes[i] != b':' {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            if bytes[i] == b'"' {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i = (i + 2).min(bytes.len());
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                out.push_str("string");
+            } else if display[i..].starts_with("true") {
+                i += 4;
+                out.push_str("boolean");
+            } else if display[i..].starts_with("false") {
+                i += 5;
+                out.push_str("boolean");
+            } else {
+                let start = i;
+                if bytes[i] == b'-' {
+                    i += 1;
+                }
+                let digits_start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i > digits_start {
+                    if i < bytes.len() && bytes[i] == b'.' {
+                        i += 1;
+                        while i < bytes.len() && bytes[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                    }
+                    out.push_str("number");
+                } else {
+                    out.push_str(&display[start..i]);
+                }
+            }
+        }
+        out
+    }
+
     pub(crate) fn resolve_diagnostic_anchor(
         &self,
         idx: NodeIndex,
@@ -246,6 +337,13 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
+                if self.should_suppress_missing_property_for_callable_source(
+                    source,
+                    *source_type,
+                    target,
+                ) {
+                    return None;
+                }
                 if crate::query_boundaries::common::is_primitive_type(self.ctx.types, *source_type)
                 {
                     return None;
@@ -264,17 +362,30 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                if prop_name.starts_with("__private_brand") {
+                if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                     return None;
                 }
-                let widened = self.widen_type_for_display(*source_type);
+                let source_display_type =
+                    self.widen_display_property_literals_for_related_info(source);
+                let source_display_type = query_common::widen_argument_type_for_display(
+                    self.ctx.types,
+                    source_display_type,
+                );
+                let target_display_type =
+                    self.widen_display_property_literals_for_related_info(target);
                 let src_str = self.format_type_for_diagnostic_role(
-                    widened,
+                    source_display_type,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
                 );
+                let tgt_str = self.format_type_for_diagnostic_role(
+                    target_display_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
+                let src_str = Self::widen_anonymous_object_literal_display_text(&src_str);
+                let tgt_str = Self::widen_anonymous_object_literal_display_text(&tgt_str);
                 let (src_str, tgt_str) = self.finalize_pair_display_for_diagnostic(
-                    *source_type,
-                    *target_type,
+                    source_display_type,
+                    target_display_type,
                     src_str,
                     tgt_str,
                 );
@@ -295,6 +406,13 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
+                if self.should_suppress_missing_property_for_callable_source(
+                    source,
+                    *source_type,
+                    target,
+                ) {
+                    return None;
+                }
                 if crate::query_boundaries::common::is_primitive_type(self.ctx.types, *source_type)
                 {
                     return None;
@@ -460,29 +578,31 @@ impl<'a> CheckerState<'a> {
                     source_str,
                     target_str,
                 );
-                let mut items = vec![
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Error,
-                        code: reason.diagnostic_code(),
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length,
-                        message_text: format!(
-                            "Return type '{source_str}' is not assignable to '{target_str}'."
-                        ),
-                    },
-                    DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        file: self.ctx.file_name.clone(),
-                        start,
-                        length,
-                        message_text: format_message(
-                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&source_str, &target_str],
-                        ),
-                    },
-                ];
+                // tsc's elaboration shape for TS2345 function-return-type
+                // mismatches goes straight from the top-level message into
+                // the inner mismatch line:
+                //
+                //   error TS2345: Argument of type '(a) => string' is not
+                //                 assignable to parameter of type '(a) => 1'.
+                //     Type 'string' is not assignable to type '1'.
+                //
+                // The intermediate "Return type 'X' is not assignable to 'Y'."
+                // framing is never emitted by tsc (verified: zero matches in
+                // tsc baselines). Emit only the inner mismatch line, then
+                // drill into any nested reason for further elaboration. This
+                // mirrors the same fix applied to TS2322's
+                // `render_return_type_mismatch` in iter 51.
+                let mut items = vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length,
+                    message_text: format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    ),
+                }];
                 // Drill into nested reason to produce elaboration diagnostics
                 // (e.g. TS2741 "Property 'x' is missing..." when the return type
                 // mismatch is due to a missing property).

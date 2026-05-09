@@ -24,12 +24,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Lib assets: tsz uses embedded (comment-stripped) lib files by default.
-# Setting TSZ_LIB_DIR forces disk-based loading which can cause
-# NodeIndex mismatches between the binder and lowering arenas.
-# Only set TSZ_LIB_DIR when explicitly overridden by the user.
+# Lib assets: benchmark tsz with embedded (comment-stripped) lib files by default.
+# Setting TSZ_LIB_DIR forces disk-based loading for explicit local overrides.
 if [ -n "${TSZ_LIB_DIR:-}" ]; then
     export TSZ_LIB_DIR
+elif [ -z "${TSZ_USE_EMBEDDED_LIBS+x}" ]; then
+    export TSZ_USE_EMBEDDED_LIBS=1
+else
+    export TSZ_USE_EMBEDDED_LIBS
 fi
 
 # Dedicated target directory for benchmarks - isolated from dev builds.
@@ -73,6 +75,7 @@ NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
 NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 NEXT_APP_BENCH_DIR="${NEXT_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/next-app-live}"
+VITE_APP_BENCH_DIR="${VITE_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/vite-vanilla-ts-live}"
 # Real-world reactive library — Observable / Subject deep generics, ~150 source files.
 # REF empty by default: the fixture clones the default branch tip. Set
 # RXJS_REF=<sha> to pin a specific commit for reproducible benches.
@@ -100,14 +103,22 @@ KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
 LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
 LARGE_TS_REF="${LARGE_TS_REF:-e1b22bda18664a507ed0da19c155e0365d585b18}"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
+# The local fallback was previously implicit, which silently contaminated
+# PR-quality numbers on any developer machine that happened to have a
+# checkout. Gate it behind TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1 so the default
+# is the pinned external clone. See docs/plan/PERFORMANCE_PLAN.md §3.5.1.
 if [ -n "${LARGE_TS_DIR:-}" ]; then
     LARGE_TS_DIR="$LARGE_TS_DIR"
-elif [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
+elif [ "${TSZ_BENCH_ALLOW_LOCAL_FIXTURE:-0}" = "1" ] \
+     && [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
     LARGE_TS_DIR="$LARGE_TS_LOCAL_DIR"
 else
     LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
 fi
 LARGE_TS_NODE_OPTIONS="${LARGE_TS_NODE_OPTIONS:---max-old-space-size=8192}"
+# Deep project fixtures can exhaust Rust's default worker-thread stack before
+# producing a benchmark result. Keep the default overrideable for local runs.
+TSZ_RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}"
 
 # Parse arguments
 QUICK_MODE=false
@@ -151,6 +162,7 @@ while [[ $# -gt 0 ]]; do
             echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
             echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
+            echo "  VITE_APP_BENCH_DIR=<path> Override generated Vite fixture directory"
             exit 0
             ;;
         *) shift ;;
@@ -273,7 +285,7 @@ hyperfine_exit_status_for() {
 
 sum_ts_lines() {
     local src_dir="$1"
-    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
         | while IFS= read -r -d '' file; do
             wc -l < "$file" 2>/dev/null || true
         done \
@@ -282,8 +294,33 @@ sum_ts_lines() {
 
 sum_ts_bytes() {
     local src_dir="$1"
-    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
         | xargs -0 cat 2>/dev/null | wc -c | tr -d ' '
+}
+
+count_ts_files() {
+    local src_dir="$1"
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print 2>/dev/null \
+        | wc -l | tr -d ' '
+}
+
+project_tsconfig_stats() {
+    local tsconfig="$1"
+    local fallback_src_dir="$2"
+    local stats
+
+    if stats="$(TSC_TOOL_DIR_VALUE="$TSC_TOOL_DIR" TSC_BIN_VALUE="$TSC" node "$SCRIPT_DIR/project-file-stats.mjs" "$tsconfig" 2>/dev/null)"; then
+        echo "$stats"
+        return
+    fi
+
+    local lines
+    local bytes
+    local file_count
+    lines=$(sum_ts_lines "$fallback_src_dir")
+    bytes=$(sum_ts_bytes "$fallback_src_dir")
+    file_count=$(count_ts_files "$fallback_src_dir")
+    echo "$lines $bytes $file_count"
 }
 
 # Timeout for pre-validation checks (seconds). Generous enough for heavy
@@ -744,13 +781,15 @@ run_project_benchmark() {
 
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
-    # Count total TS/TSX source lines in the project
+    # Count TS-family files from the same tsconfig used for project-mode
+    # compilation. This keeps full-project metadata aligned with the files
+    # passed to `tsz/tsgo --noEmit -p`.
     local lines
     local bytes
-    lines=$(sum_ts_lines "$src_dir")
-    bytes=$(sum_ts_bytes "$src_dir")
+    local file_count
+    read -r lines bytes file_count < <(project_tsconfig_stats "$tsconfig" "$src_dir")
     local kb=$((bytes / 1024))
-    local info="${lines} lines, ${kb}KB (project)"
+    local info="${lines} lines, ${kb}KB (${file_count} project files)"
 
     # Set project-level Node options for large-ts-repo so tsc/tsgo/tsz can
     # run with a larger heap during compilation.
@@ -764,6 +803,9 @@ run_project_benchmark() {
     fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
+    fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_prefix+=(env "RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
     fi
 
     # For project fixtures (except nextjs and large-ts-repo), require
@@ -780,9 +822,12 @@ run_project_benchmark() {
             run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
         fi
         if [ "$tsc_check" -ne 0 ]; then
+            local status
             if [ "$tsc_check" -eq 124 ]; then
+                status="tsc timeout after ${project_tsc_timeout}s"
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
             else
+                status="tsc fixture error"
                 local tsc_error
                 if [ "${#project_node_prefix[@]}" -gt 0 ]; then
                     tsc_error="$(run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
@@ -792,6 +837,7 @@ run_project_benchmark() {
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
             fi
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             return
         fi
     fi
@@ -910,6 +956,9 @@ run_project_benchmark() {
     fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
+    fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_cmd_prefix="${tsz_cmd_prefix}env RUST_MIN_STACK=$TSZ_RUST_MIN_STACK "
     fi
     local -a hyperfine_prepare_args=()
     if [[ "${BENCH_COLD:-0}" == "1" ]]; then
@@ -1062,12 +1111,59 @@ export_results_json() {
     TSZ_BIN_VALUE="$TSZ" \
     TSGO_BIN_VALUE="$TSGO" \
     TSC_BIN_VALUE="$TSC" \
+    LARGE_TS_DIR_VALUE="$LARGE_TS_DIR" \
+    NEXTJS_DIR_VALUE="$NEXTJS_DIR" \
+    NEXT_APP_BENCH_DIR_VALUE="$NEXT_APP_BENCH_DIR" \
+    VITE_APP_BENCH_DIR_VALUE="$VITE_APP_BENCH_DIR" \
+    RXJS_DIR_VALUE="$RXJS_DIR" \
+    TYPE_FEST_DIR_VALUE="$TYPE_FEST_DIR" \
+    ZOD_DIR_VALUE="$ZOD_DIR" \
+    UTILITY_TYPES_DIR_VALUE="$UTILITY_TYPES_DIR" \
+    TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
+    TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
     BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
+const path = require("node:path");
 const outFile = process.argv[2];
 
+function readProjectReadmes() {
+  const candidates = {
+    "large-ts-repo": [[process.env.LARGE_TS_DIR_VALUE, "README.md"]],
+    nextjs: [[process.env.NEXTJS_DIR_VALUE, "README.md"]],
+    "nextjs-fresh-app": [[process.env.NEXT_APP_BENCH_DIR_VALUE, "README.md"]],
+    "vite-vanilla-ts-app": [[process.env.VITE_APP_BENCH_DIR_VALUE, "README.md"]],
+    "rxjs-project": [[process.env.RXJS_DIR_VALUE, "README.md"]],
+    "type-fest-project": [
+      [process.env.TYPE_FEST_DIR_VALUE, "readme.md"],
+      [process.env.TYPE_FEST_DIR_VALUE, "README.md"],
+    ],
+    "zod-project": [[process.env.ZOD_DIR_VALUE, "README.md"]],
+    "utility-types-project": [[process.env.UTILITY_TYPES_DIR_VALUE, "README.md"]],
+    "ts-toolbelt-project": [[process.env.TS_TOOLBELT_DIR_VALUE, "README.md"]],
+    "ts-essentials-project": [[process.env.TS_ESSENTIALS_DIR_VALUE, "README.md"]],
+  };
+
+  const readmes = new Map();
+  for (const [name, paths] of Object.entries(candidates)) {
+    for (const [dir, file] of paths) {
+      if (!dir) continue;
+      try {
+        const text = fs.readFileSync(path.join(dir, file), "utf8").trim();
+        if (text) {
+          readmes.set(name, text.length > 18000 ? `${text.slice(0, 18000).trimEnd()}\n\n...` : text);
+          break;
+        }
+      } catch {
+        // README is optional for fixtures that were not prepared in this run.
+      }
+    }
+  }
+  return readmes;
+}
+
 const csv = process.env.RESULTS_CSV_EXPANDED || "";
+const projectReadmes = readProjectReadmes();
 const rows = csv
   .split(/\r?\n/)
   .map((line) => line.trim())
@@ -1092,6 +1188,7 @@ const rows = csv
       winner: winner || null,
       factor: toNumber(factor),
       status: status || null,
+      ...(projectReadmes.has(name) ? { readme: projectReadmes.get(name) } : {}),
     };
   });
 
@@ -1173,6 +1270,18 @@ ensure_next_app_benchmark_fixture() {
 
     echo -e "${CYAN}Generating fresh Next.js benchmark app...${NC}"
     node "$SCRIPT_DIR/generate-next-app-fixture.mjs" "$NEXT_APP_BENCH_DIR"
+}
+
+ensure_vite_app_benchmark_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found. Install npm to generate the fresh Vite benchmark app.${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}Generating fresh Vite vanilla TypeScript benchmark app...${NC}"
+    node "$SCRIPT_DIR/generate-vite-app-fixture.mjs" "$VITE_APP_BENCH_DIR"
 }
 
 ensure_utility_types_fixture() {
@@ -1268,7 +1377,7 @@ ensure_ts_toolbelt_fixture() {
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "ignoreDeprecations": "5.0"
+    "ignoreDeprecations": "6.0"
   },
   "include": ["sources/**/*.ts"],
   "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
@@ -1357,15 +1466,15 @@ ensure_rxjs_fixture() {
 {
   "compilerOptions": {
     "target": "es2017",
-    "module": "commonjs",
+    "module": "esnext",
     "strict": true,
     "lib": ["es2018", "dom"],
     "types": [],
     "skipLibCheck": true,
     "noEmit": true,
+    "noCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0"
+    "moduleResolution": "bundler"
   },
   "include": ["${rxjs_src_root}/internal/**/*.ts"],
   "exclude": [
@@ -1414,8 +1523,7 @@ ensure_type_fest_fixture() {
     "skipLibCheck": true,
     "noEmit": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0"
+    "moduleResolution": "bundler"
   },
   "include": ["source/**/*.d.ts", "index.d.ts"],
   "exclude": ["test-d/**/*", "node_modules/**/*"]
@@ -1495,6 +1603,13 @@ ensure_kysely_fixture() {
         fi
     fi
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
+    local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
+    cat > "$bench_globals" << 'GLOBALSEOF'
+declare const Buffer: {
+  isBuffer(value: unknown): boolean;
+  compare(left: unknown, right: unknown): number;
+};
+GLOBALSEOF
     if [ ! -f "$flat_tsconfig" ]; then
         cat > "$flat_tsconfig" << 'FLATEOF'
 {
@@ -1510,7 +1625,7 @@ ensure_kysely_fixture() {
     "moduleResolution": "node",
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
   "exclude": [
     "**/*.test.ts",
     "test/**/*",
@@ -1746,7 +1861,7 @@ run_rxjs_project_benchmarks() {
         return
     fi
 
-    print_header "Real-world External Project - rxjs (Observable / operator deep generics)"
+    print_header "Real-world External Project - rxjs (source parse with noCheck)"
     ensure_rxjs_fixture
     echo -e "${GREEN}✓${NC} rxjs pinned at $(git -C "$RXJS_DIR" rev-parse --short HEAD)"
 
@@ -1879,6 +1994,26 @@ run_next_app_project_benchmarks() {
     fi
 
     run_project_benchmark "nextjs-fresh-app" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_vite_app_project_benchmarks() {
+    if ! is_benchmark_selected "vite-vanilla-ts-app"; then
+        return
+    fi
+
+    print_header "Generated Project - fresh Vite vanilla TypeScript app"
+    ensure_vite_app_benchmark_fixture
+
+    local tsconfig="$VITE_APP_BENCH_DIR/tsconfig.json"
+    local src_dir="$VITE_APP_BENCH_DIR"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "vite-vanilla-ts-app" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -3164,6 +3299,7 @@ main() {
     run_isolated "type-fest-project"      run_type_fest_project_benchmarks
     run_isolated "zod-project"            run_zod_project_benchmarks
     run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
     run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
     run_isolated "nextjs"                 run_nextjs_benchmarks
     run_isolated "large-ts-repo"          run_large_ts_repo_benchmarks

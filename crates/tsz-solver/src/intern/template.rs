@@ -67,17 +67,37 @@ impl TypeInterner {
         for span in spans {
             let span_count = match span {
                 TemplateSpan::Text(_) => Some(1),
-                TemplateSpan::Type(type_id) => self.template_span_cardinality(*type_id),
+                TemplateSpan::Type(type_id) => self.template_span_complexity_cardinality(*type_id),
             };
             let Some(span_count) = span_count else {
                 return false;
             };
             total = total.saturating_mul(span_count);
-            if total > TEMPLATE_LITERAL_EXPANSION_LIMIT {
+            if total >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
                 return true;
             }
         }
         false
+    }
+
+    fn template_span_complexity_cardinality(&self, type_id: TypeId) -> Option<usize> {
+        if let Some(count) = self.template_span_cardinality(type_id) {
+            return Some(count);
+        }
+
+        match self.lookup(type_id) {
+            Some(TypeData::Union(list_id)) => {
+                let members = self.type_list(list_id);
+                let mut count = 0usize;
+                for member in members.iter() {
+                    count =
+                        count.checked_add(self.template_span_complexity_cardinality(*member)?)?;
+                }
+                Some(count)
+            }
+            Some(TypeData::TemplateLiteral(_)) | Some(TypeData::StringIntrinsic { .. }) => Some(1),
+            _ => None,
+        }
     }
 
     /// Check if a template literal can be expanded to a union of string literals.
@@ -246,7 +266,7 @@ impl TypeInterner {
             .map(|s| self.literal_string(s))
             .collect();
 
-        self.union(members)
+        self.union_preserve_members(members)
     }
 
     /// Normalize template literal spans by merging consecutive text spans
@@ -258,6 +278,7 @@ impl TypeInterner {
         let mut normalized = Vec::with_capacity(spans.len());
         let mut pending_text: Option<String> = None;
         let mut has_consecutive_texts = false;
+        let mut changed = false;
 
         for span in &spans {
             match span {
@@ -274,6 +295,7 @@ impl TypeInterner {
                     // Task #47: Flatten nested template literals
                     // If a Type(type_id) refers to another TemplateLiteral, splice its spans into the parent
                     if let Some(TypeData::TemplateLiteral(nested_list_id)) = self.lookup(*type_id) {
+                        changed = true;
                         let nested_spans = self.template_list(nested_list_id);
                         // Process each nested span as if it were part of the parent template
                         for nested_span in nested_spans.iter() {
@@ -369,7 +391,7 @@ impl TypeInterner {
         }
 
         // If no normalization occurred, return original to avoid unnecessary allocation
-        if !has_consecutive_texts && normalized.len() == spans.len() {
+        if !changed && !has_consecutive_texts && normalized.len() == spans.len() {
             return spans;
         }
 
@@ -412,6 +434,7 @@ impl TypeInterner {
 
         // Check if expansion would exceed the limit
         if self.template_literal_exceeds_limit(&normalized) {
+            self.set_union_too_complex();
             return TypeId::STRING;
         }
 
@@ -441,6 +464,10 @@ impl TypeInterner {
             }
         }
 
+        if let Some(distributed) = self.distribute_template_literal_union_spans(&normalized) {
+            return distributed;
+        }
+
         // Mirror tsc's `getTemplateLiteralType` collapse: a template literal
         // whose only span is a single pattern-literal type (e.g.
         // `Uppercase<\`${number}\`>`) is structurally identical to that span
@@ -458,6 +485,65 @@ impl TypeInterner {
 
         let list_id = self.intern_template_list(normalized);
         self.intern(TypeData::TemplateLiteral(list_id))
+    }
+
+    fn distribute_template_literal_union_spans(&self, spans: &[TemplateSpan]) -> Option<TypeId> {
+        let mut alternatives: Vec<Vec<TemplateSpan>> = Vec::with_capacity(spans.len());
+        let mut total = 1usize;
+        let mut saw_union = false;
+
+        for span in spans {
+            match span {
+                TemplateSpan::Type(type_id) => {
+                    if let Some(TypeData::Union(list_id)) = self.lookup(*type_id) {
+                        let members = self.type_list(list_id);
+                        if members.len() > 1 {
+                            saw_union = true;
+                            total = total.saturating_mul(members.len());
+                            if total >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                                self.set_union_too_complex();
+                                return Some(TypeId::STRING);
+                            }
+                            alternatives.push(
+                                members
+                                    .iter()
+                                    .map(|member| TemplateSpan::Type(*member))
+                                    .collect(),
+                            );
+                            continue;
+                        }
+                    }
+                    alternatives.push(vec![TemplateSpan::Type(*type_id)]);
+                }
+                TemplateSpan::Text(atom) => alternatives.push(vec![TemplateSpan::Text(*atom)]),
+            }
+        }
+
+        if !saw_union {
+            return None;
+        }
+
+        let mut combinations: Vec<Vec<TemplateSpan>> = vec![Vec::with_capacity(spans.len())];
+        for choices in alternatives {
+            let mut next = Vec::with_capacity(combinations.len() * choices.len());
+            for prefix in &combinations {
+                for choice in &choices {
+                    let mut combined = prefix.clone();
+                    combined.push(choice.clone());
+                    next.push(combined);
+                }
+            }
+            combinations = next;
+        }
+
+        Some(
+            self.union_preserve_members(
+                combinations
+                    .into_iter()
+                    .map(|combination| self.template_literal(combination))
+                    .collect(),
+            ),
+        )
     }
 
     /// Check if a type is a "pattern literal type": a `TemplateLiteral` whose

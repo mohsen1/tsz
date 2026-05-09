@@ -3,6 +3,7 @@
 //! parse diagnostic conversion, and pragma detection.
 
 use super::*;
+use tsz_common::file_extensions::is_ts_declaration_file;
 
 #[derive(Clone, Copy)]
 struct TslibHelperRequirement {
@@ -66,9 +67,9 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
 
         // When the file is a `tslib.d.ts` that contains `declare module "tslib" { ... }`,
         // the file-level exports are empty but the module declarations contain the helpers.
-        // Check if the tslib module has non-empty ambient exports, OR if the source text
-        // of the file contains actual helper function declarations (the binder may not
-        // always register ambient module function declarations as module exports).
+        // Check if the tslib module has non-empty ambient exports. If not, fall through
+        // to the declaration scan below; raw helper-name mentions in comments or strings
+        // must not satisfy tslib helper requirements.
         if program.declared_modules.contains("tslib") {
             let tslib_ambient_has_exports = program
                 .module_exports
@@ -76,23 +77,6 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                 .is_some_and(|exports| !exports.is_empty());
             if tslib_ambient_has_exports {
                 return emit_tslib_helper_diagnostics(program, options, "tslib", file_is_esm_map);
-            }
-            // Scan the source text for helper function declarations.
-            // A `declare module "tslib" { export {}; }` with no helpers will not match.
-            let source = &tslib_file.arena.source_files.first().map(|sf| &sf.text);
-            if let Some(source) = source
-                && (source.contains("__importStar")
-                    || source.contains("__importDefault")
-                    || source.contains("__extends")
-                    || source.contains("__rest")
-                    || source.contains("__decorate")
-                    || source.contains("__metadata")
-                    || source.contains("__awaiter")
-                    || source.contains("__generator")
-                    || source.contains("__spread")
-                    || source.contains("__values"))
-            {
-                return Vec::new();
             }
         }
 
@@ -173,7 +157,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
     // tslib truly not found → TS2354 for each file needing helpers
     let mut result = Vec::new();
     for file in &program.files {
-        if file.file_name.ends_with(".d.ts") {
+        if is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
         }
         let is_esm = file_is_esm_map
@@ -214,7 +198,7 @@ fn emit_tslib_helper_diagnostics(
     let mut result = Vec::new();
     let tslib_exports = program.module_exports.get(tslib_key);
     for file in &program.files {
-        if file.file_name == tslib_key || file.file_name.ends_with(".d.ts") {
+        if file.file_name == tslib_key || is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
         }
 
@@ -301,7 +285,7 @@ fn emit_tslib_helper_diagnostics_from_counts(
 ) -> Vec<Diagnostic> {
     let mut result = Vec::new();
     for file in &program.files {
-        if file.file_name.ends_with(".d.ts") {
+        if is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
         }
 
@@ -386,10 +370,7 @@ fn filesystem_tslib_declaration(base_dir: &Path) -> Option<std::path::PathBuf> {
         if let Some(tslib_path) = tslib_declaration_in_dir(dir) {
             return Some(tslib_path);
         }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 
@@ -406,6 +387,8 @@ fn source_tslib_helper_parameter_counts(
     let mut counts = rustc_hash::FxHashMap::default();
     for helper_name in [
         "__extends",
+        "__awaiter",
+        "__generator",
         "__asyncGenerator",
         "__classPrivateFieldGet",
         "__classPrivateFieldSet",
@@ -429,7 +412,7 @@ fn source_tslib_helper_parameter_counts(
 
 fn extract_declared_function_parameter_count(source: &str, helper_name: &str) -> Option<usize> {
     let marker = format!("function {helper_name}");
-    let marker_idx = source.find(&marker)?;
+    let marker_idx = find_source_marker_outside_trivia(source, &marker)?;
     let mut idx = marker_idx + marker.len();
 
     while let Some(ch) = source[idx..].chars().next() {
@@ -515,6 +498,85 @@ fn extract_declared_function_parameter_count(source: &str, helper_name: &str) ->
     }
 
     None
+}
+
+fn find_source_marker_outside_trivia(source: &str, marker: &str) -> Option<usize> {
+    let mut search_start = 0usize;
+    loop {
+        let rel_idx = source[search_start..].find(marker)?;
+        let marker_idx = search_start + rel_idx;
+        if !source_offset_is_in_comment_or_string(source, marker_idx) {
+            return Some(marker_idx);
+        }
+        search_start = marker_idx + marker.len();
+    }
+}
+
+fn source_offset_is_in_comment_or_string(source: &str, target: usize) -> bool {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Code,
+        LineComment,
+        BlockComment,
+        SingleQuote,
+        DoubleQuote,
+        Template,
+    }
+
+    let bytes = source.as_bytes();
+    let mut idx = 0usize;
+    let mut state = State::Code;
+    while idx < target && idx < bytes.len() {
+        let byte = bytes[idx];
+        let next = bytes.get(idx + 1).copied();
+        match state {
+            State::Code => match (byte, next) {
+                (b'/', Some(b'/')) => {
+                    state = State::LineComment;
+                    idx += 2;
+                    continue;
+                }
+                (b'/', Some(b'*')) => {
+                    state = State::BlockComment;
+                    idx += 2;
+                    continue;
+                }
+                (b'\'', _) => state = State::SingleQuote,
+                (b'"', _) => state = State::DoubleQuote,
+                (b'`', _) => state = State::Template,
+                _ => {}
+            },
+            State::LineComment => {
+                if byte == b'\n' || byte == b'\r' {
+                    state = State::Code;
+                }
+            }
+            State::BlockComment => {
+                if byte == b'*' && next == Some(b'/') {
+                    state = State::Code;
+                    idx += 2;
+                    continue;
+                }
+            }
+            State::SingleQuote | State::DoubleQuote | State::Template => {
+                if byte == b'\\' {
+                    idx += 2;
+                    continue;
+                }
+                let terminator = match state {
+                    State::SingleQuote => b'\'',
+                    State::DoubleQuote => b'"',
+                    State::Template => b'`',
+                    _ => unreachable!(),
+                };
+                if byte == terminator {
+                    state = State::Code;
+                }
+            }
+        }
+        idx += 1;
+    }
+    state != State::Code
 }
 
 fn program_appears_filesystem_backed(program: &MergedProgram) -> bool {
@@ -771,12 +833,21 @@ fn required_tslib_helpers(
         }];
     }
     if let Some((start, length)) = first_async_function.or(saw_await) {
-        return vec![TslibHelperRequirement {
+        let mut helpers = vec![TslibHelperRequirement {
             name: "__awaiter",
             start,
             length,
             required_parameter_count: None,
         }];
+        if !target.supports_es2015() {
+            helpers.push(TslibHelperRequirement {
+                name: "__generator",
+                start,
+                length,
+                required_parameter_count: None,
+            });
+        }
+        return helpers;
     }
 
     if !is_esm {
@@ -1199,11 +1270,14 @@ pub(super) fn js_file_has_ts_check_pragma(file: &BoundFile) -> bool {
     let Some(source) = file.arena.get_source_file_at(file.source_file) else {
         return false;
     };
-    let text = source.text.as_ref().to_ascii_lowercase();
-    let ts_check = text.rfind("@ts-check");
-    let ts_no_check = text.rfind("@ts-nocheck");
-    match (ts_check, ts_no_check) {
-        (Some(check_idx), Some(no_check_idx)) => check_idx > no_check_idx,
+    let text: &str = source.text.as_ref();
+    // When both directives are present in leading trivia, the last one wins.
+    let ts_check_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-check");
+    let ts_nocheck_pos =
+        tsz_common::comments::last_ts_directive_offset_in_leading_trivia(text, "@ts-nocheck");
+    match (ts_check_pos, ts_nocheck_pos) {
+        (Some(check), Some(nocheck)) => check > nocheck,
         (Some(_), None) => true,
         _ => false,
     }
@@ -1213,11 +1287,8 @@ pub(super) fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
     let Some(source) = file.arena.get_source_file_at(file.source_file) else {
         return false;
     };
-    source
-        .text
-        .as_ref()
-        .to_ascii_lowercase()
-        .contains("@ts-nocheck")
+    let text: &str = source.text.as_ref();
+    tsz_common::comments::source_has_ts_nocheck_directive(text)
 }
 
 /// Convert specific parser diagnostics to `TS8xxx` equivalents for JS files.
@@ -1300,6 +1371,17 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
                 diags.push(parse_diagnostic_to_checker(file_name, parse_diagnostic));
             }
         }
+        // tsc reports the JS-only TS8xxx grammar diagnostics from its parser,
+        // so they must surface even in `--noCheck` mode where tsz otherwise
+        // skips the regular checker pass (#3692). Run a minimal binder + checker
+        // grammar-only walk for each JS source so type annotations, modifiers,
+        // and other TypeScript-only constructs still produce TS8xxx errors.
+        diags.extend(collect_js_grammar_diagnostics(
+            file_name,
+            arena,
+            source_file,
+            options,
+        ));
         diags
     } else {
         filtered_parse_diagnostics
@@ -1324,6 +1406,27 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
     file_diagnostics
 }
 
+/// Run the checker's JS grammar pass on a parsed JS source file. The pass
+/// surfaces the `TS8xxx` diagnostics tsc emits for TypeScript-only constructs in
+/// JS files. Used by the `--noCheck` parse-only path to align with tsc, which
+/// reports these from its parser regardless of `--noCheck`.
+fn collect_js_grammar_diagnostics(
+    file_name: &str,
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    options: &ResolvedCompilerOptions,
+) -> Vec<Diagnostic> {
+    let mut binder = tsz_binder::state::BinderState::new();
+    binder.bind_source_file(arena, source_file);
+    tsz_checker::run_js_grammar_pass(
+        arena,
+        &binder,
+        source_file,
+        file_name.to_string(),
+        options.checker.clone(),
+    )
+}
+
 pub(super) fn filtered_parse_diagnostics(
     parse_diagnostics: &[ParseDiagnostic],
     program_has_real_syntax_errors: bool,
@@ -1342,19 +1445,13 @@ pub(super) fn filtered_parse_diagnostics(
         .iter()
         .any(|d| !matches!(d.code, 1009 | 1185 | 1214 | 1262) && !is_parser_grammar_code(d.code));
 
-    // In tsc, TS1359 for 'await' as a binding identifier in async/static-block
-    // contexts is emitted by the checker via grammarErrorOnNode, NOT by the parser.
-    // grammarErrorOnNode checks hasParseDiagnostics(sourceFile) and suppresses the
-    // error when any parse diagnostic exists. In tsz, this check lives in the parser
-    // (check_illegal_binding_identifier). We replicate tsc's suppression by filtering
-    // out TS1359-for-await when ANY other non-grammar parse diagnostic is present.
-    let has_non_await1359_parse_error = parse_diagnostics.iter().any(|d| {
-        // Exclude the special codes and grammar codes from the trigger check
-        !(matches!(d.code, 1009 | 1185 | 1214 | 1262)
-            || is_parser_grammar_code(d.code)
-            // Also exclude TS1359 for 'await' — those are grammar checks in tsc
-            || (d.code == 1359 && d.message.contains("'await'")))
-    });
+    // TS1359 for `await` is parser-emitted in tsz. Keep it alongside unrelated
+    // parse diagnostics (tsc does this in plain JS binder errors), but suppress
+    // it for expression-recovery cases where TS1109 is the primary diagnostic.
+    let has_expression_expected_parse_error = parse_diagnostics.iter().any(|d| d.code == 1109);
+    let has_hard_keyword_interface_ts2427 = parse_diagnostics
+        .iter()
+        .any(is_hard_keyword_interface_name_2427_parse_diagnostic);
     parse_diagnostics
         .iter()
         .filter(|diagnostic| {
@@ -1373,17 +1470,29 @@ pub(super) fn filtered_parse_diagnostics(
             {
                 return false;
             }
-            // Suppress TS1359 for 'await' when other parse diagnostics exist.
-            // In tsc this is a checker grammar check suppressed by hasParseDiagnostics.
+            // Suppress TS1359 for 'await' when expression recovery already
+            // reported TS1109 at the construct.
             if diagnostic.code == 1359
                 && diagnostic.message.contains("'await'")
-                && has_non_await1359_parse_error
+                && has_expression_expected_parse_error
+            {
+                return false;
+            }
+            if has_hard_keyword_interface_ts2427
+                && diagnostic.code == 2427
+                && !is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic)
             {
                 return false;
             }
             true
         })
         .collect()
+}
+
+fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagnostic) -> bool {
+    diagnostic.code == 2427
+        && (diagnostic.message == "Interface name cannot be 'void'."
+            || diagnostic.message == "Interface name cannot be 'null'.")
 }
 
 /// Parser-emitted codes that tsc emits via grammarErrorOnNode in the checker.
@@ -1465,10 +1574,17 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 1110 // Type expected
         | 1111 // Private field must be declared in an enclosing class
         | 1139 // Can not use 'JSDoc' type in TS
+        | 1141 // String literal expected
+        | 1163 // A 'yield' expression is only allowed in a generator body
+        // Note: TS1192 ("Module has no default export") is intentionally
+        // excluded — it is a semantic checker diagnostic that tsc routes
+        // through getSemanticDiagnostics, so unchecked JS files never see
+        // it (issue #3693).
         | 1196 // Catch clause variable type annotation
         | 1206 // Decorators are not valid here
         | 8038 // Decorators may not appear after 'export' if they also appear before 'export'
         | 1210 // Code contained in a class is evaluated in strict mode
+        | 1214 // Identifier expected; 'yield' is reserved in module strict mode
         | 1215 // Identifier expected; 'await' is a reserved word
         | 1223 // Constructor implementation is missing
         | 1228 // A type predicate is only allowed in return type position
@@ -1491,6 +1607,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
         | 2657 // JSX expressions must have one parent element
         | 17008 // JSX element '{0}' has no corresponding closing tag
         | 18030 // An optional chain cannot contain private identifiers
+        | 18012 // '#constructor' is a reserved word
     )
 }
 
@@ -1534,24 +1651,47 @@ pub(super) const fn is_js_only_syntactic_diagnostic(code: u32) -> bool {
     )
 }
 
-/// True when a checker-emitted diagnostic should be retained even though the
-/// program contains a JS-only-syntactic diagnostic.
+/// True when a diagnostic should be retained even though the program contains
+/// a JS-only-syntactic diagnostic.
 ///
 /// In tsc, `getSyntacticDiagnostics` (which contains the JS-only-syntactic
-/// codes for JS files) short-circuits `getSemanticDiagnostics` for every
-/// source file. We mirror that by keeping only:
-/// - real parse failures (parser-emitted, structural recovery)
-/// - `TS1xxx` codes that tsc legitimately emits for JS sources
-/// - `TS8xxx` JS grammar diagnostics (the gate trigger plus its peers)
-/// - `TS2427`/`TS2457` reserved type names (deferred parse-vs-checker validation)
+/// codes for JS files) short-circuits `getSemanticDiagnostics` program-wide
+/// in `emitFilesAndReportErrors`. The only diagnostics that survive are the
+/// ones tsc routes through `getSyntacticDiagnostics` itself: structural parse
+/// failures, plus the codes contributed by `getJSSyntacticDiagnosticsForFile`.
 ///
-/// Everything else — checker semantic diagnostics, including low-numbered
-/// codes like `TS1192` and `TS1295` — is suppressed to match tsc.
+/// tsz's emission map straddles parser and checker — many `TS1xxx` codes that
+/// `is_ts1xxx_allowed_in_js` legitimately accepts in JS files are nonetheless
+/// emitted from the *checker*'s grammar phase, so tsc would route them through
+/// `getSemanticDiagnostics` and drop them here. We honour that by keeping the
+/// broad `TS1xxx` allow-list and then explicitly excluding the checker/binder
+/// grammar checks tsc treats as semantic — break/continue (`TS1104`/`TS1105`)
+/// and the cross-function jump-target check (`TS1107`).
 pub(super) const fn keep_diagnostic_when_js_only_syntactic_skips_semantic(code: u32) -> bool {
+    if is_post_js_gate_suppressed_checker_grammar(code) {
+        return false;
+    }
     is_real_syntax_error(code)
         || is_ts1xxx_allowed_in_js(code)
         || (code >= 8000 && code < 9000)
         || matches!(code, 2427 | 2457)
+}
+
+/// Checker/binder grammar codes that tsc routes through `getSemanticDiagnostics`
+/// rather than `getSyntacticDiagnostics` — so when the JS-only-syntactic gate
+/// fires, tsc drops them program-wide. These codes appear in
+/// `is_ts1xxx_allowed_in_js` because tsc legitimately emits them for plain JS
+/// files when no syntactic gate-trigger is present, but once a gate-trigger
+/// fires they must be suppressed even though they are `TS1xxx`.
+const fn is_post_js_gate_suppressed_checker_grammar(code: u32) -> bool {
+    matches!(
+        code,
+        // The break/continue family — tsc's `checkBreakOrContinueStatement`
+        // emits these from the type checker.
+        1104 // A 'continue' statement can only be used within an enclosing iteration statement.
+        | 1105 // A 'break' statement can only be used within an enclosing iteration or switch statement.
+        | 1107 // Jump target cannot cross function boundary.
+    )
 }
 
 /// Pre-computed merged augmentation data shared across all per-file binders.
@@ -1912,12 +2052,44 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
 }
 
 // --- TS directive suppression ---
+/// Length in bytes of a line break starting at `bytes[i]`, or `0` if there is
+/// no line break at that position. Recognizes `\n`, `\r`, `\r\n`, and the
+/// UTF-8 encodings of U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH
+/// SEPARATOR), matching `tsz-scanner::is_line_break` and tsc's own line
+/// break recognition.
+fn line_break_len_at(bytes: &[u8], i: usize) -> usize {
+    match bytes.get(i) {
+        Some(&b'\n') => 1,
+        Some(&b'\r') => {
+            if bytes.get(i + 1) == Some(&b'\n') {
+                2
+            } else {
+                1
+            }
+        }
+        Some(&0xE2)
+            if bytes.get(i + 1) == Some(&0x80)
+                && matches!(bytes.get(i + 2), Some(&0xA8) | Some(&0xA9)) =>
+        {
+            3
+        }
+        _ => 0,
+    }
+}
+
 /// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
 fn build_line_starts(text: &str) -> Vec<u32> {
     let mut starts = vec![0u32];
-    for (i, b) in text.bytes().enumerate() {
-        if b == b'\n' {
-            starts.push((i + 1) as u32);
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        let lb = line_break_len_at(bytes, i);
+        if lb > 0 {
+            starts.push((i + lb) as u32);
+            i += lb;
+        } else {
+            i += 1;
         }
     }
     starts
@@ -1939,21 +2111,39 @@ enum DirectiveKind {
 
 /// Characters that can follow `@ts-expect-error` / `@ts-ignore` in a valid directive.
 const fn is_directive_separator(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b':' | b'*' | b'/')
+    matches!(
+        b,
+        b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b':' | b'*' | b'/'
+    )
+}
+
+const fn is_directive_leading_trivia_byte(b: u8) -> bool {
+    matches!(b, b'/' | b' ' | b'\t' | b'\r' | b'\n' | 0x0B | 0x0C | b'*')
 }
 
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
 fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
-    if let Some(pos) = comment.find("@ts-expect-error") {
-        let after = pos + "@ts-expect-error".len();
-        if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
-            return Some((DirectiveKind::ExpectError, pos));
-        }
+    let bytes = comment.as_bytes();
+    let mut pos = if comment.starts_with("//") || comment.starts_with("/*") {
+        2
+    } else {
+        0
+    };
+
+    while pos < bytes.len() && is_directive_leading_trivia_byte(bytes[pos]) {
+        pos += 1;
     }
-    if let Some(pos) = comment.find("@ts-ignore") {
-        let after = pos + "@ts-ignore".len();
+
+    for (kind, text) in [
+        (DirectiveKind::ExpectError, "@ts-expect-error"),
+        (DirectiveKind::Ignore, "@ts-ignore"),
+    ] {
+        if !comment[pos..].starts_with(text) {
+            continue;
+        }
+        let after = pos + text.len();
         if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
-            return Some((DirectiveKind::Ignore, pos));
+            return Some((kind, pos));
         }
     }
     None
@@ -1976,80 +2166,29 @@ struct TsDirective {
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
 fn find_ts_directives(text: &str) -> Vec<TsDirective> {
     let line_starts = build_line_starts(text);
-    let bytes = text.as_bytes();
-    let len = bytes.len();
     let mut directives = Vec::new();
-    let mut i = 0;
 
-    while i < len {
-        if bytes[i] == b'/' && i + 1 < len {
-            if bytes[i + 1] == b'/' {
-                // Single-line comment
-                let comment_start = i as u32;
-                let line_end = bytes[i..]
-                    .iter()
-                    .position(|&b| b == b'\n')
-                    .map(|offset| i + offset)
-                    .unwrap_or(len);
-                let comment_text = &text[i..line_end];
-                let comment_length = (line_end - i) as u32;
-
-                if let Some((kind, rel_offset)) = find_directive_in_text(comment_text) {
-                    let comment_line = line_of_offset(&line_starts, comment_start);
-                    directives.push(TsDirective {
-                        is_expect_error: kind == DirectiveKind::ExpectError,
-                        suppressed_line: comment_line + 1,
-                        comment_start,
-                        comment_length,
-                        directive_text_start: comment_start + rel_offset as u32,
-                    });
-                }
-                i = line_end;
-                continue;
-            } else if bytes[i + 1] == b'*' {
-                // Multi-line comment
-                let comment_start = i as u32;
-                let close = text[i + 2..]
-                    .find("*/")
-                    .map(|offset| i + 2 + offset + 2)
-                    .unwrap_or(len);
-                let comment_text = &text[i..close];
-                let comment_length = (close - i) as u32;
-
-                if let Some((kind, rel_offset)) = find_directive_in_text(comment_text) {
-                    let close_line = line_of_offset(&line_starts, (close.saturating_sub(1)) as u32);
-                    directives.push(TsDirective {
-                        is_expect_error: kind == DirectiveKind::ExpectError,
-                        suppressed_line: close_line + 1,
-                        comment_start,
-                        comment_length,
-                        directive_text_start: comment_start + rel_offset as u32,
-                    });
-                }
-                i = close;
-                continue;
-            }
-        }
-
-        // Skip string literals to avoid false positives
-        if bytes[i] == b'"' || bytes[i] == b'\'' || bytes[i] == b'`' {
-            let quote = bytes[i];
-            i += 1;
-            while i < len {
-                if bytes[i] == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == quote {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
+    for comment in tsz_common::comments::get_comment_ranges(text) {
+        let comment_text = comment.get_text(text);
+        let Some((kind, rel_offset)) = find_directive_in_text(comment_text) else {
             continue;
-        }
+        };
 
-        i += 1;
+        let suppressed_line = if comment.is_multi_line {
+            let close_line = line_of_offset(&line_starts, comment.end.saturating_sub(1));
+            close_line + 1
+        } else {
+            let comment_line = line_of_offset(&line_starts, comment.pos);
+            comment_line + 1
+        };
+
+        directives.push(TsDirective {
+            is_expect_error: kind == DirectiveKind::ExpectError,
+            suppressed_line,
+            comment_start: comment.pos,
+            comment_length: comment.end.saturating_sub(comment.pos),
+            directive_text_start: comment.pos + rel_offset as u32,
+        });
     }
 
     directives
@@ -2074,37 +2213,27 @@ pub(super) fn apply_ts_directive_suppression(
     let line_starts = build_line_starts(source_text);
 
     // Check for @ts-nocheck — suppresses TS2578 for unused directives.
-    let has_ts_nocheck = source_text.to_ascii_lowercase().contains("@ts-nocheck");
+    let has_ts_nocheck =
+        tsz_common::comments::has_ts_directive_in_leading_trivia(source_text, "@ts-nocheck");
 
     let mut directive_used = vec![false; directives.len()];
 
-    // Suppress diagnostics on directive-targeted lines
+    // Suppress diagnostics on directive-targeted lines.
+    //
+    // tsc applies `@ts-ignore` and `@ts-expect-error` uniformly across the
+    // checking pipeline, including the JSDoc `@type` lookup that runs during
+    // checked-JS declaration emit. An earlier carve-out kept TS2304/TS2552
+    // alive on lines containing `@type {` to align a different fingerprint,
+    // but issue #3996 confirmed tsc actually suppresses those diagnostics.
+    // The `preserve_declaration_jsdoc_name_diagnostics` flag is now unused
+    // here; callers still pass it so the public signature stays stable while
+    // any deeper revisit of declaration-emit fingerprints lands.
+    let _ = preserve_declaration_jsdoc_name_diagnostics;
     diagnostics.retain(|diag| {
         let diag_line = line_of_offset(&line_starts, diag.start);
         for (idx, directive) in directives.iter().enumerate() {
             if diag_line == directive.suppressed_line {
                 directive_used[idx] = true;
-
-                if preserve_declaration_jsdoc_name_diagnostics && matches!(diag.code, 2304 | 2552) {
-                    let line_start = line_starts
-                        .get(diag_line as usize)
-                        .copied()
-                        .unwrap_or_default() as usize;
-                    let line_end = line_starts
-                        .get(diag_line as usize + 1)
-                        .copied()
-                        .unwrap_or(source_text.len() as u32)
-                        as usize;
-                    let line_end = line_end.min(source_text.len());
-                    let line_start = line_start.min(line_end);
-                    let line_text = &source_text[line_start..line_end];
-                    if line_text.contains("@type {") {
-                        // Preserve declaration-emit JSDoc name diagnostics even when a
-                        // preceding directive suppresses source-file checking diagnostics.
-                        return true;
-                    }
-                }
-
                 return false;
             }
         }
@@ -2309,7 +2438,6 @@ pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
         | 2528 // A module cannot have multiple default exports
         | 2752 // The first export default is here
         | 2753 // Another export default is here
-        | 2774 // This condition will always return true since this function is always defined
         | 2801 // This condition will always return true since this '{0}' is always defined
         | 2803 // Cannot assign to private method '{0}'. Private methods are not writable
         | 2839 // This condition will always return '{0}' since JS compares objects by reference
@@ -2353,9 +2481,124 @@ mod tests {
         parallel::merge_bind_results(bind_results)
     }
 
+    fn check_merged_program_file(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic> {
+        let program = merged_program(files);
+        let entry_idx = program
+            .files
+            .iter()
+            .position(|file| file.file_name == entry_file)
+            .expect("entry file should exist");
+        let augmentations = MergedAugmentations::from_program(&program);
+        let all_arenas = Arc::new(
+            program
+                .files
+                .iter()
+                .map(|file| Arc::clone(&file.arena))
+                .collect::<Vec<_>>(),
+        );
+        let all_binders = Arc::new(
+            program
+                .files
+                .iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    Arc::new(create_binder_from_bound_file_with_augmentations(
+                        file,
+                        &program,
+                        file_idx,
+                        &augmentations,
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        );
+        let file_names = program
+            .files
+            .iter()
+            .map(|file| file.file_name.clone())
+            .collect::<Vec<_>>();
+        let (resolved_module_paths, resolved_modules) =
+            tsz::checker::module_resolution::build_module_resolution_maps(&file_names);
+        let opts = tsz_common::checker_options::CheckerOptions {
+            jsx_mode: tsz_common::checker_options::JsxMode::React,
+            no_unused_locals: true,
+            no_lib: true,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let interner = tsz_solver::TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[entry_idx].as_ref(),
+            all_binders[entry_idx].as_ref(),
+            &interner,
+            file_names[entry_idx].clone(),
+            opts,
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(entry_idx);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+
+        checker.check_source_file(program.files[entry_idx].source_file);
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.code != 2318)
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn plain_class_needs_no_helpers() {
         assert!(helper_names("class C { method() {} }").is_empty());
+    }
+
+    #[test]
+    fn jsx_fragment_factory_scope_ignores_external_module_globals() {
+        let diagnostics = check_merged_program_file(
+            &[
+                (
+                    "/renderer.d.ts",
+                    r#"
+declare global {
+    namespace JSX {
+        interface IntrinsicElements { [e: string]: any; }
+        interface Element {}
+    }
+}
+export function h(): void;
+export function Fragment(): void;
+"#,
+                ),
+                (
+                    "/entry.tsx",
+                    r#"/** @jsx h
+ * @jsxFrag Fragment
+ */
+import { Fragment } from "./renderer";
+const _frag = <></>;
+"#,
+                ),
+            ],
+            "/entry.tsx",
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2874 && diag.message_text.contains("'h'")),
+            "Expected TS2874 for missing JSX factory `h`, got: {diagnostics:#?}"
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diag| diag.code == 2879 && diag.message_text.contains("Fragment")),
+            "Expected imported fragment factory to remain in scope, got: {diagnostics:#?}"
+        );
     }
 
     /// TS1101 ('with' statements not allowed in strict mode) is a grammar
@@ -2384,6 +2627,327 @@ mod tests {
                 "TS{code} should still be classified as a real syntax error"
             );
         }
+    }
+
+    #[test]
+    fn ts_directive_scan_ignores_jsdoc_example_mentions() {
+        let source = r#"/**
+Example:
+```
+// @ts-expect-error
+foo.bar;
+```
+*/
+const value = 1;
+"#;
+        assert!(
+            find_ts_directives(source).is_empty(),
+            "directives embedded in documentation examples must not target source lines"
+        );
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_real_line_directives() {
+        let directives =
+            find_ts_directives("// @ts-expect-error: intentional\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_accepts_form_feed_before_directive() {
+        let directives = find_ts_directives("//\x0C@ts-ignore\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_scan_accepts_vertical_tab_before_directive() {
+        let directives = find_ts_directives("//\x0B@ts-ignore\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_suppresses_next_line_with_form_feed_spacing() {
+        let source = "//\x0C@ts-ignore\nlet x: string = 1;\n";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            21,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected form-feed @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_template_substitution_directives() {
+        let directives =
+            find_ts_directives("const value = `${/* @ts-ignore */ 0}`;\nconst x: string = 1;");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+
+        let directives = find_ts_directives(
+            "const value = `${/* @ts-expect-error */ 0}`;\nconst x: string = 1;",
+        );
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn ts_directive_suppresses_next_line_from_template_substitution() {
+        let source = "const value = `${/* @ts-ignore */ 0}`;\nconst x: string = 1;\n";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            45,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected template-substitution @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_directive_scan_ignores_plain_template_text() {
+        assert!(
+            find_ts_directives("const value = `// @ts-ignore`;\nconst x: string = 1;").is_empty(),
+            "directives in template text must not target source lines"
+        );
+    }
+
+    #[test]
+    fn ts_directive_line_starts_treat_cr_as_line_break() {
+        assert_eq!(
+            build_line_starts("// @ts-ignore\rlet x: string = 1;\r"),
+            vec![0, 14, 33],
+        );
+        assert_eq!(
+            build_line_starts("// @ts-ignore\r\nlet x: string = 1;\n"),
+            vec![0, 15, 34],
+        );
+    }
+
+    #[test]
+    fn ts_ignore_suppresses_jsdoc_at_type_ts2304_in_declaration_emit() {
+        // Issue #3996: a `// @ts-ignore` followed by a JSDoc `@type` annotation
+        // referencing a missing name was incorrectly preserved during checked-JS
+        // declaration emit because of a `line_text.contains("@type {")`
+        // carve-out. tsc 6.0.3 suppresses the diagnostic regardless of which
+        // checking surface (source-file vs declaration-emit) raised it.
+        let source = "// @ts-ignore\n/** @type {Missing} */\nexport const x = 1;\n";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.js".to_string(),
+            22,
+            7,
+            "Cannot find name 'Missing'.".to_string(),
+            2304,
+        )];
+        apply_ts_directive_suppression("repro.js", source, &mut diagnostics, true);
+        assert!(
+            diagnostics.is_empty(),
+            "Expected @ts-ignore to suppress JSDoc @type TS2304 even during declaration emit, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_ignore_suppresses_next_line_with_cr_only_line_endings() {
+        let source = "// @ts-ignore\rlet x: string = 1;\r";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            18,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected CR-only @ts-ignore to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_expect_error_uses_next_line_with_cr_only_line_endings() {
+        let source = "// @ts-expect-error\rlet x: string = 1;\r";
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            24,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected CR-only @ts-expect-error to suppress the next-line diagnostic, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn raw_ts_nocheck_text_does_not_suppress_unused_expect_error() {
+        let source = r#"const marker = "@ts-nocheck";
+
+// @ts-expect-error
+const stringValue = 1;
+
+marker;
+stringValue;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression("string.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+    }
+
+    #[test]
+    fn late_ts_nocheck_comment_does_not_suppress_unused_expect_error() {
+        let source = r#"const before = 0;
+
+// @ts-nocheck
+// @ts-expect-error
+const lateValue = 1;
+
+before;
+lateValue;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression("late-comment.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+    }
+
+    #[test]
+    fn leading_ts_nocheck_suppresses_unused_expect_error() {
+        let source = r#"// @ts-nocheck
+
+// @ts-expect-error
+const unchecked = 1;
+
+unchecked;
+"#;
+        let mut diagnostics = Vec::new();
+
+        apply_ts_directive_suppression(
+            "actual-nocheck-control.ts",
+            source,
+            &mut diagnostics,
+            false,
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_triple_slash_directives() {
+        let directives = find_ts_directives("/// @ts-ignore\nx();");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+    }
+
+    #[test]
+    fn build_line_starts_handles_cr_and_crlf() {
+        // \n only
+        assert_eq!(build_line_starts("a\nb\nc"), vec![0, 2, 4]);
+        // \r only (classic Mac line endings)
+        assert_eq!(build_line_starts("a\rb\rc"), vec![0, 2, 4]);
+        // \r\n (Windows): one line break, not two
+        assert_eq!(build_line_starts("a\r\nb\r\nc"), vec![0, 3, 6]);
+        // Mixed
+        assert_eq!(build_line_starts("a\nb\rc\r\nd"), vec![0, 2, 4, 7]);
+        // U+2028 LINE SEPARATOR
+        assert_eq!(build_line_starts("a\u{2028}b"), vec![0, 4]);
+        // U+2029 PARAGRAPH SEPARATOR
+        assert_eq!(build_line_starts("a\u{2029}b"), vec![0, 4]);
+    }
+
+    #[test]
+    fn ts_directive_scan_handles_cr_only_line_endings() {
+        // CR-only file: directive on line 0 must suppress line 1, and the
+        // single-line comment must not swallow the rest of the file.
+        let directives = find_ts_directives("// @ts-ignore\rlet x: string = 1;\r");
+        assert_eq!(directives.len(), 1);
+        assert!(!directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+        // Comment span must stop at the CR, not run to end-of-file.
+        assert_eq!(directives[0].comment_length, "// @ts-ignore".len() as u32);
+    }
+
+    #[test]
+    fn ts_directive_scan_handles_crlf_line_endings() {
+        let directives = find_ts_directives("// @ts-expect-error\r\nconst x: string = 1;\r\n");
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 1);
+        // The CR must be excluded from the comment span (matches the
+        // existing behaviour of the LF-only path).
+        assert_eq!(
+            directives[0].comment_length,
+            "// @ts-expect-error".len() as u32
+        );
+    }
+
+    #[test]
+    fn ts_directive_suppresses_diagnostic_with_cr_line_endings() {
+        let source = "// @ts-ignore\rlet x: string = 1;\r";
+        // The bad assignment is on line 1 (0-based) at the byte offset of
+        // the literal `1` after the CR.
+        let bad_offset = source.find('1').unwrap() as u32;
+        let mut diagnostics = vec![Diagnostic::error(
+            "repro.ts".to_string(),
+            bad_offset,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        assert!(
+            diagnostics.is_empty(),
+            "@ts-ignore must suppress the next-line diagnostic with CR-only endings: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn ts_directive_scan_keeps_block_comment_directives() {
+        let directives = find_ts_directives(
+            r#"/**
+ @ts-expect-error */
+texts.push(100);
+
+{/*@ts-ignore*/}
+<MyComponent foo={100} />"#,
+        );
+        assert_eq!(directives.len(), 2);
+        assert!(directives[0].is_expect_error);
+        assert!(!directives[1].is_expect_error);
+        assert_eq!(directives[0].suppressed_line, 2);
+        assert_eq!(directives[1].suppressed_line, 5);
     }
 
     #[test]
@@ -2446,6 +3010,37 @@ mod tests {
     }
 
     #[test]
+    fn declaration_extension_variants_do_not_require_imported_tslib_helpers() {
+        let program = merged_program(&[
+            (
+                "__virtual__/index.d.mts",
+                "declare class Base {}\ndeclare class Derived extends Base {}",
+            ),
+            (
+                "__virtual__/index.d.cts",
+                "declare class CjsBase {}\ndeclare class CjsDerived extends CjsBase {}",
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
+        options.checker.target = tsz_common::ScriptTarget::ES5;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/__virtual__"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2354),
+            "Did not expect TS2354 for declaration-file variants. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
     fn in_program_tslib_index_helpers_satisfy_legacy_decorator_requirements() {
         let program = merged_program(&[
             (
@@ -2479,6 +3074,89 @@ mod tests {
                 .iter()
                 .any(|diag| diag.code == 2343 || diag.code == 2354),
             "Did not expect tslib helper diagnostics when index.d.ts declares __decorate. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn ambient_tslib_helper_comments_do_not_satisfy_missing_helpers() {
+        let program = merged_program(&[
+            (
+                "main.ts",
+                "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
+            ),
+            (
+                "node_modules/tslib/tslib.d.ts",
+                r#"declare module "tslib" {
+  // Mentioning __importStar in a comment should not provide any helper export.
+  // export declare function __awaiter(thisArg: any, _arguments: any, P: any, generator: any): any;
+  export {};
+}
+"#,
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
+        options.checker.target = tsz_common::ScriptTarget::ES5;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2343
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__awaiter")
+            }),
+            "Expected TS2343 for missing __awaiter. Got: {diagnostics:#?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == 2343
+                    && diag.file == "main.ts"
+                    && diag.message_text.contains("__generator")
+            }),
+            "Expected TS2343 for missing __generator. Got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn ambient_tslib_helper_declarations_satisfy_async_helpers() {
+        let program = merged_program(&[
+            (
+                "main.ts",
+                "export async function load(): Promise<number> {\n    await Promise.resolve();\n    return 1;\n}\n",
+            ),
+            (
+                "node_modules/tslib/tslib.d.ts",
+                r#"declare module "tslib" {
+  export declare function __awaiter(thisArg: any, _arguments: any, P: any, generator: any): any;
+  export declare function __generator(thisArg: any, body: any): any;
+}
+"#,
+            ),
+        ]);
+        let mut options = ResolvedCompilerOptions {
+            import_helpers: true,
+            ..Default::default()
+        };
+        options.checker.target = tsz_common::ScriptTarget::ES5;
+
+        let diagnostics = detect_missing_tslib_helper_diagnostics(
+            &program,
+            &options,
+            Path::new("/"),
+            &rustc_hash::FxHashMap::default(),
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2343),
+            "Did not expect missing-helper diagnostics when ambient tslib declares async helpers. Got: {diagnostics:#?}"
         );
     }
 
@@ -2715,6 +3393,35 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
     }
 
     #[test]
+    fn filtered_parse_diagnostics_keeps_await_ts1359_with_unrelated_parse_errors() {
+        use tsz::parser::ParseDiagnostic;
+
+        let diagnostics = vec![
+            ParseDiagnostic {
+                start: 100,
+                length: 5,
+                message:
+                    "Identifier expected. 'await' is a reserved word that cannot be used here."
+                        .to_string(),
+                code: 1359,
+            },
+            ParseDiagnostic {
+                start: 10,
+                length: 6,
+                message: "A module cannot have multiple default exports.".to_string(),
+                code: 2528,
+            },
+        ];
+
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1359),
+            "TS1359 for 'await' should survive unrelated parse diagnostics, got: {codes:?}"
+        );
+    }
+
+    #[test]
     fn filtered_parse_diagnostics_keeps_await_ts1359_when_alone() {
         use tsz::parser::ParseDiagnostic;
 
@@ -2732,6 +3439,16 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             codes.contains(&1359),
             "TS1359 for 'await' should be kept when it's the only diagnostic, got: {codes:?}"
         );
+    }
+
+    #[test]
+    fn js_parse_allowlist_keeps_plain_js_binder_strict_codes() {
+        for code in [1214, 18012] {
+            assert!(
+                is_ts1xxx_allowed_in_js(code),
+                "plain JS binder parse diagnostic TS{code} should be reported in JavaScript files"
+            );
+        }
     }
 
     #[test]
@@ -2755,6 +3472,14 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
         assert!(
             is_ts1xxx_allowed_in_js(17014),
             "TS17014 should be preserved for JS JSX fragment recovery diagnostics"
+        );
+    }
+
+    #[test]
+    fn js_parse_allowlist_keeps_ts1163() {
+        assert!(
+            is_ts1xxx_allowed_in_js(1163),
+            "TS1163 should be preserved for JS yield-outside-generator diagnostics"
         );
     }
 
@@ -2931,6 +3656,58 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
         assert!(
             is_non_suppressing_parse_error(1502),
             "TS1502 (Incompatible u/v flags) should be non-suppressing"
+        );
+    }
+
+    /// Helper: parse a single file and collect noCheck path diagnostics.
+    fn collect_no_check_diags(file_name: &str, source: &str) -> Vec<Diagnostic> {
+        let mut parse_results =
+            parallel::parse_files_parallel(vec![(file_name.to_string(), source.to_string())]);
+        let result = parse_results.remove(0);
+        let options = ResolvedCompilerOptions::default();
+        let program_has_real_syntax_errors = result
+            .parse_diagnostics
+            .iter()
+            .any(|d| is_real_syntax_error(d.code));
+        collect_no_check_parse_diagnostics_for_file(
+            &result.file_name,
+            &result.arena,
+            result.source_file,
+            &result.parse_diagnostics,
+            &options,
+            program_has_real_syntax_errors,
+        )
+    }
+
+    #[test]
+    fn no_check_path_emits_ts8010_for_js_parameter_type_annotation() {
+        // Issue #3692: `--noCheck` previously skipped TS8xxx grammar
+        // diagnostics that tsc reports from its parser. Confirm that a
+        // type-annotated JS parameter still produces TS8010 here.
+        let diagnostics = collect_no_check_diags("a.js", "function f(x: number) {}\n");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 8010),
+            "expected TS8010 in JS noCheck output, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_path_emits_ts8010_for_js_variable_type_annotation() {
+        // Variable declarations with TS-only type annotations also surface.
+        let diagnostics = collect_no_check_diags("a.js", "let x: number;\n");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 8010),
+            "expected TS8010 in JS noCheck output for `let x: number`, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_path_does_not_emit_ts8010_for_typescript_files() {
+        // The grammar walker must not fire on TypeScript files.
+        let diagnostics = collect_no_check_diags("a.ts", "function f(x: number) {}\n");
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 8010),
+            "TS8010 must not fire on TypeScript files, got: {diagnostics:#?}"
         );
     }
 }

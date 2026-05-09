@@ -10,9 +10,36 @@
 use crate::def::DefId;
 use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 
 use super::core::is_keyof_type;
 use super::data::contains_type_parameters_db;
+
+// Reusable scratch `FxHashSet<TypeId>` for the three index-type DFS walkers
+// in this module. Mirrors the pool pattern from #4722 / #4790 and follow-ups.
+thread_local! {
+    static EXTENDED_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_extended_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = EXTENDED_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    EXTENDED_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 // =============================================================================
 // Full Literal Type Classification (includes boolean)
@@ -108,8 +135,7 @@ pub fn get_number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
 /// Returns the specific `TypeId` within the given type (e.g., inside a union)
 /// that makes it invalid for indexing.
 pub fn get_invalid_index_type_member(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    let mut visited = FxHashSet::default();
-    is_invalid_index_type_inner(db, type_id, &mut visited)
+    with_extended_visited(|visited| is_invalid_index_type_inner(db, type_id, visited))
 }
 
 fn is_invalid_index_type_inner(
@@ -162,8 +188,23 @@ fn is_invalid_index_type_inner(
             | TypeData::Function(_)
             | TypeData::Callable(_),
         ) => true,
-        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             for &member in db.type_list(list_id).iter() {
+                if let Some(invalid_member) = is_invalid_index_type_inner(db, member, visited) {
+                    return Some(invalid_member);
+                }
+            }
+            false
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            if members
+                .iter()
+                .any(|&member| is_index_key_anchor(db, member))
+            {
+                return None;
+            }
+            for &member in members.iter() {
                 if let Some(invalid_member) = is_invalid_index_type_inner(db, member, visited) {
                     return Some(invalid_member);
                 }
@@ -184,6 +225,46 @@ fn is_invalid_index_type_inner(
     if is_invalid { Some(type_id) } else { None }
 }
 
+fn is_index_key_anchor(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    with_extended_visited(|visited| is_index_key_anchor_inner(db, type_id, visited))
+}
+
+fn is_index_key_anchor_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    visited: &mut FxHashSet<TypeId>,
+) -> bool {
+    if !visited.insert(type_id) {
+        return false;
+    }
+
+    match type_id {
+        TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL => true,
+        _ if type_id.is_intrinsic() => false,
+        _ => match db.lookup(type_id) {
+            Some(
+                TypeData::Literal(LiteralValue::String(_) | LiteralValue::Number(_))
+                | TypeData::TemplateLiteral(_)
+                | TypeData::StringIntrinsic { .. }
+                | TypeData::UniqueSymbol(_)
+                | TypeData::KeyOf(_),
+            ) => true,
+            Some(TypeData::Union(list_id)) => db
+                .type_list(list_id)
+                .iter()
+                .all(|&member| is_index_key_anchor_inner(db, member, visited)),
+            Some(TypeData::Intersection(list_id)) => db
+                .type_list(list_id)
+                .iter()
+                .any(|&member| is_index_key_anchor_inner(db, member, visited)),
+            Some(TypeData::TypeParameter(info)) => info
+                .constraint
+                .is_some_and(|constraint| is_index_key_anchor_inner(db, constraint, visited)),
+            _ => false,
+        },
+    }
+}
+
 /// Strict version of `get_invalid_index_type_member` matching tsc's `isValidIndexType`.
 ///
 /// Used for computed property names in destructuring patterns where tsc applies
@@ -200,8 +281,7 @@ pub fn get_invalid_index_type_member_strict(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
-    let mut visited = FxHashSet::default();
-    is_invalid_index_type_strict_inner(db, type_id, &mut visited)
+    with_extended_visited(|visited| is_invalid_index_type_strict_inner(db, type_id, visited))
 }
 
 fn is_invalid_index_type_strict_inner(
@@ -1403,6 +1483,37 @@ mod tests {
     use super::*;
     use crate::{CallSignature, ParamInfo, TypeParamInfo};
     use tsz_common::Atom;
+
+    #[test]
+    fn branded_primitive_intersections_are_valid_index_types() {
+        let interner = crate::TypeInterner::new();
+        let brand = interner.object(vec![]);
+
+        let branded_string = interner.intersection(vec![TypeId::STRING, brand]);
+        assert!(
+            get_invalid_index_type_member(&interner, branded_string).is_none(),
+            "string & Brand should stay usable as an element-access index"
+        );
+
+        let branded_number = interner.intersection(vec![TypeId::NUMBER, brand]);
+        assert!(
+            get_invalid_index_type_member(&interner, branded_number).is_none(),
+            "number & Brand should stay usable as an element-access index"
+        );
+    }
+
+    #[test]
+    fn object_only_intersections_remain_invalid_index_types() {
+        let interner = crate::TypeInterner::new();
+        let left = interner.object(vec![]);
+        let right = interner.object(vec![]);
+        let object_intersection = interner.intersection(vec![left, right]);
+
+        assert!(
+            get_invalid_index_type_member(&interner, object_intersection).is_some(),
+            "object-only intersections should still be rejected as index types"
+        );
+    }
 
     #[test]
     fn dedup_alpha_equivalent_generic_signatures() {

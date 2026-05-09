@@ -5,7 +5,7 @@
 //! references the same alias, tsc emits TS2456. This test locks in the
 //! AST-based detection path that walks through `var x: T[]` annotations.
 
-use tsz_checker::test_utils::check_source_codes as get_error_codes;
+use tsz_checker::test_utils::{check_source_codes as get_error_codes, check_source_diagnostics};
 
 #[test]
 fn test_ts2456_typeof_alias_references_self_through_array() {
@@ -21,6 +21,27 @@ fn test_ts2456_typeof_alias_references_self_through_array() {
     assert!(
         codes.contains(&2456),
         "Expected TS2456 (circularly references itself), got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_ts2456_typeof_parameter_after_forward_predicate_call() {
+    let src = r#"
+        function test(arg: string | number, whatever: any) {
+            if (typeof arg === "string") {
+                b();
+                type First = typeof arg;
+                type Test = (arg: unknown) => arg is First;
+                const b: Test = whatever;
+                return b;
+            }
+            return undefined;
+        }
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        codes.contains(&2456),
+        "Expected TS2456 for typeof parameter narrowed by forward predicate call, got: {codes:?}"
     );
 }
 
@@ -96,6 +117,34 @@ fn test_no_ts2456_when_typeof_target_references_alias_inside_type_literal() {
     assert!(
         !codes.contains(&2456),
         "Expected no TS2456 when alias reference is inside a TYPE_LITERAL property, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts2322_expands_recursive_typeof_alias_source_display() {
+    let src = r#"
+        declare var a27: { prop: number } | { prop: T27 };
+        type T27 = typeof a27;
+
+        declare var b: T27;
+        var s: string = b;
+    "#;
+    let diagnostics = check_source_diagnostics(src);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got {diagnostics:?}"));
+    assert!(
+        ts2322
+            .message_text
+            .contains("{ prop: number; } | { prop: { prop: number; } | ...; }"),
+        "TS2322 should expand the recursive typeof alias source, got: {}",
+        ts2322.message_text
+    );
+    assert!(
+        !ts2322.message_text.contains("Type 'T27'"),
+        "TS2322 should not preserve the outer typeof alias name, got: {}",
+        ts2322.message_text
     );
 }
 

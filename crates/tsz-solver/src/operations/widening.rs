@@ -345,7 +345,13 @@ fn widen_type_cached(
                         )
                     })
                     .collect();
+                // Preserve source order for diagnostic display: the canonical
+                // union sort uses anonymous shape allocation order, which can
+                // disagree with source order when normalization allocates new
+                // shapes for some members but reuses existing ones for others.
+                let origin_members = widened_members.clone();
                 let widened = db.union(widened_members);
+                db.store_union_origin(widened, origin_members);
                 propagate_display_alias(db, type_id, widened);
                 widened
             } else {
@@ -792,9 +798,15 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
         Some(TypeData::Union(list_id)) => {
-            let members = db.type_list(list_id);
+            let canonical_members = db.type_list(list_id);
+            let origin_members = db.get_union_origin(type_id);
+            let members = origin_members
+                .as_deref()
+                .map_or(canonical_members.as_ref(), Vec::as_slice);
             let mapped: Vec<TypeId> = members.iter().map(|&m| widen_literal_type(db, m)).collect();
-            db.union(mapped)
+            let result = db.union(mapped.clone());
+            db.store_union_origin(result, mapped);
+            result
         }
 
         _ => type_id,

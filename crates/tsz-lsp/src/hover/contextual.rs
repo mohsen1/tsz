@@ -49,19 +49,7 @@ impl<'a> HoverProvider<'a> {
             .get_identifier_text(prop_assign.name)
             .map(std::string::ToString::to_string)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -550,11 +538,10 @@ impl<'a> HoverProvider<'a> {
             let contextual_param_idx =
                 if let Some(fn_type) = self.arena.get_function_type(contextual_node) {
                     *fn_type.parameters.nodes.get(param_index)?
-                } else if let Some(signature) = self.arena.get_signature(contextual_node) {
+                } else {
+                    let signature = self.arena.get_signature(contextual_node)?;
                     let params = signature.parameters.as_ref()?;
                     *params.nodes.get(param_index)?
-                } else {
-                    return None;
                 };
             let contextual_param_node = self.arena.get(contextual_param_idx)?;
             let contextual_param = self.arena.get_parameter(contextual_param_node)?;
@@ -910,19 +897,7 @@ impl<'a> HoverProvider<'a> {
             .get_identifier_text(access.name_or_argument)
             .map(str::to_string)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = CheckerState::new(
             self.arena,
             self.binder,
@@ -988,19 +963,7 @@ impl<'a> HoverProvider<'a> {
                 .iter()
                 .position(|&idx| idx == fn_expr_idx)?;
 
-            let compiler_options = tsz_checker::context::CheckerOptions {
-                strict: self.strict,
-                no_implicit_any: self.strict,
-                no_implicit_returns: false,
-                no_implicit_this: self.strict,
-                strict_null_checks: self.strict,
-                strict_function_types: self.strict,
-                strict_property_initialization: self.strict,
-                use_unknown_in_catch_variables: self.strict,
-                sound_mode: self.sound_mode,
-                isolated_modules: false,
-                ..Default::default()
-            };
+            let compiler_options = self.checker_options();
             let mut checker = CheckerState::new(
                 self.arena,
                 self.binder,

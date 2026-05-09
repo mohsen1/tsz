@@ -74,6 +74,36 @@ f({ a: 1 });
 }
 
 #[test]
+fn call_missing_property_related_info_widens_fresh_inferred_target() {
+    let source = r#"
+declare function assertEqual<T>(actual: T, expected: NoInfer<T>): boolean;
+const g = { x: 3, y: 2 };
+assertEqual(g, { x: 3 });
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for missing inferred property");
+    let related = ts2345
+        .related_information
+        .iter()
+        .find(|info| info.message_text.contains("Property 'y' is missing"))
+        .expect("expected missing-property related information");
+    assert!(
+        related.message_text.contains("{ x: number; }")
+            && related.message_text.contains("{ x: number; y: number; }"),
+        "Expected fresh inferred object displays to be widened, got: {}",
+        related.message_text
+    );
+    assert!(
+        !related.message_text.contains("{ x: 3"),
+        "Related info should not leak fresh literal object displays, got: {}",
+        related.message_text
+    );
+}
+
+#[test]
 fn argument_not_assignable_suppressed_for_identical_types() {
     let source = r#"
 function f(x: number) {}
@@ -579,6 +609,42 @@ fn ts2322_deterministic_message_text() {
     assert_eq!(
         msg1, msg2,
         "Repeated checks should produce identical messages"
+    );
+}
+
+#[test]
+fn ts2322_related_generic_indexed_access_source_uses_short_namespace_member() {
+    let source = r#"
+declare namespace Foo {
+    interface Elements {
+        a: { a: string };
+        b: { b: number };
+    }
+}
+
+class I<T1 extends keyof Foo.Elements, T2 extends keyof Foo.Elements> {
+    M() {
+        let c1: Foo.Elements[T1] = {} as any;
+        const c2: Foo.Elements[T2] = c1;
+    }
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type 'Elements[T1]' is not assignable to type 'Elements[T2]'"),
+        "TS2322 should use the short namespace member name for related generic indexed access source, got: {:?}",
+        ts2322.message_text
+    );
+    assert!(
+        !ts2322.message_text.contains("Foo.Elements[T1]"),
+        "TS2322 source display should not keep the namespace qualifier, got: {:?}",
+        ts2322.message_text
     );
 }
 

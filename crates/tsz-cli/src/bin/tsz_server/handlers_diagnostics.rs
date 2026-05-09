@@ -94,6 +94,16 @@ impl Server {
             .get("includeCompletionsWithClassMemberSnippets")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        self.include_inlay_parameter_name_hints = preferences
+            .get("includeInlayParameterNameHints")
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
+        // `generateReturnInDocTemplate` controls the `@returns` line in
+        // `docCommentTemplate`. Storing as `Option<bool>` so the per-request
+        // argument or the default still applies when `configure` doesn't set it.
+        self.generate_return_in_doc_template = preferences
+            .get("generateReturnInDocTemplate")
+            .and_then(serde_json::Value::as_bool);
         if let Some(format_options) = request
             .arguments
             .get("formatOptions")
@@ -129,13 +139,16 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files
-                .get(file_path)
-                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
-                .or_else(|| {
-                    Self::read_virtual_harness_path(file_path)
-                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-                })
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
@@ -208,13 +221,16 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files
-                .get(file_path)
-                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
-                .or_else(|| {
-                    Self::read_virtual_harness_path(file_path)
-                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-                })
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
@@ -275,17 +291,22 @@ impl Server {
         };
 
         if input.include_line_position {
+            let start = Self::utf16_offset_for_byte_offset(input.content, input.start_offset);
+            let end = Self::utf16_offset_for_byte_offset(
+                input.content,
+                input.start_offset.saturating_add(input.length),
+            );
             // When includeLinePosition is true, the harness expects:
-            // - start: 0-based byte offset (number)
-            // - length: byte length (number)
+            // - start: 0-based UTF-16 offset (number)
+            // - length: UTF-16 length (number)
             // - startLocation: {line, offset} (1-based)
             // - endLocation: {line, offset} (1-based)
             // - message: the diagnostic text
             // - category: category string
             // - code: error code
             serde_json::json!({
-                "start": input.start_offset,
-                "length": input.length,
+                "start": start,
+                "length": end.saturating_sub(start),
                 "startLocation": {
                     "line": start_pos.line + 1,
                     "offset": start_pos.character + 1,
@@ -314,6 +335,17 @@ impl Server {
                 "category": cat_str,
             })
         }
+    }
+
+    fn utf16_offset_for_byte_offset(content: &str, byte_offset: u32) -> u32 {
+        let limit = usize::try_from(byte_offset)
+            .unwrap_or(content.len())
+            .min(content.len());
+        content
+            .char_indices()
+            .take_while(|(idx, _)| *idx < limit)
+            .map(|(_, ch)| u32::try_from(ch.len_utf16()).unwrap_or(0))
+            .sum()
     }
 
     fn normalized_diagnostic_span(
@@ -361,13 +393,16 @@ impl Server {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
-            open_files
-                .get(file_path)
-                .map(|raw| Self::normalize_fourslash_virtual_content(file_path, raw))
-                .or_else(|| {
-                    Self::read_virtual_harness_path(file_path)
-                        .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
-                })
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
         };
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = get_content(file_path, &self.open_files) {
@@ -447,8 +482,30 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // geterr is async in tsserver - it fires diagnostic events
-        // For now, just acknowledge the request
+        // tsserver acknowledges immediately, then asynchronously fires
+        // `syntaxDiag`, `semanticDiag`, `suggestionDiag`, and finally
+        // `requestCompleted`. Without these events, clients see no
+        // diagnostics. See https://github.com/mohsen1/tsz/issues/3544.
+        let files: Vec<String> = request
+            .arguments
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| f.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for file in &files {
+            self.emit_geterr_events_for_file(file);
+        }
+
+        self.emit_event(
+            "requestCompleted",
+            serde_json::json!({"request_seq": request.seq}),
+        );
+
         self.stub_response(seq, request, None)
     }
 
@@ -457,6 +514,59 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        // Without a real project graph, behave like `geterr` over all
+        // currently-open files: emit per-file events plus a final
+        // `requestCompleted`. See #3544.
+        let files: Vec<String> = self.open_files.keys().cloned().collect();
+        for file in &files {
+            self.emit_geterr_events_for_file(file);
+        }
+        self.emit_event(
+            "requestCompleted",
+            serde_json::json!({"request_seq": request.seq}),
+        );
         self.stub_response(seq, request, None)
+    }
+
+    /// Compute and emit `syntaxDiag`, `semanticDiag`, `suggestionDiag`
+    /// events for a single file. Reuses the existing `*-Sync` handlers'
+    /// diagnostic shapes (each returns a JSON body of `{file, diagnostics}`)
+    /// by synthesizing a minimal request and extracting the response body.
+    fn emit_geterr_events_for_file(&mut self, file: &str) {
+        let synth_request = |command: &str| TsServerRequest {
+            seq: 0,
+            _msg_type: "request".to_string(),
+            command: command.to_string(),
+            arguments: serde_json::json!({"file": file}),
+        };
+        let body_of = |response: TsServerResponse| -> serde_json::Value {
+            response
+                .body
+                .unwrap_or(serde_json::Value::Array(Vec::new()))
+        };
+
+        let syntax = body_of(
+            self.handle_syntactic_diagnostics_sync(0, &synth_request("syntacticDiagnosticsSync")),
+        );
+        self.emit_event(
+            "syntaxDiag",
+            serde_json::json!({"file": file, "diagnostics": syntax}),
+        );
+
+        let semantic = body_of(
+            self.handle_semantic_diagnostics_sync(0, &synth_request("semanticDiagnosticsSync")),
+        );
+        self.emit_event(
+            "semanticDiag",
+            serde_json::json!({"file": file, "diagnostics": semantic}),
+        );
+
+        let suggestion = body_of(
+            self.handle_suggestion_diagnostics_sync(0, &synth_request("suggestionDiagnosticsSync")),
+        );
+        self.emit_event(
+            "suggestionDiag",
+            serde_json::json!({"file": file, "diagnostics": suggestion}),
+        );
     }
 }

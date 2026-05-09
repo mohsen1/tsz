@@ -1,0 +1,251 @@
+//! Regression coverage for assertion-function target diagnostics and reachability.
+
+use crate::context::CheckerOptions;
+use crate::module_resolution::build_module_resolution_maps;
+use crate::state::CheckerState;
+use crate::test_utils::{
+    check_js_source_diagnostics, check_source, check_source_codes, check_source_strict_codes,
+};
+use std::sync::Arc;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
+
+fn check_require_assertion_from_dts() -> Vec<u32> {
+    let files = [
+        (
+            "ex2.d.ts",
+            r#"
+declare function art(value: any): asserts value;
+export = art;
+"#,
+        ),
+        (
+            "38379.js",
+            r#"
+const artoo = require("./ex2");
+let y = 1;
+artoo(y);
+"#,
+        ),
+    ];
+
+    let mut parsed = Vec::new();
+    let mut binders = Vec::new();
+    let mut roots = Vec::new();
+    for (file_name, source) in files {
+        let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        roots.push(root);
+        binders.push(Arc::new(binder));
+        parsed.push(Arc::new(parser.get_arena().clone()));
+    }
+
+    let file_names = vec!["ex2.d.ts".to_string(), "38379.js".to_string()];
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let types = TypeInterner::new();
+    let current_arena = Arc::clone(&parsed[1]);
+    let current_binder = Arc::clone(&binders[1]);
+    let mut checker = CheckerState::new(
+        current_arena.as_ref(),
+        current_binder.as_ref(),
+        &types,
+        "38379.js".to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::new(parsed));
+    checker.ctx.set_all_binders(Arc::new(binders));
+    checker.ctx.set_current_file_idx(1);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+    checker.ctx.set_lib_contexts(Vec::new());
+
+    checker.check_source_file(roots[1]);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect()
+}
+
+#[test]
+fn unannotated_assertion_identifier_emits_ts2775() {
+    let codes = check_source_codes(
+        r#"
+function f(x: unknown) {
+    const assert = (value: unknown): asserts value => {};
+    assert(typeof x === "string");
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for assertion variable without explicit declaration type, got {codes:?}"
+    );
+}
+
+#[test]
+fn invalid_assertion_alias_does_not_narrow_after_ts2775() {
+    let codes = check_source_strict_codes(
+        r#"
+function assertString(x: unknown): asserts x is string {
+    if (typeof x !== "string") throw "";
+}
+const f = assertString;
+let v: unknown;
+f(v);
+v.toUpperCase();
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for assertion alias without explicit type annotation, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&18046),
+        "invalid assertion alias must not narrow unknown value, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_element_access_emits_ts2776() {
+    let codes = check_source_codes(
+        r#"
+const assert: (value: unknown) => asserts value = value => {};
+const a = [assert];
+a[0](true);
+"#,
+    );
+    assert!(
+        codes.contains(&2776),
+        "expected TS2776 for assertion call through element access, got {codes:?}"
+    );
+}
+
+#[test]
+fn asserts_this_method_does_not_require_receiver_annotation() {
+    let codes = check_source_codes(
+        r#"
+class Test {
+    assertIsTest(): asserts this is Test {}
+}
+function f(items: Test[]) {
+    for (let item of items) {
+        item.assertIsTest();
+    }
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2775),
+        "asserts-this methods should not require a receiver annotation, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_false_condition_emits_unreachable_code() {
+    let diagnostics = check_source(
+        r#"
+const assert: (value: unknown) => asserts value = value => {};
+function f(x: unknown) {
+    assert(false && x === undefined);
+    x;
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            allow_unreachable_code: Some(false),
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    assert!(
+        codes.contains(&7027),
+        "expected TS7027 after assert(false && ...), got {codes:?}"
+    );
+}
+
+#[test]
+fn jsdoc_returns_asserts_predicate_on_arrow_var_does_not_emit_ts2775() {
+    // `const foo = (a) => { … }` with `@returns {asserts a is B}` is an
+    // explicit assertion annotation in JS files. Without the JSDoc-asserts
+    // arm in `declaration_has_explicit_assertion_annotation`, every
+    // arrow-bound assertion target in JS would fire a spurious TS2775 at
+    // its call site (regression: `assertionTypePredicates2.ts`).
+    let diagnostics = check_js_source_diagnostics(
+        r#"
+/**
+ * @typedef {{ x: number }} A
+ */
+/**
+ * @typedef { A & { y: number } } B
+ */
+
+/**
+ * @param {A} a
+ * @returns { asserts a is B }
+ */
+const foo = (a) => {
+    if (/** @type { B } */ (a).y !== 0) throw TypeError();
+    return undefined;
+};
+
+/** @type { A } */
+const a = { x: 1 };
+foo(a);
+"#,
+    );
+    let ts2775: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2775)
+        .collect();
+    assert!(
+        ts2775.is_empty(),
+        "did not expect TS2775 when assertion target has @returns predicate, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn js_require_export_equals_assertion_from_dts_does_not_emit_ts2775() {
+    let codes = check_require_assertion_from_dts();
+    assert!(
+        !codes.contains(&2775),
+        "did not expect TS2775 for JS require() of export= assertion function from .d.ts, got {codes:?}"
+    );
+}
+
+#[test]
+fn constructor_type_predicate_return_emits_ts1228() {
+    let codes = check_source_codes("declare let Q: new (x: unknown) => asserts x;");
+    assert!(
+        codes.contains(&1228),
+        "expected TS1228 for predicate return in constructor type, got {codes:?}"
+    );
+}
+
+#[test]
+fn interface_construct_signature_type_predicate_does_not_emit_ts1228() {
+    // Construct signatures inside an interface declaration accept type
+    // predicates as their return type — tsc allows `interface I { new (...): x is T }`
+    // even though the predicate is meaningless at runtime. Only constructor
+    // *type* nodes (`new (...) => x is T`) and class constructor declarations
+    // emit TS1228.
+    let codes = check_source_codes("interface I { new (p: unknown): p is string; }");
+    assert!(
+        !codes.contains(&1228),
+        "did not expect TS1228 for predicate return in interface construct signature, got {codes:?}"
+    );
+}

@@ -13,7 +13,7 @@ use crate::types::{
 };
 use crate::visitor::{
     intersection_list_id, intrinsic_kind, literal_value, string_intrinsic_components,
-    template_literal_id, union_list_id,
+    template_literal_id, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -369,16 +369,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         spans: &[TemplateSpan],
         span_idx: usize,
     ) -> bool {
-        let is_last_span = span_idx == spans.len() - 1;
-
         // Find the longest valid number at the start of remaining
         let num_len = find_number_length(remaining);
 
         if num_len == 0 {
-            // No valid number found, but empty match might be valid for last span
-            if is_last_span {
-                return remaining.is_empty();
-            }
             return false;
         }
 
@@ -424,15 +418,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         spans: &[TemplateSpan],
         span_idx: usize,
     ) -> bool {
-        let is_last_span = span_idx == spans.len() - 1;
-
         // Find the longest valid bigint at the start of remaining
         let int_len = find_integer_length(remaining);
 
         if int_len == 0 {
-            if is_last_span {
-                return remaining.is_empty();
-            }
             return false;
         }
 
@@ -692,6 +681,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn is_template_type_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         // Regular subtype check first
         if self.check_subtype(source, target).is_true() {
+            return true;
+        }
+
+        if let (Some(source_info), Some(target_info)) = (
+            type_param_info(self.interner, source),
+            type_param_info(self.interner, target),
+        ) && source_info.name == target_info.name
+        {
             return true;
         }
 
@@ -1075,14 +1072,6 @@ pub(crate) fn find_number_length(s: &str) -> usize {
         i += 1;
     }
 
-    // Check for special values
-    if s.len() > i && s[i..].starts_with("Infinity") {
-        return i + 8;
-    }
-    if s.len() > i && s[i..].starts_with("NaN") {
-        return i + 3;
-    }
-
     // Check for 0x/0o/0b prefixes (valid JS number literals)
     if i < chars.len() && chars[i] == '0' && i + 1 < chars.len() {
         match chars[i + 1] {
@@ -1177,10 +1166,6 @@ pub(crate) fn is_valid_number(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
-    // Handle special values
-    if s == "NaN" || s == "Infinity" || s == "-Infinity" || s == "+Infinity" {
-        return true;
-    }
     // Handle hex/octal/binary prefixes (Rust's f64 parse doesn't accept these)
     if s.len() >= 3 && s.starts_with('0') {
         match s.as_bytes()[1] {
@@ -1201,15 +1186,18 @@ pub(crate) fn find_integer_length(s: &str) -> usize {
     let bytes = s.as_bytes();
     let mut i = 0;
 
-    // Handle optional sign (only for decimal integers)
-    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+    // Handle optional minus (only for decimal integers).
+    // TypeScript accepts `-1` for `${bigint}`, but unlike `${number}` it
+    // rejects plus-signed strings such as `+1`.
+    let has_sign = i < bytes.len() && bytes[i] == b'-';
+    if has_sign {
         i += 1;
     }
 
     let start = i;
 
     // Check for 0x/0o/0b prefixes (no sign allowed for prefixed forms)
-    if start == i && i + 1 < bytes.len() && bytes[i] == b'0' {
+    if !has_sign && i + 1 < bytes.len() && bytes[i] == b'0' {
         match bytes[i + 1] {
             b'x' | b'X' => {
                 i += 2;

@@ -171,6 +171,45 @@ function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
 }
 
 #[test]
+fn test_array_flat_lib_alias_return_does_not_emit_ts5088() {
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2019.array.d.ts",
+    ]);
+    if lib_files.len() < 2 {
+        return;
+    }
+
+    let source = r#"
+function foo<T>(arr: T[], depth: number) {
+    return arr.flat(depth);
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+    let diagnostics: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message_text))
+        .collect();
+
+    assert!(
+        !has_error(&diagnostics, 5088),
+        "Did not expect TS5088 for Array#flat's inferred declaration return type \
+         through the named lib FlatArray alias. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_explicit_return_annotation_suppresses_ts5088() {
     let source = r#"
 type BadFlatArray<Arr, Depth extends number> = {obj: {
@@ -273,48 +312,7 @@ fn test_exported_variable_typeof_block_local_value_emits_ts4025() {
 }
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
-        "es5.d.ts",
-        "es2015.d.ts",
-        "es2015.core.d.ts",
-        "es2015.collection.d.ts",
-        "es2015.iterable.d.ts",
-        "es2015.generator.d.ts",
-        "es2015.promise.d.ts",
-        "es2015.proxy.d.ts",
-        "es2015.reflect.d.ts",
-        "es2015.symbol.d.ts",
-        "es2015.symbol.wellknown.d.ts",
-        "dom.d.ts",
-        "dom.generated.d.ts",
-        "dom.iterable.d.ts",
-        "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                let lib_file = LibFile::from_source(file_name.to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-                break;
-            }
-        }
-    }
-    lib_files
+    tsz_checker::test_utils::load_default_lib_files()
 }
 
 fn lib_files_available() -> bool {

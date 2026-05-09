@@ -2,7 +2,7 @@ use crate::transforms::emit_utils::sanitize_module_name;
 use crate::transforms::ir::IRNode;
 use crate::transforms::module_commonjs::*;
 use crate::transforms::module_commonjs_ir::CommonJsTransformContext;
-use tsz_parser::parser::ParserState;
+use tsz_parser::parser::{NodeIndex, ParserState};
 
 fn parse_collect_exports(source: &str) -> Vec<String> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -12,6 +12,30 @@ fn parse_collect_exports(source: &str) -> Vec<String> {
         .get_source_file(parser.arena.get(root).expect("root node must exist"))
         .expect("source file must exist");
     collect_export_names(&parser.arena, &source_file.statements.nodes)
+}
+
+/// Parse `source` and return the parser plus the index of its first
+/// top-level statement. Used by tests that exercise per-statement
+/// transforms (e.g. `get_import_bindings`).
+fn parse_first_statement(source: &str) -> (ParserState, NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let stmt_idx = {
+        let root_node = parser
+            .arena
+            .get(root)
+            .expect("root node must exist in arena");
+        let source_file = parser
+            .arena
+            .get_source_file(root_node)
+            .expect("failed to get source file");
+        *source_file
+            .statements
+            .nodes
+            .first()
+            .expect("source should have one statement")
+    };
+    (parser, stmt_idx)
 }
 
 fn parse_transform_cjs(source: &str) -> Vec<IRNode> {
@@ -92,22 +116,7 @@ fn test_emit_reexport_property_alias() {
 fn test_get_import_bindings_default_import_uses_default_property() {
     use tsz_parser::parser::syntax_kind_ext;
 
-    let source = "import foo from \"./module\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let root_node = parser
-        .arena
-        .get(root)
-        .expect("root node must exist in arena");
-    let source_file = parser
-        .arena
-        .get_source_file(root_node)
-        .expect("failed to get source file");
-    let stmt_idx = *source_file
-        .statements
-        .nodes
-        .first()
-        .expect("source should have one statement");
+    let (parser, stmt_idx) = parse_first_statement("import foo from \"./module\";");
     let stmt_node = parser
         .arena
         .get(stmt_idx)
@@ -123,22 +132,7 @@ fn test_get_import_bindings_default_import_uses_default_property() {
 fn test_namespace_import_without_es_module_interop() {
     use tsz_parser::parser::syntax_kind_ext;
 
-    let source = r#"import * as ns from "./module";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let root_node = parser
-        .arena
-        .get(root)
-        .expect("root node must exist in arena");
-    let source_file = parser
-        .arena
-        .get_source_file(root_node)
-        .expect("failed to get source file");
-    let stmt_idx = *source_file
-        .statements
-        .nodes
-        .first()
-        .expect("source should have one statement");
+    let (parser, stmt_idx) = parse_first_statement(r#"import * as ns from "./module";"#);
     let stmt_node = parser
         .arena
         .get(stmt_idx)
@@ -242,11 +236,64 @@ fn test_collect_export_names_with_multiple_named_exports() {
 
 #[test]
 fn test_collect_export_names_with_export_import_equals() {
-    let export_names = parse_collect_exports("export import Foo = require(\"./bar\");");
+    // `export import Foo = Bar;` where Bar is *instantiated* (has runtime
+    // value declarations) does export the alias. Empty/non-instantiated
+    // namespaces are elided by tsc and verified separately.
+    let export_names =
+        parse_collect_exports("namespace Bar { export const x = 1; }\nexport import Foo = Bar;");
     assert_eq!(
         export_names,
         vec!["Foo"],
-        "Expected export name from export import equals"
+        "Expected export name from namespace export import equals"
+    );
+}
+
+#[test]
+fn test_collect_export_names_skips_external_export_import_equals() {
+    let export_names = parse_collect_exports("export import Foo = require(\"./bar\");");
+    assert!(
+        export_names.is_empty(),
+        "External export import equals should not get a void 0 preamble"
+    );
+}
+
+#[test]
+fn test_collect_export_names_ignores_type_only_import_equals_namespace_identifier() {
+    let export_names =
+        parse_collect_exports("export namespace C { export interface I {} }\nexport import v = C;");
+    assert!(
+        export_names.is_empty(),
+        "Expected no runtime exports for import-equals aliases to type-only namespaces"
+    );
+}
+
+#[test]
+fn test_collect_export_names_skips_namespace_alias_to_exported_interface() {
+    // `export import b = a.I;` where `a.I` is an *exported* interface inside
+    // an exported namespace resolves to a type-only member that is reachable
+    // from outside `a`. tsc elides both the void-0 preamble and the runtime
+    // assignment in that case.
+    let export_names = parse_collect_exports(
+        "export namespace a {\n    export interface I {}\n}\nexport import b = a.I;\nexport var x: b;\n",
+    );
+    assert_eq!(
+        export_names,
+        vec!["x"],
+        "Only the runtime variable `x` should be initialized; the type-only alias `b` is elided"
+    );
+}
+
+#[test]
+fn test_collect_export_names_keeps_namespace_alias_to_non_exported_interface() {
+    // `import a = x.c;` where `c` is *non-exported* inside `x` cannot be
+    // resolved from outside the namespace. tsc preserves the runtime assignment
+    // (a broken-at-runtime emit) and the void-0 preamble.
+    let export_names =
+        parse_collect_exports("namespace x { interface c {} }\nexport import a = x.c;\n");
+    assert_eq!(
+        export_names,
+        vec!["a"],
+        "Non-exported inner interface keeps the runtime alias and its void-0 preamble"
     );
 }
 
@@ -370,8 +417,12 @@ export const bar = 42;
         panic!("Failed to get source file");
     };
 
-    let result =
-        collect_export_names_categorized(&parser.arena, &source_file.statements.nodes, false);
+    let result = collect_export_names_categorized(
+        &parser.arena,
+        &source_file.statements.nodes,
+        false,
+        &rustc_hash::FxHashSet::default(),
+    );
 
     assert_eq!(
         result.function_exports,
@@ -382,6 +433,86 @@ export const bar = 42;
         result.other_exports,
         vec!["bar"],
         "Non-function exports should be unaffected"
+    );
+}
+
+#[test]
+fn collect_export_names_categorized_skips_marked_type_only_specifiers() {
+    let source = "export { I, I as II };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node must exist"))
+        .expect("source file must exist");
+
+    let mut type_only_nodes = rustc_hash::FxHashSet::default();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(export_decl) = parser.arena.get_export_decl(stmt) else {
+            continue;
+        };
+        let Some(clause_node) = parser.arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = parser.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        type_only_nodes.extend(named_exports.elements.nodes.iter().copied());
+    }
+
+    let result = collect_export_names_categorized(
+        &parser.arena,
+        &source_file.statements.nodes,
+        false,
+        &type_only_nodes,
+    );
+
+    assert!(
+        result.other_exports.is_empty(),
+        "type-only export specifiers should not be preinitialized"
+    );
+}
+
+#[test]
+fn collect_export_names_categorized_skips_marked_type_only_reexports() {
+    let source = "export { I, I as II } from \"./ambient\";";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node must exist"))
+        .expect("source file must exist");
+
+    let mut type_only_nodes = rustc_hash::FxHashSet::default();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(export_decl) = parser.arena.get_export_decl(stmt) else {
+            continue;
+        };
+        let Some(clause_node) = parser.arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = parser.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        type_only_nodes.extend(named_exports.elements.nodes.iter().copied());
+    }
+
+    let result = collect_export_names_categorized(
+        &parser.arena,
+        &source_file.statements.nodes,
+        false,
+        &type_only_nodes,
+    );
+
+    assert!(
+        result.other_exports.is_empty(),
+        "type-only re-export specifiers should not be preinitialized"
     );
 }
 

@@ -11,11 +11,40 @@
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use std::cell::RefCell;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::def::DefId;
+
+// Reusable scratch `FxHashSet<DefId>` for the alias-resolution DFS in this
+// module. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
+thread_local! {
+    static ALIAS_DEFID_VISITED_POOL: RefCell<Option<rustc_hash::FxHashSet<DefId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_alias_defid_visited<R>(f: impl FnOnce(&mut rustc_hash::FxHashSet<DefId>) -> R) -> R {
+    let mut visited = ALIAS_DEFID_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    ALIAS_DEFID_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a> CheckerState<'a> {
     fn type_node_is_nested_in_type_literal(&self, node_idx: NodeIndex) -> bool {
@@ -64,30 +93,30 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut visited = rustc_hash::FxHashSet::default();
-        let mut pending = vec![start_def_id];
-        let mut steps = 0usize;
-        while let Some(def_id) = pending.pop() {
-            if !visited.insert(def_id) {
-                continue;
+        with_alias_defid_visited(|visited| {
+            let mut pending = vec![start_def_id];
+            let mut steps = 0usize;
+            while let Some(def_id) = pending.pop() {
+                if !visited.insert(def_id) {
+                    continue;
+                }
+                if resolving_defs.contains(&def_id) {
+                    return true;
+                }
+                let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+                    continue;
+                };
+                steps += 1;
+                if steps > 64 {
+                    break;
+                }
+                pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
+                    self.ctx.types,
+                    body,
+                ));
             }
-            if resolving_defs.contains(&def_id) {
-                return true;
-            }
-            let Some(body) = self.ctx.definition_store.get_body(def_id) else {
-                continue;
-            };
-            steps += 1;
-            if steps > 64 {
-                break;
-            }
-            pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
-                self.ctx.types,
-                body,
-            ));
-        }
-
-        false
+            false
+        })
     }
 
     /// Check a type alias declaration.
@@ -177,20 +206,86 @@ impl<'a> CheckerState<'a> {
             .map(|sid| self.ctx.symbol_resolution_set.insert(sid))
             .unwrap_or(false);
 
-        self.check_variance_annotations_supported_for_type_alias(alias);
+        let variance_annotations_supported =
+            self.check_variance_annotations_supported_for_type_alias(alias);
 
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
         // This must be done while type parameters are still in scope.
+        let has_deferred_self_reference = alias_sym_id.is_some_and(|alias_sid| {
+            self.alias_ast_is_deferred(alias_sid)
+                && self.ctx.symbol_resolution_set.contains(&alias_sid)
+                && self.alias_ast_refs_symbol_or_resolution_chain_alias(alias.type_node, alias_sid)
+        });
         let body_type = {
-            let body_type = self.get_type_from_type_node(alias.type_node);
-            self.check_variance_annotations_with_body(
-                node_idx,
-                &alias.type_parameters,
-                Some(body_type),
-            );
+            let _ = self.ctx.types.take_union_too_complex();
+            let body_type = if has_deferred_self_reference {
+                crate::TypeNodeChecker::new(&mut self.ctx).check(alias.type_node)
+            } else {
+                self.get_type_from_type_node(alias.type_node)
+            };
+            if variance_annotations_supported {
+                self.check_variance_annotations_with_body(
+                    node_idx,
+                    &alias.type_parameters,
+                    Some(body_type),
+                );
+            }
+            self.check_styled_component_inner_component_constraint(alias.type_node);
             body_type
         };
+        let body_construction_too_complex = self.ctx.types.take_union_too_complex();
+        let body_evaluation_too_complex = if has_deferred_self_reference {
+            false
+        } else {
+            let _ = self.evaluate_type_with_env_uncached(body_type);
+            self.ctx.types.take_union_too_complex()
+        };
+        if body_type != TypeId::ERROR
+            && let Some(alias_sid) = alias_sym_id
+        {
+            let type_params = self.current_alias_type_params(alias.type_parameters.as_ref());
+            let can_register_non_generic_conditional = type_params.is_empty()
+                && crate::query_boundaries::common::is_conditional_type(self.ctx.types, body_type)
+                && !crate::query_boundaries::checkers::generic::contains_named_or_bound_type_parameter(
+                    self.ctx.types,
+                    body_type,
+                );
+            if !type_params.is_empty() || can_register_non_generic_conditional {
+                self.ctx.get_or_create_def_id(alias_sid);
+                let registered_type = if can_register_non_generic_conditional {
+                    self.evaluate_type_with_env_uncached(body_type)
+                } else {
+                    body_type
+                };
+                self.ctx.symbol_types.insert(alias_sid, registered_type);
+                self.ctx
+                    .register_resolved_type(alias_sid, registered_type, type_params);
+                self.ctx.env_eval_cache.borrow_mut().clear();
+            }
+        }
+        if self.type_node_produces_too_large_tuple(alias.type_node) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                alias.type_node,
+                diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+            );
+        }
+        if body_construction_too_complex || body_evaluation_too_complex {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let anchor = if body_evaluation_too_complex {
+                self.too_complex_union_member_anchor(alias.type_node)
+                    .unwrap_or(alias.type_node)
+            } else {
+                alias.type_node
+            };
+            self.error_at_node(
+                anchor,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
 
         // TS2589: detect excessively deep type instantiation at definition time.
         // tsc emits TS2589 for type aliases whose body contains conditional types
@@ -311,8 +406,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.check_type_node(alias.type_node);
-        self.check_type_for_missing_names(alias.type_node);
+        if has_deferred_self_reference {
+            if let Some(owner_name) = alias_name_str.as_deref() {
+                self.check_type_literal_self_indexed_property_annotations(
+                    alias.type_node,
+                    owner_name,
+                );
+            }
+            if self
+                .ctx
+                .arena
+                .get(alias.type_node)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_LITERAL)
+                && self.type_literal_has_circular_accessor_reference(alias.type_node)
+            {
+                let _ = self.get_type_from_type_literal(alias.type_node);
+            }
+        } else {
+            self.check_type_node(alias.type_node);
+            self.check_type_for_missing_names(alias.type_node);
+        }
 
         if inserted_for_circular_check && let Some(sid) = alias_sym_id {
             self.ctx.symbol_resolution_set.remove(&sid);
@@ -326,61 +439,111 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(updates);
     }
 
+    fn too_complex_union_member_anchor(&mut self, type_node: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(type_node)?;
+        if node.kind != syntax_kind_ext::UNION_TYPE {
+            return None;
+        }
+        let members: Vec<NodeIndex> = self
+            .ctx
+            .arena
+            .get_composite_type(node)?
+            .types
+            .nodes
+            .to_vec();
+
+        for member in members {
+            let _ = self.ctx.types.take_union_too_complex();
+            let member_type = self.get_type_from_type_node(member);
+            let construction_too_complex = self.ctx.types.take_union_too_complex();
+            let _ = self.evaluate_type_with_env_uncached(member_type);
+            if construction_too_complex || self.ctx.types.take_union_too_complex() {
+                return Some(member);
+            }
+        }
+
+        None
+    }
+
     fn check_variance_annotations_supported_for_type_alias(
         &mut self,
         alias: &tsz_parser::parser::node::TypeAliasData,
-    ) {
+    ) -> bool {
         let Some(type_params) = &alias.type_parameters else {
-            return;
+            return true;
         };
 
-        let first_variance_modifier = type_params.nodes.iter().copied().find_map(|param_idx| {
-            let param_node = self.ctx.arena.get(param_idx)?;
-            let param = self.ctx.arena.get_type_parameter(param_node)?;
-            if self.node_contains_any_parse_error(param_idx)
-                || matches!(
-                    self.get_identifier_text_from_idx(param.name).as_deref(),
-                    Some("in" | "out")
-                )
+        let variance_supported = self.type_alias_body_supports_variance_annotations(alias);
+        if variance_supported {
+            return true;
+        }
+
+        let mut emitted_unsupported_variance_diagnostic = false;
+        for param_idx in type_params.nodes.iter().copied() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if self.node_contains_any_parse_error(param.name)
+                || self.type_parameter_name_is_variance_keyword(param.name)
             {
-                return None;
+                continue;
             }
-            let modifiers = param.modifiers.as_ref()?;
-            modifiers.nodes.iter().copied().find(|&modifier_idx| {
-                self.ctx
-                    .arena
-                    .get(modifier_idx)
-                    .is_some_and(|modifier_node| {
-                        matches!(
-                            modifier_node.kind,
-                            k if k == SyntaxKind::InKeyword as u16
-                                || k == SyntaxKind::OutKeyword as u16
-                        )
-                    })
-            })
-        });
+            let Some(modifiers) = param.modifiers.as_ref() else {
+                continue;
+            };
+            let Some(variance_modifier_idx) =
+                modifiers.nodes.iter().copied().find(|&modifier_idx| {
+                    self.ctx
+                        .arena
+                        .get(modifier_idx)
+                        .is_some_and(|modifier_node| {
+                            matches!(
+                                modifier_node.kind,
+                                k if k == SyntaxKind::InKeyword as u16
+                                    || k == SyntaxKind::OutKeyword as u16
+                            )
+                        })
+                })
+            else {
+                continue;
+            };
 
-        let Some(variance_modifier_idx) = first_variance_modifier else {
-            return;
-        };
+            self.error_at_node(
+                variance_modifier_idx,
+                crate::diagnostics::diagnostic_messages::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
+                crate::diagnostics::diagnostic_codes::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
+            );
+            emitted_unsupported_variance_diagnostic = true;
+        }
 
-        let body_kind = self.ctx.arena.kind_at(alias.type_node);
-        let variance_supported = body_kind.is_some_and(|kind| {
+        !emitted_unsupported_variance_diagnostic
+    }
+
+    fn type_alias_body_supports_variance_annotations(
+        &self,
+        alias: &tsz_parser::parser::node::TypeAliasData,
+    ) -> bool {
+        self.ctx.arena.kind_at(alias.type_node).is_some_and(|kind| {
             kind == syntax_kind_ext::TYPE_LITERAL
                 || kind == syntax_kind_ext::FUNCTION_TYPE
                 || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                 || kind == syntax_kind_ext::MAPPED_TYPE
-        });
+        })
+    }
 
-        if variance_supported {
-            return;
+    fn type_parameter_name_is_variance_keyword(&self, name_idx: NodeIndex) -> bool {
+        if matches!(
+            self.get_identifier_text_from_idx(name_idx).as_deref(),
+            Some("in" | "out")
+        ) {
+            return true;
         }
-
-        self.error_at_node(
-            variance_modifier_idx,
-            crate::diagnostics::diagnostic_messages::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
-            crate::diagnostics::diagnostic_codes::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
-        );
+        self.ctx.arena.get(name_idx).is_some_and(|node| {
+            node.kind == SyntaxKind::InKeyword as u16 || node.kind == SyntaxKind::OutKeyword as u16
+        })
     }
 
     /// Walk the alias body AST and return the AST node of the last
@@ -764,6 +927,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.get_type_from_type_node(node_idx)
                 };
+                self.check_styled_component_inner_component_constraint(node_idx);
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
@@ -994,7 +1158,6 @@ impl<'a> CheckerState<'a> {
                 // `typeof expr<Args>` — validate instantiation expression type args.
                 if let Some(type_query) = self.ctx.arena.get_type_query(node)
                     && let Some(args) = &type_query.type_arguments
-                    && !args.nodes.is_empty()
                 {
                     let args_nodes = args.nodes.clone();
                     for &arg_idx in &args_nodes {
@@ -1027,36 +1190,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let db = self.ctx.types.as_type_database();
-        let call_sigs = crate::query_boundaries::common::call_signatures_for_type(db, expr_type);
-        let construct_sigs =
-            crate::query_boundaries::common::construct_signatures_for_type(db, expr_type);
-
-        let mut has_applicable = false;
-        if let Some(sigs) = &call_sigs {
-            for sig in sigs {
-                if sig.type_params.len() == num_type_args {
-                    has_applicable = true;
-                    break;
-                }
-            }
-        }
-        if !has_applicable && let Some(sigs) = &construct_sigs {
-            for sig in sigs {
-                if sig.type_params.len() == num_type_args {
-                    has_applicable = true;
-                    break;
-                }
-            }
-        }
-        if !has_applicable
-            && self
-                .type_query_targets_generic_function_like_with_arity(type_query_idx, num_type_args)
+        if let Some(error_type) =
+            self.instantiation_expression_applicability_error_type(expr_type, num_type_args)
         {
-            has_applicable = true;
-        }
-
-        if !has_applicable {
             // Skip TS2635 if any type argument node contains parse errors (e.g. JSDoc
             // syntax like `?string` outside documentation comments). tsc reports the
             // syntax errors but does not validate type argument applicability in that case.
@@ -1066,9 +1202,74 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            // TS2635: emit at last type argument node
-            let error_node = type_arg_nodes.last().copied().unwrap_or(type_query_idx);
-            self.error_no_applicable_signatures_for_type_args(expr_type, error_node);
+            if let Some(error_node) = type_arg_nodes.first().copied() {
+                let base_expr = self
+                    .ctx
+                    .arena
+                    .get(type_query_idx)
+                    .and_then(|node| self.ctx.arena.get_type_query(node))
+                    .map(|type_query| type_query.expr_name)
+                    .unwrap_or(type_query_idx);
+                self.error_no_applicable_signatures_for_type_args_with_base(
+                    error_type, error_node, base_expr,
+                );
+            }
+            return;
+        }
+
+        self.validate_instantiation_expression_type_arg_constraints(expr_type, type_arg_nodes);
+    }
+
+    fn validate_instantiation_expression_type_arg_constraints(
+        &mut self,
+        expr_type: TypeId,
+        type_arg_nodes: &[NodeIndex],
+    ) {
+        if type_arg_nodes.is_empty() {
+            return;
+        }
+
+        let type_args_list = NodeList {
+            nodes: type_arg_nodes.to_vec(),
+            pos: 0,
+            end: 0,
+            has_trailing_comma: false,
+        };
+        let expr_type = self.resolve_lazy_type(expr_type);
+
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, expr_type)
+            && shape.type_params.len() == type_arg_nodes.len()
+        {
+            let type_params = shape.type_params.clone();
+            self.validate_type_args_against_params(&type_params, &type_args_list);
+        }
+
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, expr_type)
+        {
+            let matching: Vec<Vec<tsz_solver::TypeParamInfo>> = sigs
+                .iter()
+                .filter(|sig| sig.type_params.len() == type_arg_nodes.len())
+                .map(|sig| sig.type_params.clone())
+                .collect();
+            for type_params in matching {
+                self.validate_type_args_against_params(&type_params, &type_args_list);
+            }
+        }
+
+        if let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            expr_type,
+        ) {
+            let matching: Vec<Vec<tsz_solver::TypeParamInfo>> = sigs
+                .iter()
+                .filter(|sig| sig.type_params.len() == type_arg_nodes.len())
+                .map(|sig| sig.type_params.clone())
+                .collect();
+            for type_params in matching {
+                self.validate_type_args_against_params(&type_params, &type_args_list);
+            }
         }
     }
 
@@ -1123,6 +1324,31 @@ impl<'a> CheckerState<'a> {
                 == num_type_args;
         }
         false
+    }
+
+    fn current_alias_type_params(
+        &self,
+        type_parameters: Option<&NodeList>,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let Some(type_parameters) = type_parameters else {
+            return Vec::new();
+        };
+
+        type_parameters
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                let name_node = self.ctx.arena.get(param.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                let type_id = self.ctx.type_parameter_scope.get(&ident.escaped_text)?;
+                crate::query_boundaries::checkers::generic::named_type_param_info(
+                    self.ctx.types,
+                    *type_id,
+                )
+            })
+            .collect()
     }
 
     /// Walk a type node AST subtree to find `TYPE_QUERY` nodes (`typeof expr`)

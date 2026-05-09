@@ -279,6 +279,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: member_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -479,10 +480,12 @@ impl<'a> CheckerState<'a> {
                     readonly,
                     param_name,
                 };
-                if key_type == TypeId::NUMBER {
-                    Self::merge_index_signature(&mut number_index, info);
-                } else {
-                    Self::merge_index_signature(&mut string_index, info);
+                if is_valid_index_type || is_valid_via_alias {
+                    if key_type == TypeId::NUMBER {
+                        Self::merge_index_signature(&mut number_index, info);
+                    } else {
+                        Self::merge_index_signature(&mut string_index, info);
+                    }
                 }
             }
         }
@@ -534,6 +537,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: entry.declaration_order,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -564,6 +568,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -1131,6 +1136,24 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types_extending_array.insert(result);
                 result
             }
+            (_, InterfaceMergeKind::Other)
+                if crate::query_boundaries::common::mapped_type_id(
+                    self.ctx.types,
+                    base_resolved,
+                )
+                .is_some()
+                    && derived != TypeId::ANY =>
+            {
+                factory.intersection2(derived, base_resolved)
+            }
+            (_, InterfaceMergeKind::Other)
+                if crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    base_resolved,
+                ) && derived != TypeId::ANY =>
+            {
+                factory.intersection2(derived, base_resolved)
+            }
             _ => derived,
         }
     }
@@ -1259,6 +1282,11 @@ impl<'a> CheckerState<'a> {
     /// Merge derived and base interface properties.
     ///
     /// Derived properties override base properties when names match.
+    /// Property order matches tsc: derived (own) members are listed first in
+    /// declaration order, followed by base members not overridden by derived.
+    /// `declaration_order` is offset for base-only members so a stable sort by
+    /// `declaration_order` reproduces this own-first / base-last layout — for
+    /// both diagnostic display and downstream `keyof T` iteration.
     ///
     /// # Arguments
     /// * `derived` - Properties from the derived interface
@@ -1271,22 +1299,25 @@ impl<'a> CheckerState<'a> {
         derived: &[tsz_solver::PropertyInfo],
         base: &[tsz_solver::PropertyInfo],
     ) -> Vec<tsz_solver::PropertyInfo> {
-        use rustc_hash::{FxHashMap, FxHashSet};
+        use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
 
-        // Find the max declaration_order from base so derived-only properties
-        // can be offset to come after all base properties.
-        let base_max_order = base.iter().map(|p| p.declaration_order).max().unwrap_or(0);
+        // Find the max declaration_order from derived so base-only properties
+        // can be offset to come after all derived properties (tsc parity).
+        let derived_max_order = derived
+            .iter()
+            .map(|p| p.declaration_order)
+            .max()
+            .unwrap_or(0);
 
         let total_len = derived.len() + base.len();
         if total_len <= 32 {
-            let mut merged = Vec::with_capacity(total_len);
-            merged.extend_from_slice(base);
+            let mut merged: Vec<tsz_solver::PropertyInfo> = Vec::with_capacity(total_len);
+            // Walk derived first so own members keep their (low) declaration_order
+            // and appear before inherited members in the final ordering.
             for prop in derived {
-                if let Some(pos) = merged.iter().position(|p| p.name == prop.name) {
-                    // Declaration merging should preserve callable overload sets from
-                    // both sides instead of dropping the earlier property type.
-                    let base_prop = &merged[pos];
+                let merged_prop = if let Some(base_prop) = base.iter().find(|p| p.name == prop.name)
+                {
                     let merged_type = if crate::query_boundaries::common::callable_shape_for_type(
                         self.ctx.types,
                         base_prop.type_id,
@@ -1314,11 +1345,18 @@ impl<'a> CheckerState<'a> {
                         merged_prop.write_type = merged_type;
                     }
                     merged_prop.type_id = merged_type;
-                    merged_prop.declaration_order = base_prop.declaration_order;
-                    merged[pos] = merged_prop;
+                    merged_prop
                 } else {
-                    let mut new_prop = prop.clone();
-                    new_prop.declaration_order = base_max_order + prop.declaration_order;
+                    prop.clone()
+                };
+                merged.push(merged_prop);
+            }
+            // Append base-only members with offset declaration_order so a sort by
+            // declaration_order keeps them after all derived members.
+            for base_prop in base {
+                if !derived.iter().any(|p| p.name == base_prop.name) {
+                    let mut new_prop = base_prop.clone();
+                    new_prop.declaration_order = derived_max_order + base_prop.declaration_order;
                     merged.push(new_prop);
                 }
             }
@@ -1332,11 +1370,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut merged = Vec::with_capacity(total_len);
-        let mut processed: FxHashSet<Atom> =
-            FxHashSet::with_capacity_and_hasher(derived.len(), Default::default());
 
+        // Walk derived first so own members keep their (low) declaration_order.
+        // For names that also appear in base, merge callable signatures.
+        let mut base_by_name: FxHashMap<Atom, &tsz_solver::PropertyInfo> =
+            FxHashMap::with_capacity_and_hasher(base.len(), Default::default());
         for base_prop in base {
-            if let Some(derived_prop) = derived_map.get(&base_prop.name) {
+            base_by_name.insert(base_prop.name, base_prop);
+        }
+
+        for derived_prop in derived {
+            let merged_prop = if let Some(base_prop) = base_by_name.get(&derived_prop.name) {
                 let merged_type = if crate::query_boundaries::common::callable_shape_for_type(
                     self.ctx.types,
                     base_prop.type_id,
@@ -1353,23 +1397,24 @@ impl<'a> CheckerState<'a> {
                     derived_prop.type_id
                 };
 
-                let mut prop = (*derived_prop).clone();
+                let mut prop = derived_prop.clone();
                 if merged_type != derived_prop.type_id && prop.write_type == derived_prop.type_id {
                     prop.write_type = merged_type;
                 }
                 prop.type_id = merged_type;
-                prop.declaration_order = base_prop.declaration_order;
-                merged.push(prop);
-                processed.insert(base_prop.name);
+                prop
             } else {
-                merged.push(base_prop.clone());
-            }
+                derived_prop.clone()
+            };
+            merged.push(merged_prop);
         }
 
-        for prop in derived {
-            if !processed.contains(&prop.name) {
-                let mut new_prop = prop.clone();
-                new_prop.declaration_order = base_max_order + prop.declaration_order;
+        // Append base-only members with offset declaration_order so they sort
+        // after the derived members.
+        for base_prop in base {
+            if !derived_map.contains_key(&base_prop.name) {
+                let mut new_prop = base_prop.clone();
+                new_prop.declaration_order = derived_max_order + base_prop.declaration_order;
                 merged.push(new_prop);
             }
         }

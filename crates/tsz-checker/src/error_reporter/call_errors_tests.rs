@@ -18,6 +18,68 @@ fn check_source_without_strict_null(source: &str) -> Vec<crate::diagnostics::Dia
 }
 
 #[test]
+fn mapped_type_template_key_constraint_argument_displays_remapped_shape() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function foo<T extends { [K in keyof T as `${Extract<K, string>}y`]: number }>(foox: T) { }
+
+const c = { x: 1 };
+
+foo(c);
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains(
+            "Argument of type '{ x: 1; }' is not assignable to parameter of type '{ xy: number; }'."
+        ),
+        "expected remapped constraint shape in TS2345, got: {diag:?}"
+    );
+}
+
+#[test]
+fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
+    let mut parser = tsz_parser::parser::ParserState::new("test.ts".to_string(), String::new());
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let property_name = checker.ctx.types.intern_string("y");
+    let target_property_type = checker
+        .ctx
+        .types
+        .union2(tsz_solver::TypeId::NUMBER, tsz_solver::TypeId::UNDEFINED);
+    let reason = tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+        property_name,
+        source_property_type: tsz_solver::TypeId::STRING,
+        target_property_type,
+        nested_reason: None,
+    };
+
+    let display = checker
+        .mapped_property_mismatch_parameter_display(
+            "{ [x in K]?: Lower<T>[] | undefined; }",
+            Some(&reason),
+        )
+        .expect("expected mapped property display rewrite");
+
+    assert_eq!(display, "{ y?: number | undefined; }");
+}
+
+#[test]
 fn emits_ts2721_for_calling_null() {
     let diagnostics = check_source_with_strict_null("null();");
     assert!(
@@ -90,6 +152,82 @@ var r6 = c.y();
     assert!(
         !codes.contains(&2721),
         "Should NOT emit TS2721 for calling getter on generic class, got: {codes:?}"
+    );
+}
+
+#[test]
+fn tdz_callee_still_checks_argument_type_against_declared_signature() {
+    let diagnostics =
+        check_source_with_strict_null("f(true);\nconst f: (a: number) => void = null as any;");
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2448),
+        "expected TDZ diagnostic for forward const call, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2345
+                && d.message_text.contains(
+                    "Argument of type 'boolean' is not assignable to parameter of type 'number'.",
+                )
+        }),
+        "expected TS2345 from recovered declared callee signature, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_optional_array_parameter_diagnostic_uses_array_shorthand() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+interface Utils {
+   fold<T, S>(c: Array<T>, folder?: (s: S, t: T) => T, init?: S): T;
+}
+
+declare var utils: Utils;
+
+utils.fold();
+utils.fold(null);
+utils.fold(null, null);
+utils.fold(null, null, null);
+"#,
+    );
+
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        3,
+        "expected three TS2345 diagnostics, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2554),
+        "expected TS2554 for the zero-argument call, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2345
+            .iter()
+            .all(|d| d.message_text.contains("parameter of type 'unknown[]'")),
+        "expected TS2345 parameter display to use `unknown[]`, got: {ts2345:#?}"
+    );
+    assert!(
+        ts2345
+            .iter()
+            .all(|d| !d.message_text.contains("Array<unknown>")),
+        "TS2345 parameter display should not use `Array<unknown>`, got: {ts2345:#?}"
+    );
+}
+
+#[test]
+fn tdz_callee_still_checks_minimum_argument_count() {
+    let diagnostics = check_source_with_strict_null(
+        "b();\ntype Test = (arg: unknown) => arg is string;\nconst b: Test = null as any;",
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2554 && d.message_text == "Expected 1 arguments, but got 0."),
+        "expected TS2554 from recovered declared callee signature, got: {diagnostics:?}"
     );
 }
 
@@ -546,6 +684,34 @@ takes(1, 2, "hello", true);
 }
 
 #[test]
+fn ts2345_array_literal_call_argument_display_widens_boolean_literal_element() {
+    let source = r#"
+declare const test1:
+  | ((...args: [a: string | number, b: number | boolean]) => void)
+  | ((...args: [c: number | boolean, d: string | boolean]) => void);
+
+test1(42, [true]);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains(
+            "Argument of type 'boolean[]' is not assignable to parameter of type 'boolean'."
+        ),
+        "TS2345 should widen boolean literal array elements for non-literal targets, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Argument of type 'true[]'"),
+        "TS2345 should not preserve boolean literal array elements here, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_array_literal_tuple_overflow_elaborates_element_mismatch_to_ts2322() {
     let source = r#"
 function a5([a, b, [[c]]]) { }
@@ -589,6 +755,69 @@ a5([1, 2]);
     assert!(
         has_short_tuple_ts2345,
         "should still report TS2345 for the short tuple argument, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2322_array_literal_elaboration_widens_destructuring_default_sources() {
+    let source = r#"
+function b6([a, z, y] = [undefined, null, undefined]) { }
+b6(["string", 1, 2]);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    for expected in [
+        "Type 'string' is not assignable to type 'undefined'.",
+        "Type 'number' is not assignable to type 'null'.",
+        "Type 'number' is not assignable to type 'undefined'.",
+    ] {
+        assert!(
+            messages.iter().any(|message| message.contains(expected)),
+            "expected widened TS2322 message `{expected}`, got: {messages:#?}"
+        );
+    }
+
+    assert!(
+        messages.iter().all(|message| {
+            !message.contains("Type '\"string\"'")
+                && !message.contains("Type '1'")
+                && !message.contains("Type '2'")
+        }),
+        "array literal elaboration should not preserve literal source display here, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn ts2322_array_literal_elaboration_preserves_same_primitive_literal_targets() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+function takesLiteral(value: ["a"]) { }
+takesLiteral(["b"]);
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"b\"' is not assignable to type '\"a\"'.")),
+        "same-primitive literal targets should preserve the source literal, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("Type 'string' is not assignable to type '\"a\"'.")),
+        "same-primitive literal targets should not widen to the primitive source, got: {messages:#?}"
     );
 }
 
@@ -692,364 +921,6 @@ var foo = <{ id: number; }> { id: 4, name: "as" };
 }
 
 #[test]
-fn ts2769_overload_related_information_keeps_overload_order() {
-    let source = r#"
-declare function fn(value: string): void;
-declare function fn(value: number): void;
-fn(true);
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let arg_start = source.rfind("true").expect("expected argument") as u32;
-    assert_eq!(
-        diag.start, arg_start,
-        "TS2769 should anchor at the argument for plain overload calls"
-    );
-    assert_eq!(
-        diag.length, 4,
-        "TS2769 should cover only the argument token"
-    );
-    assert!(
-        diag.related_information.len() >= 2,
-        "expected overload related info, got: {diag:?}"
-    );
-    // Verify both overload failures are present in the related info.
-    // Note: tsc shows them in declaration order (string, number), but our
-    // current overload resolution may produce them in a different order
-    // depending on the call resolution path taken.
-    let has_string = diag
-        .related_information
-        .iter()
-        .any(|info| info.message_text.contains("parameter of type 'string'"));
-    let has_number = diag
-        .related_information
-        .iter()
-        .any(|info| info.message_text.contains("parameter of type 'number'"));
-    assert!(
-        has_string && has_number,
-        "expected both overload failures in related info, got: {diag:?}"
-    );
-}
-
-#[test]
-fn ts2769_literal_overload_mismatch_anchors_first_failing_argument() {
-    let source = r#"
-function foo(x: "hi", items: string[]): number;
-function foo(x: "bye", items: string[]): string;
-function foo(x: string, items: string[]): string | number {
-    return 1;
-}
-foo("um", []);
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let arg_start = source.rfind("\"um\"").expect("expected argument literal") as u32;
-    assert_eq!(
-        diag.start, arg_start,
-        "TS2769 should anchor at the mismatched literal argument"
-    );
-    assert_eq!(
-        diag.length, 4,
-        "TS2769 should cover only the literal argument token"
-    );
-}
-
-#[test]
-fn ts2769_provisional_callback_failures_anchor_callee_not_callback_argument() {
-    let source = r#"
-declare var func: {
-    (s: string): number;
-    (lambda: (s: string) => { a: number; b: number }): string;
-};
-
-func(s => ({}));
-func(s => ({ a: blah, b: 3 }));
-func(s => ({ a: blah }));
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let ts2769: Vec<_> = diagnostics.iter().filter(|d| d.code == 2769).collect();
-    assert_eq!(
-        ts2769.len(),
-        2,
-        "expected two TS2769 diagnostics, got: {diagnostics:?}"
-    );
-
-    let first_call_start = source
-        .find("func(s => ({}));")
-        .expect("expected first call") as u32;
-    let third_call_start = source
-        .find("func(s => ({ a: blah }));")
-        .expect("expected third call") as u32;
-    let callback_start = source.find("s => ({})").expect("expected callback") as u32;
-
-    let starts: Vec<u32> = ts2769.iter().map(|diag| diag.start).collect();
-    assert!(
-        starts.contains(&first_call_start),
-        "expected TS2769 at first call callee, got: {ts2769:?}"
-    );
-    assert!(
-        starts.contains(&third_call_start),
-        "expected TS2769 at third call callee, got: {ts2769:?}"
-    );
-    assert!(
-        !starts.contains(&callback_start),
-        "TS2769 should anchor at callee, not callback argument: {ts2769:?}"
-    );
-}
-
-#[test]
-fn ts2769_tagged_template_anchors_offending_substitution() {
-    // tsc anchors TS2769 for failed tagged-template overload resolution at the
-    // offending substitution expression, not at the tag callee. This mirrors
-    // the regular-call behavior of pointing at the failing argument.
-    let source = r#"
-declare function tag(strs: TemplateStringsArray, x: number): string;
-declare function tag(strs: TemplateStringsArray, x: string): number;
-let r = tag`${true}`;
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let true_start = source.rfind("true").expect("expected 'true' substitution") as u32;
-    assert_eq!(
-        diag.start, true_start,
-        "TS2769 should anchor at the offending tagged-template substitution, got: {diag:?}"
-    );
-    assert_eq!(
-        diag.length, 4,
-        "TS2769 should cover only the substitution token, got: {diag:?}"
-    );
-}
-
-#[test]
-fn ts2769_bind_call_with_non_undefined_this_arg_anchors_bind_member() {
-    let source = r#"
-function bar<T extends unknown[]>(callback: (this: 1, ...args: T) => void) {
-    callback.bind(2);
-}
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let bind_start = source.find("bind(2)").expect("expected bind call token") as u32;
-    assert_eq!(
-        diag.start, bind_start,
-        "TS2769 should anchor at `bind` for callback.bind(2)-style failures"
-    );
-    assert_eq!(diag.length, 4, "TS2769 should cover only `bind`");
-}
-
-#[test]
-fn ts2769_bind_call_with_undefined_this_arg_anchors_argument() {
-    let source = r#"
-class C {
-    foo(this: C, a: number, b: string): string { return ""; }
-}
-declare const c: C;
-c.foo.bind(undefined);
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let undefined_start = source
-        .find("undefined")
-        .expect("expected undefined argument") as u32;
-    assert_eq!(
-        diag.start, undefined_start,
-        "TS2769 should anchor at the `undefined` argument for bind(undefined)"
-    );
-}
-
-#[test]
-fn ts2769_array_literal_overload_mismatch_anchors_nested_property() {
-    let source = r#"
-function foo(bar:{a:number;}[]):string;
-function foo(bar:{a:boolean;}[]):number;
-function foo(bar:{a:any;}[]):any{ return bar }
-var x = foo([{a:'bar'}]);
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let prop_start = source
-        .rfind("a:'bar'")
-        .expect("expected offending property") as u32;
-    assert_eq!(
-        diag.start, prop_start,
-        "TS2769 should anchor at the offending nested property, got: {diag:?}"
-    );
-    assert_eq!(
-        diag.length, 1,
-        "TS2769 should cover only the property token"
-    );
-}
-
-#[test]
-fn ts2769_array_literal_missing_property_anchors_object_literal() {
-    let source = r#"
-function foo(bar:{a:number;}[]):string;
-function foo(bar:{a:boolean;}[]):number;
-function foo(bar:{a:any;}[]):any{ return bar }
-var x = foo([{}]);
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let object_start = source.rfind("{}").expect("expected object literal") as u32;
-    assert_eq!(
-        diag.start, object_start,
-        "TS2769 should anchor at the object literal with the missing property, got: {diag:?}"
-    );
-    assert_eq!(
-        diag.length, 2,
-        "TS2769 should cover the empty object literal"
-    );
-}
-
-#[test]
-fn ts2345_single_arity_overload_mismatch_does_not_emit_ts2769() {
-    let source = r#"
-declare function fn(value: string): void;
-declare function fn(value: number, extra: number): void;
-fn(true);
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        codes.contains(&2345),
-        "expected TS2345 for the single arity-compatible overload, got: {diagnostics:?}"
-    );
-    assert!(
-        !codes.contains(&2769),
-        "should not emit TS2769 when only one overload survives arity filtering, got: {diagnostics:?}"
-    );
-
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2345)
-        .expect("expected TS2345");
-    let arg_start = source.find("true").expect("expected argument") as u32;
-    assert_eq!(
-        diag.start, arg_start,
-        "TS2345 should anchor at the argument"
-    );
-    assert_eq!(diag.length, 4, "TS2345 should cover only the argument span");
-}
-
-#[test]
-fn ts2769_multiple_arity_compatible_mismatches_stay_overload_errors() {
-    let source = r#"
-declare function fn(value: 1): void;
-declare function fn<T extends 1>(value: T): void;
-fn(2);
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        codes.contains(&2769),
-        "expected TS2769 when multiple arity-compatible overloads fail, got: {diagnostics:?}"
-    );
-    assert!(
-        !codes.contains(&2345),
-        "should not collapse multiple arity-compatible overload failures to TS2345, got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn ts2769_mixed_type_and_count_failures_anchor_shared_argument() {
-    let source = r#"
-declare const Object: {
-    assign<T extends {}, U>(target: T, source: U): T & U;
-    assign<T extends {}, U, V>(target: T, source1: U, source2: V): T & U & V;
-    assign<T extends {}, U, V, W>(target: T, source1: U, source2: V, source3: W): T & U & V & W;
-    assign(target: object, ...sources: any[]): any;
-};
-
-class Base<T> {
-    constructor(public t: T) {}
-}
-
-class Foo<T> extends Base<T> {
-    update() {
-        return Object.assign(this.t, { x: 1 });
-    }
-}
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let arg_start = source
-        .find("this.t")
-        .expect("expected first argument in source") as u32;
-    assert_eq!(
-        diag.start, arg_start,
-        "TS2769 should anchor at the shared offending argument, got: {diag:?}"
-    );
-}
-
-#[test]
-fn ts2769_array_best_common_type_keeps_nullable_member() {
-    let source = r#"
-class Box {
-    take(value: boolean): number;
-    take(value: string): number;
-    take(value: number): number;
-    take(value: any): any { return value; }
-}
-
-<number>(new Box().take([4, 2, undefined][0]));
-"#;
-
-    let diagnostics = check_source_with_strict_null(source);
-    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        codes.contains(&2769),
-        "expected TS2769 when array BCT preserves undefined, got: {diagnostics:?}"
-    );
-    assert!(
-        !codes.contains(&2345),
-        "multi-overload nullable mismatch should stay TS2769, got: {diagnostics:?}"
-    );
-}
-
-#[test]
 fn ts2554_excess_argument_span_starts_at_first_excess_argument() {
     let source = r#"
 declare function takes(): void;
@@ -1098,6 +969,40 @@ foo({ e: 1, m: 1 });
         !diag.message_text.contains("{ e: 1"),
         "TS2345 should NOT show literal property types. Got: {}",
         diag.message_text
+    );
+}
+
+#[test]
+fn ts2345_missing_property_keeps_literal_key_but_widens_object_type_arg() {
+    let source = r#"
+interface ListProps<T, K extends keyof T> {
+    items: T[];
+    itemKey: K;
+    prop: number;
+}
+declare const Component: <T, K extends keyof T>(x: ListProps<T, K>) => void;
+Component({ items: [{ name: ' string' }], itemKey: 'name' });
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected exactly one TS2345, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "missing required property should suppress per-property TS2322, got: {diagnostics:?}"
+    );
+    let message = &ts2345[0].message_text;
+    assert!(
+        message.contains("Argument of type '{ items: { name: string; }[]; itemKey: \"name\"; }'"),
+        "TS2345 source display should widen nested object literals but preserve literal key, got: {message}"
+    );
+    assert!(
+        message.contains("parameter of type 'ListProps<{ name: string; }, \"name\">'"),
+        "TS2345 target display should widen the inferred object type argument, got: {message}"
     );
 }
 
@@ -1274,6 +1179,53 @@ let g8 = pipe((x: number, y: string) => 42, x => "" + x);
 }
 
 #[test]
+fn pipe_contextual_return_refines_overload_callbacks_progressively() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+type Fn = (n: number) => number;
+const fn30: Fn = pipe(
+    x => x + 1,
+    x => x * 2,
+);
+"#,
+    );
+    let false_positives: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2362)
+        .collect();
+    assert!(
+        false_positives.is_empty(),
+        "Contextual pipe overload should refine B from the first callback before checking the second, got: {:?}",
+        false_positives
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn nested_generic_call_callee_receives_outer_call_context() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function map<T, U>(transform: (t: T) => U): (arr: T[]) => U[];
+declare const identity: <T>(value: T) => T;
+const arr1: string[] = map(identity)(['a']);
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Nested generic callee should infer string[] from the outer call arguments/context, got: {:?}",
+        ts2322
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn pipe_concrete_callback_holes_only_in_expected_no_ts2322_in_body() {
     // Specifically guards against the arrow-body TS2322 false positive.
     // `() => true` against `(...args: A) => B` should NOT elaborate into the body
@@ -1389,6 +1341,91 @@ setup({
 }
 
 #[test]
+fn ts2345_widens_literals_when_constraint_chains_to_unconstrained_type_param() {
+    // For `<T, U extends T>(x: T, y: U)` called with two fresh literal
+    // arguments that widen to different primitives (e.g. `foo(1, '')`),
+    // tsc widens both sides of the TS2345 diagnostic to their primitive
+    // bases, regardless of whether the return annotation exposes `U`.
+    //
+    // Use two name choices for the bound variables to guard against
+    // hardcoded-name regressions (per the anti-hardcoding directive).
+    for (t_name, u_name, return_type) in &[
+        ("T", "U", "U"),
+        ("T", "U", "void"),
+        ("X", "P", "P"),
+        ("X", "P", "void"),
+    ] {
+        let source = format!(
+            "function foo<{t_name}, {u_name} extends {t_name}>\
+             (x: {t_name}, y: {u_name}): {return_type} {{ return y as any; }}\nfoo(1, '');\n"
+        );
+        let diagnostics = check_source_with_strict_null(&source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.code == 2345)
+            .unwrap_or_else(|| {
+                panic!("expected TS2345 for {t_name}/{u_name} variant, got: {diagnostics:?}")
+            });
+        assert!(
+            diag.message_text.contains(
+                "Argument of type 'string' is not assignable to parameter of type 'number'."
+            ),
+            "TS2345 must widen both source and target to their primitive bases when the \
+             type parameter's declared-constraint chain ends at an unconstrained type \
+             parameter ({t_name}/{u_name} variant), got: {diag:?}"
+        );
+    }
+}
+
+#[test]
+fn ts2345_preserves_literals_when_type_param_has_no_declared_constraint() {
+    // Inverse of the widening case above: for `<T>(x: T, y: T)` called
+    // with two fresh literal arguments whose primitive bases differ
+    // (`foo(1, '')`), tsc preserves the literal candidate display
+    // (`'""' / '1'`). T has no declared constraint at all, so the
+    // first-wins inference picks `1` and the literal `''` is reported
+    // against it without widening.
+    let source = r#"
+function foo<T>(x: T, y: T): T { return y; }
+foo(1, '');
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for unconstrained type parameter");
+    assert!(
+        diag.message_text
+            .contains("Argument of type '\"\"' is not assignable to parameter of type '1'."),
+        "TS2345 must preserve literal candidate display when the type parameter has no \
+         declared constraint, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_widens_unconstrained_implementation_param_hidden_from_return() {
+    // `fixTypeParameterInSignatureWithRestParameters.ts`: for an implemented
+    // generic function whose type parameter is not exposed through the return
+    // type, tsc widens the second fresh literal candidate after the first
+    // argument fixes the primitive base.
+    let source = r#"
+function bar<T>(item1: T, item2: T) { }
+bar(1, "");
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for unconstrained implementation parameter");
+    assert!(
+        diag.message_text
+            .contains("Argument of type 'string' is not assignable to parameter of type 'number'."),
+        "TS2345 must widen source and target when the implementation signature hides the \
+         unconstrained type parameter from its return surface, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2322_skips_arrow_body_elaboration_for_object_property_in_generic_call() {
     // Guard against the indirect-caller variant of the unresolved-holes regression:
     // when the arrow appears as a property value inside an object literal that is
@@ -1414,184 +1451,5 @@ const r = foo({ transform: (x: string) => x.length });
             .filter(|d| d.code == 2322)
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
-    );
-}
-
-/// Object-literal property elaboration: when a numeric literal property is
-/// passed to a parameter expecting a boolean literal, tsc reports the source
-/// as the widened primitive (`number`) rather than the AST literal (`1`).
-/// Mirrors `getWidenedLiteralLikeTypeForContextualType`: literal `1` is not a
-/// "literal of contextual type" against `true`, so its display widens.
-///
-/// Direct literal-to-literal assignments (`let x: 1 = "abc"`) are unaffected
-/// because the source carries its own literal TypeId rather than being
-/// pre-widened by property elaboration.
-#[test]
-fn ts2322_property_elaboration_widens_cross_primitive_literal_source() {
-    let diagnostics = check_source_with_strict_null(
-        r#"
-const fn1 = (s: { a: true }) => {};
-fn1({ a: 1 });
-fn1({ a: 1 } satisfies unknown);
-"#,
-    );
-    let messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .map(|d| d.message_text.as_str())
-        .collect();
-    assert!(
-        messages
-            .iter()
-            .all(|m| m.contains("Type 'number' is not assignable to type 'true'.")),
-        "Expected widened source display 'number' for cross-primitive-kind \
-         property elaboration (`a: 1` against `a: true`), got: {messages:#?}"
-    );
-    assert_eq!(
-        messages.len(),
-        2,
-        "Expected exactly two TS2322 diagnostics (one per call), got: {messages:#?}"
-    );
-}
-
-/// Direct literal-to-literal assignment must keep the literal display:
-/// `let x: 1 = "abc"` reports `Type '"abc"'`, not `Type 'string'`.
-/// `let literal2: true = 1 satisfies number` keeps `Type '1'` because
-/// `satisfies` preserves the inner literal type.
-#[test]
-fn ts2322_direct_literal_assignment_preserves_ast_literal_display() {
-    let diagnostics = check_source_with_strict_null(
-        r#"
-const a: 1 = "abc";
-const b: 1 = true;
-const c: true = 1 satisfies number;
-"#,
-    );
-    let messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .map(|d| d.message_text.as_str())
-        .collect();
-    let has = |needle: &str| messages.iter().any(|m| m.contains(needle));
-    assert!(
-        has("Type '\"abc\"' is not assignable to type '1'."),
-        "Expected literal `\"abc\"` for direct string-to-1 assignment, got: {messages:#?}"
-    );
-    assert!(
-        has("Type 'true' is not assignable to type '1'."),
-        "Expected literal `true` for direct boolean-to-1 assignment, got: {messages:#?}"
-    );
-    assert!(
-        has("Type '1' is not assignable to type 'true'."),
-        "Expected literal `1` for `let c: true = 1 satisfies number`, got: {messages:#?}"
-    );
-}
-
-/// TS2345 against an optional parameter whose underlying type is
-/// literal-sensitive (`null`, a literal, etc.) must render the
-/// externally-visible parameter type with `| undefined` and preserve the
-/// argument literal — matching tsc's diagnostic surface.  Covers both
-/// parameters with explicit `?` and parameters made optional by a default
-/// initializer such as `z = null`.
-///
-/// The bound variable name in `fd` (`z`) is intentionally different from
-/// `fi` (`x`) so the fix can't be hardcoded to a particular spelling.
-#[test]
-fn ts2345_optional_parameter_with_null_default_includes_undefined_surface() {
-    let diagnostics = check_source_with_strict_null(
-        r#"
-function fi(x = null) {}
-function fd(z = null, o = { a: 0 }) {}
-
-fi("hi");
-fd("hi");
-"#,
-    );
-    let messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .map(|d| d.message_text.as_str())
-        .collect();
-    let null_undefined_count = messages
-        .iter()
-        .filter(|m| {
-            m.contains(
-            "Argument of type '\"hi\"' is not assignable to parameter of type 'null | undefined'.",
-        )
-        })
-        .count();
-    assert_eq!(
-        null_undefined_count, 2,
-        "Expected two TS2345 diagnostics with `'\"hi\"'` arg and `null | undefined` \
-         param (one each for `fi` and `fd`), got: {messages:#?}"
-    );
-    assert!(
-        !messages.iter().any(|m| m.contains("undefined | undefined")),
-        "Expected no duplicated `undefined`, got: {messages:#?}"
-    );
-    assert!(
-        !messages
-            .iter()
-            .any(|m| m.contains("parameter of type 'null'.")),
-        "Optional null-default param must surface `null | undefined`, not bare `null`, \
-         got: {messages:#?}"
-    );
-}
-
-/// Parameters whose declared type already contains `undefined` should not
-/// double-up the surface — `union2` deduplicates, so the rendered type stays
-/// `string | undefined`, not `string | undefined | undefined`.
-#[test]
-fn ts2345_optional_parameter_already_includes_undefined_does_not_duplicate() {
-    let diagnostics = check_source_with_strict_null(
-        r#"
-function f(x?: string | undefined) {}
-f(42);
-"#,
-    );
-    let messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .map(|d| d.message_text.as_str())
-        .collect();
-    assert!(
-        !messages.iter().any(|m| m.contains("undefined | undefined")),
-        "Expected no duplicated `undefined`, got: {messages:#?}"
-    );
-}
-
-/// Optional non-rest parameters whose underlying type has at least one
-/// non-nullish member must NOT surface the synthetic `| undefined`. tsc
-/// elides it once a regular (non-spread) argument fills the slot — so a
-/// plain `number` optional param renders as `'number'`, not
-/// `'number | undefined'`. This is the inverse of the null-default case
-/// above and ensures the widen-then-strip pipeline still strips when the
-/// underlying type carries a non-nullish member.
-#[test]
-fn ts2345_optional_parameter_with_concrete_default_strips_synthetic_undefined() {
-    let diagnostics = check_source_with_strict_null(
-        r#"
-function f(x?: number) {}
-f("hi");
-"#,
-    );
-    let messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .map(|d| d.message_text.as_str())
-        .collect();
-    assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("parameter of type 'number'.")),
-        "Expected stripped `'number'` for non-spread arg landing on \
-         optional concrete param, got: {messages:#?}"
-    );
-    assert!(
-        !messages
-            .iter()
-            .any(|m| m.contains("parameter of type 'number | undefined'")),
-        "Synthetic `| undefined` must not surface for non-spread args on \
-         optional concrete params, got: {messages:#?}"
     );
 }

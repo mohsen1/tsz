@@ -692,6 +692,57 @@ fn test_namespace_comment_after_erased_interface() {
 }
 
 #[test]
+fn test_namespace_standalone_comment_between_classes_preserved() {
+    // A standalone line comment sitting between two class declarations
+    // inside a namespace must appear in the IIFE body before the second
+    // class. Previously the cursor advanced past `stmt_node.end` of the
+    // first class, which on some inputs sat past the inter-class comment,
+    // and `trailing_standalone` was intentionally empty for class members,
+    // so the comment was dropped on the floor.
+    let source = r#"namespace M {
+    export class b {
+    }
+
+    // class d
+    export class d {
+    }
+}"#;
+    let output = transform_and_emit_with_comments(source);
+    let b_pos = output.find("M.b = b").unwrap_or(usize::MAX);
+    let comment_pos = output.find("// class d").unwrap_or(usize::MAX);
+    let d_pos = output.find("class d {").unwrap_or(usize::MAX);
+    assert!(
+        comment_pos < d_pos,
+        "Inter-class comment should appear before class d. Got:\n{output}"
+    );
+    assert!(
+        b_pos < comment_pos,
+        "Inter-class comment should appear after class b's namespace export. Got:\n{output}"
+    );
+}
+
+#[test]
+fn test_namespace_erased_member_drops_its_leading_comment() {
+    // A leading comment on an erased member (e.g., a non-instantiated
+    // namespace) should be dropped along with the member, matching tsc's
+    // erasure semantics. Without this, the comment would float to the end
+    // of the parent IIFE body with no associated statement.
+    let source = r#"namespace M {
+    export class b {
+    }
+
+    /// module m2
+    export namespace m2 {
+    }
+}"#;
+    let output = transform_and_emit_with_comments(source);
+    assert!(
+        !output.contains("/// module m2"),
+        "Leading comment on erased namespace must be dropped. Got:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_comment_between_value_exports() {
     let source = r#"namespace Geometry {
     export var Origin = { x: 0, y: 0 };

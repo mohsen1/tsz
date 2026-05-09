@@ -328,7 +328,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             {
                 let name = ident.escaped_text.as_str();
                 if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                    for other_binder in all_binders.iter() {
+                    for (file_idx, other_binder) in all_binders.iter().enumerate() {
                         if std::ptr::eq(other_binder.as_ref() as *const _, binder as *const _) {
                             continue;
                         }
@@ -336,6 +336,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                             continue;
                         }
                         if let Some(sym) = other_binder.file_locals.get(name) {
+                            self.ctx.register_symbol_file_target(sym, file_idx);
                             return Some(sym);
                         }
                     }

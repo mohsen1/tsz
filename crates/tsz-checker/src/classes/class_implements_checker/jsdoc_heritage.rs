@@ -374,7 +374,7 @@ impl<'a> CheckerState<'a> {
         let mut out: Vec<JsDocTemplateParam> = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed.strip_prefix("@template") else {
+            let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
                 continue;
             };
             let mut rest = rest.trim_start();
@@ -453,16 +453,16 @@ impl<'a> CheckerState<'a> {
         let name = self
             .heritage_name_text(expr_idx)
             .unwrap_or_else(|| "<expression>".to_string());
+        let type_params = self.type_params_for_heritage_symbol(heritage_sym);
         if (self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(heritage_sym))
             || self.is_well_known_lib_type_name(&name)
-            || self
-                .get_cross_file_symbol(heritage_sym)
-                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VARIABLE))
+            || (type_params.is_empty()
+                && self
+                    .get_cross_file_symbol(heritage_sym)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VARIABLE)))
         {
             return;
         }
-
-        let type_params = self.type_params_for_heritage_symbol(heritage_sym);
         if type_params.is_empty() {
             return;
         }
@@ -520,47 +520,16 @@ impl<'a> CheckerState<'a> {
 
         let comment_text = comment.get_text(source_text);
         for tag in ["augments", "extends"] {
-            let needle = format!("@{tag}");
-            for (match_pos, _) in comment_text.match_indices(&needle) {
-                let after = match_pos + needle.len();
-                if after >= comment_text.len() {
-                    continue;
-                }
-                let next_ch = comment_text[after..]
-                    .chars()
-                    .next()
-                    .expect("after < len checked above");
-                if next_ch.is_ascii_alphanumeric() {
-                    continue;
-                }
+            for match_pos in Self::jsdoc_tag_offsets(comment_text, tag) {
+                let after = match_pos + tag.len() + 1;
                 let rest = comment_text[after..].trim_start();
                 if rest.is_empty() {
                     continue;
                 }
 
                 let rest_offset = rest.as_ptr() as usize - comment_text.as_ptr() as usize;
-                if let Some(inner) = rest.strip_prefix('{') {
-                    // Walk brace-balanced so nested `{...}` inside the
-                    // annotation (e.g. `@extends {A<{x:number}>}`) are kept
-                    // intact. The previous `rest.find('}')` truncated at the
-                    // inner closing `}` and silently dropped the remainder.
-                    let mut depth = 1usize;
-                    let mut close = None;
-                    for (idx, ch) in inner.char_indices() {
-                        match ch {
-                            '{' => depth += 1,
-                            '}' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    close = Some(idx);
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let close = close?;
-                    let raw = &inner[..close];
+                if rest.starts_with('{') {
+                    let (raw, _after_type) = Self::parse_jsdoc_curly_type_expr(rest)?;
                     let type_expr = raw.trim();
                     if type_expr.is_empty() {
                         continue;
@@ -617,6 +586,65 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    pub(crate) fn jsdoc_extends_type_arguments_for_heritage_expr(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<TypeId>> {
+        if !self.ctx.is_js_file() {
+            return None;
+        }
+
+        let mut current = expr_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.get_extended(current)?.parent.into_option()?;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.is_class_like() {
+                return self.jsdoc_extends_type_arguments_for_heritage(parent, expr_idx);
+            }
+            current = parent;
+        }
+        None
+    }
+
+    pub(crate) fn jsdoc_extends_type_arguments_for_heritage(
+        &mut self,
+        class_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<TypeId>> {
+        if !self.ctx.is_js_file() {
+            return None;
+        }
+
+        let (_tag, type_expr, _type_pos) =
+            self.attached_jsdoc_extends_or_augments_tag(class_idx)?;
+        let type_expr = type_expr.trim();
+        let angle_idx = type_expr.find('<')?;
+        if !type_expr.ends_with('>') {
+            return None;
+        }
+
+        let base_name = type_expr[..angle_idx].trim();
+        let heritage_name = self.heritage_name_text(expr_idx)?;
+        if base_name != heritage_name {
+            return None;
+        }
+
+        let inner = &type_expr[angle_idx + 1..type_expr.len() - 1];
+        let mut args = Vec::new();
+        for raw_arg in Self::split_jsdoc_type_arguments(inner) {
+            let cleaned = Self::normalize_jsdoc_type_fragment(raw_arg);
+            if cleaned.is_empty() {
+                return None;
+            }
+            let arg_type = self
+                .jsdoc_type_from_expression(&cleaned)
+                .or_else(|| self.resolve_jsdoc_type_str(&cleaned))?;
+            args.push(arg_type);
+        }
+
+        (!args.is_empty()).then_some(args)
     }
 
     /// Returns `true` when the class has a JSDoc `@augments`/`@extends` tag
@@ -714,6 +742,23 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: tsz_binder::SymbolId,
     ) -> Vec<tsz_solver::TypeParamInfo> {
+        let import_target = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+            Some((
+                symbol.import_module.as_ref()?.clone(),
+                symbol.import_name.as_ref()?.clone(),
+            ))
+        });
+
+        if let Some((module_specifier, import_name)) = import_target
+            && import_name != "*"
+            && import_name != "default"
+            && let Some(export_sym) =
+                self.resolve_direct_imported_heritage_export(&module_specifier, &import_name)
+            && let Some(type_params) = self.type_params_for_cross_file_heritage_symbol(export_sym)
+        {
+            return type_params;
+        }
+
         let mut type_params = self.get_type_params_for_symbol(sym_id);
         if type_params.is_empty() {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -721,7 +766,122 @@ impl<'a> CheckerState<'a> {
                 type_params = self.get_type_params_for_symbol(resolved);
             }
         }
+        if type_params.is_empty()
+            && let Some((module_specifier, import_name)) =
+                self.get_cross_file_symbol(sym_id).and_then(|symbol| {
+                    Some((
+                        symbol.import_module.as_ref()?,
+                        symbol.import_name.as_deref()?,
+                    ))
+                })
+            && import_name != "*"
+            && import_name != "default"
+            && let Some(export_sym) = self.resolve_cross_file_export(module_specifier, import_name)
+        {
+            type_params = self.get_type_params_for_symbol(export_sym);
+        }
         type_params
+    }
+
+    fn resolve_direct_imported_heritage_export(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.as_str();
+
+        let sym_id = target_binder
+            .module_exports
+            .get(target_file_name)
+            .and_then(|exports| exports.get(export_name))
+            .or_else(|| {
+                target_binder
+                    .module_exports
+                    .get(module_specifier)
+                    .and_then(|exports| exports.get(export_name))
+            })
+            .or_else(|| target_binder.file_locals.get(export_name))?;
+
+        self.ctx
+            .register_symbol_file_target(sym_id, target_file_idx);
+        Some(sym_id)
+    }
+
+    fn type_params_for_cross_file_heritage_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        use tsz_binder::symbol_flags;
+
+        let file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let symbol = binder.get_symbol(sym_id)?;
+        let flags = symbol.flags;
+        if flags & (symbol_flags::TYPE_ALIAS | symbol_flags::CLASS | symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+
+        let mut decl_candidates = Vec::new();
+        if symbol.value_declaration.is_some() {
+            decl_candidates.push(symbol.value_declaration);
+        }
+        for &decl in &symbol.declarations {
+            if decl != symbol.value_declaration {
+                decl_candidates.push(decl);
+            }
+        }
+
+        for decl_idx in decl_candidates {
+            let Some(params) = self.simple_cross_file_heritage_type_params(arena, flags, decl_idx)
+            else {
+                continue;
+            };
+            if !params.is_empty() {
+                return Some(params);
+            }
+        }
+        None
+    }
+
+    fn simple_cross_file_heritage_type_params(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        flags: u32,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        use tsz_binder::symbol_flags;
+
+        let node = arena.get(decl_idx)?;
+        let type_parameters = if flags & symbol_flags::TYPE_ALIAS != 0 {
+            arena.get_type_alias(node)?.type_parameters.as_ref()?
+        } else if flags & symbol_flags::CLASS != 0 {
+            arena.get_class(node)?.type_parameters.as_ref()?
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            arena.get_interface(node)?.type_parameters.as_ref()?
+        } else {
+            return None;
+        };
+
+        let mut params = Vec::with_capacity(type_parameters.nodes.len());
+        for &param_idx in &type_parameters.nodes {
+            let node = arena.get(param_idx)?;
+            let data = arena.get_type_parameter(node)?;
+            let name = arena
+                .get(data.name)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .map(|id_data| id_data.escaped_text.clone())?;
+            params.push(tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: (data.default != NodeIndex::NONE).then_some(TypeId::UNKNOWN),
+                is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
+            });
+        }
+        Some(params)
     }
 
     fn split_jsdoc_type_arguments(type_args: &str) -> Vec<&str> {

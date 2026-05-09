@@ -27,7 +27,7 @@ pub fn is_debug_enabled() -> bool {
 }
 
 /// A record of a symbol declaration event.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SymbolDeclarationEvent {
     /// The symbol's name
     pub name: String,
@@ -44,7 +44,7 @@ pub struct SymbolDeclarationEvent {
 }
 
 /// A record of a symbol lookup event.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SymbolLookupEvent {
     /// The name being looked up
     pub name: String,
@@ -59,7 +59,7 @@ pub struct SymbolLookupEvent {
 }
 
 /// A record of a symbol merge operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SymbolMergeEvent {
     /// The symbol's name
     pub name: String,
@@ -76,7 +76,7 @@ pub struct SymbolMergeEvent {
 }
 
 /// Debugger for module resolution operations.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ModuleResolutionDebugger {
     /// All symbol declaration events
     pub declaration_events: Vec<SymbolDeclarationEvent>,

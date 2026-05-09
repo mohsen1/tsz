@@ -621,6 +621,37 @@ const len: number = result.length;
 }
 
 #[test]
+fn test_reduce_empty_array_concat_failure_surfaces_through_destructuring() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+declare var tuple: [boolean, number, ...string[]];
+
+const [a, b, c, ...rest] = tuple;
+
+declare var receiver: typeof tuple;
+
+[...receiver] = tuple;
+
+const [oops1] = [1, 2, 3].reduce((accu, el) => accu.concat(el), []);
+
+const [oops2] = [1, 2, 3].reduce((acc: number[], e) => acc.concat(e), []);
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        real_errors.iter().any(|(code, _)| *code == 2488),
+        "Destructuring the failed reduce result should report TS2488.\nDiagnostics: {real_errors:#?}"
+    );
+    assert!(
+        real_errors.iter().any(|(code, _)| *code == 2769),
+        "The reduce/concat overload failure should report TS2769.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
 fn test_promise_identity_across_multiple_references() {
     if !lib_files_available() {
         return;
@@ -1179,6 +1210,46 @@ class Board {
     assert!(
         !real_errors.iter().any(|(c, _)| *c == 2339 || *c == 7006),
         "Array boxed type registration should preserve Array<T> methods and callback inference.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_recursive_alias_interface_preserves_array_method_surface() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+interface Box<T> { value: T }
+type Box2 = Box<Box2 | number>;
+
+interface HTMLHeadingElement {
+    id: string;
+    tagName: string;
+    textContent: string | null;
+}
+
+type Tree = [HTMLHeadingElement, Tree][];
+
+function parse(node: Tree, index: number[] = []): string[] {
+    return node.map(([el, children], i) => {
+        const idx = [...index, i + 1];
+        return `${el.id}:${idx.join(".")}:${children.length}`;
+    });
+}
+
+function cons(hs: HTMLHeadingElement[]): Tree {
+    return hs.reduce<Tree>((node, _h) => node, []);
+}
+"#,
+    );
+    let array_surface_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339 || *c == 7006 || *c == 7031)
+        .collect();
+    assert!(
+        array_surface_errors.is_empty(),
+        "Recursive interface aliases should not overwrite the registered Array<T> base.\nDiagnostics: {array_surface_errors:#?}"
     );
 }
 
@@ -1751,6 +1822,51 @@ async function tupleAll() {
     assert!(
         errors.is_empty(),
         "Promise.all([p1, p2]) should type-check.\nDiagnostics: {errors:#?}"
+    );
+}
+
+#[test]
+fn promise_all_async_map_tuple_context_evaluates_awaited_elements() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib_and_options(
+        r#"
+interface ILocalExtension {
+  isApplicationScoped: boolean;
+  publisherId: string | null;
+}
+type Metadata = {
+  updated: boolean;
+};
+declare function scanMetadata(
+  local: ILocalExtension
+): Promise<Metadata | undefined>;
+
+async function copyExtensions(
+  fromExtensions: ILocalExtension[]
+): Promise<void> {
+  const extensions: [ILocalExtension, Metadata | undefined][] =
+    await Promise.all(
+      fromExtensions
+        .filter((e) => !e.isApplicationScoped)
+        .map(async (e) => [e, await scanMetadata(e)])
+    );
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Promise.all async map tuple context should not produce TS2322.\nDiagnostics: {errors:#?}"
     );
 }
 
@@ -3518,6 +3634,35 @@ const p: MyPromise<string> = f().then(n => String(n));
 }
 
 #[test]
+fn local_promise_alias_is_not_valid_async_return_type() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+type Promise<T> = { value: T };
+
+async function f(): Promise<string> {
+    return "ok";
+}
+
+const value = f();
+const bad: Promise<string> = value;
+
+export {};
+"#,
+    );
+    assert!(
+        has_error(&diagnostics, 1064),
+        "local Promise alias should not satisfy async return type identity.\nDiagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "async body should be checked against the local Promise alias payload.\nDiagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_import_type_partial_record_utility() {
     // Partial<T> and Record<K,V> are type aliases in the lib that get lowered
     // as Lazy(DefId). Application expansion must correctly substitute type
@@ -4365,6 +4510,46 @@ var p = new Proxy(obj, {
 }
 
 #[test]
+fn test_proxy_handler_identity_wrapper_uses_contextual_callback_target() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+function deprecate<T extends Function>(fn: T, msg: string, code: string): T {
+    return fn;
+}
+
+function soonFrozenObjectDeprecation<T extends object>(obj: T) {
+    return new Proxy(obj, {
+        defineProperty: deprecate(
+            (target, property, descriptor) => Reflect.defineProperty(target, property, descriptor),
+            "msg",
+            "code"
+        ),
+        deleteProperty: deprecate(
+            (target, property) => Reflect.deleteProperty(target, property),
+            "msg",
+            "code"
+        ),
+        setPrototypeOf: deprecate(
+            (target, proto) => Reflect.setPrototypeOf(target, proto),
+            "msg",
+            "code"
+        ),
+    });
+}
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected identity-wrapped Proxy handler callbacks to use contextual targets, got: {ts2322:#?}"
+    );
+}
+
+#[test]
 fn test_builtin_iterator_constructor_uses_scoped_abstract_typeof_alias() {
     let lib_files = load_lib_files_with_es2015_sublibs();
     if lib_files.is_empty() {
@@ -4448,5 +4633,53 @@ const iter3 = iter2.flatMap(() => g1);
             .iter()
             .any(|(_, message)| { message.contains("Iterator<string, undefined, unknown>") }),
         "Expected Iterator<string> heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_map_iterator_next_uses_strict_builtin_iterator_return() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+declare const map: Map<string, number>;
+const value: number = map.values().next().value;
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+const result: Next<number> = map.values().next();
+"#,
+    );
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected strict built-in iterator return to report both MapIterator.next assignments. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_synthesized_array_iterator_methods_see_es2025_helpers() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+[1, 2, 3, 4].values()
+    .filter((x) => x % 2 === 0)
+    .map((x) => x * 10)
+    .toArray();
+"#,
+    );
+    let false_iterator_helper_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 7006))
+        .collect();
+    assert!(
+        false_iterator_helper_diags.is_empty(),
+        "Expected synthesized ArrayIterator methods to inherit es2025 iterator helpers. Got: {diagnostics:#?}"
     );
 }

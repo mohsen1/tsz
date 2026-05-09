@@ -5,53 +5,26 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
+use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Try to find the lib files in a few common locations relative to the crate
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
-        // Fallback paths trying to find node_modules in various places
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.d.ts",
+        "lib.dom.d.ts",
+    ])
 }
 
 fn load_symbol_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.symbol.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.es2015.symbol.wellknown.d.ts"),
-    ]
-    .into_iter()
-    .map(|lib_path| {
-        let content = std::fs::read_to_string(&lib_path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", lib_path.display()));
-        let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-        Arc::new(LibFile::from_source(file_name, content))
-    })
-    .collect()
+    tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+    ])
 }
 
 fn get_line_and_col(source: &str, offset: u32) -> (u32, u32) {
@@ -96,42 +69,17 @@ fn verify_errors(
     source: &str,
     expected: &[(u32, u32, &str)],
 ) -> Vec<tsz_checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
     let lib_files = load_lib_files_for_test();
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
+    let diagnostics = if lib_files.is_empty() {
+        tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
     } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-    let diagnostics = checker.ctx.diagnostics.clone();
+        tsz_checker::test_utils::check_source_with_libs(
+            source,
+            "test.ts",
+            CheckerOptions::default(),
+            &lib_files,
+        )
+    };
 
     // Validation
     let mut matched_indices = Vec::new();
@@ -186,6 +134,57 @@ fn verify_errors(
     }
 
     diagnostics
+}
+
+fn check_script_files(files: &[(&str, &str)], entry_idx: usize) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        module: ModuleKind::CommonJS,
+        ..CheckerOptions::default()
+    };
+
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.message_text.clone()))
+        .collect()
 }
 
 #[test]
@@ -373,6 +372,28 @@ fn duplicate_function_implementations() {
     assert_eq!(ts2393, 2, "Should have 2 TS2393 errors");
 }
 
+#[test]
+fn duplicate_script_function_implementations_across_files_emit_ts2393() {
+    let files = [
+        ("a.ts", "function test() { return 1; }"),
+        ("b.ts", "function test() { return 2; }"),
+    ];
+
+    for entry_idx in 0..files.len() {
+        let diagnostics = check_script_files(&files, entry_idx);
+        let ts2393 = diagnostics
+            .iter()
+            .filter(|(code, msg)| *code == 2393 && msg == "Duplicate function implementation.")
+            .count();
+
+        assert_eq!(
+            ts2393, 1,
+            "entry file {} should emit TS2393 on its local implementation, got {diagnostics:?}",
+            files[entry_idx].0
+        );
+    }
+}
+
 /// Test that field + getter with same name emits TS2300.
 #[test]
 fn field_and_getter_with_same_name() {
@@ -464,9 +485,47 @@ fn duplicate_symbol_computed_property() {
 /// Test that duplicate import = alias declarations emit TS2300.
 #[test]
 fn duplicate_import_equals_alias() {
-    verify_errors(
+    let diagnostics = verify_errors(
         "namespace m { export const x = 1; } import a = m; import a = m;",
-        &[(1, 58, "Duplicate identifier 'a'.")],
+        &[
+            (1, 44, "Duplicate identifier 'a'."),
+            (1, 58, "Duplicate identifier 'a'."),
+        ],
+    );
+
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 2,
+        "Duplicate import aliases should report TS2300 on both declarations"
+    );
+}
+
+#[test]
+fn duplicate_import_equals_qualified_value_alias() {
+    let diagnostics = verify_errors(
+        "namespace m { export var m = ''; }\nimport x = m.m;\nimport x = m.m;",
+        &[
+            (2, 8, "Duplicate identifier 'x'."),
+            (3, 8, "Duplicate identifier 'x'."),
+        ],
+    );
+
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 2,
+        "Duplicate qualified import aliases should report TS2300 on both declarations"
+    );
+}
+
+/// Test that duplicate ES import local bindings emit TS2300.
+#[test]
+fn duplicate_named_import_local_binding() {
+    verify_errors(
+        "import { z } from './a'; import { z1 as z } from './a';",
+        &[
+            (1, 10, "Duplicate identifier 'z'."),
+            (1, 41, "Duplicate identifier 'z'."),
+        ],
     );
 }
 

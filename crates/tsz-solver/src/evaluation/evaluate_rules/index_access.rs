@@ -23,10 +23,10 @@ use super::super::evaluate::{
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
 use super::apparent::make_apparent_method_type;
+use super::string_index_helpers::string_index_signature_applies;
 use crate::objects::apparent::is_member;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
-
 /// Lazily compute and cache array member types (length + apparent methods).
 /// Shared between `ArrayKeyVisitor` and `TupleKeyVisitor`.
 fn get_or_init_array_member_types(
@@ -98,6 +98,26 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         &mut self,
         mapped: &crate::types::MappedType,
     ) -> TypeId {
+        if let Some(TypeData::IndexAccess(template_obj, template_idx)) =
+            self.evaluator.interner().lookup(mapped.template)
+            && matches!(
+                self.evaluator.interner().lookup(template_idx),
+                Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name
+            )
+        {
+            let mut value_type = self
+                .evaluator
+                .interner()
+                .index_access(template_obj, mapped.constraint);
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                value_type = self
+                    .evaluator
+                    .interner()
+                    .union2(value_type, TypeId::UNDEFINED);
+            }
+            return value_type;
+        }
+
         let constrained_key = self.evaluator.interner().type_param(TypeParamInfo {
             name: mapped.type_param.name,
             constraint: Some(mapped.constraint),
@@ -1094,39 +1114,44 @@ impl<'a> TupleKeyVisitor<'a> {
         get_or_init_array_member_types(&mut self.array_member_types_cache, self.db)
     }
 
-    /// Compute the fixed length of the tuple, resolving rest spreads to
-    /// fixed-length inner tuples. Returns `None` if the length is not fixed
-    /// (e.g., rest element spreads an array or variadic tuple) or exceeds
-    /// the maximum tuple size.
-    ///
-    /// Uses an iterative approach for single-rest-element tuples (the common
-    /// `[T, ...Acc]` accumulator pattern), and bounded recursion for
-    /// multi-rest tuples to prevent O(2^n) traversal of branching spreads.
-    fn fixed_length(&self) -> Option<usize> {
+    fn length_type(&self) -> Option<TypeId> {
+        let (min, max) = self.length_bounds()?;
+        if min == max {
+            return Some(self.db.literal_number(max as f64));
+        }
+
+        let members = (min..=max)
+            .map(|len| self.db.literal_number(len as f64))
+            .collect();
+        Some(self.db.union(members))
+    }
+
+    fn length_bounds(&self) -> Option<(usize, usize)> {
         const MAX_FIXED_LENGTH: usize = 1000;
 
-        let mut total = 0usize;
-        let mut current_type = None; // type_id of rest element to descend into
+        let mut min = 0usize;
+        let mut max = 0usize;
+        let mut current_type = None;
 
-        // Process current elements
         let mut rest_count = 0;
         for element in self.elements {
             if element.rest {
                 rest_count += 1;
                 if rest_count > 1 {
-                    // Multiple rest elements at same level — bail
                     return None;
                 }
                 current_type = Some(element.type_id);
             } else {
-                total += 1;
-                if total > MAX_FIXED_LENGTH {
+                if !element.optional {
+                    min += 1;
+                }
+                max += 1;
+                if max > MAX_FIXED_LENGTH {
                     return None;
                 }
             }
         }
 
-        // Iteratively descend into single-rest chains
         while let Some(rest_type_id) = current_type.take() {
             let inner_list_id = tuple_list_id(self.db, rest_type_id)?;
             let inner_elements = self.db.tuple_list(inner_list_id);
@@ -1140,29 +1165,27 @@ impl<'a> TupleKeyVisitor<'a> {
                     }
                     current_type = Some(element.type_id);
                 } else {
-                    total += 1;
-                    if total > MAX_FIXED_LENGTH {
+                    if !element.optional {
+                        min += 1;
+                    }
+                    max += 1;
+                    if max > MAX_FIXED_LENGTH {
                         return None;
                     }
                 }
             }
         }
 
-        Some(total)
+        Some((min, max))
     }
 
     /// Check for known array members (length, methods)
     fn get_array_member_kind(&self, name: &str) -> Option<ApparentMemberKind> {
         if name == "length" {
-            // For fixed-length tuples, return the literal length type (e.g., 0, 1, 2)
-            // instead of generic `number`. This handles both simple tuples and tuples
-            // with rest spreads that resolve to fixed-length inner tuples (e.g.,
-            // `[T, ...Acc]` where `Acc` is `[any, any]` → length 3).
-            // Required for patterns like `Acc["length"] extends N` in tail-recursive
-            // conditional types.
-            if let Some(len) = self.fixed_length() {
-                let literal = self.db.literal_number(len as f64);
-                return Some(ApparentMemberKind::Value(literal));
+            // Return literal tuple lengths, including optional-element ranges
+            // like `[T?]["length"]` -> `0 | 1`.
+            if let Some(length_type) = self.length_type() {
+                return Some(ApparentMemberKind::Value(length_type));
             }
             return Some(ApparentMemberKind::Value(TypeId::NUMBER));
         }
@@ -1538,6 +1561,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ERROR;
         }
 
+        // `T[never]` and `T[keyof T]` where the key set is empty index over no
+        // properties, so they evaluate to `never`. Keep this narrower than all
+        // indexes that simplify to `never`, because some mapped/utility-type
+        // paths rely on the existing concrete lookup fallback behavior.
+        let is_empty_index_access = evaluated_index == TypeId::NEVER
+            && (index_type == TypeId::NEVER
+                || matches!(
+                    self.interner().lookup(index_type),
+                    Some(TypeData::KeyOf(inner))
+                        if inner == object_type
+                            || inner == evaluated_object
+                            || self.evaluate(inner) == object_type
+                            || self.evaluate(inner) == evaluated_object
+                ));
+        if is_empty_index_access {
+            return TypeId::NEVER;
+        }
+
         // Rule #38: Distribute over index union at the top level (Cartesian product expansion)
         // T[A | B] -> T[A] | T[B]
         // This must happen before checking the object type to ensure full cross-product expansion
@@ -1599,11 +1640,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 | TypeData::IndexAccess(_, _)
                 | TypeData::Mapped(_)
                 | TypeData::KeyOf(_)
-                | TypeData::Lazy(_)
                 | TypeData::TemplateLiteral(_)
                 | TypeData::StringIntrinsic { .. }
                 | TypeData::ReadonlyType(_)
-                | TypeData::TypeQuery(_),
+                | TypeData::TypeQuery(_)
+                | TypeData::Lazy(_),
             ) => self.evaluate(result),
             _ => result,
         }
@@ -1689,8 +1730,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(name) =
             crate::type_queries::get_literal_property_name(self.interner(), index_type)
         {
-            let name_str = self.interner().resolve_atom(name);
-            let is_symbol_key = name_str.starts_with("__unique_");
+            let is_symbol_key = matches!(
+                self.interner().lookup(index_type),
+                Some(TypeData::UniqueSymbol(_))
+            );
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -1705,7 +1748,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.add_undefined_if_unchecked(symbol_index.value_type);
             }
             // Symbol-keyed properties must not fall through to string index signatures.
-            if !is_symbol_key && let Some(string_index) = string_index {
+            if !is_symbol_key
+                && let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
@@ -1716,14 +1762,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(number_index) = shape.number_index.as_ref() {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = string_index {
+            if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
         }
 
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = string_index {
+            let result = if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1754,7 +1804,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // these index types should resolve to the string index signature's value type,
         // just like TypeId::STRING does.
         if let Some(string_index) = string_index
-            && self.is_string_like_index(index_type)
+            && string_index_signature_applies(self, string_index, index_type)
         {
             return self.add_undefined_if_unchecked(string_index.value_type);
         }
@@ -1802,8 +1852,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(name) =
             crate::type_queries::get_literal_property_name(self.interner(), index_type)
         {
-            let name_str = self.interner().resolve_atom(name);
-            let is_symbol_key = name_str.starts_with("__unique_");
+            let is_symbol_key = matches!(
+                self.interner().lookup(index_type),
+                Some(TypeData::UniqueSymbol(_))
+            );
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -1818,7 +1870,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.add_undefined_if_unchecked(symbol_index.value_type);
             }
             // Symbol-keyed properties must NOT fall through to string index signatures
-            if !is_symbol_key && let Some(string_index) = string_index {
+            if !is_symbol_key
+                && let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
@@ -1829,14 +1884,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(number_index) = shape.number_index.as_ref() {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = string_index {
+            if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
         }
 
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = string_index {
+            let result = if let Some(string_index) = string_index
+                && string_index_signature_applies(self, string_index, index_type)
+            {
                 string_index.value_type
             } else {
                 self.union_property_types(&shape.properties)
@@ -1864,50 +1923,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // String-like index types (template literals, string intrinsics, branded strings)
         // should use the string index signature when available.
         if let Some(string_index) = string_index
-            && self.is_string_like_index(index_type)
+            && string_index_signature_applies(self, string_index, index_type)
         {
             return self.add_undefined_if_unchecked(string_index.value_type);
         }
 
         TypeId::UNDEFINED
-    }
-
-    /// Check if an index type is a subtype of string for index signature resolution.
-    ///
-    /// Template literal types, string intrinsic types (Lowercase, Uppercase, etc.),
-    /// and intersections that contain string or a string literal are all subtypes
-    /// of string. When used as an index on an object with a string index signature,
-    /// they should resolve to the string index signature's value type.
-    fn is_string_like_index(&self, index_type: TypeId) -> bool {
-        if index_type.is_intrinsic() {
-            return false;
-        }
-        match self.interner().lookup(index_type) {
-            Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => true,
-            Some(TypeData::Intersection(list_id)) => {
-                // An intersection is string-like if any member is string or a string literal
-                let members = self.interner().type_list(list_id);
-                members.iter().any(|&m| {
-                    if m == TypeId::STRING {
-                        return true;
-                    }
-                    // Other intrinsics (NUMBER, BOOLEAN_TRUE/FALSE, ...) never match
-                    // Literal(String)/TemplateLiteral/StringIntrinsic — skip lookup.
-                    if m.is_intrinsic() {
-                        return false;
-                    }
-                    matches!(
-                        self.interner().lookup(m),
-                        Some(
-                            TypeData::Literal(LiteralValue::String(_))
-                                | TypeData::TemplateLiteral(_)
-                                | TypeData::StringIntrinsic { .. }
-                        )
-                    )
-                })
-            }
-            _ => false,
-        }
     }
 
     pub(crate) fn union_property_types(&self, props: &[PropertyInfo]) -> TypeId {
@@ -1943,8 +1964,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         elements: &[TupleElement],
         index_type: TypeId,
     ) -> TypeId {
-        // Use TupleKeyVisitor to handle the index type
-        // The visitor handles Union distribution internally via visit_union
         let mut visitor = TupleKeyVisitor::new(self.interner(), elements);
         let result = visitor.evaluate(index_type);
 
@@ -1972,11 +1991,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
         // Use ArrayKeyVisitor to handle the index type
-        // The visitor handles Union distribution internally via visit_union
         let mut visitor = ArrayKeyVisitor::new(self.interner(), elem);
         let result = visitor.evaluate(index_type);
 
-        // Add undefined if unchecked indexed access is allowed
         self.add_undefined_if_unchecked(result)
     }
 }

@@ -15,6 +15,8 @@ pub(crate) mod callable_truthiness;
 pub(crate) mod class;
 pub(crate) mod core;
 pub(crate) mod lib;
+pub(crate) mod lib_augmentations;
+pub(crate) mod lib_decls;
 mod lib_name_text;
 pub(crate) mod lib_prime;
 pub(crate) mod lib_resolution;

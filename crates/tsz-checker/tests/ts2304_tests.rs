@@ -5,7 +5,6 @@
 //! 2. TS2304 is NOT emitted when lib.d.ts is loaded and provides the name
 //! 3. The "Any poisoning" effect is eliminated
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_binder::{BinderState, lib_loader::LibFile};
@@ -21,48 +20,11 @@ fn diagnostic_contains(diagnostic: &Diagnostic, fragment: &str) -> bool {
 }
 
 fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
 fn load_es5_and_dom_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let mut lib_files = load_es5_lib_files_for_test();
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-    ];
-
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
 }
 
 /// Helper function to check source with lib.es5.d.ts and return diagnostics.
@@ -118,38 +80,12 @@ fn check_without_lib(source: &str) -> Vec<Diagnostic> {
 fn check_with_lib(source: &str) -> Vec<Diagnostic> {
     // Load ES5 plus DOM so built-in browser globals like `console` resolve.
     let lib_files = load_es5_and_dom_lib_files_for_test();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<CheckerLibContext> = lib_files
-            .iter()
-            .map(|lib| CheckerLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
 }
 
 fn check_js_without_lib(source: &str) -> Vec<Diagnostic> {
@@ -226,6 +162,21 @@ fn test_ts2304_emitted_for_undefined_name() {
     assert!(
         !ts2304_errors.is_empty(),
         "Expected TS2304 error for undefinedName, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_preserved_for_unresolved_var_initializer_constructor() {
+    let diagnostics = check_without_lib(r#"var chain: ScopeChain = new ScopeChain();"#);
+
+    let scope_chain_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'ScopeChain'"))
+        .collect();
+    assert_eq!(
+        scope_chain_errors.len(),
+        2,
+        "Expected TS2304 for both the type annotation and constructor initializer, got: {diagnostics:?}"
     );
 }
 
@@ -655,5 +606,232 @@ fn test_ts2304_emitted_for_nested_new_expression_arguments_when_target_unresolve
         count_for("StringHashTable"),
         2,
         "Expected 2 TS2304 for 'StringHashTable' inside the nested `new` arguments, got: {ts2304_errors:?}"
+    );
+}
+
+// =============================================================================
+// JSDoc unresolved-name diagnostics inside compound types (issue #3408)
+//
+// Each test exercises a different compound type wrapper around an unresolved
+// simple name `Missing`. tsc emits TS2304 in every case; tsz must too. The
+// helpers walk the JSDoc type expression to find the leaf, so each case uses
+// a distinct iteration variable / parameter name to ensure the fix does not
+// hardcode any user-chosen identifier.
+// =============================================================================
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_simple_unresolved_name() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {Missing} value
+ */
+function fn0(value) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc @param simple name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_arrow_return_unresolved_name() {
+    // `() => Missing` — the unresolved name is the return type of an arrow
+    // type appearing inside an `@param` annotation.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {() => Missing} cb
+ */
+function fn1(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc arrow-return name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_arrow_param_type_unresolved_name() {
+    // `(p: Missing) => void` — unresolved name in an arrow parameter type.
+    // Use a parameter name that is not the conformance default `x` to make
+    // sure the walker descends structurally rather than matching a literal.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {(arg: Missing) => void} cb
+ */
+function fn2(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc arrow-param type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_type_object_property_unresolved_name() {
+    // `{ a: Missing }` wrapped in `@type {{ ... }}`. The brace balancer
+    // must keep the inner object literal intact instead of truncating at
+    // the first `}`.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/** @type {{ field: Missing }} */
+let value;
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc object property type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_emitted_for_jsdoc_param_object_property_unresolved_name() {
+    // Object-literal property type appearing inside `@param`.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {{ field: Missing }} obj
+ */
+function fn3(obj) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'Missing'"))
+        .collect();
+    assert!(
+        !ts2304.is_empty(),
+        "Expected TS2304 for unresolved JSDoc @param object property, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_in_scope_template() {
+    // `@template T` declares an in-scope type parameter. References to it
+    // inside a compound type must NOT be flagged TS2304, even though the
+    // walker descends into the arrow return position.
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @template T
+ * @param {() => T} cb
+ */
+function fn4(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'T'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "@template T should be in scope for arrow-return position, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_assertion_predicate_target() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/** @typedef {(check: boolean) => asserts check} AssertFunc */
+/** @type {AssertFunc} */
+const assert = check => {};
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304.is_empty(),
+        "Assertion predicate target names are values, not unresolved JSDoc types: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_signature_local_template() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/** @type {<T>(param?: T) => T | undefined} */
+function typed(param) {
+    return param;
+}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'T'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "Signature-local generic T should be in scope for JSDoc function type leaves: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_dotted_namespace_leaf() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {!Array<!lf.schema.Table>} scope
+ */
+function begin(scope) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'lf.schema.Table'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "Qualified JSDoc leaves should not be reported as plain TS2304 names: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_compound_type_unresolved_walker_skips_intrinsic_unknown() {
+    let diagnostics = check_js_without_lib(
+        r#"// @ts-check
+/**
+ * @param {(value: unknown) => unknown} cb
+ */
+function call(cb) {}
+"#,
+    );
+
+    let ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && diagnostic_contains(d, "'unknown'"))
+        .collect();
+    assert!(
+        ts2304.is_empty(),
+        "Intrinsic JSDoc type names should not be emitted as TS2304: {diagnostics:?}"
     );
 }

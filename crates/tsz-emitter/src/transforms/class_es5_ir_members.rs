@@ -1311,6 +1311,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 if is_static {
                     // --- Static property ---
+                    if self.skip_static_field_initializers {
+                        continue;
+                    }
                     if is_abstract || is_declare || is_private_field || is_accessor_keyword {
                         continue;
                     }
@@ -1627,6 +1630,10 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     fn is_type_only_declaration_name(&self, name: &str) -> bool {
+        if self.has_value_declaration_name(name) {
+            return false;
+        }
+
         self.arena.nodes.iter().any(|node| {
             if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
                 self.arena.get_type_alias(node).is_some_and(|alias| {
@@ -1643,6 +1650,60 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 false
             }
+        })
+    }
+
+    fn has_value_declaration_name(&self, name: &str) -> bool {
+        self.arena.nodes.iter().any(|node| match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                .arena
+                .get_variable(node)
+                .is_some_and(|var_stmt| self.variable_statement_declares_name(var_stmt, name)),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.arena.get_function(node).is_some_and(|func| {
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, func.name)
+                        == name
+                })
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(node).is_some_and(|class| {
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, class.name)
+                        == name
+                })
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(node).is_some_and(|enum_decl| {
+                    crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        enum_decl.name,
+                    ) == name
+                })
+            }
+            _ => false,
+        })
+    }
+
+    fn variable_statement_declares_name(
+        &self,
+        var_stmt: &tsz_parser::parser::node::VariableData,
+        name: &str,
+    ) -> bool {
+        var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                return false;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                return false;
+            };
+            decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                self.arena
+                    .get_variable_declaration_at(decl_idx)
+                    .is_some_and(|decl| {
+                        crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena, decl.name,
+                        ) == name
+                    })
+            })
         })
     }
 }

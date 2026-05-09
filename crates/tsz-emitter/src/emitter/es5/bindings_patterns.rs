@@ -2,9 +2,14 @@
 
 use super::super::{ParamTransformPlan, Printer};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{BindingElementData, BindingPatternData, ForInOfData, Node};
+use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+
+pub(in crate::emitter) enum ES5RestProp {
+    Static(NodeIndex),
+    Dynamic(String),
+}
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn get_binding_element_property_key(
@@ -34,23 +39,18 @@ impl<'a> Printer<'a> {
         &mut self,
         elem_idx: NodeIndex,
         temp_name: &str,
-    ) {
-        let Some(elem_node) = self.arena.get(elem_idx) else {
-            return;
-        };
-        let Some(elem) = self.arena.get_binding_element(elem_node) else {
-            return;
-        };
+    ) -> Option<ES5RestProp> {
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
         if elem.dot_dot_dot_token {
-            return;
+            return None;
         }
 
-        let Some(key_idx) = self.get_binding_element_property_key(elem) else {
-            return;
-        };
+        let key_idx = self.get_binding_element_property_key(elem)?;
 
         // Check if key is computed and save to temp if needed
         let computed_key_temp = self.emit_computed_key_temp_if_needed(key_idx);
+        let rest_prop = self.es5_rest_prop_for_key(key_idx, computed_key_temp.as_deref());
 
         if self.is_binding_pattern(elem.name) {
             let value_name = self.get_temp_var_name();
@@ -80,11 +80,11 @@ impl<'a> Printer<'a> {
             };
 
             self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
-            return;
+            return Some(rest_prop);
         }
 
         if !self.has_identifier_text(elem.name) {
-            return;
+            return Some(rest_prop);
         }
 
         if elem.initializer.is_none() {
@@ -116,6 +116,8 @@ impl<'a> Printer<'a> {
             self.write(" : ");
             self.write(&value_name);
         }
+
+        Some(rest_prop)
     }
 
     /// If `key_idx` is a computed property, emit a temp variable assignment and return the temp name
@@ -228,23 +230,18 @@ impl<'a> Printer<'a> {
         elem_idx: NodeIndex,
         temp_name: &str,
         first: &mut bool,
-    ) {
-        let Some(elem_node) = self.arena.get(elem_idx) else {
-            return;
-        };
-        let Some(elem) = self.arena.get_binding_element(elem_node) else {
-            return;
-        };
+    ) -> Option<ES5RestProp> {
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
         if elem.dot_dot_dot_token {
-            return;
+            return None;
         }
 
-        let Some(key_idx) = self.get_binding_element_property_key(elem) else {
-            return;
-        };
+        let key_idx = self.get_binding_element_property_key(elem)?;
 
         // Check if key is computed and save to temp if needed
         let computed_key_temp = self.emit_computed_key_temp_for_direct(key_idx, first);
+        let rest_prop = self.es5_rest_prop_for_key(key_idx, computed_key_temp.as_deref());
 
         if self.is_binding_pattern(elem.name) {
             let value_name = self.get_temp_var_name();
@@ -277,11 +274,11 @@ impl<'a> Printer<'a> {
             };
 
             self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
-            return;
+            return Some(rest_prop);
         }
 
         if !self.has_identifier_text(elem.name) {
-            return;
+            return Some(rest_prop);
         }
 
         if elem.initializer.is_none() {
@@ -318,6 +315,8 @@ impl<'a> Printer<'a> {
             self.write(" : ");
             self.write(&value_name);
         }
+
+        Some(rest_prop)
     }
 
     /// Similar to `emit_computed_key_temp_if_needed` but handles the first flag for direct destructuring
@@ -469,7 +468,7 @@ impl<'a> Printer<'a> {
             let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
                 return;
             };
-            let rest_props = self.collect_object_rest_props(pattern);
+            let mut rest_props = Vec::new();
             for &elem_idx in &pattern.elements.nodes {
                 if elem_idx.is_none() {
                     continue;
@@ -482,8 +481,8 @@ impl<'a> Printer<'a> {
                 };
                 if elem.dot_dot_dot_token {
                     self.emit_es5_object_rest_element(elem, &rest_props, temp_name);
-                } else {
-                    self.emit_es5_binding_element(elem_idx, temp_name);
+                } else if let Some(rest_prop) = self.emit_es5_binding_element(elem_idx, temp_name) {
+                    rest_props.push(rest_prop);
                 }
             }
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
@@ -508,7 +507,7 @@ impl<'a> Printer<'a> {
             let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
                 return;
             };
-            let rest_props = self.collect_object_rest_props(pattern);
+            let mut rest_props = Vec::new();
             for &elem_idx in &pattern.elements.nodes {
                 if elem_idx.is_none() {
                     continue;
@@ -525,8 +524,10 @@ impl<'a> Printer<'a> {
                     }
                     self.emit_es5_object_rest_element(elem, &rest_props, ident_name);
                     *first = false;
-                } else {
-                    self.emit_es5_binding_element_direct(elem_idx, ident_name, first);
+                } else if let Some(rest_prop) =
+                    self.emit_es5_binding_element_direct(elem_idx, ident_name, first)
+                {
+                    rest_props.push(rest_prop);
                 }
             }
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
@@ -721,7 +722,7 @@ impl<'a> Printer<'a> {
         match pattern_node.kind {
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
                 if let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
-                    let rest_props = self.collect_object_rest_props(pattern);
+                    let mut rest_props = Vec::new();
                     for &elem_idx in &pattern.elements.nodes {
                         if elem_idx.is_none() {
                             continue;
@@ -739,8 +740,10 @@ impl<'a> Printer<'a> {
                                 temp_name,
                                 started,
                             );
-                        } else {
-                            self.emit_param_object_binding_element(elem_idx, temp_name, started);
+                        } else if let Some(rest_prop) =
+                            self.emit_param_object_binding_element(elem_idx, temp_name, started)
+                        {
+                            rest_props.push(rest_prop);
                         }
                     }
                 }
@@ -761,24 +764,19 @@ impl<'a> Printer<'a> {
         elem_idx: NodeIndex,
         temp_name: &str,
         started: &mut bool,
-    ) {
-        let Some(elem_node) = self.arena.get(elem_idx) else {
-            return;
-        };
-        let Some(elem) = self.arena.get_binding_element(elem_node) else {
-            return;
-        };
+    ) -> Option<ES5RestProp> {
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
 
         if elem.dot_dot_dot_token {
-            return;
+            return None;
         }
 
-        let Some(key_idx) = self.get_binding_element_property_key(elem) else {
-            return;
-        };
+        let key_idx = self.get_binding_element_property_key(elem)?;
 
         // Check if key is computed and save to temp if needed
         let computed_key_temp = self.emit_computed_key_temp_for_param(key_idx, started);
+        let rest_prop = self.es5_rest_prop_for_key(key_idx, computed_key_temp.as_deref());
 
         if self.is_binding_pattern(elem.name) {
             let value_name = self.get_temp_var_name();
@@ -803,11 +801,11 @@ impl<'a> Printer<'a> {
             }
 
             self.emit_param_binding_assignments(elem.name, &value_name, started);
-            return;
+            return Some(rest_prop);
         }
 
         if !self.has_identifier_text(elem.name) {
-            return;
+            return Some(rest_prop);
         }
 
         self.emit_param_assignment_prefix(started);
@@ -837,6 +835,8 @@ impl<'a> Printer<'a> {
                 computed_key_temp.as_deref(),
             );
         }
+
+        Some(rest_prop)
     }
 
     /// Similar to `emit_computed_key_temp_if_needed` but handles started flag for param destructuring
@@ -947,7 +947,7 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_param_object_rest_element(
         &mut self,
         elem: &BindingElementData,
-        rest_props: &[NodeIndex],
+        rest_props: &[ES5RestProp],
         temp_name: &str,
         started: &mut bool,
     ) {
@@ -1016,7 +1016,7 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_es5_object_rest_element(
         &mut self,
         elem: &BindingElementData,
-        rest_props: &[NodeIndex],
+        rest_props: &[ES5RestProp],
         temp_name: &str,
     ) {
         let rest_target = elem.name;
@@ -1112,51 +1112,47 @@ impl<'a> Printer<'a> {
         rest_name
     }
 
-    pub(in crate::emitter) fn collect_object_rest_props(
+    fn es5_rest_prop_for_key(
         &self,
-        pattern: &BindingPatternData,
-    ) -> Vec<NodeIndex> {
-        let mut props = Vec::new();
-        for &elem_idx in &pattern.elements.nodes {
-            let Some(elem_node) = self.arena.get(elem_idx) else {
-                continue;
-            };
-            let Some(elem) = self.arena.get_binding_element(elem_node) else {
-                continue;
-            };
-            if elem.dot_dot_dot_token {
-                continue;
-            }
-            let key_idx = if elem.property_name.is_some() {
-                elem.property_name
-            } else {
-                elem.name
-            };
-            if let Some(key_node) = self.arena.get(key_idx)
-                && (key_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || key_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-            {
-                continue;
-            }
-            props.push(key_idx);
+        key_idx: NodeIndex,
+        computed_temp: Option<&str>,
+    ) -> ES5RestProp {
+        if let Some(temp) = computed_temp {
+            ES5RestProp::Dynamic(temp.to_string())
+        } else {
+            ES5RestProp::Static(key_idx)
         }
-        props
     }
 
-    pub(in crate::emitter) fn emit_rest_exclude_list(&mut self, props: &[NodeIndex]) {
+    fn emit_rest_exclude_list(&mut self, props: &[ES5RestProp]) {
         self.write("[");
         let mut first = true;
-        for &prop_idx in props {
+        for prop in props {
             if !first {
                 self.write(", ");
             }
             first = false;
-            self.emit_rest_property_key(prop_idx);
+            self.emit_rest_excluded_prop(prop);
         }
         self.write("]");
     }
 
-    pub(in crate::emitter) fn emit_rest_property_key(&mut self, key_idx: NodeIndex) {
+    fn emit_rest_excluded_prop(&mut self, prop: &ES5RestProp) {
+        match prop {
+            ES5RestProp::Static(key_idx) => self.emit_rest_property_key(*key_idx),
+            ES5RestProp::Dynamic(temp) => {
+                self.write("typeof ");
+                self.write(temp);
+                self.write(" === \"symbol\" ? ");
+                self.write(temp);
+                self.write(" : ");
+                self.write(temp);
+                self.write(" + \"\"");
+            }
+        }
+    }
+
+    fn emit_rest_property_key(&mut self, key_idx: NodeIndex) {
         let Some(key_node) = self.arena.get(key_idx) else {
             return;
         };
@@ -1444,10 +1440,13 @@ impl<'a> Printer<'a> {
         let counter = self.ctx.destructuring_state.for_of_counter;
 
         // TypeScript's variable naming pattern:
-        // Top-level: e_N (error container), _a (temp for return function)
-        // For loop: _b (iterator), _c (result), _d (done), _e (guard)
+        // - Simple identifier expression `arr`: iterator=arr_1, result=arr_1_1
+        // - Complex expression: iterator=_d, result=_e (generic temps)
+        // - Top-level hoisted: _a (done), e_N (error), _b (return), _c (value)
+        // - For loop: _d (guard)
         // Catch: e_N_1 (error value, not pre-declared)
         let error_container_name = format!("e_{}", counter + 1);
+        let loop_done_name = self.get_temp_var_name();
         let return_temp_name = self
             .reserved_iterator_return_temps
             .remove(&for_of_idx)
@@ -1459,17 +1458,48 @@ impl<'a> Printer<'a> {
         // allocating this loop's iterator/result vars.
         self.preallocate_nested_iterator_return_temps(for_in_of.statement);
 
-        let loop_iterator_name = self.get_temp_var_name(); // _b
-        let loop_result_name = self.get_temp_var_name(); // _c
-        let loop_done_name = self.get_temp_var_name(); // _d
-        let loop_guard_name = self.get_temp_var_name(); // _e
+        let value_temp_name = self.get_temp_var_name();
+        let loop_guard_name = self.get_temp_var_name();
+        let (loop_iterator_name, loop_result_name) = if let Some(expr_node) =
+            self.arena.get(for_in_of.expression)
+            && expr_node.is_identifier()
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+        {
+            let base = self.arena.resolve_identifier_text(ident).to_string();
+            let mut iter_name = None;
+            for suffix in 1..=100 {
+                let candidate = format!("{base}_{suffix}");
+                if !self.file_identifiers.contains(&candidate)
+                    && !self.generated_temp_names.contains(&candidate)
+                {
+                    iter_name = Some(candidate);
+                    break;
+                }
+            }
+            if let Some(iter_name) = iter_name {
+                self.generated_temp_names.insert(iter_name.clone());
+                let result_name = format!("{iter_name}_1");
+                self.generated_temp_names.insert(result_name.clone());
+                (iter_name, result_name)
+            } else {
+                let a = self.get_temp_var_name();
+                let b = self.get_temp_var_name();
+                (a, b)
+            }
+        } else {
+            let a = self.get_temp_var_name();
+            let b = self.get_temp_var_name();
+            (a, b)
+        };
         let catch_error_name = format!("e_{}_1", counter + 1);
 
         self.ctx.destructuring_state.for_of_counter += 1;
 
-        // Hoist error container + return temp to the top of the source file scope.
+        // Hoist done/error/return/value temps to the top of the source file scope.
+        self.hoisted_for_of_temps.push(loop_done_name.clone());
         self.hoisted_for_of_temps.push(error_container_name.clone());
         self.hoisted_for_of_temps.push(return_temp_name.clone());
+        self.hoisted_for_of_temps.push(value_temp_name.clone());
 
         // try block
         self.write("try {");
@@ -1483,7 +1513,7 @@ impl<'a> Printer<'a> {
             self.emit_comments_before_pos(actual_start);
         }
 
-        // for (var _e = true, iterable_1 = __asyncValues(iterable), iterable_1_1 = [await/yield] iterable_1.next(), _d = iterable_1_1.done, !_d; _e = true) {
+        // for (var _d = true, iterable_1 = __asyncValues(iterable), iterable_1_1; iterable_1_1 = [await/yield] iterable_1.next(), _a = iterable_1_1.done, !_a; _d = true) {
         let await_or_yield = if self.ctx.emit_await_as_yield {
             "yield"
         } else {
@@ -1509,6 +1539,8 @@ impl<'a> Printer<'a> {
             self.write("), ");
         }
         self.write(&loop_result_name);
+        self.write("; ");
+        self.write(&loop_result_name);
         self.write(" = ");
         self.write(await_or_yield);
         self.write(" ");
@@ -1517,7 +1549,7 @@ impl<'a> Printer<'a> {
         self.write(&loop_done_name);
         self.write(" = ");
         self.write(&loop_result_name);
-        self.write(".done; !");
+        self.write(".done, !");
         self.write(&loop_done_name);
         self.write("; ");
         self.write(&loop_guard_name);
@@ -1668,14 +1700,18 @@ impl<'a> Printer<'a> {
             self.write_line();
         } else {
             // Normal (non-using) path
-            // Emit the value binding: var item = _c.value;
-            self.emit_for_of_value_binding_iterator_es5_async(
-                for_in_of.initializer,
-                &loop_result_name,
-            );
+            self.write(&value_temp_name);
+            self.write(" = ");
+            self.write(&loop_result_name);
+            self.write(".value;");
             self.write_line();
             self.write(&loop_guard_name);
             self.write(" = false;");
+            self.write_line();
+            self.emit_for_of_value_binding_iterator_es5_async(
+                for_in_of.initializer,
+                &value_temp_name,
+            );
             self.write_line();
 
             // Emit the loop body

@@ -10,14 +10,8 @@
 //! - TS2724 (namespace export spelling suggestion)
 //! - TS2749 (value used as type)
 
-use std::sync::Arc;
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::module_resolution::build_module_resolution_maps;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn check(source: &str) -> Vec<Diagnostic> {
     let mut parser =
@@ -43,54 +37,9 @@ fn check(source: &str) -> Vec<Diagnostic> {
 }
 
 fn check_named_files(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic> {
-    let mut arenas = Vec::with_capacity(files.len());
-    let mut binders = Vec::with_capacity(files.len());
-    let mut roots = Vec::with_capacity(files.len());
-    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
-
-    for (name, source) in files {
-        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-        arenas.push(Arc::new(parser.get_arena().clone()));
-        binders.push(Arc::new(binder));
-        roots.push(root);
-    }
-
-    let entry_idx = file_names
-        .iter()
-        .position(|name| name == entry_file)
-        .expect("entry file should exist");
-    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
-
-    let all_arenas = Arc::new(arenas);
-    let all_binders = Arc::new(binders);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        all_arenas[entry_idx].as_ref(),
-        all_binders[entry_idx].as_ref(),
-        &types,
-        file_names[entry_idx].clone(),
-        CheckerOptions::default(),
-    );
-
-    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-    checker.ctx.set_all_binders(Arc::clone(&all_binders));
-    checker.ctx.set_current_file_idx(entry_idx);
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::new(resolved_module_paths));
-    checker.ctx.set_resolved_modules(resolved_modules);
-    checker.check_source_file(roots[entry_idx]);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
+    tsz_checker::test_utils::check_multi_file(files, entry_file, CheckerOptions::default())
+        .into_iter()
         .filter(|d| d.code != 2318)
-        .cloned()
         .collect()
 }
 
@@ -863,6 +812,27 @@ class C {
     assert!(
         diags.iter().any(|d| d.code == 17013),
         "Expected TS17013 for new.target inside a method, got: {diags:?}"
+    );
+}
+
+#[test]
+fn new_target_uses_function_expando_properties() {
+    let diags = check(
+        r#"
+function foo(x: true) { }
+
+function f() {
+  if (new.target.marked === true) {
+    foo(new.target.marked);
+  }
+}
+
+f.marked = true;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics for new.target expando property narrowing, got: {diags:?}"
     );
 }
 

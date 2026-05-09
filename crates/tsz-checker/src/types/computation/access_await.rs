@@ -321,7 +321,9 @@ impl<'a> CheckerState<'a> {
             query::PromiseTypeKind::Union(members) => {
                 for member in members {
                     if let Some(inner) = self.promise_like_return_type_argument(member)
-                        && self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1)
+                        && (inner == target
+                            || inner == type_id
+                            || self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1))
                     {
                         return true;
                     }
@@ -329,7 +331,9 @@ impl<'a> CheckerState<'a> {
             }
             _ => {
                 if let Some(inner) = self.promise_like_return_type_argument(target)
-                    && self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1)
+                    && (inner == target
+                        || inner == type_id
+                        || self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1))
                 {
                     return true;
                 }

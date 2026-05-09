@@ -190,6 +190,52 @@ let x2 = <MyComp a="hi" />;
 }
 
 #[test]
+fn jsx_concrete_prop_rejects_unconstrained_generic_attr_value() {
+    // tsc emits TS2322 for `<Comp s={x} />` when `Comp` expects `s: string`
+    // and `x: T` is an unconstrained outer type parameter. The expected prop
+    // type is concrete (no type parameters), so per-attribute checking must
+    // run even though the actual value type contains a type parameter.
+    // Re-tests with a different type-parameter name to ensure the rule is
+    // structural and not a hardcoded `T`.
+    for type_param_name in ["T", "K"] {
+        let source = format!(
+            r#"
+{JSX_PREAMBLE}
+declare function Comp(props: {{ s: string }}): JSX.Element;
+function f<{type_param_name}>(x: {type_param_name}) {{
+    return <Comp s={{x}} />;
+}}
+"#
+        );
+        let diags = jsx_diagnostics(&source);
+        assert!(
+            has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "Expected TS2322 for unconstrained generic attribute value (param `{type_param_name}` -> string), got: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn jsx_concrete_prop_accepts_constrained_generic_attr_value() {
+    // Counterpart to the unconstrained case: when the type parameter's
+    // constraint satisfies the expected prop type, no TS2322 should fire.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare function Comp(props: {{ s: string }}): JSX.Element;
+function f<T extends string>(x: T) {{
+    return <Comp s={{x}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Constrained `T extends string` should be assignable to a `string` prop, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_sfc_type_mismatch_emits_ts2322() {
     let source = format!(
         r#"
@@ -1148,6 +1194,49 @@ let c = <ruhroh />;
     );
 }
 
+#[test]
+fn jsx_intrinsic_elements_merges_global_augmentation_with_existing_namespace() {
+    let diags = jsx_diagnostics(
+        r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {};
+    }
+}
+
+export {};
+
+declare global {
+    namespace JSX {
+        interface IntrinsicElements {
+            "my-custom-element": {};
+        }
+    }
+}
+
+<div />;
+<my-custom-element />;
+<missing-element />;
+"#,
+    );
+
+    let ts2339_messages: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert_eq!(
+        ts2339_messages.len(),
+        1,
+        "Expected only the truly missing intrinsic tag to fail, got: {diags:?}"
+    );
+    assert!(
+        ts2339_messages[0].contains("missing-element"),
+        "Expected TS2339 for missing-element only, got: {diags:?}"
+    );
+}
+
 fn cross_file_jsx_diagnostics_with_pos(
     lib_source: &str,
     main_source: &str,
@@ -1276,6 +1365,73 @@ let p = <Poisoned x />;
     assert!(
         !has_code(&diags, 2307),
         "Should not emit TS2307 for resolvable ambient module, got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_react_class_empty_attrs_reports_missing_props_not_whole_target_ts2322() {
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+    interface IntrinsicAttributes {}
+    interface IntrinsicClassAttributes<T> {}
+}
+declare namespace __React {
+    type ReactNode = string | number | null | undefined;
+    class Component<P, S = {}> {
+        props: P & { children?: ReactNode };
+        state: S;
+        constructor(props?: P, context?: any);
+        render(): JSX.Element | null;
+    }
+}
+declare module "react" {
+    export = __React;
+}
+"#;
+
+    let main_source = r#"
+import React = require('react');
+
+interface PoisonedProp {
+    x: string;
+    y: "2";
+}
+class Poisoned extends React.Component<PoisonedProp, {}> {
+    render() {
+        return <div>Hello</div>;
+    }
+}
+
+let y = <Poisoned />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        main_source,
+        JsxMode::Preserve,
+        true,
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                && message.contains("PoisonedProp")
+                && message.contains("x, y")
+        }),
+        "Expected TS2739 against bare PoisonedProp for empty React class attrs, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("IntrinsicClassAttributes")
+                && message.contains("Type '{}'")
+        }),
+        "Empty React class attrs should not fall through to whole-target TS2322, got: {diags:?}"
     );
 }
 
@@ -1911,6 +2067,185 @@ declare function UnwrappedLink2<T extends React.ElementType = React.ElementType>
 }
 
 #[test]
+fn test_generic_intrinsic_tag_type_parameter_checks_empty_attrs_against_lma() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    type LibraryManagedAttributes<C, P> = P;
+    interface IntrinsicElements {
+        div: { id: string };
+        span: { title: string };
+    }
+}
+
+declare namespace React {
+    interface SFC {
+        (): JSX.Element;
+    }
+}
+
+type Tags = "span" | "div";
+
+const Hoc = <Tag extends Tags>(
+   TagElement: Tag,
+): React.SFC => {
+   const Component = () => <TagElement />;
+   return Component;
+};
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("LibraryManagedAttributes<Tag,")
+        }),
+        "Expected TS2322 for empty attrs against generic intrinsic LibraryManagedAttributes target, got: {diags:?}"
+    );
+}
+
+/// Regression for <https://github.com/mohsen1/tsz/issues/3227>.
+///
+/// `apply_jsx_library_managed_attributes` previously discarded the LMA
+/// evaluation whenever `format_type(evaluated)` contained the substring
+/// `Factory<`. That printer-output check spuriously triggered for any user
+/// type happening to be named `Factory`, producing a false TS2741 for the
+/// optional prop. With the heuristic removed, LMA must still erase the
+/// required prop whose default is provided through `defaultProps`.
+#[test]
+fn test_jsx_library_managed_attributes_with_user_named_factory_generic() {
+    let user_named_generic_sources = [
+        ("Factory", "value: Factory<number>"),
+        ("Maker", "value: Maker<number>"),
+        ("Producer", "value: Producer<number>"),
+        ("Builder", "value: Builder<number>"),
+        ("Wrapper", "value: Wrapper<number>"),
+    ];
+
+    for (type_name, prop_decl) in user_named_generic_sources {
+        let source = format!(
+            r#"
+declare namespace JSX {{
+    interface Element {{}}
+    interface ElementClass {{}}
+    interface IntrinsicElements {{}}
+    type LibraryManagedAttributes<C, P> =
+        C extends {{ defaultProps: infer D }}
+            ? {{ [K in keyof P]?: P[K] }}
+            : P;
+}}
+
+interface {type_name}<T> {{
+    make(): T;
+}}
+
+interface Props {{
+    {prop_decl};
+    other: number;
+}}
+
+declare function Comp(props: Props): JSX.Element;
+declare namespace Comp {{
+    const defaultProps: {{
+        {prop_decl};
+    }};
+}}
+
+const _ok = <Comp other={{0}} />;
+"#
+        );
+
+        let diags = jsx_diagnostics(&source);
+        assert!(
+            !has_code(
+                &diags,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            ),
+            "JSX LibraryManagedAttributes must mark props with a default as optional regardless of user-chosen type names; user generic `{type_name}<T>` produced TS2741: {diags:?}"
+        );
+        assert!(
+            !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "JSX LibraryManagedAttributes erasure must not introduce TS2322 for user generic `{type_name}<T>`: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn jsx_library_managed_attributes_preserves_factory_named_prop_defaults() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface ElementClass { render(): Element; }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements { div: {}; }
+
+    type Exclude<T, U> = T extends U ? never : T;
+    type Extract<T, U> = T extends U ? T : never;
+    type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+    type Partial<T> = { [P in keyof T]?: T[P] };
+    type Defaultize<Props, Defaults> =
+        Partial<Pick<Props, Extract<keyof Props, keyof Defaults>>> &
+        Pick<Props, Exclude<keyof Props, keyof Defaults>>;
+    type LibraryManagedAttributes<Component, Props> =
+        Component extends { defaultProps: infer Defaults }
+            ? Defaultize<Props, Defaults>
+            : Props;
+}
+
+interface Factory<T> {
+    create(): T;
+}
+
+interface Props {
+    value: Factory<string>;
+    other: number;
+}
+
+declare class Comp {
+    props: Props;
+    static defaultProps: { value: Factory<string> };
+    render(): JSX.Element;
+}
+
+let ok = <Comp other={1} />;
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "LibraryManagedAttributes should preserve defaulted Factory<T> props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_component_type_parameter_checks_empty_attrs_against_lma() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    type LibraryManagedAttributes<C, P> =
+        C extends (props: any) => any ? P & { managed: C } : P;
+}
+
+function f1<T extends (props: {}) => JSX.Element>(Component: T) {
+    return <Component />;
+}
+"#;
+
+    let diags = jsx_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("LibraryManagedAttributes<T, {}>")
+        }),
+        "Expected empty attrs to be checked against JSX.LibraryManagedAttributes<T, {{}}>, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_generic_jsx_props_conditional_component_props_with_ref_keeps_callback_context() {
     let lib_source = r#"
 declare namespace JSX {
@@ -2005,6 +2340,251 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
     assert!(
         !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "real react16 fixture should not emit TS7006, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_excess_props_and_assignability_react16_generic_spread_reports_ts2322() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let source = r#"
+import * as React from 'react';
+
+const myHoc = <ComposedComponentProps extends any>(
+    ComposedComponent: React.ComponentClass<ComposedComponentProps>,
+) => {
+    type WrapperComponentProps = ComposedComponentProps & { myProp: string };
+    const WrapperComponent: React.ComponentClass<WrapperComponentProps> = null as any;
+
+    const props: ComposedComponentProps = null as any;
+
+    <WrapperComponent {...props} myProp={'1000000'} />;
+    <WrapperComponent {...props} myProp={1000000} />;
+};
+"#;
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        &react_types,
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            strict_bind_call_apply: true,
+            strict_property_initialization: true,
+            no_implicit_this: true,
+            always_strict: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("ComposedComponentProps & { myProp: number; }")
+        }),
+        "expected generic spread plus numeric myProp to emit whole-object TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_generic_spread_wrapper_number_prop_does_not_use_alias_fallback() {
+    let react_types = r#"
+declare namespace React {
+  class Component<P = {}, S = any> {
+    props: P;
+  }
+
+  interface ComponentClass<P = {}> {
+    new (props: P): Component<P>;
+  }
+
+  interface Attributes {
+    key?: any;
+  }
+
+  interface ClassAttributes<T> {
+    ref?: any;
+  }
+}
+
+declare module "react" {
+  export = React;
+}
+
+declare namespace JSX {
+  interface Element {}
+  interface ElementClass {
+    props: any;
+  }
+  interface ElementAttributesProperty {
+    props: {};
+  }
+  interface IntrinsicAttributes extends React.Attributes {}
+  interface IntrinsicClassAttributes<T> extends React.ClassAttributes<T> {}
+}
+"#;
+    let source = r#"
+import * as React from "react";
+
+function render<ComposedComponentProps extends object>() {
+  type WrapperComponentProps = ComposedComponentProps & { myProp: number };
+  const WrapperComponent = null as any as React.ComponentClass<WrapperComponentProps>;
+
+  const props: ComposedComponentProps = null as any;
+
+  <WrapperComponent {...props} myProp={123} />;
+}
+
+render;
+"#;
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        react_types,
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            strict_bind_call_apply: true,
+            strict_property_initialization: true,
+            no_implicit_this: true,
+            always_strict: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "number-valued WrapperComponentProps.myProp should accept a numeric JSX attr, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_generic_componentclass_annotation_spread_does_not_recurse() {
+    let react_types = r#"
+declare namespace React {
+  class Component<P = {}, S = any> {
+    props: P;
+  }
+
+  interface ComponentClass<P = {}> {
+    new (props: P): Component<P>;
+  }
+
+  interface Attributes {
+    key?: any;
+  }
+
+  interface ClassAttributes<T> {
+    ref?: any;
+  }
+}
+
+declare module "react" {
+  export = React;
+}
+
+declare namespace JSX {
+  interface Element {}
+  interface ElementClass {
+    props: any;
+  }
+  interface ElementAttributesProperty {
+    props: {};
+  }
+  interface IntrinsicAttributes extends React.Attributes {}
+  interface IntrinsicClassAttributes<T> extends React.ClassAttributes<T> {}
+}
+"#;
+    let source = r#"
+import * as React from "react";
+
+function render<ComposedComponentProps extends object>(
+  ComposedComponent: React.ComponentClass<ComposedComponentProps>,
+) {
+  type OuterProps = ComposedComponentProps & { otherProp: string };
+  const WrapperComponent: React.ComponentClass<OuterProps> = null as any;
+
+  const props: ComposedComponentProps = null as any;
+
+  <WrapperComponent {...props} otherProp="ok" />;
+  <WrapperComponent {...props} otherProp={123} />;
+}
+
+render;
+"#;
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        react_types,
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            strict_bind_call_apply: true,
+            strict_property_initialization: true,
+            no_implicit_this: true,
+            always_strict: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("otherProp: number")
+        }),
+        "generic ComponentClass annotation should report the numeric otherProp mismatch without recursing, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx",
+    ) else {
+        return;
+    };
+    source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        &react_types,
+        &source,
+        JsxMode::React,
+        true,
+    );
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+        ),
+        "real react16 fixture should emit TS2698 for generic spreads, got: {diags:?}"
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "real react16 fixture should emit TS2322 for the number myProp JSX element, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("ComposedComponentProps & { myProp: string; }")
+        }),
+        "real react16 fixture should not emit TS2322 for the string myProp JSX element, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT),
+        "ComponentClass<WrapperComponentProps> should be accepted as a JSX component, got: {diags:?}"
     );
 }
 
@@ -3948,6 +4528,98 @@ declare const MockComponent: MockComponentInterface;
 }
 
 #[test]
+fn jsx_children_diagnostics_keep_declared_children_display_through_intrinsic_intersection() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Props {{
+    children: (x: number) => string;
+}}
+function Blah(props: Props) {{ return <div></div>; }}
+
+interface PropsArr {{
+    children: ((x: number) => string)[];
+}}
+function Blah2(props: PropsArr) {{ return <div></div>; }}
+
+type Cb = (x: number) => string;
+interface PropsMixed {{
+    children: Cb | Cb[];
+}}
+function Blah3(props: PropsMixed) {{ return <div></div>; }}
+
+let text = <Blah>Hello unexpected text!</Blah>;
+let multi = <Blah>{{x => "" + x}}{{x => "" + x}}</Blah>;
+let arraySingle = <Blah2>{{x => x}}</Blah2>;
+let mixed = <Blah3>{{x => x}}</Blah3>;
+let mixedText = <Blah3>Hello unexpected text!</Blah3>;
+"#
+    );
+
+    let diags = jsx_diagnostics_with_pos(&source);
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
+                && msg.contains("expected type of 'children' is '(x: number) => string'")
+        }),
+        "Plain function children text diagnostic should use the declared function type, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+                && msg.contains("single child of type '(x: number) => string'")
+        }),
+        "Plain function children arity diagnostic should use the declared function type, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
+                && msg.contains("expects type '((x: number) => string)[]'")
+        }),
+        "Array children should keep the array target for single body children, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && msg.contains("Type '(x: number) => number' is not assignable to type")
+                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
+        }),
+        "Union children mismatch should report against the declared union surface, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, _, msg)| {
+            *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
+                && (msg.contains("expected type of 'children' is 'Cb[] | Cb'")
+                    || msg.contains("expected type of 'children' is 'Cb | Cb[]'"))
+        }),
+        "Union children text diagnostic should keep the declared union surface, got: {diags:?}"
+    );
+
+    let mixed_start = source
+        .find("let mixed =")
+        .expect("test source should contain the mixed declaration");
+    let mixed_child_start = source[mixed_start..]
+        .find("{x => x")
+        .map(|offset| mixed_start + offset)
+        .expect("test source should contain the mixed child expression")
+        as u32;
+    let mixed_child_end = source[mixed_start..]
+        .find("}</Blah3>")
+        .map(|offset| mixed_start + offset)
+        .expect("test source should contain the mixed child close")
+        as u32;
+    assert!(
+        diags.iter().any(|(code, start, msg)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && *start >= mixed_child_start
+                && *start <= mixed_child_end
+                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
+        }),
+        "Union child TS2322 should be anchored at the JSX child expression, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_react_jsx_ignores_element_children_attribute_and_keeps_related_info() {
     let source = r#"
 declare namespace JSX {
@@ -4692,14 +5364,12 @@ fn jsx_react_multiple_render_prop_children_ts2322_message_preserves_react_child_
     let source = format!(
         r#"
 {JSX_PREAMBLE}
+interface Array<T> {{ length: number; [n: number]: T; }}
 declare namespace React {{
     type ReactText = string | number;
     interface ReactElement<P> {{ props: P; }}
     type ReactChild = ReactElement<any> | ReactText;
-    interface ReactNodeArray {{
-        [n: number]: ReactChild | ReactNodeArray | boolean;
-    }}
-    type ReactFragment = {{}} | ReactNodeArray;
+    type ReactFragment = {{}} | Array<ReactChild | any[] | boolean>;
     type ReactNode = ReactChild | ReactFragment | boolean;
     class Component<P, S> {{
         props: P & {{ children?: ReactNode }};
@@ -4731,6 +5401,14 @@ let err =
     );
     for (_, msg) in &ts2322 {
         assert!(
+            msg.contains("boolean | any[] | ReactChild"),
+            "TS2322 target type message should match tsc's ReactNode child union order. Got: {msg:?}"
+        );
+        assert!(
+            !msg.contains("ReactChild | any[] | boolean"),
+            "TS2322 target type message should not use construction-order ReactNode child display. Got: {msg:?}"
+        );
+        assert!(
             msg.contains("ReactChild"),
             "TS2322 target type message should preserve the ReactChild alias, \
              not expand it to constituent types. Got: {msg:?}"
@@ -4740,6 +5418,70 @@ let err =
             "TS2322 message should not expand ReactChild to ReactElement/ReactText. Got: {msg:?}"
         );
     }
+}
+
+#[test]
+fn jsx_react_multiple_render_prop_children_contextual_type_uses_declared_callback() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    type ReactText = string | number;
+    interface ReactElement<P> {{ props: P; }}
+    type ReactChild = ReactElement<any> | ReactText;
+    interface ReactNodeArray {{
+        [n: number]: ReactChild | ReactNodeArray | boolean;
+    }}
+    type ReactFragment = {{}} | ReactNodeArray;
+    type ReactNode = ReactChild | ReactFragment | boolean;
+    class Component<P, S> {{
+        props: P & {{ children?: ReactNode }};
+    }}
+}}
+
+interface User {{
+    name: string;
+}}
+interface Prop {{
+    children: (user: User) => JSX.Element;
+}}
+class FetchUser extends React.Component<Prop, any> {{}}
+let err =
+    <FetchUser>
+        {{ user => <div /> }}
+        {{ user => <div /> }}
+    </FetchUser>;
+"#
+    );
+    let diags = jsx_diagnostics_with_pos(&source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type '(user: User) => Element'")
+                && message.contains("ReactChild")
+        })
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "React multiple render-prop children should be contextually typed by the declared callback while reporting against ReactNode, got: {diags:?}"
+    );
+
+    let first_brace = source.find("{ user =>").expect("test source has child");
+    let first_user = source.find("user =>").expect("test source has arrow");
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, start, _)| *start as usize == first_user),
+        "TS2322 should anchor at the arrow expression, not the JSX expression wrapper. brace={first_brace}, user={first_user}, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|(_, start, _)| *start as usize != first_brace),
+        "TS2322 should not anchor at the opening JSX expression brace, got: {ts2322:?}"
+    );
 }
 
 #[test]
@@ -5424,6 +6166,49 @@ let x = <MyComp<Prop, Prop> a={{10}} />;
 }
 
 #[test]
+fn test_jsx_intrinsic_type_args_validate_nested_errors() {
+    let source = r#"
+type Record<K extends keyof any, T> = { [P in K]: T };
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: {};
+    }
+}
+
+const a = <div<>></div>;
+const b = <div<number,>></div>;
+const c = <div<Missing>></div>;
+const d = <div<Missing<AlsoMissing>>></div>;
+const e = <div<Record<object, object>>></div>;
+const f = <div<number>></div>;
+const g = <div<>/>;
+const h = <div<number,>/>;
+const i = <div<Missing>/>;
+const j = <div<Missing<AlsoMissing>>/>;
+const k = <div<Record<object, object>>/>;
+const l = <div<number>/>;
+"#;
+    let codes = jsx_codes(source);
+    assert!(
+        codes.contains(&1009),
+        "intrinsic JSX trailing type-argument commas should emit TS1009, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2304),
+        "intrinsic JSX type arguments should be visited for missing names, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2344),
+        "intrinsic JSX type arguments should be checked for constraints, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2558),
+        "intrinsic JSX elements should reject explicit type arguments, got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_jsx_explicit_type_args_constraint_violation_emits_ts2344() {
     // <MyComp2<Prop> /> where MyComp2<P extends {a: string}> and Prop = {a: number}
     let source = format!(
@@ -5618,4 +6403,112 @@ let d = <MyComponent initialValues={{ x: "y" }} nextValues={a => a.x} />;
             "TS2322 target should show intersection of callable types with '&', got: {message}"
         );
     }
+}
+
+/// When a class JSX component's constructor takes a primitive first parameter
+/// (e.g. `new(n: string): { x: number; render(): void }`) AND the JSX
+/// namespace's `IntrinsicAttributes` declares a required prop the caller did
+/// not pass (typically `key`), tsc reports ONLY `TS2741` for the missing
+/// required `IntrinsicAttributes` prop. It does NOT also emit `TS2322` for
+/// whole-attrs assignability against the primitive props type, because
+/// primitive props can never structurally accept JSX attributes — the
+/// assignability failure is uninformative when TS2741 already conveys the
+/// user-actionable error.
+///
+/// Mirrors the conformance test
+/// `conformance/jsx/tsxIntrinsicAttributeErrors.tsx`.
+#[test]
+fn jsx_class_primitive_props_with_missing_intrinsic_required_emits_only_ts2741_not_ts2322() {
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface ElementClass { render: any; }
+    interface IntrinsicAttributes { key: string | number }
+    interface IntrinsicClassAttributes<T> { ref: T }
+    interface IntrinsicElements { div: { text?: string }; span: any; }
+}
+interface I { new(n: string): { x: number; render(): void } }
+declare var E: I;
+<E x={10} />
+"#;
+    let codes = jsx_codes(source);
+    assert!(
+        codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "Expected TS2741 (missing required `key`) for class JSX with primitive props, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected NO TS2322 for class JSX whole-attrs assignability against primitive props, got: {codes:?}"
+    );
+}
+
+/// Regression test for issue #3227: `JSX.LibraryManagedAttributes` was being
+/// discarded whenever the formatted evaluated props type happened to contain
+/// the substring `Factory<`. That was a display-text heuristic, not a
+/// semantic condition, so any user type named `Factory` (or anything else
+/// whose printed form started with `Factory<`) silently broke LMA.
+///
+/// Structural rule: when a component has `defaultProps`, the props returned
+/// from `JSX.LibraryManagedAttributes<C, Props>` must reflect the mapped
+/// optional-property result regardless of the names of types appearing in
+/// the props.
+fn jsx_lma_user_type_named_factory_does_not_disable_default_props_helper(
+    user_type_name: &str,
+) -> Vec<u32> {
+    let source = format!(
+        r#"
+declare namespace JSX {{
+    interface Element {{}}
+    interface ElementClass {{}}
+    interface IntrinsicElements {{}}
+    type LibraryManagedAttributes<C, P> =
+        C extends {{ defaultProps: infer D }}
+          ? {{ [K in keyof P]?: P[K] }}
+          : P;
+}}
+
+interface {user_type_name}<T> {{
+    make(): T;
+}}
+
+interface Props {{
+    value: {user_type_name}<number>;
+    other: number;
+}}
+
+declare function Comp(props: Props): JSX.Element;
+declare namespace Comp {{
+    const defaultProps: {{
+        value: {user_type_name}<number>;
+    }};
+}}
+
+const _ok = <Comp />;
+"#
+    );
+    jsx_codes(&source)
+}
+
+#[test]
+fn jsx_lma_user_type_named_factory_does_not_disable_default_props() {
+    // Reproduces the issue: a user type literally named `Factory` must not
+    // suppress the LMA-mapped optional props.
+    let codes = jsx_lma_user_type_named_factory_does_not_disable_default_props_helper("Factory");
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "User type named `Factory` should not disable JSX.LibraryManagedAttributes; \
+         expected no TS2741 for `<Comp />`, got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_lma_user_type_named_widget_does_not_emit_ts2741() {
+    // Sister test with a different name: proves the rule is structural and not
+    // tied to the literal spelling `Factory`.
+    let codes = jsx_lma_user_type_named_factory_does_not_disable_default_props_helper("Widget");
+    assert!(
+        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        "User type named `Widget` should also not disable JSX.LibraryManagedAttributes; \
+         expected no TS2741 for `<Comp />`, got: {codes:?}"
+    );
 }

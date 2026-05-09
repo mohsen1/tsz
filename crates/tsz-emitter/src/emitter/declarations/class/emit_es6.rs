@@ -4,11 +4,13 @@ use super::replace_identifier;
 use super::{AutoAccessorInfo, StaticFieldInit};
 use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{
-    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
-    collect_private_fields, collect_private_methods, get_private_field_name, is_private_identifier,
+    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
+    collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
+    collect_private_fields_with_reserved, collect_private_methods_with_reserved,
+    get_private_field_name, is_private_identifier, make_unique_private_name,
 };
 use std::sync::Arc;
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node::{ClassData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::{
@@ -16,7 +18,176 @@ use tsz_parser::syntax::transform_utils::{
 };
 use tsz_scanner::SyntaxKind;
 
+#[derive(Debug, Clone)]
+struct PrivateAutoAccessorInfo {
+    member_idx: NodeIndex,
+    name: String,
+    get_var_name: String,
+    set_var_name: String,
+    storage_name: String,
+    initializer: Option<NodeIndex>,
+    is_static: bool,
+}
+
+fn collect_private_auto_accessors_with_reserved(
+    printer: &Printer<'_>,
+    class: &ClassData,
+    class_name: &str,
+    used_names: &mut rustc_hash::FxHashSet<String>,
+) -> Vec<PrivateAutoAccessorInfo> {
+    if class_name.is_empty() {
+        return Vec::new();
+    }
+
+    let mut accessors = Vec::new();
+    for &member_idx in &class.members.nodes {
+        let Some(member_node) = printer.arena.get(member_idx) else {
+            continue;
+        };
+        let Some(prop) = printer.arena.get_property_decl(member_node) else {
+            continue;
+        };
+        if !printer
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+        {
+            continue;
+        }
+        if printer
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+            || printer
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            continue;
+        }
+        if !is_private_identifier(printer.arena, prop.name) {
+            continue;
+        }
+
+        let Some(field_name) = get_private_field_name(printer.arena, prop.name) else {
+            continue;
+        };
+        let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+        let base = format!("_{class_name}_{clean_name}");
+        let get_var_name = make_unique_private_name(&format!("{base}_get"), used_names);
+        let set_var_name = make_unique_private_name(&format!("{base}_set"), used_names);
+        let storage_name = if printer.ctx.options.legacy_decorators {
+            used_names.insert(base.clone());
+            let storage_stem = make_unique_private_name(&base, used_names);
+            make_unique_private_name(&format!("{storage_stem}_accessor_storage"), used_names)
+        } else {
+            make_unique_private_name(&format!("{base}_accessor_storage"), used_names)
+        };
+        accessors.push(PrivateAutoAccessorInfo {
+            member_idx,
+            name: clean_name.to_string(),
+            get_var_name,
+            set_var_name,
+            storage_name,
+            initializer: if prop.initializer.is_none() {
+                None
+            } else {
+                Some(prop.initializer)
+            },
+            is_static: printer.has_effective_static_modifier_js(&prop.modifiers),
+        });
+    }
+    accessors
+}
+
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn class_expression_is_in_loop_body(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        while let Some(ext) = self.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+
+            let Some(current_node) = self.arena.get(current) else {
+                return false;
+            };
+            let Some(parent_node) = self.arena.get(parent) else {
+                return false;
+            };
+
+            if current_node.kind == syntax_kind_ext::BLOCK
+                && (parent_node.kind == syntax_kind_ext::FOR_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::WHILE_STATEMENT
+                    || parent_node.kind == syntax_kind_ext::DO_STATEMENT)
+            {
+                return true;
+            }
+
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                return false;
+            }
+
+            current = parent;
+        }
+
+        false
+    }
+
+    fn is_reserved_private_constructor_name(name: &str) -> bool {
+        name == "constructor"
+    }
+
+    fn emit_private_auto_accessor_function_def(
+        &mut self,
+        var_name: &str,
+        storage_name: &str,
+        is_static: bool,
+        is_get: bool,
+        class_alias: Option<&str>,
+    ) {
+        self.write(var_name);
+        self.write(" = function ");
+        self.write(var_name);
+        self.write("(");
+        if !is_get {
+            self.write("value");
+        }
+        self.write(") { ");
+        if is_get {
+            self.write("return ");
+            self.write_helper("__classPrivateFieldGet");
+        } else {
+            self.write_helper("__classPrivateFieldSet");
+        }
+        self.write("(");
+        if is_static {
+            let alias = class_alias.unwrap_or("this");
+            self.write(alias);
+            self.write(", ");
+            self.write(alias);
+            if is_get {
+                self.write(", \"f\", ");
+                self.write(storage_name);
+            } else {
+                self.write(", value, \"f\", ");
+                self.write(storage_name);
+            }
+        } else {
+            self.write("this, ");
+            self.write(storage_name);
+            if is_get {
+                self.write(", \"f\"");
+            } else {
+                self.write(", value, \"f\"");
+            }
+        }
+        self.write("); }");
+    }
+
     /// Emit a class using ES6 native class syntax (no transforms).
     /// This is the pure emission logic that can be reused by both the old API
     /// and the new transform system.
@@ -35,6 +206,7 @@ impl<'a> Printer<'a> {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
+        let class_name_is_real = class.name.is_some();
         let class_name = if class.name.is_none() {
             assignment_prefix
                 .as_ref()
@@ -56,6 +228,13 @@ impl<'a> Printer<'a> {
             self.get_identifier_text_idx(class.name)
         };
 
+        if !suppress_modifiers
+            && self.ctx.options.target == ScriptTarget::ESNext
+            && self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
+
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
@@ -73,6 +252,8 @@ impl<'a> Printer<'a> {
                     if mod_node.kind == SyntaxKind::AbstractKeyword as u16
                         || mod_node.kind == SyntaxKind::DeclareKeyword as u16
                         || mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                        || (self.ctx.options.legacy_decorators
+                            && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
                         continue;
                     }
@@ -80,6 +261,10 @@ impl<'a> Printer<'a> {
                         self.write("export");
                     } else if mod_node.kind == SyntaxKind::DefaultKeyword as u16 {
                         self.write("default");
+                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
+                        && self.ctx.options.target == ScriptTarget::ESNext
+                    {
+                        self.write("accessor");
                     } else {
                         self.emit(mod_idx);
                     }
@@ -186,6 +371,12 @@ impl<'a> Printer<'a> {
                 {
                     continue;
                 }
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
                 if lower_auto_accessors_to_weakmap
                     && self
                         .arena
@@ -236,7 +427,7 @@ impl<'a> Printer<'a> {
                 };
                 auto_accessor_members.push((member_idx, storage_name.clone(), init, is_static));
                 if is_static {
-                    if auto_accessor_class_alias.is_none() {
+                    if lower_auto_accessors_to_weakmap && auto_accessor_class_alias.is_none() {
                         auto_accessor_class_alias = Some(self.make_unique_name());
                     }
                     auto_accessor_static_inits.push((storage_name, init));
@@ -261,48 +452,183 @@ impl<'a> Printer<'a> {
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
+        let mut used_private_names = if needs_private_field_lowering {
+            collect_enclosing_source_binding_names(self.arena, _idx)
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
         let private_fields: Vec<PrivateFieldInfo> = if needs_private_field_lowering {
-            collect_private_fields(self.arena, _idx, &class_name)
+            collect_private_fields_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
         let private_methods: Vec<PrivateMethodInfo> = if needs_private_field_lowering {
-            collect_private_methods(self.arena, _idx, &class_name)
+            collect_private_methods_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
         let private_accessors: Vec<PrivateAccessorInfo> = if needs_private_field_lowering {
-            collect_private_accessors(self.arena, _idx, &class_name)
+            collect_private_accessors_with_reserved(
+                self.arena,
+                _idx,
+                &class_name,
+                &mut used_private_names,
+            )
         } else {
             Vec::new()
         };
+        let private_auto_accessors: Vec<PrivateAutoAccessorInfo> =
+            if needs_private_field_lowering && lower_auto_accessors_to_weakmap {
+                collect_private_auto_accessors_with_reserved(
+                    self,
+                    class,
+                    &class_name,
+                    &mut used_private_names,
+                )
+            } else {
+                Vec::new()
+            };
+        let constructor_auto_accessor_instance_inits: Vec<(String, Option<NodeIndex>)> =
+            auto_accessor_instance_inits
+                .iter()
+                .cloned()
+                .chain(
+                    private_auto_accessors
+                        .iter()
+                        .filter(|a| !a.is_static)
+                        .map(|a| (a.storage_name.clone(), a.initializer)),
+                )
+                .collect();
 
         // Determine if we need a WeakSet for instance methods/accessors
         let has_instance_methods_or_accessors = private_methods.iter().any(|m| !m.is_static)
             || private_accessors.iter().any(|a| !a.is_static);
+        let has_instance_methods_or_accessors = has_instance_methods_or_accessors
+            || private_auto_accessors.iter().any(|a| !a.is_static);
         let instances_weakset_name = if has_instance_methods_or_accessors {
-            Some(format!("_{class_name}_instances"))
+            Some(make_unique_private_name(
+                &format!("_{class_name}_instances"),
+                &mut used_private_names,
+            ))
         } else {
             None
         };
 
-        // Determine if we need a class alias for static private fields
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (tsz_common::ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let target_needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+
+        let static_initializer_alias_source_nodes: Vec<NodeIndex> =
+            if target_needs_static_block_lowering {
+                class
+                    .members
+                    .nodes
+                    .iter()
+                    .filter_map(|&member_idx| {
+                        let member_node = self.arena.get(member_idx)?;
+                        if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                            return Some(member_idx);
+                        }
+                        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                            return None;
+                        }
+                        let prop = self.arena.get_property_decl(member_node)?;
+                        if !self.arena.is_static(&prop.modifiers)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                            || prop.initializer.is_none()
+                        {
+                            return None;
+                        }
+                        Some(prop.initializer)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let static_initializer_needs_this_alias = !static_initializer_alias_source_nodes.is_empty()
+            && static_initializer_alias_source_nodes
+                .iter()
+                .any(|init_idx| {
+                    contains_this_reference(self.arena, *init_idx)
+                        || contains_async_arrow_function(self.arena, *init_idx)
+                });
+        let private_member_def_needs_class_alias = !class_name.is_empty()
+            && (private_methods.iter().any(|method| {
+                method
+                    .body
+                    .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
+            }) || private_accessors.iter().any(|accessor| {
+                accessor
+                    .getter_body
+                    .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
+                    || accessor
+                        .setter_body
+                        .is_some_and(|body| self.node_text_contains_identifier(body, &class_name))
+            }));
+
         let has_static_privates = private_fields.iter().any(|f| f.is_static)
             || private_methods.iter().any(|m| m.is_static)
-            || private_accessors.iter().any(|a| a.is_static);
-        let private_class_alias = if has_static_privates {
+            || private_accessors.iter().any(|a| a.is_static)
+            || private_auto_accessors.iter().any(|a| a.is_static);
+        let static_initializer_contains_class_name = !class_name.is_empty()
+            && static_initializer_alias_source_nodes
+                .iter()
+                .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
+        let static_initializer_needs_class_alias = static_initializer_contains_class_name
+            && (static_initializer_needs_this_alias
+                || has_static_privates
+                || private_member_def_needs_class_alias);
+
+        // Determine if we need a class alias for static private fields.
+        let class_value_alias = if has_static_privates
+            || static_initializer_needs_this_alias
+            || static_initializer_needs_class_alias
+            || private_member_def_needs_class_alias
+        {
             Some(self.make_unique_name())
         } else {
             None
         };
+        let private_class_alias = if has_static_privates {
+            class_value_alias.clone()
+        } else {
+            None
+        };
+        let static_initializer_class_alias = if static_initializer_needs_this_alias
+            || static_initializer_needs_class_alias
+            || private_member_def_needs_class_alias
+        {
+            class_value_alias.clone()
+        } else {
+            None
+        };
 
-        // Save the previous private field map (for nested classes)
-        let prev_private_field_weakmaps = std::mem::take(&mut self.private_field_weakmaps);
+        // Save the previous private-name maps (for nested classes). Private
+        // names are lexically scoped, so nested classes must still be able to
+        // lower accesses to outer private names unless shadowed by their own.
+        let prev_private_field_weakmaps = self.private_field_weakmaps.clone();
         let prev_pending_weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
         let prev_pending_static_private_inits =
             std::mem::take(&mut self.pending_static_private_inits);
         let prev_pending_private_class_alias = self.pending_private_class_alias.take();
-        let prev_private_member_info = std::mem::take(&mut self.private_member_info);
+        let prev_private_member_info = self.private_member_info.clone();
         let prev_pending_private_field_constructor_inits =
             std::mem::take(&mut self.pending_private_field_constructor_inits);
         let prev_pending_instances_weakset_add = self.pending_instances_weakset_add.take();
@@ -311,86 +637,146 @@ impl<'a> Printer<'a> {
         let prev_pending_private_accessor_defs =
             std::mem::take(&mut self.pending_private_accessor_defs);
         let prev_private_members_to_skip = std::mem::take(&mut self.private_members_to_skip);
-        let prev_private_static_class_alias = self.private_static_class_alias.take();
+        let prev_private_static_class_alias = self.private_static_class_alias.clone();
 
         let has_any_private_lowering = !private_fields.is_empty()
             || !private_methods.is_empty()
-            || !private_accessors.is_empty();
+            || !private_accessors.is_empty()
+            || !private_auto_accessors.is_empty();
 
         if has_any_private_lowering {
-            // Collect all variable names needed for declaration
+            // Collect all variable names needed for declaration.
+            //
+            // tsc's order, see e.g. `privateNameInInExpressionTransform`:
+            //   1. WeakSet for instance methods/accessors (`_C_instances`)
+            //   2. Class alias for static members (`_a`)
+            //   3. Private members in *source* order (per-class)
+            //
+            // Grouping by category (all instance fields → all static fields →
+            // all methods → all accessors) does not match tsc — tsc walks the
+            // class body once and emits each var as it encounters the member.
             let mut var_names: Vec<String> = Vec::new();
 
-            // Class alias for static members
-            if let Some(ref alias) = private_class_alias {
-                var_names.push(alias.clone());
-            }
-
-            // WeakSet for instance methods/accessors
+            // WeakSet for instance methods/accessors (first in tsc's emit)
             if let Some(ref ws_name) = instances_weakset_name {
                 var_names.push(ws_name.clone());
             }
 
-            // Instance field WeakMaps
-            for field in &private_fields {
-                if !field.is_static {
-                    var_names.push(field.weakmap_name.clone());
-                }
+            // Class alias for static elements and extracted private member bodies.
+            if let Some(ref alias) = class_value_alias {
+                var_names.push(alias.clone());
             }
 
-            // Static field value containers
-            for field in &private_fields {
-                if field.is_static {
-                    var_names.push(field.weakmap_name.clone());
+            // Private members in source order. Walk `class.members.nodes`
+            // once and look up each member's pre-computed info entry by
+            // private-identifier name. Accessors share a private name across
+            // get/set, so we dedupe within an accessor pair.
+            let mut emitted_accessor_names: rustc_hash::FxHashSet<String> =
+                rustc_hash::FxHashSet::default();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let private_name = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(member_node)
+                        .and_then(|p| get_private_field_name(self.arena, p.name)),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .and_then(|m| get_private_field_name(self.arena, m.name)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .and_then(|a| get_private_field_name(self.arena, a.name))
+                    }
+                    _ => None,
+                };
+                let Some(private_name) = private_name else {
+                    continue;
+                };
+                let clean_name = private_name.strip_prefix('#').unwrap_or(&private_name);
+                match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        if let Some(accessor) = private_auto_accessors
+                            .iter()
+                            .find(|a| a.member_idx == member_idx)
+                        {
+                            var_names.push(accessor.get_var_name.clone());
+                            var_names.push(accessor.set_var_name.clone());
+                        } else if let Some(field) =
+                            private_fields.iter().find(|f| f.name == clean_name)
+                        {
+                            var_names.push(field.weakmap_name.clone());
+                        }
+                    }
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        if let Some(method) = private_methods.iter().find(|m| m.name == clean_name)
+                        {
+                            var_names.push(method.fn_var_name.clone());
+                        }
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        if !emitted_accessor_names.insert(clean_name.to_string()) {
+                            continue;
+                        }
+                        if let Some(accessor) =
+                            private_accessors.iter().find(|a| a.name == clean_name)
+                        {
+                            if let Some(ref name) = accessor.get_var_name
+                                && accessor.getter_body.is_some()
+                            {
+                                var_names.push(name.clone());
+                            }
+                            if let Some(ref name) = accessor.set_var_name
+                                && accessor.setter_body.is_some()
+                            {
+                                var_names.push(name.clone());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
-
-            // Private method function vars
-            for method in &private_methods {
-                var_names.push(method.fn_var_name.clone());
-            }
-
-            // Private accessor function vars
-            for accessor in &private_accessors {
-                if let Some(ref name) = accessor.get_var_name
-                    && accessor.getter_body.is_some()
-                {
-                    var_names.push(name.clone());
-                }
-                if let Some(ref name) = accessor.set_var_name
-                    && accessor.setter_body.is_some()
-                {
-                    var_names.push(name.clone());
-                }
+            for accessor in &private_auto_accessors {
+                var_names.push(accessor.storage_name.clone());
             }
 
             if !var_names.is_empty() {
                 // Hoist private field vars to the top of the scope (after "use strict"
                 // and CJS preamble), matching tsc behavior. tsc emits all private field
                 // WeakMap/method vars before the first class in the scope.
-                // NOTE: For class expressions in loop bodies, tsc uses block-scoped `let`
-                // instead of `var` hoisting. This is a known limitation - we always use
-                // `var` for now, which is semantically equivalent since the comma expression
-                // reassigns new WeakMaps each iteration.
-                self.hoisted_assignment_temps.extend(var_names);
+                if node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    && self.class_expression_is_in_loop_body(_idx)
+                {
+                    self.block_scoped_private_temps.extend(var_names);
+                } else {
+                    self.hoisted_assignment_temps.extend(var_names);
+                }
             }
 
             // Set up the private field map for expression lowering
             for field in &private_fields {
                 self.private_field_weakmaps
                     .insert(field.name.clone(), field.weakmap_name.clone());
-                if field.is_static {
-                    self.private_member_info.insert(
-                        field.name.clone(),
-                        PrivateMemberInfo {
-                            kind: "f",
-                            fn_ref: Some(field.weakmap_name.clone()),
-                            setter_ref: None,
-                            is_static: true,
-                            state_var: private_class_alias.clone(),
+                self.private_member_info.insert(
+                    field.name.clone(),
+                    PrivateMemberInfo {
+                        kind: "f",
+                        fn_ref: field.is_static.then(|| field.weakmap_name.clone()),
+                        setter_ref: None,
+                        state_var: if field.is_static {
+                            private_class_alias.clone()
+                        } else {
+                            None
                         },
-                    );
-                }
+                    },
+                );
             }
 
             // Register methods
@@ -403,7 +789,6 @@ impl<'a> Printer<'a> {
                         kind: "m",
                         fn_ref: Some(method.fn_var_name.clone()),
                         setter_ref: None,
-                        is_static: method.is_static,
                         state_var: if method.is_static {
                             private_class_alias.clone()
                         } else {
@@ -437,7 +822,28 @@ impl<'a> Printer<'a> {
                             .as_ref()
                             .filter(|_| accessor.setter_body.is_some())
                             .cloned(),
-                        is_static: accessor.is_static,
+                        state_var: if accessor.is_static {
+                            private_class_alias.clone()
+                        } else {
+                            instances_weakset_name.clone()
+                        },
+                    },
+                );
+            }
+            for accessor in &private_auto_accessors {
+                let weakmap_entry = if accessor.is_static {
+                    private_class_alias.clone().unwrap_or_default()
+                } else {
+                    instances_weakset_name.clone().unwrap_or_default()
+                };
+                self.private_field_weakmaps
+                    .insert(accessor.name.clone(), weakmap_entry);
+                self.private_member_info.insert(
+                    accessor.name.clone(),
+                    PrivateMemberInfo {
+                        kind: "a",
+                        fn_ref: Some(accessor.get_var_name.clone()),
+                        setter_ref: Some(accessor.set_var_name.clone()),
                         state_var: if accessor.is_static {
                             private_class_alias.clone()
                         } else {
@@ -462,12 +868,15 @@ impl<'a> Printer<'a> {
                 .map(|f| (f.weakmap_name.clone(), f.initializer))
                 .collect();
 
-            // Store class alias for static privates: emit `_a = ClassName;` after class body
-            if let Some(ref alias) = private_class_alias
+            // Store class alias for static elements/private bodies:
+            // emit `_a = ClassName;` after the class body, before extracted members.
+            if let Some(ref alias) = class_value_alias
                 && !class_name.is_empty()
             {
                 self.pending_private_class_alias = Some((alias.clone(), class_name.clone()));
-                self.private_static_class_alias = Some((class_name.clone(), alias.clone()));
+                if has_static_privates {
+                    self.private_static_class_alias = Some((class_name.clone(), alias.clone()));
+                }
             }
 
             // Prepare private field constructor inits (WeakMap.set calls)
@@ -485,6 +894,9 @@ impl<'a> Printer<'a> {
             // Prepare private method function defs for after the class body
             // Both instance and static private methods are extracted.
             for method in &private_methods {
+                if Self::is_reserved_private_constructor_name(&method.name) {
+                    continue;
+                }
                 if let Some(body_idx) = method.body {
                     self.pending_private_method_defs.push((
                         method.fn_var_name.clone(),
@@ -525,9 +937,15 @@ impl<'a> Printer<'a> {
 
             // Mark all private methods and accessors (instance + static) to skip from class body
             for method in &private_methods {
+                if Self::is_reserved_private_constructor_name(&method.name) {
+                    continue;
+                }
                 self.private_members_to_skip.insert(method.name.clone());
             }
             for accessor in &private_accessors {
+                self.private_members_to_skip.insert(accessor.name.clone());
+            }
+            for accessor in &private_auto_accessors {
                 self.private_members_to_skip.insert(accessor.name.clone());
             }
         }
@@ -538,15 +956,96 @@ impl<'a> Printer<'a> {
         let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
+        // Computed property name hoisting for targets < ES2022.
+        // tsc hoists non-constant computed property name expressions to temp variables
+        // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
+        // the class body can reference the temp instead of the original expression.
+        //
+        // Only PROPERTY DECLARATIONS with computed names participate in hoisting.
+        // Methods and accessors keep their computed names inline in ES6+.
+        // After the class body, a comma expression joins all assignments and side effects.
+        let needs_computed_prop_hoisting =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        // Each entry: (Option<temp_name>, expr_idx, member_idx) — None means side-effect only
+        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
+        if needs_computed_prop_hoisting {
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                // Only property declarations participate in computed property hoisting
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    continue;
+                }
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.arena.get(prop.name) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                let Some(expr_node) = self.arena.get(computed.expression) else {
+                    continue;
+                };
+                // Check if expression is a constant that doesn't need hoisting
+                let is_constant = expr_node.kind == SyntaxKind::StringLiteral as u16
+                    || expr_node.kind == SyntaxKind::NumericLiteral as u16
+                    || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
+                if is_constant {
+                    continue;
+                }
+                // Check if this property is erased (type-only, abstract, declared).
+                // `declare` fields have no runtime effect even when an
+                // initializer is present (the initializer is part of the
+                // declaration and is dropped). tsc still emits the computed
+                // expression for its side effects, but does not allocate a
+                // temp — see the `esDecorators-classDeclaration-fields-staticAmbient`
+                // baseline where `static declare [field3] = 3;` produces
+                // no `var _a; _a = field3;` pair.
+                let is_erased = if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    true
+                } else {
+                    let is_private = self
+                        .arena
+                        .get(prop.name)
+                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+                    let has_accessor = self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                    prop.initializer.is_none() && !is_private && !has_accessor
+                };
+                if is_erased {
+                    // Side-effect only: expression is emitted for its effects but no temp.
+                    let is_side_effect_free =
+                        self.is_computed_name_expr_side_effect_free(computed.expression);
+                    if !is_side_effect_free {
+                        computed_prop_entries.push((None, computed.expression, member_idx));
+                    }
+                } else {
+                    // Allocate a temp variable for this computed property name
+                    let temp = self.make_unique_name_hoisted();
+                    self.computed_prop_temp_map
+                        .insert(computed.expression, temp.clone());
+                    computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                }
+            }
+        }
+
         // For class expressions with static field initializers, we need to wrap
         // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
-        // Allocate the class-expression temp before any computed-name temps so the
+        // Allocate the class-expression temp after computed-name temps so the
         // generated `_a`, `_b`, `_c` ordering matches tsc.
-        let target_needs_field_lowering = (self.ctx.options.target as u32)
-            < (tsz_common::ScriptTarget::ES2022 as u32)
-            || !self.ctx.options.use_define_for_class_fields;
-        let target_needs_static_block_lowering =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         // Positive-form predicate reads more clearly than clippy's inverted De Morgan form.
         #[allow(clippy::nonminimal_bool)]
         let has_static_field_comma_expr = target_needs_field_lowering
@@ -604,80 +1103,94 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+        // tsc emits `__setFunctionName(temp, "C")` for an anonymous class
+        // expression only when the comma wrapper carries *static* state
+        // (a static field initializer, a static block, or a static
+        // private field that lowers into the same comma). Instance-only
+        // private comma forms — e.g.
+        // `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep the
+        // engine's automatic assignment-based naming and tsc does not
+        // emit the helper. Mirror this so the helper inclusion decision
+        // in lowering and the comma-item emission in the printer agree.
+        let has_static_private_member = needs_private_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|m| {
+                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(m).is_some_and(|p| {
+                            self.arena.is_static(&p.modifiers)
+                                && is_private_identifier(self.arena, p.name)
+                        })
+                })
+            });
+        let needs_set_function_name_comma_item =
+            needs_static_comma_expr || has_static_private_member;
+        let class_expr_set_function_name = class_expr_temp.as_ref().and_then(|_| {
+            if class.name.is_none() && needs_set_function_name_comma_item {
+                self.resolve_class_expr_binding_name(_idx)
+            } else {
+                None
+            }
+        });
 
-        // Computed property name hoisting for targets < ES2022.
-        // tsc hoists non-constant computed property name expressions to temp variables
-        // (e.g., `_a = n, _b = s + n`) so that the evaluation order is preserved and
-        // the class body can reference the temp instead of the original expression.
-        //
-        // Only PROPERTY DECLARATIONS with computed names participate in hoisting.
-        // Methods and accessors keep their computed names inline in ES6+.
-        // After the class body, a comma expression joins all assignments and side effects.
-        let needs_computed_prop_hoisting =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
-        // Each entry: (Option<temp_name>, expr_idx) — None means side-effect only
-        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex)> = Vec::new();
-        if needs_computed_prop_hoisting {
+        let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
+        if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
+            let mut pending_computed_entries = Vec::new();
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                // Only property declarations participate in computed property hoisting
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
-                }
-                let Some(prop) = self.arena.get_property_decl(member_node) else {
-                    continue;
-                };
-                let Some(name_node) = self.arena.get(prop.name) else {
-                    continue;
-                };
-                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    continue;
-                }
-                let Some(computed) = self.arena.get_computed_property(name_node) else {
-                    continue;
-                };
-                let Some(expr_node) = self.arena.get(computed.expression) else {
-                    continue;
-                };
-                // Check if expression is a constant that doesn't need hoisting
-                let is_constant = expr_node.kind == SyntaxKind::StringLiteral as u16
-                    || expr_node.kind == SyntaxKind::NumericLiteral as u16
-                    || expr_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
-                if is_constant {
-                    continue;
-                }
-                // Check if this property is erased (type-only, abstract, etc.)
-                let is_erased = if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                {
-                    true
-                } else {
-                    let is_private = self
-                        .arena
-                        .get(prop.name)
-                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-                    let has_accessor = self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    prop.initializer.is_none() && !is_private && !has_accessor
-                };
-                if is_erased {
-                    // Side-effect only: expression is emitted for its effects but no temp.
-                    let is_side_effect_free =
-                        self.is_computed_name_expr_side_effect_free(computed.expression);
-                    if !is_side_effect_free {
-                        computed_prop_entries.push((None, computed.expression));
+
+                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    if let Some(entry_idx) = computed_prop_entries
+                        .iter()
+                        .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+                    {
+                        pending_computed_entries.push(entry_idx);
                     }
-                } else {
-                    // Allocate a temp variable for this computed property name
-                    let temp = self.make_unique_name_hoisted();
-                    self.computed_prop_temp_map
-                        .insert(computed.expression, temp.clone());
-                    computed_prop_entries.push((Some(temp), computed.expression));
+                    continue;
                 }
+
+                let computed_name = match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .and_then(|method| self.arena.get(method.name)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .and_then(|accessor| self.arena.get(accessor.name))
+                    }
+                    _ => None,
+                };
+                let Some(computed_name) = computed_name else {
+                    continue;
+                };
+                if computed_name.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.arena.get_computed_property(computed_name) else {
+                    continue;
+                };
+                if pending_computed_entries.is_empty() {
+                    continue;
+                }
+
+                let mut comma_parts = Vec::new();
+                for entry_idx in pending_computed_entries.drain(..) {
+                    let (temp_name, expr_idx, _) = computed_prop_entries[entry_idx].clone();
+                    let expr_text = self.capture_emit(expr_idx);
+                    if let Some(temp) = temp_name {
+                        comma_parts.push(format!("{temp} = {expr_text}"));
+                    } else {
+                        comma_parts.push(expr_text);
+                    }
+                    computed_prop_entries_consumed_by_member_name.push(entry_idx);
+                }
+                comma_parts.push(self.capture_emit(computed.expression));
+                self.computed_prop_temp_map
+                    .insert(computed.expression, format!("({})", comma_parts.join(", ")));
             }
         }
 
@@ -699,51 +1212,27 @@ impl<'a> Printer<'a> {
         let externalized_static_initializer_uses_undefined_receiver =
             !is_class_expression && needs_static_block_lowering && has_legacy_class_decorators;
 
-        let static_initializer_nodes: Vec<NodeIndex> =
-            if is_class_expression || !needs_static_block_lowering {
-                Vec::new()
-            } else {
-                class
-                    .members
-                    .nodes
-                    .iter()
-                    .filter_map(|&member_idx| {
-                        let member_node = self.arena.get(member_idx)?;
-                        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                            return None;
-                        }
-                        let prop = self.arena.get_property_decl(member_node)?;
-                        if !self.arena.is_static(&prop.modifiers)
-                            || self
-                                .arena
-                                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                            || self
-                                .arena
-                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                            || prop.initializer.is_none()
-                        {
-                            return None;
-                        }
-                        Some(prop.initializer)
-                    })
-                    .collect()
-            };
-
-        let static_initializer_needs_this_alias = !static_initializer_nodes.is_empty()
-            && static_initializer_nodes.iter().any(|init_idx| {
-                contains_this_reference(self.arena, *init_idx)
-                    || contains_async_arrow_function(self.arena, *init_idx)
-            });
         let static_initializer_needs_super_alias = has_extends
             && !extends_null
-            && !static_initializer_nodes.is_empty()
-            && static_initializer_nodes
+            && !static_initializer_alias_source_nodes.is_empty()
+            && static_initializer_alias_source_nodes
                 .iter()
                 .any(|init_idx| contains_super_reference(self.arena, *init_idx));
+        if !has_any_private_lowering
+            && let Some(alias) = static_initializer_class_alias.as_ref()
+            && !self
+                .hoisted_assignment_temps
+                .iter()
+                .any(|name| name == alias)
+        {
+            self.hoisted_assignment_temps.push(alias.clone());
+        }
         let static_this_alias = if static_initializer_needs_this_alias
             && !externalized_static_initializer_uses_undefined_receiver
         {
-            Some(self.make_unique_name_hoisted())
+            static_initializer_class_alias
+                .clone()
+                .or_else(|| Some(self.make_unique_name_hoisted()))
         } else {
             None
         };
@@ -894,8 +1383,8 @@ impl<'a> Printer<'a> {
 
         // Store auto-accessor inits for constructor emission.
         let prev_auto_accessor_inits = std::mem::take(&mut self.pending_auto_accessor_inits);
-        if !auto_accessor_instance_inits.is_empty() && lower_auto_accessors_to_weakmap {
-            self.pending_auto_accessor_inits = auto_accessor_instance_inits.clone();
+        if !constructor_auto_accessor_instance_inits.is_empty() && lower_auto_accessors_to_weakmap {
+            self.pending_auto_accessor_inits = constructor_auto_accessor_instance_inits.clone();
         }
 
         // Private field WeakMap.set inits are handled via pending_private_field_constructor_inits
@@ -927,11 +1416,23 @@ impl<'a> Printer<'a> {
                     && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                     && let Some(prop) = self.arena.get_property_decl(member_node)
                 {
-                    if prop.initializer.is_none()
-                        || !self.class_property_initializer_has_equals(member_node, prop)
-                        || self
-                            .arena
-                            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                    // With useDefineForClassFields, fields without initializers
+                    // are still materialized at runtime as
+                    // `Object.defineProperty(this, "name", { value: void 0 })`.
+                    // Without that flag the typed-only declaration has no
+                    // runtime effect, so skip it.
+                    let no_initializer_node = prop.initializer.is_none();
+                    let materialize_no_init =
+                        no_initializer_node && self.ctx.options.use_define_for_class_fields;
+                    if !materialize_no_init
+                        && (no_initializer_node
+                            || !self.class_property_initializer_has_equals(member_node, prop))
+                    {
+                        continue;
+                    }
+                    if self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
                         || self
                             .arena
                             .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
@@ -999,7 +1500,7 @@ impl<'a> Printer<'a> {
                         Vec::new()
                     };
 
-                    if self.arena.is_static(&prop.modifiers) {
+                    if self.has_effective_static_modifier_js(&prop.modifiers) {
                         // At ES2022+, static fields are emitted as `static { this.f = v; }`
                         // blocks inside the class body, not as external assignments.
                         if !needs_static_block_lowering {
@@ -1066,6 +1567,8 @@ impl<'a> Printer<'a> {
         let synthesize_constructor = !has_constructor
             && (!field_inits.is_empty()
                 || (lower_auto_accessors_to_weakmap && !auto_accessor_instance_inits.is_empty())
+                || (lower_auto_accessors_to_weakmap
+                    && !constructor_auto_accessor_instance_inits.is_empty())
                 || has_private_field_inits
                 || has_instances_weakset);
 
@@ -1106,7 +1609,7 @@ impl<'a> Printer<'a> {
                 }
             }
             if lower_auto_accessors_to_weakmap {
-                for (storage_name, init_idx) in &auto_accessor_instance_inits {
+                for (storage_name, init_idx) in &constructor_auto_accessor_instance_inits {
                     self.write(storage_name);
                     self.write(".set(this, ");
                     match init_idx {
@@ -1145,9 +1648,20 @@ impl<'a> Printer<'a> {
                     self.write("writable: true,");
                     self.write_line();
                     self.write("value: ");
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
+                    if init_idx.is_none() {
+                        self.write("void 0");
+                    } else {
+                        if let Some(init_node) = self.arena.get(*init_idx) {
+                            while self.comment_emit_idx < self.all_comments.len()
+                                && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                            {
+                                self.comment_emit_idx += 1;
+                            }
+                        }
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_expression(*init_idx);
+                        });
+                    }
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
@@ -1160,9 +1674,20 @@ impl<'a> Printer<'a> {
                         self.write(name);
                     }
                     self.write(" = ");
-                    self.with_scoped_static_initializer_context_cleared(|this| {
-                        this.emit_expression(*init_idx);
-                    });
+                    if init_idx.is_none() {
+                        self.write("void 0");
+                    } else {
+                        if let Some(init_node) = self.arena.get(*init_idx) {
+                            while self.comment_emit_idx < self.all_comments.len()
+                                && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                            {
+                                self.comment_emit_idx += 1;
+                            }
+                        }
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_expression(*init_idx);
+                        });
+                    }
                     self.write(";");
                     if !trailing.is_empty() {
                         for comment in trailing {
@@ -1230,13 +1755,23 @@ impl<'a> Printer<'a> {
         let mut field_init_comment_idx = 0usize;
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
-        if let Some(temp) = class_expr_temp.as_ref()
+        if let Some(temp) = class_expr_temp.as_ref() {
+            if class_name_is_real && !class_name.is_empty() && class_name != *temp {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(temp.as_str()),
+                ));
+            }
+        } else if let Some((static_class_name, static_class_alias)) =
+            self.private_static_class_alias.clone()
+            && class_name_is_real
             && !class_name.is_empty()
-            && class_name != *temp
+            && class_name == static_class_name
+            && class_name != static_class_alias
         {
             self.scoped_class_expression_self_alias = Some((
                 Arc::<str>::from(class_name.as_str()),
-                Arc::<str>::from(temp.as_str()),
+                Arc::<str>::from(static_class_alias.as_str()),
             ));
         }
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
@@ -1271,6 +1806,16 @@ impl<'a> Printer<'a> {
                 && let Some(member_node) = self.arena.get(member_idx)
             {
                 let should_skip = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(member_node)
+                        .filter(|p| {
+                            self.arena
+                                .has_modifier(&p.modifiers, SyntaxKind::AccessorKeyword)
+                        })
+                        .and_then(|p| get_private_field_name(self.arena, p.name))
+                        .map(|n| n.strip_prefix('#').unwrap_or(&n).to_string())
+                        .is_some_and(|n| self.private_members_to_skip.contains(&n)),
                     k if k == syntax_kind_ext::METHOD_DECLARATION => self
                         .arena
                         .get_method_decl(member_node)
@@ -1357,13 +1902,13 @@ impl<'a> Printer<'a> {
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
                 // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
                 // blocks, not deferred to external assignments.
-                && (!self.arena.is_static(&prop.modifiers)
+                && (!self.has_effective_static_modifier_js(&prop.modifiers)
                     || needs_static_block_lowering)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved
                 // after the class body.
-                let is_static = self.arena.is_static(&prop.modifiers);
+                let is_static = self.has_effective_static_modifier_js(&prop.modifiers);
                 if is_static {
                     let leading = self.collect_leading_comments(member_node.pos);
                     if let Some(entry) = static_field_inits
@@ -1495,10 +2040,12 @@ impl<'a> Printer<'a> {
                     // Bodyless methods are erased (abstract methods without body,
                     // overload signatures). Abstract methods WITH a body (an error
                     // in TS) are still emitted by tsc, so we must not erase them.
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .is_some_and(|m| m.body.is_none()),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(member_node).is_some_and(|m| {
+                            m.body.is_none()
+                                && !self.has_recovered_declaration_trailing_comma(member_node)
+                        })
+                    }
                     // Abstract accessors without body are erased. Bodyless non-abstract
                     // accessors (error case) are kept — tsc emits them as `{}`.
                     // Abstract accessors WITH a body (error case) are also kept.
@@ -1620,7 +2167,9 @@ impl<'a> Printer<'a> {
                         property_end.unwrap_or(member_node.end),
                     );
                 } else {
+                    self.class_member_emit_depth = self.class_member_emit_depth.saturating_add(1);
                     self.emit(member_idx);
+                    self.class_member_emit_depth = self.class_member_emit_depth.saturating_sub(1);
                 }
             }
             let mut emit_standalone_class_semicolon = false;
@@ -1777,6 +2326,20 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let computed_side_effects_emitted_in_static_block =
+            !computed_property_side_effects.is_empty() && class_expr_temp.is_none();
+        if computed_side_effects_emitted_in_static_block {
+            self.write("static { ");
+            for (i, expr_idx) in computed_property_side_effects.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.emit_expression(*expr_idx);
+            }
+            self.write("; }");
+            self.write_line();
+        }
+
         // Skip orphaned comments inside the class body.
         // When class members are erased (type-only properties, abstract members, etc.),
         // comments on lines between erased members or between the last erased member
@@ -1827,7 +2390,15 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+        if self
+            .pending_commonjs_class_export_name
+            .as_ref()
+            .is_some_and(|(class_idx, _)| *class_idx == _idx)
+        {
+            let (_, class_name) = self
+                .pending_commonjs_class_export_name
+                .take()
+                .expect("pending class export should be present");
             self.write_line();
             self.write("exports.");
             self.write(&class_name);
@@ -1839,7 +2410,12 @@ impl<'a> Printer<'a> {
         // Emit computed property name hoisting comma expression or standalone side effects.
         if !computed_prop_entries.is_empty() {
             if class_expr_temp.is_some() {
-                for (temp_name, expr_idx) in computed_prop_entries.iter() {
+                for (entry_idx, (temp_name, expr_idx, _)) in
+                    computed_prop_entries.iter().enumerate()
+                {
+                    if computed_prop_entries_consumed_by_member_name.contains(&entry_idx) {
+                        continue;
+                    }
                     self.write(",");
                     self.write_line();
                     self.increase_indent();
@@ -1853,19 +2429,28 @@ impl<'a> Printer<'a> {
             } else {
                 // Emit as a single comma expression: `_a = expr1, sideEffect, _b = expr2;`
                 self.write_line();
-                for (i, (temp_name, expr_idx)) in computed_prop_entries.iter().enumerate() {
-                    if i > 0 {
+                let mut emitted_entry = false;
+                for (entry_idx, (temp_name, expr_idx, _)) in
+                    computed_prop_entries.iter().enumerate()
+                {
+                    if computed_prop_entries_consumed_by_member_name.contains(&entry_idx) {
+                        continue;
+                    }
+                    if emitted_entry {
                         self.write(", ");
                     }
+                    emitted_entry = true;
                     if let Some(temp) = temp_name {
                         self.write(temp);
                         self.write(" = ");
                     }
                     self.emit_expression(*expr_idx);
                 }
-                self.write(";");
+                if emitted_entry {
+                    self.write(";");
+                }
             }
-        } else {
+        } else if !computed_side_effects_emitted_in_static_block {
             // Emit computed property name side-effect statements for erased members
             // (when hoisting is not active, e.g., ES2022+ targets).
             // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`
@@ -1896,6 +2481,169 @@ impl<'a> Printer<'a> {
         // Emit static field initializers after class body
         // For class expressions: use comma expression `(_a = class C {}, _a.field = value, _a)`
         // For class declarations: use separate statements `ClassName.field = value;`
+        let emit_private_inits_before_static_elements = !needs_private_comma_expr
+            && has_any_private_lowering
+            && (static_initializer_class_alias.is_some() || has_static_privates)
+            && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
+        let mut emitted_private_auto_accessors_pre_static = false;
+        if emit_private_inits_before_static_elements {
+            let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
+            let private_class_alias_pair = self.pending_private_class_alias.take();
+            let instances_ws = self.pending_instances_weakset_add.take();
+            let method_defs = std::mem::take(&mut self.pending_private_method_defs);
+            let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
+            let weakmap_inits = self.pending_weakmap_inits.clone();
+            let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
+                .iter()
+                .filter(|a| !a.is_static)
+                .map(|a| format!("{} = new WeakMap()", a.storage_name))
+                .collect();
+            let has_pre_static_private_inits = private_class_alias_pair.is_some()
+                || !weakmap_inits.is_empty()
+                || instances_ws.is_some()
+                || !method_defs.is_empty()
+                || !accessor_defs.is_empty()
+                || !private_auto_accessors.is_empty()
+                || !private_auto_instance_storage_inits.is_empty()
+                || !static_private_inits.is_empty();
+
+            if has_pre_static_private_inits {
+                self.write_line();
+                let mut first = true;
+                if let Some((ref alias, ref cls_name)) = private_class_alias_pair {
+                    self.write(alias);
+                    self.write(" = ");
+                    self.write(cls_name);
+                    first = false;
+                }
+                for init in &weakmap_inits {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(init);
+                    first = false;
+                }
+                if let Some(ref ws_name) = instances_ws {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(ws_name);
+                    self.write(" = new WeakSet()");
+                    first = false;
+                }
+                for init in &private_auto_instance_storage_inits {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(init);
+                    first = false;
+                }
+                for (var_name, body_idx, params) in &method_defs {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(var_name);
+                    self.write(" = function ");
+                    self.write(var_name);
+                    self.write("(");
+                    for (i, &param_idx) in params.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        if let Some(param_node) = self.arena.get(param_idx)
+                            && let Some(param_data) = self.arena.get_parameter(param_node)
+                        {
+                            self.emit(param_data.name);
+                        }
+                    }
+                    self.write(") ");
+                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                    if private_member_def_needs_class_alias
+                        && let Some(alias) = class_value_alias.as_ref()
+                        && !class_name.is_empty()
+                    {
+                        self.scoped_class_expression_self_alias = Some((
+                            Arc::<str>::from(class_name.as_str()),
+                            Arc::<str>::from(alias.as_str()),
+                        ));
+                    }
+                    self.emit_single_line_block(*body_idx);
+                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    first = false;
+                }
+                for def in &accessor_defs {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.write(&def.var_name);
+                    self.write(" = function ");
+                    self.write(&def.var_name);
+                    self.write("(");
+                    if let Some(param_idx) = def.param
+                        && let Some(param_node) = self.arena.get(param_idx)
+                        && let Some(param_data) = self.arena.get_parameter(param_node)
+                    {
+                        self.emit(param_data.name);
+                    }
+                    self.write(") ");
+                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                    if private_member_def_needs_class_alias
+                        && let Some(alias) = class_value_alias.as_ref()
+                        && !class_name.is_empty()
+                    {
+                        self.scoped_class_expression_self_alias = Some((
+                            Arc::<str>::from(class_name.as_str()),
+                            Arc::<str>::from(alias.as_str()),
+                        ));
+                    }
+                    self.emit_single_line_block(def.body);
+                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    first = false;
+                }
+                for accessor in &private_auto_accessors {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.get_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        true,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    self.write(", ");
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.set_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        false,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    first = false;
+                }
+                if !private_auto_accessors.is_empty() {
+                    emitted_private_auto_accessors_pre_static = true;
+                }
+                self.write(";");
+                for (var_name, init_idx) in &static_private_inits {
+                    self.write_line();
+                    self.write(var_name);
+                    self.write(" = { value: ");
+                    if init_idx.is_some() {
+                        self.emit_expression(*init_idx);
+                    } else {
+                        self.write("void 0");
+                    }
+                    self.write(" };");
+                }
+            }
+        }
         if !static_field_inits.is_empty()
             && let Some(temp) = class_expr_static_temp.as_ref()
         {
@@ -1916,14 +2664,20 @@ impl<'a> Printer<'a> {
             // they're emitted in their existing trailing batch instead.
             let interleave_blocks = !self.defer_class_static_blocks;
             enum CommaItem {
+                SetFunctionName(String),
                 Field(StaticFieldInit),
                 Block(NodeIndex, usize),
             }
             let owned_field_inits = std::mem::take(&mut static_field_inits);
-            let mut comma_items: Vec<(u32, CommaItem)> = owned_field_inits
-                .into_iter()
-                .map(|init| (init.2, CommaItem::Field(init)))
-                .collect();
+            let mut comma_items: Vec<(u32, CommaItem)> = Vec::new();
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                comma_items.push((node.pos, CommaItem::SetFunctionName(name.clone())));
+            }
+            comma_items.extend(
+                owned_field_inits
+                    .into_iter()
+                    .map(|init| (init.2, CommaItem::Field(init))),
+            );
             if interleave_blocks {
                 let blocks = std::mem::take(&mut deferred_static_blocks);
                 for (block_idx, comment_idx) in blocks {
@@ -1935,6 +2689,9 @@ impl<'a> Printer<'a> {
 
             for (_pos, item) in comma_items {
                 match item {
+                    CommaItem::SetFunctionName(name) => {
+                        self.emit_class_expr_set_function_name_comma_item(temp, &name);
+                    }
                     CommaItem::Field((
                         name_emit,
                         init_idx,
@@ -2019,7 +2776,15 @@ impl<'a> Printer<'a> {
                         self.write(",");
                         self.write_line();
                         self.increase_indent();
+                        let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                        if class_name_is_real && !class_name.is_empty() && class_name != *temp {
+                            self.scoped_class_expression_self_alias = Some((
+                                Arc::<str>::from(class_name.as_str()),
+                                Arc::<str>::from(temp.as_str()),
+                            ));
+                        }
                         self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.scoped_class_expression_self_alias = prev_self_alias;
                         self.decrease_indent();
                     }
                 }
@@ -2034,18 +2799,51 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
-            // If static field initializers reference `this`, emit `_a = ClassName;`
-            // so that `this` can be replaced with the temp alias.
-            if let Some(ref alias) = static_this_alias {
+            // If lowered static elements need a stable class value, emit
+            // `_a = ClassName;` so `this` and class-name references can use it.
+            if !emit_private_inits_before_static_elements
+                && let Some(ref alias) = static_initializer_class_alias
+            {
                 self.write(alias);
                 self.write(" = ");
                 self.write(&class_name);
                 self.write(";");
                 self.write_line();
             }
+            let mut next_static_block = 0usize;
             for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
             {
+                if !self.defer_class_static_blocks {
+                    while next_static_block < deferred_static_blocks.len() {
+                        let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                        let block_pos = self.arena.get(block_idx).map_or(u32::MAX, |node| node.pos);
+                        if block_pos >= *_member_pos {
+                            break;
+                        }
+                        let prev_this_alias = self.scoped_static_this_alias.clone();
+                        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                        self.scoped_static_this_alias =
+                            static_initializer_this_binding.map(std::sync::Arc::from);
+                        self.scoped_static_super_base_alias =
+                            static_initializer_super_base.map(std::sync::Arc::from);
+                        let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                        if let Some(alias) = static_initializer_class_alias.as_ref() {
+                            self.scoped_class_expression_self_alias = Some((
+                                Arc::<str>::from(class_name.as_str()),
+                                Arc::<str>::from(alias.as_str()),
+                            ));
+                        }
+                        self.emit_static_block_iife_expression(block_idx, comment_idx);
+                        self.scoped_class_expression_self_alias = prev_self_alias;
+                        self.scoped_static_this_alias = prev_this_alias;
+                        self.scoped_static_super_base_alias = prev_super_alias;
+                        self.write(";");
+                        self.write_line();
+                        next_static_block += 1;
+                    }
+                }
+
                 // Emit saved leading comments from the original static property declaration
                 for (comment_text, source_pos) in leading_comments {
                     self.write_comment_with_reindent(comment_text, Some(*source_pos));
@@ -2080,7 +2878,8 @@ impl<'a> Printer<'a> {
                         externalized_static_initializer_uses_undefined_receiver,
                     );
                     let after = self.writer.len();
-                    if let Some(alias) = static_initializer_self_alias
+                    if let Some(alias) =
+                        static_initializer_self_alias.or(static_initializer_class_alias.as_deref())
                         && !class_name.is_empty()
                         && class_name != alias
                     {
@@ -2118,7 +2917,8 @@ impl<'a> Printer<'a> {
                         externalized_static_initializer_uses_undefined_receiver,
                     );
                     let after = self.writer.len();
-                    if let Some(alias) = static_initializer_self_alias
+                    if let Some(alias) =
+                        static_initializer_self_alias.or(static_initializer_class_alias.as_deref())
                         && !class_name.is_empty()
                         && class_name != alias
                     {
@@ -2139,6 +2939,34 @@ impl<'a> Printer<'a> {
                     self.write_comment(comment_text);
                 }
                 self.write_line();
+            }
+            if !self.defer_class_static_blocks {
+                while next_static_block < deferred_static_blocks.len() {
+                    let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
+                    let prev_this_alias = self.scoped_static_this_alias.clone();
+                    let prev_super_alias = self.scoped_static_super_base_alias.clone();
+                    self.scoped_static_this_alias =
+                        static_initializer_this_binding.map(std::sync::Arc::from);
+                    self.scoped_static_super_base_alias =
+                        static_initializer_super_base.map(std::sync::Arc::from);
+                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                    if let Some(alias) = static_initializer_class_alias.as_ref() {
+                        self.scoped_class_expression_self_alias = Some((
+                            Arc::<str>::from(class_name.as_str()),
+                            Arc::<str>::from(alias.as_str()),
+                        ));
+                    }
+                    self.emit_static_block_iife_expression(block_idx, comment_idx);
+                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    self.scoped_static_this_alias = prev_this_alias;
+                    self.scoped_static_super_base_alias = prev_super_alias;
+                    self.write(";");
+                    self.write_line();
+                    next_static_block += 1;
+                }
+                if next_static_block > 0 {
+                    deferred_static_blocks.clear();
+                }
             }
         }
 
@@ -2211,11 +3039,18 @@ impl<'a> Printer<'a> {
         let instances_ws = self.pending_instances_weakset_add.clone();
         let method_defs = std::mem::take(&mut self.pending_private_method_defs);
         let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
+        let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
+            .iter()
+            .filter(|_| !emitted_private_auto_accessors_pre_static)
+            .filter(|a| !a.is_static)
+            .map(|a| format!("{} = new WeakMap()", a.storage_name))
+            .collect();
         let has_post_class_inits = private_class_alias_pair.is_some()
             || has_weakmap_inits
             || instances_ws.is_some()
             || !method_defs.is_empty()
-            || !accessor_defs.is_empty();
+            || !accessor_defs.is_empty()
+            || !private_auto_instance_storage_inits.is_empty();
 
         // For class expressions with private field lowering, emit the WeakMap/WeakSet/method
         // initializations as comma-separated items inside the wrapping expression:
@@ -2228,6 +3063,13 @@ impl<'a> Printer<'a> {
         if needs_private_comma_expr && has_post_class_inits {
             // Emit comma-separated inits inline in the expression.
             // The `(_a = ` prefix was already emitted before the `class` keyword.
+
+            if !needs_static_comma_expr
+                && let Some(temp) = class_expr_temp.as_ref()
+                && let Some(name) = class_expr_set_function_name.as_ref()
+            {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
+            }
 
             // WeakMap inits: _X_field = new WeakMap()
             let weakmap_inits = self.pending_weakmap_inits.clone();
@@ -2246,6 +3088,14 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
                 self.write(ws_name);
                 self.write(" = new WeakSet()");
+                self.decrease_indent();
+            }
+
+            for init in &private_auto_instance_storage_inits {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(init);
                 self.decrease_indent();
             }
 
@@ -2269,7 +3119,18 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(*body_idx);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 self.decrease_indent();
             }
 
@@ -2289,8 +3150,50 @@ impl<'a> Printer<'a> {
                     self.emit(param_data.name);
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(def.body);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 self.decrease_indent();
+            }
+
+            if !emitted_private_auto_accessors_pre_static {
+                for accessor in &private_auto_accessors {
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.get_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        true,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    self.write(",");
+                    self.write_line();
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.set_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        false,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    self.decrease_indent();
+                }
             }
 
             // Emit static private field value initializations as comma items
@@ -2303,6 +3206,20 @@ impl<'a> Printer<'a> {
                 self.write(" = { value: ");
                 if init_idx.is_some() {
                     self.emit_expression(*init_idx);
+                } else {
+                    self.write("void 0");
+                }
+                self.write(" }");
+                self.decrease_indent();
+            }
+            for accessor in private_auto_accessors.iter().filter(|a| a.is_static) {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(&accessor.storage_name);
+                self.write(" = { value: ");
+                if let Some(init) = accessor.initializer {
+                    self.emit_expression(init);
                 } else {
                     self.write("void 0");
                 }
@@ -2354,6 +3271,14 @@ impl<'a> Printer<'a> {
                 first = false;
             }
 
+            for init in &private_auto_instance_storage_inits {
+                if !first {
+                    self.write(", ");
+                }
+                self.write(init);
+                first = false;
+            }
+
             // Private method function definitions:
             // _C_method = function _C_method(params) { ... }
             for (var_name, body_idx, params) in &method_defs {
@@ -2376,7 +3301,18 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(*body_idx);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 first = false;
             }
 
@@ -2400,8 +3336,49 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(") ");
+                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                if private_member_def_needs_class_alias
+                    && let Some(alias) = class_value_alias.as_ref()
+                    && !class_name.is_empty()
+                {
+                    self.scoped_class_expression_self_alias = Some((
+                        Arc::<str>::from(class_name.as_str()),
+                        Arc::<str>::from(alias.as_str()),
+                    ));
+                }
                 self.emit_single_line_block(def.body);
+                self.scoped_class_expression_self_alias = prev_self_alias;
                 first = false;
+            }
+
+            if !emitted_private_auto_accessors_pre_static {
+                for accessor in &private_auto_accessors {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.get_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        true,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    self.write(", ");
+                    self.emit_private_auto_accessor_function_def(
+                        &accessor.set_var_name,
+                        &accessor.storage_name,
+                        accessor.is_static,
+                        false,
+                        private_class_alias_pair
+                            .as_ref()
+                            .map(|(alias, _)| alias.as_str())
+                            .or(class_value_alias.as_deref()),
+                    );
+                    first = false;
+                }
             }
 
             self.write(";");
@@ -2425,6 +3402,17 @@ impl<'a> Printer<'a> {
                 }
                 self.write(" };");
             }
+            for accessor in private_auto_accessors.iter().filter(|a| a.is_static) {
+                self.write_line();
+                self.write(&accessor.storage_name);
+                self.write(" = { value: ");
+                if let Some(init) = accessor.initializer {
+                    self.emit_expression(init);
+                } else {
+                    self.write("void 0");
+                }
+                self.write(" };");
+            }
         }
 
         // Emit deferred static blocks as IIFEs after the class body.
@@ -2435,11 +3423,22 @@ impl<'a> Printer<'a> {
             && !self.defer_class_static_blocks
             && !deferred_static_blocks.is_empty()
         {
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
+            }
+            let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+            if class_name_is_real && !class_name.is_empty() && class_name != *temp {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(temp.as_str()),
+                ));
+            }
             self.emit_static_block_iife_comma_items_with_context(
                 deferred_static_blocks,
                 static_initializer_this_binding,
                 static_initializer_super_base,
             );
+            self.scoped_class_expression_self_alias = prev_self_alias;
             self.write(",");
             self.write_line();
             self.increase_indent();
@@ -2452,11 +3451,33 @@ impl<'a> Printer<'a> {
             self.deferred_class_static_blocks
                 .extend(deferred_static_blocks);
         } else {
+            if static_field_inits.is_empty()
+                && !deferred_static_blocks.is_empty()
+                && !emit_private_inits_before_static_elements
+                && !class_name.is_empty()
+                && let Some(alias) = static_initializer_class_alias.as_ref()
+            {
+                self.write_line();
+                self.write(alias);
+                self.write(" = ");
+                self.write(&class_name);
+                self.write(";");
+            }
+            let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+            if let Some(alias) = static_initializer_class_alias.as_ref()
+                && !class_name.is_empty()
+            {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(alias.as_str()),
+                ));
+            }
             self.emit_static_block_iifes_with_context(
                 deferred_static_blocks,
                 static_initializer_this_binding,
                 static_initializer_super_base,
             );
+            self.scoped_class_expression_self_alias = prev_self_alias;
         }
 
         // Restore private field state (for nested classes)
@@ -2513,6 +3534,22 @@ impl<'a> Printer<'a> {
         segment[search_from..].contains(&b'=')
     }
 
+    fn node_text_contains_identifier(&self, idx: NodeIndex, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let (Some(text), Some(node)) = (self.source_text, self.arena.get(idx)) else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        let value_text = crate::import_usage::strip_type_only_content(&text[start..end]);
+        super::text_contains_identifier(&value_text, name)
+    }
+
     fn recovered_class_body_statements(&self, node: &Node) -> Vec<String> {
         let Some(text) = self.source_text else {
             return Vec::new();
@@ -2525,8 +3562,38 @@ impl<'a> Printer<'a> {
 
         let mut depth = 0_i32;
         let mut recovered = Vec::new();
+        let mut pending_empty_enum: Option<(String, bool)> = None;
+        let mut pending_empty_class: Option<(String, bool)> = None;
         for line in source.lines() {
             let trimmed = line.trim();
+            if let Some((class_name, has_body)) = pending_empty_class.as_mut() {
+                if depth == 2 && trimmed == "}" {
+                    if !*has_body {
+                        recovered.push(format!("class {class_name} {{"));
+                        recovered.push("}".to_string());
+                    }
+                    pending_empty_class = None;
+                } else if depth >= 2 && !trimmed.is_empty() {
+                    *has_body = true;
+                }
+            }
+            if let Some((enum_name, has_body)) = pending_empty_enum.as_mut() {
+                if depth == 2 && trimmed == "}" {
+                    if !*has_body {
+                        let declaration = if self.in_namespace_iife && !self.ctx.target_es5 {
+                            "let"
+                        } else {
+                            "var"
+                        };
+                        recovered.push(format!("{declaration} {enum_name};"));
+                        recovered.push(format!("(function ({enum_name}) {{"));
+                        recovered.push(format!("}})({enum_name} || ({enum_name} = {{}}));"));
+                    }
+                    pending_empty_enum = None;
+                } else if depth >= 2 && !trimmed.is_empty() {
+                    *has_body = true;
+                }
+            }
             if depth == 1
                 && (trimmed.starts_with("function ")
                     || (trimmed.starts_with("var ")
@@ -2534,6 +3601,14 @@ impl<'a> Printer<'a> {
                         && !trimmed.contains("()")))
             {
                 recovered.push(trimmed.replace("{}", "{ }"));
+            } else if depth == 1
+                && let Some(enum_name) = self.recovered_class_body_empty_enum_name(trimmed)
+            {
+                pending_empty_enum = Some((enum_name, false));
+            } else if depth == 1
+                && let Some(class_name) = self.recovered_class_body_empty_class_name(trimmed)
+            {
+                pending_empty_class = Some((class_name, false));
             } else if depth == 1
                 && let Some(stmt) = self.recovered_public_class_block(trimmed)
             {
@@ -2548,6 +3623,32 @@ impl<'a> Printer<'a> {
             }
         }
         recovered
+    }
+
+    fn recovered_class_body_empty_enum_name(&self, trimmed: &str) -> Option<String> {
+        let rest = trimmed.strip_prefix("enum ")?;
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if name.is_empty() {
+            return None;
+        }
+        let after_name = rest.get(name.len()..)?.trim_start();
+        (after_name == "{").then_some(name)
+    }
+
+    fn recovered_class_body_empty_class_name(&self, trimmed: &str) -> Option<String> {
+        let rest = trimmed.strip_prefix("class ")?;
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if name.is_empty() {
+            return None;
+        }
+        let after_name = rest.get(name.len()..)?.trim_start();
+        (after_name == "{").then_some(name)
     }
 
     fn class_has_recovered_void_extends(&self, heritage_clauses: &Option<NodeList>) -> bool {

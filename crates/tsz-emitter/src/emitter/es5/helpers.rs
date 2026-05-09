@@ -26,9 +26,9 @@ impl<'a> Printer<'a> {
     /// Emit an array literal with ES5 spread transformation.
     /// Uses TypeScript's __spreadArray helper for exact tsc matching.
     /// Pattern: [...a] -> __spreadArray([], a, true)
-    /// Pattern: [...a, 1] -> __spreadArray(a, [1], false)
-    /// Pattern: [1, ...a] -> __spreadArray([1], a, false)
-    /// Pattern: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
+    /// Pattern: [...a, 1] -> __spreadArray(__spreadArray([], a, true), [1], false)
+    /// Pattern: [1, ...a] -> __spreadArray([1], a, true)
+    /// Pattern: [1, ...a, 2] -> __spreadArray(__spreadArray([1], a, true), [2], false)
     pub(in crate::emitter) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
         if let Some(flattened) = self.flatten_single_spread_array_literal(elements) {
             self.write("[");
@@ -67,7 +67,7 @@ impl<'a> Printer<'a> {
 
         // Emit using __spreadArray for exact tsc matching.
         // tsc uses nested __spreadArray calls for multi-segment arrays:
-        //   [1, ...a, 2, ...b] -> __spreadArray(__spreadArray(__spreadArray([1], a, false), [2], false), b, false)
+        //   [1, ...a, 2, ...b] -> __spreadArray(__spreadArray(__spreadArray([1], a, true), [2], false), b, true)
         if segments.is_empty() {
             self.write("[]");
         } else if segments.len() == 1 {
@@ -110,13 +110,18 @@ impl<'a> Printer<'a> {
                     self.write("]");
                 }
                 ArraySegment::Spread(spread_idx) => {
-                    // First segment is spread: base is __spreadArray([], spread, false)
+                    // First segment is spread: base is __spreadArray([], spread, true)
+                    // unless __read already packed the spread source.
                     self.write_helper("__spreadArray");
                     self.write("([], ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
                         self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
-                    self.write(", false)");
+                    if wrap_spread_with_read {
+                        self.write(", false)");
+                    } else {
+                        self.write(", true)");
+                    }
                 }
             }
 
@@ -136,7 +141,11 @@ impl<'a> Printer<'a> {
                                 wrap_spread_with_read,
                             );
                         }
-                        self.write(", false)");
+                        if wrap_spread_with_read {
+                            self.write(", false)");
+                        } else {
+                            self.write(", true)");
+                        }
                     }
                 }
             }
@@ -698,31 +707,25 @@ impl<'a> Printer<'a> {
                 ObjectSegment::Spread(spread_idx),
             ] => {
                 // Elements then spread: { a: 1, ...b } → __assign({ a: 1 }, b)
+                // Issue #3968: when the elements contain a computed property,
+                // tsc lowers them with a comma-separated temp-var assignment
+                // such as `(_a = {}, _a[k] = 1, _a)` so that ES5 has no
+                // computed-property literal. Reuse
+                // `emit_object_literal_without_spread_es5` which already
+                // implements that lowering and writes its own outer parens.
                 let has_computed = elems
                     .iter()
                     .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
+                self.write_helper("__assign");
+                self.write("(");
                 if has_computed {
-                    // Need temp var for computed properties
-                    let temp_var = self.make_unique_name_hoisted();
-                    self.write_helper("__assign");
-                    self.write("((");
-                    self.write(&temp_var);
-                    self.write(" = ");
-                    self.emit_object_literal_entries_es5(elems);
-                    self.write(", ");
-                    self.write(&temp_var);
-                    self.write("), ");
+                    self.emit_object_literal_without_spread_es5(elems, source_range, false);
                 } else {
-                    self.write_helper("__assign");
-                    self.write("(");
                     self.emit_object_literal_entries_es5(elems);
-                    self.write(", ");
                 }
+                self.write(", ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
                     self.emit_spread_expression(spread_node);
-                }
-                if has_computed {
-                    self.write(")");
                 }
                 self.write(")");
             }
@@ -951,14 +954,43 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.increase_indent();
                     self.write("set: function (");
-                    self.emit_function_parameters_js(&accessor.parameters.nodes);
+                    let needs_param_transforms =
+                        accessor.parameters.nodes.iter().any(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_parameter(param_node))
+                                .is_some_and(|param| {
+                                    param.dot_dot_dot_token
+                                        || param.initializer.is_some()
+                                        || self.is_binding_pattern(param.name)
+                                })
+                        });
+                    let param_transforms = if needs_param_transforms {
+                        let transforms =
+                            self.emit_function_parameters_es5(&accessor.parameters.nodes);
+                        Some(transforms)
+                    } else {
+                        self.emit_function_parameters_js(&accessor.parameters.nodes);
+                        None
+                    };
                     self.write(") ");
                     let prev_fb = self.emitting_function_body_block;
                     self.emitting_function_body_block = true;
                     let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
-                    self.emit(accessor.body);
+                    if let Some(transforms) = &param_transforms {
+                        if transforms.has_transforms() {
+                            self.emit_block_with_param_prologue(accessor.body, transforms);
+                        } else {
+                            self.emit(accessor.body);
+                        }
+                    } else {
+                        self.emit(accessor.body);
+                    }
                     self.hoisted_assignment_temps = saved_temps;
                     self.emitting_function_body_block = prev_fb;
+                    if param_transforms.is_some() {
+                        self.pop_temp_scope();
+                    }
                     if let Some(body_node) = self.arena.get(accessor.body) {
                         self.emit_accessor_descriptor_trailing(body_node.pos, body_node.end);
                     }
@@ -1468,6 +1500,7 @@ impl<'a> Printer<'a> {
         async_emitter.set_lexical_this(this_expr != "this");
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             async_emitter.set_tslib_prefix(true);
+            async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
 
         let body_has_await = async_emitter.body_contains_await(func.body);

@@ -1,24 +1,33 @@
-//! Assignability diagnostic reporting and excess property checking.
-//!
-//! Contains the "report" side of assignability: methods that call the core
-//! `is_assignable_to` entrypoints and emit diagnostics when types are incompatible.
-
 use crate::query_boundaries::assignability::{
     AssignabilityQueryInputs, ExcessPropertiesKind, check_assignable_gate_with_overrides,
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
     is_type_parameter_like, object_shape_for_type,
 };
-use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type, type_param_info};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-// =============================================================================
-// Weak Union, Excess Property, and Diagnostic Reporting Methods
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
+    fn has_explicit_any_generic_variable_annotation(&self, diag_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(diag_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(decl) = self.ctx.arena.get_variable_declaration(node) else {
+            return false;
+        };
+        if decl.type_annotation == NodeIndex::NONE {
+            return false;
+        }
+        let annotation_text = self.get_source_text_for_node(decl.type_annotation);
+        annotation_text.contains('<') && annotation_text.contains("any")
+    }
+
     fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {
         match classify_for_excess_properties(self.ctx.types, type_id) {
             ExcessPropertiesKind::NotObject => (0, 0),
@@ -532,11 +541,40 @@ impl<'a> CheckerState<'a> {
         skip_source_elaboration: bool,
     ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        let force_nested_error_nullish_report =
+            self.should_report_nullish_assignment_through_nested_target_error(source, target);
+        let exact_optional_mismatch = self.has_exact_optional_property_mismatch(source, target);
+        if let Some(reason) = self.readonly_to_mutable_array_or_tuple_reason(source, target) {
+            self.error_type_not_assignable_with_reason_and_display(
+                source, target, &reason, diag_idx,
+            );
+            return false;
+        }
+        if self.same_base_application_to_constrained_type_param_target(source, target) {
+            self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+            return false;
+        }
+        if self
+            .ctx
+            .arena
+            .get(self.ctx.arena.skip_parenthesized_and_assertions(source_idx))
+            .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+            && self.try_report_concrete_remapped_mapped_missing_property(source, target, diag_idx)
+        {
+            return false;
+        }
+        if !force_nested_error_nullish_report
+            && !exact_optional_mismatch
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             return true;
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
+        }
+        if force_nested_error_nullish_report {
+            self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+            return false;
         }
 
         if is_keyof_type(self.ctx.types, target)
@@ -606,7 +644,6 @@ impl<'a> CheckerState<'a> {
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
         let assignable = self.is_assignable_to(source, target);
-
         // TS2859: if the solver hit its recursion/complexity limit during the check
         // (including the constituent-count overflow guard in check_subtype_inner),
         // emit "Excessive complexity comparing types" regardless of whether the
@@ -624,7 +661,20 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if exact_optional_mismatch {
+            self.diagnose_assignment_failure(source, target, diag_idx);
+            return false;
+        }
+
         if assignable {
+            if self.has_explicit_any_generic_variable_annotation(diag_idx)
+                && self.emit_polymorphic_this_property_assignment_error(source, target, diag_idx)
+            {
+                return false;
+            }
+            if self.emit_polymorphic_this_call_assignment_error(source_idx, target, diag_idx) {
+                return false;
+            }
             return true;
         }
 
@@ -660,6 +710,16 @@ impl<'a> CheckerState<'a> {
             self.error_no_common_properties(display_source, target, diag_idx);
             return false;
         }
+        if let Some(display_source) =
+            self.parameter_type_param_display_source_for_variadic_tuple(source, target, source_idx)
+        {
+            self.error_type_not_assignable_at_with_raw_display_types(
+                display_source,
+                target,
+                diag_idx,
+            );
+            return false;
+        }
         if !skip_source_elaboration
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
@@ -667,6 +727,81 @@ impl<'a> CheckerState<'a> {
         }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
+    }
+
+    fn error_type_not_assignable_at_with_raw_display_types(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        let source_str = self.format_type_diagnostic(source_for_display);
+        let target_str = self.format_type_diagnostic(target_for_display);
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        self.error_at_node(
+            anchor_idx,
+            &message,
+            crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+    }
+
+    fn parameter_type_param_display_source_for_variadic_tuple(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let evaluated_target = self.evaluate_type_for_assignability(target);
+        let target_has_single_rest_tuple = |ty| {
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, ty)
+                .is_some_and(|elements| elements.len() == 1 && elements[0].rest)
+        };
+        if !target_has_single_rest_tuple(target) && !target_has_single_rest_tuple(evaluated_target)
+        {
+            return None;
+        }
+
+        let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let source_node = self.ctx.arena.get(source_idx)?;
+        if source_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(source_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::PARAMETER {
+            return None;
+        }
+        let annotation = self.ctx.arena.get_parameter(decl_node)?.type_annotation;
+        if annotation.is_none() {
+            return None;
+        }
+
+        if is_type_parameter_like(self.ctx.types, source) {
+            return Some(source);
+        }
+        let display_source = self.get_type_from_type_node(annotation);
+        let param_info = type_param_info(self.ctx.types, display_source)?;
+        let constraint = param_info.constraint?;
+        let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
+        if source == display_source || source == constraint || source == evaluated_constraint {
+            Some(display_source)
+        } else {
+            None
+        }
     }
 
     fn numeric_enum_assignment_override_from_source(
@@ -735,11 +870,19 @@ impl<'a> CheckerState<'a> {
         diag_idx: NodeIndex,
     ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        let force_nested_error_nullish_report =
+            self.should_report_nullish_assignment_through_nested_target_error(source, target);
+        if !force_nested_error_nullish_report
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             return true;
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
+        }
+        if force_nested_error_nullish_report {
+            self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+            return false;
         }
         if self.is_assignable_to(source, target) {
             return true;
@@ -901,6 +1044,14 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
             return true;
         }
+        if self.should_suppress_self_referential_generic_function_arg_mismatch(source, target) {
+            return true;
+        }
+        if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
+            source, target, arg_idx,
+        ) {
+            return true;
+        }
 
         // Build a CallArg relation request to collect the weak-union hint
         // without a separate solver call.
@@ -947,7 +1098,17 @@ impl<'a> CheckerState<'a> {
         // This handles cases like JSDoc @enum types where the callback parameter
         // should be contextually typed but the assignability check happens before
         // contextual typing is fully resolved.
-        if !checker_only_mismatch && self.arg_is_callback_with_unannotated_params(arg_idx) {
+        //
+        // Only suppress when the target callable can actually contextually type
+        // every parameter of the source callback. If the target signature has
+        // fewer fixed parameters than the source callback (and no rest
+        // parameter), contextual typing cannot supply types for the extra
+        // source parameters, and the parameter-count mismatch ("Target
+        // signature provides too few arguments") must surface as TS2345.
+        if !checker_only_mismatch
+            && self.arg_is_callback_with_unannotated_params(arg_idx)
+            && self.target_can_contextually_type_callback_params(arg_idx, target)
+        {
             return true;
         }
         // Before emitting TS2345 on the whole argument, try to elaborate
@@ -990,6 +1151,256 @@ impl<'a> CheckerState<'a> {
         }
 
         self.partial_inner_alias_instantiates_to_source(inner, source)
+    }
+
+    fn should_suppress_self_referential_generic_function_arg_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(source_sig) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            self.ctx.types,
+            source,
+        )
+        .and_then(|shape| {
+            (shape.call_signatures.len() == 1).then(|| shape.call_signatures[0].clone())
+        }) else {
+            return false;
+        };
+        if !source_sig.type_params.iter().any(|tp| {
+            tp.constraint.is_some_and(|constraint| {
+                crate::query_boundaries::common::contains_type_parameter_named(
+                    self.ctx.types,
+                    constraint,
+                    tp.name,
+                )
+            })
+        }) {
+            return false;
+        }
+
+        let Some(target_sig) = crate::query_boundaries::common::callable_shape_for_type_extended(
+            self.ctx.types,
+            target,
+        )
+        .and_then(|shape| {
+            (shape.call_signatures.len() == 1).then(|| shape.call_signatures[0].clone())
+        }) else {
+            return false;
+        };
+        if target_sig.return_type != TypeId::UNKNOWN {
+            return false;
+        }
+        let Some(rest_param) = target_sig.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        if rest_param.type_id == TypeId::UNKNOWN {
+            return true;
+        }
+        crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_param.type_id)
+            .is_some_and(|elements| {
+                !elements.is_empty()
+                    && elements
+                        .iter()
+                        .all(|element| element.type_id == TypeId::UNKNOWN)
+            })
+    }
+
+    pub(crate) fn should_suppress_self_referential_mapped_constraint_arg_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        if self
+            .ctx
+            .arena
+            .get(arg_idx)
+            .is_none_or(|node| node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        {
+            return false;
+        }
+        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
+            || !self.type_contains_generic_mapped_constraint(target, &mut Default::default())
+        {
+            return false;
+        }
+
+        let mut substitution = TypeSubstitution::new();
+        let target_display = self.format_type_for_assignability_message(target);
+        for referenced in
+            crate::query_boundaries::common::collect_referenced_types(self.ctx.types, target)
+        {
+            let Some(info) = type_param_info(self.ctx.types, referenced) else {
+                continue;
+            };
+            let name = self.ctx.types.resolve_atom_ref(info.name);
+            let Some(constraint) = info.constraint else {
+                if target_display.contains(name.as_ref()) {
+                    substitution.insert(info.name, source);
+                }
+                continue;
+            };
+            if crate::query_boundaries::common::contains_type_parameter_named(
+                self.ctx.types,
+                constraint,
+                info.name,
+            ) || target_display.contains(name.as_ref())
+            {
+                substitution.insert(info.name, source);
+            }
+        }
+        if substitution.is_empty() {
+            return false;
+        }
+
+        let instantiated = instantiate_type(self.ctx.types, target, &substitution);
+        let env_evaluated = self.evaluate_type_with_env(instantiated);
+        let evaluated = self.evaluate_type_for_assignability(env_evaluated);
+        let contextual = self.evaluate_contextual_type(instantiated);
+        evaluated != target
+            && evaluated != TypeId::UNKNOWN
+            && evaluated != TypeId::ERROR
+            && (self.is_assignable_to_with_env(source, evaluated)
+                || self.is_assignable_to_with_env(source, contextual)
+                || self.self_referential_mapped_intersection_accepts_object_literal(
+                    source, evaluated, arg_idx,
+                ))
+    }
+
+    fn self_referential_mapped_intersection_accepts_object_literal(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+        else {
+            return false;
+        };
+
+        let mut skipped_generic_mapped = false;
+        let mut allowed_keys = rustc_hash::FxHashSet::default();
+        for member in members {
+            if self.type_contains_generic_mapped_constraint(member, &mut Default::default())
+                || crate::query_boundaries::common::mapped_type_info(self.ctx.types, member)
+                    .is_some()
+            {
+                skipped_generic_mapped = true;
+                continue;
+            }
+
+            let member = self.evaluate_type_with_env(member);
+            let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
+            else {
+                if !self.is_assignable_to_with_env(source, member) {
+                    return false;
+                }
+                continue;
+            };
+
+            allowed_keys.extend(shape.properties.iter().map(|prop| prop.name));
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                return self.is_assignable_to_with_env(source, member);
+            }
+            if !self.is_assignable_to_with_env(source, member) {
+                return false;
+            }
+        }
+
+        skipped_generic_mapped
+            && self
+                .object_literal_property_names(arg_idx)
+                .is_some_and(|names| names.into_iter().all(|name| allowed_keys.contains(&name)))
+    }
+
+    fn object_literal_property_names(&self, arg_idx: NodeIndex) -> Option<Vec<tsz_common::Atom>> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.ctx.arena.get_literal_expr(node)?;
+        let mut names = Vec::new();
+        for &element_idx in &object.elements.nodes {
+            let Some(element) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            let name = if let Some(prop) = self.ctx.arena.get_property_assignment(element) {
+                self.get_property_name(prop.name)
+            } else if element.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                self.ctx
+                    .arena
+                    .get_shorthand_property(element)
+                    .and_then(|prop| self.ctx.arena.get_identifier_text(prop.name))
+                    .map(str::to_string)
+            } else if let Some(method) = self.ctx.arena.get_method_decl(element) {
+                self.property_name_for_error(method.name)
+            } else {
+                None
+            };
+            let name = name?;
+            names.push(self.ctx.types.intern_string(&name));
+        }
+        Some(names)
+    }
+
+    fn type_contains_generic_mapped_constraint(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> bool {
+        if !visited.insert(type_id) {
+            return false;
+        }
+        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, type_id) {
+            return true;
+        }
+        if let Some(mapped) =
+            crate::query_boundaries::common::mapped_type_info(self.ctx.types, type_id)
+        {
+            return self.type_contains_generic_mapped_constraint(mapped.constraint, visited)
+                || mapped.name_type.is_some_and(|name_type| {
+                    self.type_contains_generic_mapped_constraint(name_type, visited)
+                });
+        }
+        if let Some((_, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            && args
+                .iter()
+                .any(|&arg| self.type_contains_generic_mapped_constraint(arg, visited))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+            && members
+                .iter()
+                .any(|&member| self.type_contains_generic_mapped_constraint(member, visited))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+            && members
+                .iter()
+                .any(|&member| self.type_contains_generic_mapped_constraint(member, visited))
+        {
+            return true;
+        }
+        if let Some((object_type, index_type)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, type_id)
+        {
+            return self.type_contains_generic_mapped_constraint(object_type, visited)
+                || self.type_contains_generic_mapped_constraint(index_type, visited);
+        }
+        if let Some(info) = type_param_info(self.ctx.types, type_id)
+            && let Some(constraint) = info.constraint
+        {
+            return self.type_contains_generic_mapped_constraint(constraint, visited);
+        }
+        false
     }
 
     fn partial_inner_alias_instantiates_to_source(&mut self, inner: &str, source: TypeId) -> bool {
@@ -1804,6 +2215,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<tsz_solver::SubtypeFailureReason> {
+        if self.iterator_result_required_value_mismatch(source, target) {
+            return Some(tsz_solver::SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
         if !self.checker_only_assignability_may_apply(source, target) {
             return None;
         }
@@ -1833,6 +2251,37 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 target,
             )
+    }
+
+    fn iterator_result_required_value_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
+        let source_display = self.format_type(source);
+        let Some((source_name, source_args)) =
+            parse_simple_type_application_display(&source_display)
+        else {
+            return false;
+        };
+        if source_name != "IteratorResult" || source_args.get(1).copied() != Some("undefined") {
+            return false;
+        }
+
+        let target = self.evaluate_type_for_assignability(target);
+        let Some(target_shape) = object_shape_for_type(self.ctx.types, target) else {
+            return false;
+        };
+        let value_name = self.ctx.types.intern_string("value");
+        let Some(value_prop) = target_shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == value_name)
+        else {
+            return false;
+        };
+        if value_prop.optional {
+            return false;
+        }
+        let value_type = value_prop.type_id;
+
+        !self.is_assignable_to(TypeId::UNDEFINED, value_type)
     }
 
     fn iterator_next_type_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {

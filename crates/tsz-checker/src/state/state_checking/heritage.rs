@@ -9,151 +9,6 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
-    fn symbol_is_uninstantiated_namespace(
-        &self,
-        sym_id: tsz_binder::SymbolId,
-    ) -> Option<tsz_binder::SymbolId> {
-        use tsz_binder::symbol_flags;
-
-        let mut visited_aliases = AliasCycleTracker::new();
-        let sym_to_check = self
-            .resolve_alias_symbol(sym_id, &mut visited_aliases)
-            .unwrap_or(sym_id);
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(sym_to_check, &lib_binders)?;
-
-        let is_namespace = symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE);
-        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        let has_other_value = symbol.has_any_flags(value_flags_except_module);
-        if !is_namespace || has_other_value {
-            return None;
-        }
-
-        let is_instantiated = symbol
-            .declarations
-            .iter()
-            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
-        if is_instantiated {
-            None
-        } else {
-            Some(sym_to_check)
-        }
-    }
-
-    fn skip_ts2314_for_heritage_symbol(
-        &self,
-        heritage_sym: tsz_binder::SymbolId,
-        is_class_declaration: bool,
-        is_extends_clause: bool,
-    ) -> bool {
-        use tsz_binder::symbol_flags;
-
-        self.is_js_file()
-            || (is_class_declaration
-                && is_extends_clause
-                && self.get_cross_file_symbol(heritage_sym).is_some_and(|s| {
-                    s.has_any_flags(symbol_flags::VARIABLE)
-                        || (s.has_any_flags(symbol_flags::INTERFACE)
-                            && !s.has_any_flags(symbol_flags::CLASS))
-                }))
-    }
-
-    /// Resolve the display name to use in TS2314-style diagnostics for a heritage
-    /// reference. tsc uses the target symbol's declared name, not the textual
-    /// qualified expression (e.g. `M.E<T>` → `E<T>`), and follows aliases so
-    /// `import { A as B }` renders as `A<T>`.
-    fn heritage_ts2314_display_name(
-        &self,
-        heritage_sym: tsz_binder::SymbolId,
-        fallback: &str,
-    ) -> String {
-        let mut visited_aliases = AliasCycleTracker::new();
-        self.resolve_alias_symbol(heritage_sym, &mut visited_aliases)
-            .and_then(|target| {
-                self.get_symbol_globally(target)
-                    .map(|s| s.escaped_name.clone())
-            })
-            .unwrap_or_else(|| fallback.to_string())
-    }
-
-    fn report_unresolved_qualified_heritage_member(
-        &mut self,
-        expr_idx: NodeIndex,
-        is_class_declaration: bool,
-        is_extends_clause: bool,
-    ) -> bool {
-        use crate::query_boundaries::name_resolution::{NameLookupKind, NameResolutionRequest};
-
-        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-
-        let (left_idx, right_idx) = if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        {
-            let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
-                return false;
-            };
-            (access.expression, access.name_or_argument)
-        } else {
-            return false;
-        };
-
-        let Some(right_name) = self
-            .ctx
-            .arena
-            .get_identifier_at(right_idx)
-            .map(|ident| ident.escaped_text.clone())
-        else {
-            return false;
-        };
-
-        let Some(left_sym) = self.resolve_heritage_symbol(left_idx) else {
-            return false;
-        };
-        let Some(namespace_sym) = self.symbol_is_uninstantiated_namespace(left_sym) else {
-            return false;
-        };
-
-        if is_class_declaration && is_extends_clause {
-            let ns_name = self
-                .entity_name_text(left_idx)
-                .unwrap_or_else(|| right_name.clone());
-            self.report_wrong_meaning_diagnostic(&ns_name, left_idx, NameLookupKind::Namespace);
-            return true;
-        }
-
-        if is_extends_clause && !is_class_declaration {
-            let lib_binders = self.get_lib_binders();
-            let Some(left_symbol) = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(namespace_sym, &lib_binders)
-            else {
-                return false;
-            };
-            let export_names: Vec<String> = left_symbol
-                .exports
-                .as_ref()
-                .map(|exports| exports.iter().map(|(name, _)| name.clone()).collect())
-                .unwrap_or_default();
-            let req = NameResolutionRequest::exported_member(
-                &right_name,
-                right_idx,
-                namespace_sym,
-                export_names,
-            );
-            if let Err(failure) = self.resolve_name_structured(&req) {
-                self.report_name_resolution_failure(&req, &failure);
-                return true;
-            }
-        }
-
-        false
-    }
-
     /// Check heritage clauses (extends/implements) for unresolved names.
     /// Emits TS2304 when a referenced name cannot be resolved.
     /// Emits TS2689 when a class extends an interface.
@@ -226,7 +81,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         type_idx
                     };
-
                 if is_class_declaration {
                     self.check_class_heritage_reserved_leftmost_name(expr_idx);
                     self.check_class_heritage_type_only_namespace_left(expr_idx);
@@ -340,7 +194,18 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Try to resolve the heritage symbol
-                if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
+                let heritage_sym = self.resolve_heritage_symbol(expr_idx).or_else(|| {
+                    if !is_class_declaration
+                        && is_extends_clause
+                        && let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym) =
+                            self.resolve_qualified_symbol_in_type_position(expr_idx)
+                    {
+                        Some(type_sym)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(heritage_sym) = heritage_sym {
                     let type_args = self
                         .ctx
                         .arena
@@ -766,49 +631,129 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else if !is_class_declaration {
-                            let symbol_type = if is_being_resolved {
+                            let instantiated_type = if is_being_resolved {
                                 TypeId::ERROR
                             } else {
-                                self.get_type_of_symbol(sym_to_check)
+                                self.get_type_from_type_node(type_idx)
                             };
-                            if symbol_type == TypeId::ERROR || symbol_type == TypeId::ANY {
-                                continue;
-                            }
-                            let mut instantiated_type = symbol_type;
-                            if let Some(args) = type_args {
-                                let mut evaluated_args = Vec::new();
-                                for &arg_idx in &args.nodes {
-                                    evaluated_args.push(self.get_type_from_type_node(arg_idx));
-                                }
-                                let base_type_params =
-                                    self.get_type_params_for_symbol(sym_to_check);
-                                if evaluated_args.len() < base_type_params.len() {
-                                    for param in base_type_params.iter().skip(evaluated_args.len())
-                                    {
-                                        let fallback = param
-                                            .default
-                                            .or(param.constraint)
-                                            .unwrap_or(TypeId::UNKNOWN);
-                                        evaluated_args.push(fallback);
+                            if instantiated_type == TypeId::ERROR
+                                || instantiated_type == TypeId::ANY
+                            {
+                                if let crate::symbol_resolver::TypeSymbolResolution::Type(
+                                    type_sym,
+                                ) = self.resolve_qualified_symbol_in_type_position(expr_idx)
+                                {
+                                    let mut visited_aliases = AliasCycleTracker::new();
+                                    let type_sym = self
+                                        .resolve_alias_symbol(type_sym, &mut visited_aliases)
+                                        .unwrap_or(type_sym);
+                                    let is_type_alias = self
+                                        .get_cross_file_symbol(type_sym)
+                                        .is_some_and(|symbol| {
+                                            symbol
+                                                .has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+                                        });
+                                    if is_type_alias {
+                                        let symbol_type = self.get_type_of_symbol(type_sym);
+                                        let enclosing_type_params =
+                                            self.enclosing_interface_type_param_names(expr_idx);
+                                        let args_reference_enclosing_type_param = type_args
+                                            .is_some_and(|args| {
+                                                self.type_args_reference_type_params(
+                                                    args,
+                                                    &enclosing_type_params,
+                                                )
+                                            });
+                                        if class_query::is_generic_mapped_type(
+                                            self.ctx.types,
+                                            symbol_type,
+                                        ) && args_reference_enclosing_type_param
+                                        {
+                                            use crate::diagnostics::{
+                                                diagnostic_codes, diagnostic_messages,
+                                            };
+                                            self.error_at_node(
+                                                expr_idx,
+                                                diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                                                diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                                            );
+                                        }
                                     }
                                 }
-                                if evaluated_args.len() > base_type_params.len() {
-                                    evaluated_args.truncate(base_type_params.len());
-                                }
-                                let substitution =
-                                    crate::query_boundaries::common::TypeSubstitution::from_args(
-                                        self.ctx.types,
-                                        &base_type_params,
-                                        &evaluated_args,
-                                    );
-                                instantiated_type =
-                                    crate::query_boundaries::common::instantiate_type(
-                                        self.ctx.types,
-                                        symbol_type,
-                                        &substitution,
-                                    );
+                                continue;
                             }
-
+                            let mut generic_mapped_check_type = instantiated_type;
+                            let validation_source_type =
+                                if let crate::symbol_resolver::TypeSymbolResolution::Type(
+                                    type_sym,
+                                ) = self.resolve_qualified_symbol_in_type_position(expr_idx)
+                                {
+                                    let mut visited_aliases = AliasCycleTracker::new();
+                                    let type_sym = self
+                                        .resolve_alias_symbol(type_sym, &mut visited_aliases)
+                                        .unwrap_or(type_sym);
+                                    let has_type_params =
+                                        !self.get_type_params_for_symbol(type_sym).is_empty();
+                                    let is_type_alias = self
+                                        .get_cross_file_symbol(type_sym)
+                                        .is_some_and(|symbol| {
+                                            symbol
+                                                .has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+                                        });
+                                    let is_non_generic_alias = is_type_alias && !has_type_params;
+                                    let symbol_type = if is_type_alias {
+                                        Some(self.get_type_of_symbol(type_sym))
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(symbol_type) = symbol_type {
+                                        generic_mapped_check_type = symbol_type;
+                                        if let Some(args) = type_args {
+                                            let mut evaluated_args = Vec::new();
+                                            for &arg_idx in &args.nodes {
+                                                evaluated_args
+                                                    .push(self.get_type_from_type_node(arg_idx));
+                                            }
+                                            let base_type_params =
+                                                self.get_type_params_for_symbol(type_sym);
+                                            if evaluated_args.len() < base_type_params.len() {
+                                                for param in base_type_params
+                                                    .iter()
+                                                    .skip(evaluated_args.len())
+                                                {
+                                                    let fallback = param
+                                                        .default
+                                                        .or(param.constraint)
+                                                        .unwrap_or(TypeId::UNKNOWN);
+                                                    evaluated_args.push(fallback);
+                                                }
+                                            }
+                                            if evaluated_args.len() > base_type_params.len() {
+                                                evaluated_args.truncate(base_type_params.len());
+                                            }
+                                            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                                                self.ctx.types,
+                                                &base_type_params,
+                                                &evaluated_args,
+                                            );
+                                            generic_mapped_check_type =
+                                                crate::query_boundaries::common::instantiate_type(
+                                                    self.ctx.types,
+                                                    symbol_type,
+                                                    &substitution,
+                                                );
+                                        }
+                                    }
+                                    if is_non_generic_alias {
+                                        symbol_type.unwrap_or(instantiated_type)
+                                    } else {
+                                        instantiated_type
+                                    }
+                                } else {
+                                    instantiated_type
+                                };
+                            let validation_type =
+                                self.evaluate_type_for_assignability(validation_source_type);
                             // TS2312: Only reject *generic* mapped types — those whose
                             // key constraint still contains type parameters (e.g.,
                             // `{ [K in keyof T]: ... }` where T is unresolved). Mapped
@@ -823,9 +768,12 @@ impl<'a> CheckerState<'a> {
                             // same TypeId, making substitution identity. evaluate_type
                             // would then flatten the mapped type into an Object, losing
                             // the structure is_generic_mapped_type needs.
-                            if class_query::is_generic_mapped_type(
+                            if !crate::query_boundaries::class::is_valid_interface_base_type(
                                 self.ctx.types,
-                                instantiated_type,
+                                validation_type,
+                            ) || class_query::is_generic_mapped_type(
+                                self.ctx.types,
+                                generic_mapped_check_type,
                             ) {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                                 self.error_at_node(
@@ -1016,7 +964,31 @@ impl<'a> CheckerState<'a> {
                         } else {
                             // Try to get the type of the expression to check if it's a constructor
                             let expr_type = self.get_type_of_node(expr_idx);
-                            self.is_constructor_type(expr_type)
+                            let evaluated_type = self.evaluate_type_for_assignability(expr_type);
+                            if self.is_constructor_type(evaluated_type) {
+                                true
+                            } else {
+                                if is_extends_clause
+                                    && is_class_declaration
+                                    && evaluated_type != TypeId::ERROR
+                                    && evaluated_type != TypeId::ANY
+                                {
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    let type_name = self.format_type(evaluated_type);
+                                    let message = format_message(
+                                        diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                        &[&type_name],
+                                    );
+                                    self.error_at_node(
+                                        expr_idx,
+                                        &message,
+                                        diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                    );
+                                }
+                                false
+                            }
                         }
                     } else {
                         false

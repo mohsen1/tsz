@@ -1,4 +1,4 @@
-use super::super::{ModuleKind, Printer, get_trailing_comment_ranges};
+use super::super::{Printer, get_trailing_comment_ranges};
 use crate::safe_slice;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node_flags;
@@ -37,8 +37,28 @@ impl<'a> Printer<'a> {
             .map(std::string::ToString::to_string);
         let needs_this_capture = this_capture_name.is_some();
 
+        if block.statements.nodes.is_empty()
+            && !needs_this_capture
+            && is_function_body_block
+            && !self.pending_object_rest_params.is_empty()
+            && self.is_single_line(node)
+        {
+            self.ctx.block_scope_state.enter_function_scope();
+            self.register_pending_function_body_parameters();
+            self.map_opening_brace(node);
+            self.write("{ ");
+            self.emit_pending_object_rest_param_preamble(true);
+            self.map_closing_brace(node);
+            self.write(" }");
+            self.ctx.block_scope_state.exit_scope();
+            return;
+        }
+
         // Empty blocks: check for comments inside and preserve original format
-        if block.statements.nodes.is_empty() && !needs_this_capture {
+        if block.statements.nodes.is_empty()
+            && !needs_this_capture
+            && self.pending_object_rest_params.is_empty()
+        {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_end = self.find_block_closing_brace_end(node);
             let closing_brace_pos = closing_brace_end.saturating_sub(1);
@@ -155,6 +175,7 @@ impl<'a> Printer<'a> {
         if should_emit_single_line {
             if is_function_body_block {
                 self.ctx.block_scope_state.enter_function_scope();
+                self.register_pending_function_body_parameters();
             } else {
                 self.ctx.block_scope_state.enter_scope();
             }
@@ -190,6 +211,7 @@ impl<'a> Printer<'a> {
 
         if is_function_body_block {
             self.ctx.block_scope_state.enter_function_scope();
+            self.register_pending_function_body_parameters();
         } else {
             self.ctx.block_scope_state.enter_scope();
         }
@@ -254,18 +276,13 @@ impl<'a> Printer<'a> {
         // Inject object rest parameter destructuring preamble for ES2018 lowering.
         // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
-            let rest_params: Vec<(String, NodeIndex)> =
-                std::mem::take(&mut self.pending_object_rest_params);
-            for (temp_name, pattern_idx) in &rest_params {
-                self.write("var ");
-                self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-                self.write(";");
-                self.write_line();
-            }
+            self.emit_pending_object_rest_param_preamble(false);
         }
 
+        let block_scoped_private_byte_offset =
+            Some((self.writer.len(), self.writer.current_line()));
         let hoisted_var_byte_offset = if is_function_body_block {
-            Some((self.writer.len(), self.writer.current_line()))
+            block_scoped_private_byte_offset
         } else {
             None
         };
@@ -307,6 +324,8 @@ impl<'a> Printer<'a> {
         // stmt_node.end past the statement boundary into the next statement's tokens,
         // so using next_stmt.pos as the scan limit prevents over-scanning.
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
+        self.recovered_module_syntax_block_depth += 1;
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
             // Save state before leading comments so we can undo them if the
             // statement produces no output (e.g., namespace alias import or
@@ -473,6 +492,7 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
             let indent = " ".repeat(self.writer.indent_width() as usize);
@@ -493,6 +513,19 @@ impl<'a> Printer<'a> {
                 );
                 self.writer.insert_line_at(byte_offset, line_no, &var_decl);
             }
+        }
+
+        if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
+            && !self.block_scoped_private_temps.is_empty()
+        {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let let_decl = format!(
+                "{}let {};",
+                indent,
+                self.block_scoped_private_temps.join(", ")
+            );
+            self.writer.insert_line_at(byte_offset, line_no, &let_decl);
+            self.block_scoped_private_temps.clear();
         }
 
         // Close the block-level using try/catch/finally if active
@@ -603,6 +636,22 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
+        let rest_params: Vec<(String, NodeIndex)> =
+            std::mem::take(&mut self.pending_object_rest_params);
+        for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
+            if inline && i > 0 {
+                self.write(" ");
+            }
+            self.write("var ");
+            self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
+            self.write(";");
+            if !inline {
+                self.write_line();
+            }
+        }
+    }
+
     pub(in crate::emitter) fn emit_variable_statement(&mut self, node: &Node) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
@@ -625,6 +674,9 @@ impl<'a> Printer<'a> {
         }
 
         if self.emit_recovered_ambiguous_generic_assertion_variable_statement(node) {
+            return;
+        }
+        if self.emit_recovered_template_property_name_variable_statement(node) {
             return;
         }
 
@@ -782,6 +834,13 @@ impl<'a> Printer<'a> {
 
         // VariableStatement.declarations contains a VARIABLE_DECLARATION_LIST
         // Emit the declaration list (which handles the let/const/var keyword)
+        if self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
+            || self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
         for &decl_list_idx in &var_stmt.declarations.nodes {
             self.emit(decl_list_idx);
         }
@@ -808,6 +867,8 @@ impl<'a> Printer<'a> {
             }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
+            self.emit_recovered_regex_slash_tail_after_variable_statement(&var_stmt.declarations);
+            self.emit_recovered_class_keyword_variable_statement_tail(node);
         }
 
         // Emit trailing comments (e.g., var x = 1; // comment).
@@ -914,9 +975,11 @@ impl<'a> Printer<'a> {
         let Ok(line) = std::str::from_utf8(&bytes[start..line_end]) else {
             return;
         };
+        let masked_line = Self::source_text_with_quoted_spans_masked(line);
+        let line_for_scan = masked_line.as_str();
 
-        if line.contains("= @") && line.contains("=>") {
-            let Some(arrow_rel) = line.find("=>") else {
+        if line_for_scan.contains("= @") && line_for_scan.contains("=>") {
+            let Some(arrow_rel) = line_for_scan.find("=>") else {
                 return;
             };
             let after_arrow = start + arrow_rel + 2;
@@ -948,7 +1011,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let Some(arrow_rel) = line.find("): =>").or_else(|| line.find("):=>")) else {
+        let Some(arrow_rel) = line_for_scan
+            .find("): =>")
+            .or_else(|| line_for_scan.find("):=>"))
+        else {
             return;
         };
 
@@ -977,6 +1043,15 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
+        // Only recover when every declaration in the statement lacks an initializer.
+        // If any declaration has an initializer, .typeof( is a valid property call
+        // in a value expression that was already emitted — not a type-annotation tail.
+        if let Some(var_stmt) = self.arena.get_variable(node) {
+            if !self.all_declarations_lack_initializer(&var_stmt.declarations) {
+                return;
+            }
+        }
+
         let Some(text) = self.source_text else {
             return;
         };
@@ -985,11 +1060,11 @@ impl<'a> Printer<'a> {
         if start >= end {
             return;
         }
-        let segment = &text[start..end];
-        let Some(typeof_rel) = segment.find(".typeof(") else {
+        let Some(typeof_pos) = self.find_source_pattern_outside_quoted_text(start, end, ".typeof(")
+        else {
             return;
         };
-        let open = start + typeof_rel + ".typeof".len();
+        let open = typeof_pos + ".typeof".len();
         let Some(close) = self.find_matching_source_paren(open, end) else {
             return;
         };
@@ -1002,6 +1077,30 @@ impl<'a> Printer<'a> {
         self.write("typeof (");
         self.write(argument);
         self.write(");");
+    }
+
+    fn find_source_pattern_outside_quoted_text(
+        &self,
+        start: usize,
+        limit: usize,
+        pattern: &str,
+    ) -> Option<usize> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let pattern = pattern.as_bytes();
+        let mut i = start;
+        let limit = limit.min(bytes.len());
+        while i + pattern.len() <= limit {
+            match bytes[i] {
+                b'\'' | b'"' | b'`' => {
+                    i = self.skip_quoted_source_text(i, limit);
+                    continue;
+                }
+                _ if bytes.get(i..i + pattern.len()) == Some(pattern) => return Some(i),
+                _ => i += 1,
+            }
+        }
+        None
     }
 
     fn find_matching_source_paren(&self, open: usize, limit: usize) -> Option<usize> {
@@ -1053,6 +1152,39 @@ impl<'a> Printer<'a> {
         i
     }
 
+    fn source_text_with_quoted_spans_masked(segment: &str) -> String {
+        let mut bytes = segment.as_bytes().to_vec();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[i];
+                    bytes[i] = b' ';
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'\\' {
+                            bytes[i] = b' ';
+                            if i + 1 < bytes.len() {
+                                bytes[i + 1] = b' ';
+                            }
+                            i = (i + 2).min(bytes.len());
+                            continue;
+                        }
+
+                        let is_end = bytes[i] == quote;
+                        bytes[i] = b' ';
+                        i += 1;
+                        if is_end {
+                            break;
+                        }
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+        String::from_utf8(bytes).unwrap_or_default()
+    }
+
     fn recovered_async_arrow_return_name(&self, node: &Node) -> Option<String> {
         let text = self.source_text?;
         let bytes = text.as_bytes();
@@ -1067,6 +1199,7 @@ impl<'a> Printer<'a> {
         }
 
         let line = std::str::from_utf8(&bytes[start..line_end]).ok()?;
+        let line = Self::source_text_with_quoted_spans_masked(line);
         if !line.contains("async") || !line.contains("= await =>") {
             return None;
         }
@@ -1095,6 +1228,7 @@ impl<'a> Printer<'a> {
         }
 
         let line = std::str::from_utf8(&bytes[start..line_end]).ok()?;
+        let line = Self::source_text_with_quoted_spans_masked(line);
         let equals = line.find('=')?;
         let arrow = line[equals..].find("=>")? + equals;
         let colon = line[equals..arrow].rfind(':')? + equals;
@@ -1144,6 +1278,96 @@ impl<'a> Printer<'a> {
         self.write(&head);
         self.write_line();
         self.write(&recovered);
+        true
+    }
+
+    fn emit_recovered_template_property_name_variable_statement(&mut self, node: &Node) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        if self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            || var_stmt.declarations.nodes.len() != 1
+        {
+            return false;
+        }
+        let Some(decl_list_idx) = var_stmt.declarations.nodes.first().copied() else {
+            return false;
+        };
+        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        if decl_list.declarations.nodes.len() != 1 {
+            return false;
+        }
+        let Some(decl_idx) = decl_list.declarations.nodes.first().copied() else {
+            return false;
+        };
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.initializer.is_none() {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(decl.initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+        if obj.elements.nodes.len() != 1 {
+            return false;
+        }
+        let Some(prop_node) = obj
+            .elements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+        else {
+            return false;
+        };
+        if prop_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+            return false;
+        }
+        let Some(prop) = self.arena.get_property_assignment(prop_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(prop.name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            && name_node.kind != syntax_kind_ext::TEMPLATE_EXPRESSION
+        {
+            return false;
+        }
+
+        let flags = decl_list_node.flags as u32;
+        let keyword = if flags & node_flags::CONST != 0 {
+            "const"
+        } else if flags & node_flags::LET != 0 {
+            "let"
+        } else {
+            "var"
+        };
+        self.write(keyword);
+        self.write(" ");
+        self.emit_decl_name(decl.name);
+        self.write(" = {} ");
+        self.emit(prop.name);
+        self.write(";");
+        self.write_line();
+        self.emit_expression(prop.initializer);
+        self.write(";");
         true
     }
 
@@ -1203,395 +1427,6 @@ impl<'a> Printer<'a> {
         Some((head, recovered))
     }
 
-    /// Lower `using`/`await using` declarations for non-ES5 targets (ES2015+).
-    /// Transforms:
-    ///   `using d = expr;`
-    /// Into:
-    ///   `var d;`
-    ///   `const env_1 = { stack: [], error: void 0, hasError: false };`
-    ///   `try { d = __addDisposableResource(env_1, expr, false); }`
-    ///   `catch (e_1) { env_1.error = e_1; env_1.hasError = true; }`
-    ///   `finally { __disposeResources(env_1); }`
-    fn emit_using_declaration_lowered(
-        &mut self,
-        decl_list: &tsz_parser::parser::node::VariableData,
-        flags: u32,
-    ) {
-        let using_async = node_flags::is_await_using(flags);
-        let (env_name, error_name, result_name) = self.next_disposable_env_names();
-
-        let initialized_decls: Vec<_> = decl_list
-            .declarations
-            .nodes
-            .iter()
-            .copied()
-            .filter(|&decl_idx| {
-                self.arena
-                    .get(decl_idx)
-                    .and_then(|n| self.arena.get_variable_declaration(n))
-                    .is_some_and(|d| d.initializer.is_some())
-            })
-            .collect();
-
-        // Hoist `var` declarations before the try block — variables must remain
-        // accessible after the try/catch/finally completes.
-        if !initialized_decls.is_empty() {
-            let mut var_names = Vec::new();
-            for &decl_idx in &initialized_decls {
-                if let Some(decl_node) = self.arena.get(decl_idx)
-                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                {
-                    self.collect_binding_names(decl.name, &mut var_names);
-                }
-            }
-            if !var_names.is_empty() {
-                self.write("var ");
-                self.write(&var_names.join(", "));
-                self.write(";");
-                self.write_line();
-            }
-        }
-
-        self.write("const ");
-        self.write(&env_name);
-        self.write(" = { stack: [], error: void 0, hasError: false };");
-        self.write_line();
-
-        self.write("try {");
-        self.write_line();
-        self.increase_indent();
-
-        // Emit assignments (no `const`/`let` prefix — vars are hoisted above)
-        if !initialized_decls.is_empty() {
-            for (i, &decl_idx) in initialized_decls.iter().enumerate() {
-                if let Some(decl_node) = self.arena.get(decl_idx)
-                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                {
-                    self.emit(decl.name);
-                    self.write(" = ");
-                    self.write_helper("__addDisposableResource");
-                    self.write("(");
-                    self.write(&env_name);
-                    self.write(", ");
-                    self.emit(decl.initializer);
-                    self.write(", ");
-                    self.write(if using_async { "true" } else { "false" });
-                    self.write(")");
-                    if i + 1 < initialized_decls.len() {
-                        self.write(", ");
-                    }
-                }
-            }
-            self.write(";");
-            self.write_line();
-        }
-
-        self.decrease_indent();
-        self.write("}");
-        self.write_line();
-        self.write("catch (");
-        self.write(&error_name);
-        self.write(") {");
-        self.write_line();
-        self.increase_indent();
-        self.write(&env_name);
-        self.write(".error = ");
-        self.write(&error_name);
-        self.write(";");
-        self.write_line();
-        self.write(&env_name);
-        self.write(".hasError = true;");
-        self.write_line();
-        self.decrease_indent();
-        self.write("}");
-        self.write_line();
-        self.write("finally {");
-        self.write_line();
-        self.increase_indent();
-        if using_async {
-            // tsc emits: const result_N = __disposeResources(env_N);
-            //            if (result_N) await result_N;
-            // (inside __awaiter generator, `await` becomes `yield`)
-            let await_kw = if self.ctx.emit_await_as_yield {
-                "yield"
-            } else {
-                "await"
-            };
-            self.write("const ");
-            self.write(&result_name);
-            self.write(" = ");
-            self.write_helper("__disposeResources");
-            self.write("(");
-            self.write(&env_name);
-            self.write(");");
-            self.write_line();
-            self.write("if (");
-            self.write(&result_name);
-            self.write(")");
-            self.write_line();
-            self.increase_indent();
-            self.write(await_kw);
-            self.write(" ");
-            self.write(&result_name);
-            self.write(";");
-            self.write_line();
-            self.decrease_indent();
-        } else {
-            self.write_helper("__disposeResources");
-            self.write("(");
-            self.write(&env_name);
-            self.write(");");
-            self.write_line();
-        }
-        self.decrease_indent();
-        self.write("}");
-    }
-
-    /// Compute the source position at the end of the last emitted content for
-    /// a variable statement, excluding erased type annotations. This prevents
-    /// `emit_trailing_comment_after_semicolon` from finding semicolons inside
-    /// erased type annotations (e.g., `var v: { (x: number); // comment }`).
-    fn variable_statement_effective_end(&self, declarations: &NodeList) -> u32 {
-        // Walk the declaration list to find the last variable declaration's
-        // name or initializer end position.
-        let mut effective_end = 0u32;
-        for &decl_list_idx in &declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            // Use the full node end as baseline
-            effective_end = effective_end.max(decl_list_node.end);
-
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                // If the declaration has a type annotation but no initializer,
-                // use the name's end as the effective boundary (the type annotation
-                // is erased and its semicolons should not be scanned).
-                if decl.type_annotation.is_some()
-                    && decl.initializer.is_none()
-                    && let Some(name_node) = self.arena.get(decl.name)
-                {
-                    effective_end = self
-                        .find_declaration_semicolon_after(name_node.end, decl_node.end)
-                        .unwrap_or(name_node.end);
-                }
-            }
-        }
-        effective_end
-    }
-
-    fn variable_statement_last_emitted_declaration_end(
-        &self,
-        declarations: &NodeList,
-    ) -> Option<u32> {
-        let mut last_end = None;
-        for &decl_list_idx in &declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                if let Some(init_node) = self.arena.get(decl.initializer) {
-                    last_end = Some(init_node.end);
-                } else if let Some(name_node) = self.arena.get(decl.name) {
-                    last_end = Some(name_node.end);
-                }
-            }
-        }
-        last_end
-    }
-
-    fn find_declaration_semicolon_after(&self, start: u32, end: u32) -> Option<u32> {
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let mut i = std::cmp::min(start as usize, bytes.len());
-        let limit = std::cmp::min(end as usize, bytes.len());
-        let mut depth = 0i32;
-        while i < limit {
-            match bytes[i] {
-                b'{' | b'(' | b'[' | b'<' => {
-                    depth += 1;
-                    i += 1;
-                }
-                b'}' | b')' | b']' | b'>' => {
-                    depth -= 1;
-                    i += 1;
-                }
-                b';' if depth == 0 => return Some((i + 1) as u32),
-                b'/' if i + 1 < limit && bytes[i + 1] == b'/' => {
-                    while i < limit && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                        i += 1;
-                    }
-                }
-                b'/' if i + 1 < limit && bytes[i + 1] == b'*' => {
-                    i += 2;
-                    while i + 1 < limit && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                        i += 1;
-                    }
-                    i = std::cmp::min(i + 2, limit);
-                }
-                b'\'' | b'"' | b'`' => {
-                    let quote = bytes[i];
-                    i += 1;
-                    while i < limit {
-                        if bytes[i] == b'\\' {
-                            i = std::cmp::min(i + 2, limit);
-                        } else if bytes[i] == quote {
-                            i += 1;
-                            break;
-                        } else {
-                            i += 1;
-                        }
-                    }
-                }
-                _ => i += 1,
-            }
-        }
-        None
-    }
-
-    /// Check if all variable declarations in a declaration list lack initializers
-    pub(in crate::emitter) fn all_declarations_lack_initializer(
-        &self,
-        declarations: &NodeList,
-    ) -> bool {
-        for &decl_list_idx in &declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                if decl.initializer.is_some() {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Check if all declared names in a variable declaration list are present
-    /// in the `commonjs_exported_var_names` set (already handled by the CJS
-    /// preamble `exports.X = void 0;`).
-    pub(in crate::emitter) fn all_declaration_names_in_exported_set(
-        &self,
-        declarations: &NodeList,
-    ) -> bool {
-        let names = self.collect_variable_names(declarations);
-        !names.is_empty()
-            && names
-                .iter()
-                .all(|n| self.commonjs_exported_var_names.contains(n))
-    }
-
-    /// Collect variable names from a declaration list for `CommonJS` export
-    pub(in crate::emitter) fn collect_variable_names(
-        &self,
-        declarations: &NodeList,
-    ) -> Vec<String> {
-        let mut names = Vec::new();
-        for &decl_list_idx in &declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                self.collect_binding_names(decl.name, &mut names);
-            }
-        }
-        names
-    }
-
-    pub(in crate::emitter) fn is_es5_empty_binding_pattern_export_statement(
-        &self,
-        node: &Node,
-    ) -> bool {
-        if !self.ctx.target_es5
-            || !matches!(
-                self.ctx.options.module,
-                ModuleKind::ES2015 | ModuleKind::ESNext
-            )
-        {
-            return false;
-        }
-
-        let Some(var_stmt) = self.arena.get_variable(node) else {
-            return false;
-        };
-        if !self
-            .arena
-            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-        {
-            return false;
-        }
-
-        self.variable_declarations_are_initialized_empty_binding_patterns(&var_stmt.declarations)
-    }
-
-    fn variable_declarations_are_initialized_empty_binding_patterns(
-        &self,
-        declarations: &NodeList,
-    ) -> bool {
-        let mut has_initializer = false;
-
-        for &decl_list_idx in &declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                return false;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                return false;
-            };
-
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    return false;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    return false;
-                };
-                if !self.binding_pattern_is_empty(decl.name) || decl.initializer.is_none() {
-                    return false;
-                }
-                has_initializer = true;
-            }
-        }
-
-        has_initializer
-    }
-
     fn emit_es5_empty_binding_pattern_export(&mut self, declarations: &NodeList) -> bool {
         let mut initializers = Vec::new();
 
@@ -1638,71 +1473,6 @@ impl<'a> Printer<'a> {
         true
     }
 
-    pub(in crate::emitter) fn collect_binding_names(
-        &self,
-        name_idx: NodeIndex,
-        names: &mut Vec<String>,
-    ) {
-        if name_idx.is_none() {
-            return;
-        }
-
-        let Some(node) = self.arena.get(name_idx) else {
-            return;
-        };
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(id) = self.arena.get_identifier(node) {
-                // Use original_text (preserving unicode escapes) when available,
-                // falling back to escaped_text. TSC preserves unicode escapes
-                // in CJS export assignments (exports.\u0078 = \u0078;).
-                let text = id
-                    .original_text
-                    .as_deref()
-                    .unwrap_or(&id.escaped_text)
-                    .to_string();
-                names.push(text);
-            }
-            return;
-        }
-
-        match node.kind {
-            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
-            {
-                if let Some(pattern) = self.arena.get_binding_pattern(node) {
-                    for &elem_idx in &pattern.elements.nodes {
-                        self.collect_binding_names_from_element(elem_idx, names);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::BINDING_ELEMENT => {
-                if let Some(elem) = self.arena.get_binding_element(node) {
-                    self.collect_binding_names(elem.name, names);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    pub(in crate::emitter) fn collect_binding_names_from_element(
-        &self,
-        elem_idx: NodeIndex,
-        names: &mut Vec<String>,
-    ) {
-        if elem_idx.is_none() {
-            return;
-        }
-
-        let Some(elem_node) = self.arena.get(elem_idx) else {
-            return;
-        };
-
-        if let Some(elem) = self.arena.get_binding_element(elem_node) {
-            self.collect_binding_names(elem.name, names);
-        }
-    }
-
     pub(in crate::emitter) fn emit_expression_statement(&mut self, node: &Node) {
         let Some(expr_stmt) = self.arena.get_expression_statement(node) else {
             return;
@@ -1747,7 +1517,9 @@ impl<'a> Printer<'a> {
             let leftmost_needs_parens = leftmost == syntax_kind_ext::FUNCTION_EXPRESSION
                 || leftmost == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION);
-            leftmost_needs_parens && !self.outer_paren_will_survive_emit(expr_stmt.expression)
+            leftmost_needs_parens
+                && !self.outer_paren_will_survive_emit(expr_stmt.expression)
+                && !self.is_erased_object_literal_access_call_expression(expr_stmt.expression)
         } else {
             false
         };
@@ -1785,11 +1557,124 @@ impl<'a> Printer<'a> {
             self.emit(expr_stmt.expression);
         }
         self.ctx.flags.in_statement_expression = prev_stmt_expr;
+        if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
+            self.write_line();
+        }
         self.map_trailing_semicolon(node);
         if !self.output_ends_with_semicolon() {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    fn emit_recovered_regex_slash_tail_after_variable_statement(
+        &mut self,
+        declarations: &NodeList,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let mut last_initializer = NodeIndex::NONE;
+        for &decl_list_idx in &declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if decl.initializer.is_some() {
+                    last_initializer = decl.initializer;
+                }
+            }
+        }
+
+        let Some(init_node) = self.arena.get(last_initializer) else {
+            return false;
+        };
+        if init_node.kind != SyntaxKind::RegularExpressionLiteral as u16 {
+            return false;
+        }
+
+        let start = init_node.end.min(text.len() as u32) as usize;
+        let end = self
+            .variable_statement_effective_end(declarations)
+            .min(text.len() as u32) as usize;
+        if start >= end {
+            return false;
+        }
+
+        let bytes = text.as_bytes();
+        let mut i = start;
+        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+            i += 1;
+        }
+        if bytes.get(i) != Some(&b']') {
+            return false;
+        }
+        i += 1;
+        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+            i += 1;
+        }
+        if bytes.get(i) != Some(&b'/') {
+            return false;
+        }
+        i += 1;
+        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+            i += 1;
+        }
+        if i < end && bytes.get(i) != Some(&b';') {
+            return false;
+        }
+
+        self.write_line();
+        self.write("/;");
+        true
+    }
+
+    fn emit_recovered_jsx_unary_trailing_less_than(
+        &mut self,
+        statement: &Node,
+        expression: NodeIndex,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.arena.get_unary_expr(expr_node) else {
+            return false;
+        };
+        let Some(operand_node) = self.arena.get(unary.operand) else {
+            return false;
+        };
+        if operand_node.kind != syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT {
+            return false;
+        }
+
+        let Ok(source) =
+            crate::safe_slice::slice(text, statement.pos as usize, statement.end as usize)
+        else {
+            return false;
+        };
+        let recovered_source = format!("{}< <", super::super::get_operator_text(unary.operator));
+        if source.trim() != recovered_source {
+            return false;
+        }
+
+        self.write(" <");
+        true
     }
 
     fn emit_import_type_arguments_statement_expression(&mut self, expression: NodeIndex) -> bool {

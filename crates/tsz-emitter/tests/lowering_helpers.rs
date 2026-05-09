@@ -904,3 +904,92 @@ fn test_lowering_destructuring_marks_rest_helper() {
         "Expected __rest helper for object rest destructuring"
     );
 }
+
+#[test]
+fn test_lowering_assignment_object_rest_marks_rest_helper() {
+    let (arena, root) = parse("let bar; ({ ...bar } = {});");
+    let ctx = EmitContext::es6();
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let helpers = transforms.helpers();
+    assert!(
+        helpers.rest,
+        "Expected __rest helper for object rest assignment destructuring"
+    );
+}
+
+// =============================================================================
+// first_private_field_op_is_write_only
+// =============================================================================
+
+fn first_class_private_op_is_write_only(source: &str) -> bool {
+    let (arena, root) = parse(source);
+    let ctx = EmitContext::es6();
+    let lowering = make_lowering(&arena, &ctx);
+
+    let root_node = arena.get(root).expect("expected root");
+    let source_file = arena.get_source_file(root_node).expect("expected sf");
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = arena.get(class_idx).expect("expected class node");
+    let class_data = arena.get_class(class_node).expect("expected class data");
+
+    lowering.first_private_field_op_is_write_only(class_data)
+}
+
+#[test]
+fn test_first_private_op_method_read_then_setter() {
+    // First private field op is a read inside a method; setter follows. Helper
+    // emit order should be Get-before-Set, so this returns false.
+    let src = "class C { \
+        #foo; \
+        #method() { return this.#foo; } \
+        get #prop() { return this.#foo; } \
+        set #prop(v) { this.#foo = v; } \
+    }";
+    assert!(
+        !first_class_private_op_is_write_only(src),
+        "Standalone read in #method() should not flag write-only first op"
+    );
+}
+
+#[test]
+fn test_first_private_op_only_setter_is_write_only() {
+    // Only a setter writes the private field; first op is a plain assignment.
+    let src = "class C { \
+        #foo; \
+        set #prop(v) { this.#foo = v; } \
+    }";
+    assert!(
+        first_class_private_op_is_write_only(src),
+        "Plain assignment to #foo with no preceding read should be write-only"
+    );
+}
+
+#[test]
+fn test_first_private_op_read_in_argument_is_not_write_only() {
+    // Read appearing as a call argument before any assignment.
+    let src = "class C { \
+        #foo; \
+        #method() { sink(this.#foo); } \
+        set #prop(v) { this.#foo = v; } \
+    }";
+    assert!(
+        !first_class_private_op_is_write_only(src),
+        "Read in call argument should not flag write-only first op"
+    );
+}
+
+#[test]
+fn test_first_private_op_compound_assign_is_not_write_only() {
+    // Compound assignment requires both Get and Set, so not write-only.
+    let src = "class C { \
+        #foo = 0; \
+        bump() { this.#foo += 1; } \
+    }";
+    assert!(
+        !first_class_private_op_is_write_only(src),
+        "Compound assignment should not flag write-only first op"
+    );
+}

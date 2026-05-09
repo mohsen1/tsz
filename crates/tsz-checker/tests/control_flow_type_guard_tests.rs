@@ -17,6 +17,299 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let options = CheckerOptions {
+        strict: true,
+        allow_js: true,
+        check_js: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    tsz_checker::test_utils::check_source(source, "test.js", options)
+        .into_iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+#[test]
+fn nested_or_right_operand_preserves_false_path_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function f(x: number | string | boolean) {
+    let y: number | string | boolean;
+    let z: number | string | boolean;
+    return typeof x === "string"
+        || ((z = x)
+        || (typeof x === "number"
+        ? ((x = 10) && x.toString())
+        : ((y = x) && x.toString())));
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'toString' does not exist on type 'never'."
+        }),
+        "expected the conformance TS2339 for `x.toString()` narrowed to never, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn shadowed_builtin_guard_names_do_not_narrow() {
+    let diagnostics = strict_diagnostics(
+        r#"
+interface ArrayBufferView {
+    byteLength: number;
+}
+
+const Array = {
+    isArray(_value: unknown): boolean {
+        return true;
+    },
+};
+
+declare let maybeArray: string | string[];
+if (Array.isArray(maybeArray)) {
+    const arrayOnly: string[] = maybeArray;
+}
+
+const ArrayBuffer = {
+    isView(_value: unknown): boolean {
+        return true;
+    },
+};
+
+declare let maybeView: string | ArrayBufferView;
+if (ArrayBuffer.isView(maybeView)) {
+    const viewOnly: ArrayBufferView = maybeView;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message == "Type 'string | string[]' is not assignable to type 'string[]'."
+        }),
+        "expected shadowed Array.isArray to avoid array narrowing: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    == "Type 'string | ArrayBufferView' is not assignable to type 'ArrayBufferView'."
+        }),
+        "expected shadowed ArrayBuffer.isView to avoid ArrayBufferView narrowing: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn overloaded_type_guard_uses_selected_predicate() {
+    let diagnostics = strict_diagnostics(
+        r#"
+interface S {
+  s: string;
+}
+interface N {
+  n: number;
+}
+
+function guard(x: unknown): x is S;
+function guard(x: unknown, flag: true): x is N;
+function guard(_x: unknown, _flag?: true): _x is S | N {
+  return true;
+}
+function takesS(value: S): void {
+  value;
+}
+function takesN(value: N): void {
+  value;
+}
+
+let value = {} as S | N;
+
+if (guard(value, true)) {
+  takesN(value);
+  takesS(value);
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message == "Argument of type 'N' is not assignable to parameter of type 'S'."
+        }),
+        "expected selected two-argument overload to narrow value to N: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, message)| {
+            *code != 2345
+                || message != "Argument of type 'S' is not assignable to parameter of type 'N'."
+        }),
+        "overloaded type guard used the first predicate instead of the selected overload: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn instanceof_symbol_hasinstance_generic_predicate_erases_to_any() {
+    let source = r#"
+interface SymbolConstructor {
+    readonly hasInstance: unique symbol;
+}
+declare var Symbol: SymbolConstructor;
+
+interface BConstructor {
+    new <T>(): B<T>;
+    [Symbol.hasInstance](value: unknown): value is B<any>;
+}
+interface B<T> {
+    foo: T;
+}
+declare var B: BConstructor;
+
+declare var obj3: B<number> | string;
+if (obj3 instanceof B) {
+    obj3.foo = 1;
+    obj3.foo = "str";
+    obj3.bar = "str";
+}
+
+declare var obj4: any;
+if (obj4 instanceof B) {
+    obj4.bar = "str";
+}
+"#;
+
+    let diagnostics = strict_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'string' is not assignable to type 'number'."
+        }),
+        "expected assignment to preserve B<number> after instanceof, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'bar' does not exist on type 'B<number>'."
+        }),
+        "expected obj3.bar to see the narrowed B<number> type, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'bar' does not exist on type 'B<any>'."
+        }),
+        "expected obj4.bar to narrow any through B<any>, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("string | B<number>")),
+        "instanceof should not leave obj3 as the original union: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn typeof_primitive_checks_narrow_explicit_any_only_in_true_branch() {
+    let diagnostics = strict_diagnostics(
+        r#"
+var x: any = { p: 0 };
+
+if (x instanceof Object) {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "string") {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "number") {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "boolean") {
+    x.p;
+} else {
+    x.p;
+}
+
+if (typeof x === "object") {
+    x.p;
+} else {
+    x.p;
+}
+"#,
+    );
+
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2339.len(),
+        3,
+        "expected exactly the string/number/boolean true-branch TS2339 diagnostics, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("type 'string'")),
+        "expected string true-branch TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("type 'number'")),
+        "expected number true-branch TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("type 'boolean'")),
+        "expected boolean true-branch TS2339, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.iter().all(|message| !message.contains("never")),
+        "object/else branches must not narrow explicit any to never, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn homomorphic_mapped_type_preserves_null_in_primitive_union() {
+    let source = r#"
+type Narrowable = string | number | bigint | boolean;
+
+type Narrow<A> = (A extends Narrowable ? A : never) | ({
+    [K in keyof A]: Narrow<A[K]>;
+});
+
+const satisfies =
+  <TWide,>() =>
+  <TNarrow extends TWide>(narrow: Narrow<TNarrow>) =>
+    narrow;
+
+type Item = { value: string | null };
+
+satisfies<Item>()({ value: null });
+"#;
+
+    let diagnostics = strict_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "homomorphic mapped types should preserve null in primitive unions: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_user_defined_type_guard_narrowing_full() {
     let source = r#"
@@ -771,6 +1064,61 @@ function g(x) {
     assert!(
         relevant.is_empty(),
         "JSDoc @return {{x is number}} should create type predicate, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn jsdoc_assertion_return_predicate_accepts_tab_whitespace() {
+    let source = concat!(
+        "// @ts-check\n",
+        "\n",
+        "/**\n",
+        " * @param {unknown} value\n",
+        " * @returns {asserts\tvalue\tis\tstring}\n",
+        " */\n",
+        "function assertString(value) {}\n",
+        "\n",
+        "/** @type {string | number} */\n",
+        "let maybe = \"ok\";\n",
+        "\n",
+        "assertString(maybe);\n",
+        "maybe.toUpperCase();\n",
+    );
+
+    let diagnostics = checked_js_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "JSDoc @returns assertion predicates should accept tab whitespace: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn jsdoc_callback_assertion_predicate_accepts_tab_whitespace() {
+    let source = concat!(
+        "// @ts-check\n",
+        "\n",
+        "/**\n",
+        " * @callback AssertString\n",
+        " * @param {unknown} value\n",
+        " * @returns {asserts\tvalue\tis\tstring}\n",
+        " */\n",
+        "\n",
+        "/** @type {AssertString} */\n",
+        "const assertString = (value) => {};\n",
+        "\n",
+        "/** @type {string | number} */\n",
+        "let maybe = \"ok\";\n",
+        "\n",
+        "assertString(maybe);\n",
+        "maybe.toUpperCase();\n",
+    );
+
+    let diagnostics = checked_js_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "JSDoc @callback assertion predicates should accept tab whitespace: {diagnostics:#?}"
     );
 }
 
@@ -1588,6 +1936,68 @@ if (isFooBlock(foobar)) {
 }
 
 #[test]
+fn inferred_type_predicate_handles_simple_statements_before_return() {
+    let source = r#"
+function isString(value: unknown) {
+  const ignored = 0;
+  ignored;
+  return typeof value === "string";
+}
+
+declare const flag: boolean;
+let input: unknown = flag ? "text" : 1;
+
+if (isString(input)) {
+  const asString: string = input;
+  const asNumber: number = input;
+
+  asString;
+  asNumber;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        !ts2322.iter().any(|(_, message)| {
+            message.contains("Type 'unknown' is not assignable to type 'string'")
+        }),
+        "Inferred predicate should allow assigning input to string; diags={diags:#?}"
+    );
+    assert!(
+        ts2322.len() == 1,
+        "Expected only the remaining number assignment to fail; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_rejects_non_final_return_path() {
+    let source = r#"
+function isString(value: unknown, flag: boolean) {
+  if (flag) {
+    return false;
+  }
+  return typeof value === "string";
+}
+
+declare const flag: boolean;
+let input: unknown = flag ? "text" : 1;
+
+if (isString(input, flag)) {
+  const asString: string = input;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'unknown' is not assignable to type 'string'")
+        }),
+        "A block with an alternate return path must not infer a predicate; diags={diags:#?}"
+    );
+}
+
+#[test]
 fn inferred_type_predicate_handles_typeof_guard() {
     // `(x) => typeof x === "string"` should infer `x is string`.
     let source = r#"
@@ -1603,6 +2013,171 @@ if (isString(v)) {
     assert!(
         ts2322.is_empty(),
         "typeof inference should narrow v to string; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_instanceof_object_guard() {
+    let source = r#"
+function isDate(x: object) {
+  return x instanceof Date;
+}
+
+declare let value: object;
+if (isDate(value)) {
+  const date: Date = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2740),
+        "instanceof predicate inference should narrow object to Date; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_in_guard_through_non_null_assertion() {
+    let source = r#"
+type Foo = { foo: string };
+type Bar = Foo & { bar: string };
+
+function isBar(x: Foo | Bar | null) {
+  return "bar" in x!;
+}
+
+declare let value: Foo | Bar;
+if (isBar(value)) {
+  const bar: Bar = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2741),
+        "in-operator predicate inference should narrow to the member-bearing type; diags={diags:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_class_methods() {
+    let source = r#"
+class Inferrer {
+  isNumber(x: number | string) {
+    return typeof x === "number";
+  }
+}
+
+declare let value: number | string;
+const inferrer = new Inferrer();
+if (inferrer.isNumber(value)) {
+  const numberValue: number = value;
+} else {
+  const stringValue: string = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "method predicate inference should narrow both branches; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_same_parameter_or_guards() {
+    let source = r#"
+function isNumberOrString(x: unknown) {
+  return typeof x === "number" || typeof x === "string";
+}
+
+declare let value: unknown;
+if (isNumberOrString(value)) {
+  const primitive: number | string = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "OR guards for the same parameter should infer a union predicate; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_allows_throwing_prefix_path() {
+    let source = r#"
+function assertAndPredicate(x: string | number | Date) {
+  if (x instanceof Date) {
+    throw new Error();
+  }
+  return typeof x === "string";
+}
+
+declare let value: string | number | Date;
+if (assertAndPredicate(value)) {
+  const stringValue: string = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "throw-only prefix paths should not block predicate inference; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_satisfies_boolean_wrapper() {
+    let source = r#"
+const numbers = [1, 2, null, 3].filter((x) => (x != null) satisfies boolean);
+const accepted: number[] = numbers;
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "satisfies boolean should not hide an inferable predicate from filter; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_handles_safe_double_negation_truthiness() {
+    let source = r#"
+type Item = { value: string };
+const items = [{ value: "a" }, undefined].filter((item) => !!item);
+const accepted: Item[] = items;
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "double-negation truthiness should infer when the falsy branch is only nullish; ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn inferred_type_predicate_rejects_number_double_negation_truthiness() {
+    let source = r#"
+const isTruthy = (x: number | null) => !!x;
+declare let value: number | null;
+if (isTruthy(value)) {
+  const accepted: number = value;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type 'number | null' is not assignable to type 'number'")
+        }),
+        "number|null truthiness must not infer because 0 makes the false branch non-nullish; diags={diags:#?}"
     );
 }
 

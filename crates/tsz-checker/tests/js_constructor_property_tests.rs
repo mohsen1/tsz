@@ -4,7 +4,12 @@
 //! assignments are recognized as class instance property declarations,
 //! preventing false TS2339 errors.
 
+use std::path::Path;
+use std::sync::Arc;
+
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::LibContext;
 
 fn check_js(source: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
@@ -100,6 +105,205 @@ fn check_ts(source: &str) -> Vec<(u32, String)> {
 
 fn count_code(diags: &[(u32, String)], code: u32) -> usize {
     diags.iter().filter(|(c, _)| *c == code).count()
+}
+
+fn load_es5_lib_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_roots = [
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../TypeScript/src/lib"),
+    ];
+
+    for root in &lib_roots {
+        let lib_path = root.join("es5.d.ts");
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&lib_path)
+        {
+            return vec![Arc::new(LibFile::from_source(
+                "es5.d.ts".to_string(),
+                content,
+            ))];
+        }
+    }
+
+    Vec::new()
+}
+
+fn load_es5_and_dom_lib_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
+    ];
+
+    let mut lib_files = Vec::new();
+    for lib_path in lib_paths {
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&lib_path)
+            && let Some(file_name) = lib_path.file_name()
+        {
+            lib_files.push(Arc::new(LibFile::from_source(
+                file_name.to_string_lossy().to_string(),
+                content,
+            )));
+        }
+    }
+
+    lib_files
+}
+
+fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    check_js_with_lib_files(source, options, load_es5_lib_for_test())
+}
+
+fn check_js_with_es5_and_dom_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    check_js_with_lib_files(source, options, load_es5_and_dom_lib_for_test())
+}
+
+fn check_js_with_lib_files(
+    source: &str,
+    options: CheckerOptions,
+    lib_files: Vec<Arc<LibFile>>,
+) -> Vec<(u32, String)> {
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+
+    if lib_files.is_empty() {
+        checker.ctx.set_lib_contexts(Vec::new());
+    } else {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+#[test]
+fn checked_js_prototype_optional_parent_method_call_suppresses_ts2531() {
+    let source = r#"
+Element.prototype.remove ??= function () {
+  this.parentNode?.removeChild(this);
+};
+
+/**
+ * @this Node
+ */
+Element.prototype.remove ??= function () {
+  this.parentNode?.removeChild(this);
+};
+"#;
+    let diagnostics = check_js_with_es5_and_dom_lib(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        0,
+        "expected optional parentNode method calls to suppress TS2531, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn checked_js_prototype_plain_parent_method_call_reports_ts2531() {
+    let source = r#"
+Element.prototype.remove = function () {
+  this.parentNode.removeChild(this);
+};
+"#;
+    let diagnostics = check_js_with_es5_and_dom_lib(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        1,
+        "expected non-optional parentNode method call to report TS2531 once, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn checked_js_constructor_nullable_array_property_reports_possibly_null_on_method_read() {
+    let source = r#"
+function Installer () {
+    this.twices = []
+    this.twices = null
+}
+Installer.prototype.second = function () {
+    this.twices.push(1)
+    if (this.twices != null) {
+        this.twices.push('hi')
+    }
+}
+"#;
+    let diagnostics = check_js_with_es5_lib(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2531 && message == "Object is possibly 'null'." }),
+        "expected TS2531 on unchecked this.twices.push(), got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        1,
+        "expected the null check to narrow the second this.twices.push(), got: {diagnostics:#?}"
+    );
 }
 
 /// Basic constructor this.prop assignment → no TS2339 on instance access
@@ -207,6 +411,37 @@ d.b;
         ts2339.len(),
         0,
         "Expected no TS2339 for subclass constructor properties, got: {ts2339:?}"
+    );
+}
+
+#[test]
+fn test_js_constructor_nullable_array_method_call_reports_ts2531() {
+    let source = r#"
+function Installer() {
+    this.twices = [];
+    this.twices = null;
+}
+Installer.prototype.second = function () {
+    this.twices.push(1);
+    if (this.twices != null) {
+        this.twices.push("hi");
+    }
+}
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(&diagnostics, 2531),
+        1,
+        "Expected nullable JS constructor property method call to report TS2531 exactly once, got: {diagnostics:?}"
     );
 }
 
@@ -641,6 +876,28 @@ test.K.prototype = {
 }
 
 #[test]
+fn test_js_self_defaulting_expando_constructor_is_constructable() {
+    let source = r#"
+var test = {};
+test.K = test.K ||
+    function () {};
+test.K.prototype = {
+    add() {}
+};
+
+new test.K().add;
+"#;
+
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| !matches!(*code, 2351 | 7009 | 2339)),
+        "Expected self-defaulting expando constructor to stay constructable with prototype members, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts_expando_reads_remain_any_typed() {
     let source = r#"
 function fn() {}
@@ -853,6 +1110,35 @@ f.x;
         ts18048.len(),
         0,
         "Expected JS constructor new result to avoid false TS18048, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_constructor_without_assignments_is_constructable_and_checks_this_reads() {
+    let source = r#"
+/**
+ * @constructor
+ */
+function Actual() {
+    return this.missing;
+}
+
+new Actual();
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("'missing'")),
+        "Expected TS2339 for missing @constructor instance property, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 7009),
+        "Expected @constructor function to avoid TS7009, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2683),
+        "Expected @constructor function to suppress TS2683, got: {diagnostics:?}"
     );
 }
 
@@ -1142,6 +1428,67 @@ a.m("nope");
 }
 
 #[test]
+fn test_jsdoc_chained_prototype_and_static_function_assignments_preserve_member_types() {
+    let source = r#"
+function A () {
+    this.x = 1
+    /** @type {1} */
+    this.first = this.second = 1
+}
+/** @param {number} n */
+A.prototype.y = A.prototype.z = function f(n) {
+    return n + this.x
+}
+/** @param {number} m */
+A.s = A.t = function g(m) {
+    return m + this.x
+}
+var a = new A()
+a.y('no')
+a.z('not really')
+A.s('still no')
+A.t('not here either')
+a.first = 10
+"#;
+    let diagnostics = check_js(source);
+    let z_missing = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2339 && message.contains("Property 'z' does not exist on type 'A'")
+        })
+        .count();
+    assert_eq!(
+        z_missing, 0,
+        "chained prototype method assignments should expose both y and z on instances; got: {diagnostics:?}"
+    );
+    let string_to_number = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type 'string' is not assignable to parameter of type 'number'",
+                )
+        })
+        .count();
+    assert_eq!(
+        string_to_number, 2,
+        "expected both annotated prototype method calls to reject string arguments; got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("Property 'x' does not exist on type 'typeof A'")
+        }),
+        "static chained assignment function body should bind this to typeof A; got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("Property 'x' does not exist on type 'g'")
+        }),
+        "static chained assignment must not bind this to the function value itself; got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_prototype_object_function_properties_keep_constructor_this_and_ts7006() {
     let source = r#"
 function Color(obj) {
@@ -1282,6 +1629,78 @@ z.t = 2
         ts2322.len(),
         0,
         "Expected no TS2322 for compatible assignment z.t = 2, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_extends_type_args_specialize_inherited_constructor() {
+    let source = r#"
+/**
+ * @template T
+ * @param {T} flavour
+ */
+function Soup(flavour) {
+    this.flavour = flavour
+}
+
+/** @extends {Soup<{ claim: "ignorant" | "malicious" }>} */
+class Chowder extends Soup {
+}
+
+var chowder = new Chowder({ claim: "ignorant" });
+chowder.flavour.claim
+var errorNoArgs = new Chowder();
+var errorArgType = new Chowder(0);
+"#;
+
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected JSDoc @extends type arguments to specialize inherited instance properties, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2554 && message.contains("Expected 1 arguments") }),
+        "Expected inherited constructor arity to require Soup's parameter, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2345 && message.contains("not assignable") }),
+        "Expected inherited constructor parameter type to use JSDoc @extends argument, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_class_method_jsdoc_params_check_against_constructor_prototype_method() {
+    let source = r#"
+/**
+ * @constructor
+ * @param {number} numberOxen
+ */
+function Wagon(numberOxen) {
+    this.numberOxen = numberOxen
+}
+/** @param {*[]=} supplies */
+Wagon.prototype.load = function (supplies) {
+}
+class Sql extends Wagon {
+    /**
+     * @param {string[]} files
+     * @param {"csv" | "json"} format
+     */
+    load(files, format) {
+    }
+}
+"#;
+
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2416 && message.contains("Property 'load'") }),
+        "Expected TS2416 for incompatible JSDoc-typed method override, got: {diagnostics:?}"
     );
 }
 
@@ -1517,7 +1936,38 @@ a.empty;
 }
 
 #[test]
-fn test_plain_js_function_constructor_initializers_emit_ts7008_in_check_js() {
+fn test_plain_js_function_constructor_void_zero_initializer_does_not_declare_property() {
+    let source = r#"
+exports.j = 1;
+exports.k = void 0;
+var o = {};
+o.x = 1;
+o.y = void 0;
+o.x + o.y;
+
+function C() {
+    this.p = 1;
+    this.q = void 0;
+}
+var c = new C();
+c.p + c.q;
+"#;
+    let diagnostics = check_js(source);
+    let q_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| {
+            *code == 2339 && msg.contains("Property 'q' does not exist on type 'C'.")
+        })
+        .collect();
+    assert_eq!(
+        q_missing.len(),
+        2,
+        "Expected TS2339 for both void-zero constructor assignment and later property access, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_plain_js_function_constructor_provisional_initializers_emit_ts7008_in_check_js() {
     let source = r#"
 function A() {
     this.unknown = null;
@@ -1542,8 +1992,8 @@ function A() {
     assert!(
         ts7008_messages
             .iter()
-            .any(|msg| msg.contains("Member 'unknown' implicitly has an 'any' type.")),
-        "Expected TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
+            .all(|msg| !msg.contains("Member 'unknown' implicitly has an 'any' type.")),
+        "Did not expect TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
     );
     assert!(
         ts7008_messages
@@ -1671,9 +2121,15 @@ Installer.prototype.second = function () {
         },
     );
     let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
-    assert!(
-        codes.iter().filter(|&&code| code == 2322).count() >= 4,
-        "Expected string/bool/null assignment errors for closed constructor properties, got: {diagnostics:?}"
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2322).count(),
+        5,
+        "Expected closed constructor properties to report the same assignment mismatches as tsc, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2531).count(),
+        1,
+        "Expected unchecked nullable constructor property access to report TS2531 once, got: {diagnostics:?}"
     );
     let ts7008_messages: Vec<_> = diagnostics
         .iter()
@@ -1689,6 +2145,12 @@ Installer.prototype.second = function () {
     assert!(
         ts7008_messages
             .iter()
+            .all(|msg| !msg.contains("Member 'unknown' implicitly has an 'any' type.")),
+        "Expected prototype writes to suppress the stale constructor TS7008 for unknown, got: {diagnostics:?}"
+    );
+    assert!(
+        ts7008_messages
+            .iter()
             .all(|msg| !msg.contains("Member 'twice' implicitly has an 'any' type.")),
         "Expected no prototype-method TS7008 duplication for twice, got: {diagnostics:?}"
     );
@@ -1696,16 +2158,12 @@ Installer.prototype.second = function () {
         .iter()
         .filter(|(_, msg)| msg.contains("Property 'push' does not exist on type 'any[]'."))
         .collect();
-    // Two pushes (`this.twices.push(1)` and the narrowed-branch
-    // `this.twices.push('hi')`) each report `Property 'push' does not exist
-    // on type 'any[]'` in the no-lib harness. This PR's checked-JS implicit-
-    // any preservation changes the typing of `this.twices` so the two access
-    // sites no longer collapse into a single diagnostic — both call sites
-    // now report independently, matching tsc's per-site behavior.
+    // The no-lib harness still lacks Array.prototype.push, but null narrowing
+    // suppresses the narrowed-branch access error.
     assert_eq!(
         push_errors.len(),
-        2,
-        "Expected one TS2339 per push call site after JS implicit-any preservation, got: {diagnostics:?}"
+        1,
+        "Expected only the un-narrowed push access to fail in the no-lib harness, got: {diagnostics:?}"
     );
 }
 
@@ -1901,6 +2359,31 @@ f.a;
         count_code(&diagnostics, 2339),
         2,
         "Expected only chained `this.prop.prop` writes to emit TS2339, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_this_direct_write_checks_explicit_receiver_shape() {
+    let source = r#"
+/**
+ * @this {{ ready: boolean }}
+ */
+function mark() {
+  this.ready = true;
+  this.missing = 1;
+}
+
+mark.call({ ready: false });
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339
+                && message == "Property 'missing' does not exist on type '{ ready: boolean; }'."
+        }),
+        "Expected TS2339 for `this.missing` against the explicit @this receiver shape, got: {diagnostics:?}"
     );
 }
 

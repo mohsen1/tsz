@@ -14,318 +14,15 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-/// Returns true if the formatted type name matches a built-in wrapper type
-/// (Boolean, Number, String, Object). These types inherit properties from Object
-/// and missing-property diagnostics should be suppressed in favor of TS2322.
-pub(super) fn is_builtin_wrapper_name(name: &str) -> bool {
-    matches!(name, "Boolean" | "Number" | "String" | "Object")
-}
-
-/// Returns true if the formatted type name represents a TypeScript primitive type.
-/// This catches cases where a complex type (e.g., homomorphic mapped type over a
-/// primitive) evaluates/displays as a primitive, even if the solver's TypeId doesn't
-/// directly represent the primitive.
-pub(crate) fn is_primitive_type_name(name: &str) -> bool {
-    matches!(
-        name,
-        "string"
-            | "number"
-            | "boolean"
-            | "bigint"
-            | "symbol"
-            | "void"
-            | "undefined"
-            | "null"
-            | "never"
-    )
-}
-
-/// Returns true if the name is a reserved type name that cannot be used as
-/// an interface or class name (TS2427/TS2414). Matches tsc's
-/// `checkTypeNameIsReserved` which checks the `typeNames` set.
-pub(crate) fn is_reserved_type_name(name: &str) -> bool {
-    matches!(
-        name,
-        "any"
-            | "unknown"
-            | "never"
-            | "string"
-            | "number"
-            | "boolean"
-            | "symbol"
-            | "bigint"
-            | "void"
-            | "undefined"
-            | "null"
-            | "object"
-    )
-}
-
-/// Returns true if the display string looks like a function/callable type.
-/// Used as a fallback when TypeId-level detection fails due to TypeQuery/Lazy wrapping.
-/// Function types display as `(params) => ReturnType`.
-pub(super) fn is_function_type_display(name: &str) -> bool {
-    // A function type display always starts with `(` and contains `) => `.
-    name.starts_with('(') && name.contains(") => ")
-}
-
-/// Returns true if the property name is a standard Object.prototype method.
-/// These are implicitly available on all interfaces/objects through the Object
-/// prototype chain. When such a property appears as "missing" in a subtype check,
-/// it typically means the source type inherits it implicitly but its `ObjectShape`
-/// doesn't include it. In this case, the mismatch is a type compatibility issue
-/// (TS2322), not a missing property issue (TS2741).
-pub(super) fn is_object_prototype_method(name: impl AsRef<str>) -> bool {
-    matches!(
-        name.as_ref(),
-        "valueOf"
-            | "toString"
-            | "toLocaleString"
-            | "hasOwnProperty"
-            | "isPrototypeOf"
-            | "propertyIsEnumerable"
-            | "constructor"
-    )
-}
-
-/// Subset of Object.prototype methods that should still be reported as missing
-/// when the target is an array-like type. Array types override `toString` and
-/// `toLocaleString` with their own signatures, so these should NOT be filtered
-/// out from TS2739/TS2740 missing property lists for array targets.
-pub(super) fn is_object_prototype_method_for_array_target(name: impl AsRef<str>) -> bool {
-    matches!(
-        name.as_ref(),
-        "valueOf" | "hasOwnProperty" | "isPrototypeOf" | "propertyIsEnumerable" | "constructor"
-    )
-}
-
-/// Check if a type is a callable application type.
-/// This checks if it's an Application type whose base is a callable/function type,
-/// or if it's directly a callable/function type.
-fn is_callable_application_type(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
-    // Check if it's an application of a callable type
-    if let Some(app) = crate::query_boundaries::common::type_application(db, type_id) {
-        crate::query_boundaries::common::callable_shape_for_type(db, app.base).is_some()
-            || crate::query_boundaries::common::function_shape_for_type(db, app.base).is_some()
-    } else {
-        // Also check if it's directly a callable/function type
-        crate::query_boundaries::common::callable_shape_for_type(db, type_id).is_some()
-            || crate::query_boundaries::common::function_shape_for_type(db, type_id).is_some()
-    }
-}
-
-/// Check if a callable/function type has its own signature-level type parameters.
-fn has_own_signature_type_params(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, type_id) {
-        return shape
-            .call_signatures
-            .iter()
-            .chain(shape.construct_signatures.iter())
-            .any(|sig| !sig.type_params.is_empty());
-    }
-    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(db, type_id) {
-        return !shape.type_params.is_empty();
-    }
-    false
-}
+pub(crate) use super::assignability_type_helpers::{
+    display_is_literal_value, is_primitive_type_name, is_reserved_type_name,
+};
+pub(super) use super::assignability_type_helpers::{
+    has_own_signature_type_params, is_builtin_wrapper_name, is_callable_application_type,
+    is_object_prototype_method, is_object_prototype_method_for_array_target,
+};
 
 impl<'a> CheckerState<'a> {
-    /// Check if the assignment failure is due to exact optional property types.
-    ///
-    /// When `exactOptionalPropertyTypes` is enabled, optional properties don't
-    /// implicitly include `undefined`. If the source has `undefined` for properties
-    /// that are optional in the target, this is an exact optional property mismatch
-    /// and should produce TS2375 instead of TS2322.
-    ///
-    /// Mirrors tsc's `getExactOptionalUnassignableProperties` + `isExactOptionalPropertyMismatch`.
-    pub(super) fn has_exact_optional_property_mismatch(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        if !self.ctx.compiler_options.exact_optional_property_types {
-            return false;
-        }
-        // Evaluate types to resolve Lazy(DefId) references to concrete Object shapes
-        let target_eval = self.evaluate_type_for_assignability(target);
-        let source_eval = self.evaluate_type_for_assignability(source);
-        let Some(target_shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval)
-        else {
-            return false;
-        };
-        let source_shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_eval);
-        for target_prop in &target_shape.properties {
-            if !target_prop.optional {
-                continue;
-            }
-            // Check if the source has a property with the same name that includes undefined
-            let source_prop_type = source_shape
-                .as_ref()
-                .and_then(|s| s.properties.iter().find(|p| p.name == target_prop.name))
-                .map(|p| p.type_id);
-            if let Some(src_type) = source_prop_type
-                && crate::query_boundaries::class_type::type_includes_undefined(
-                    self.ctx.types,
-                    src_type,
-                )
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Detect assignment-to-optional-slot mismatches that should produce TS2412.
-    ///
-    /// TS2412 applies for exact-optional write targets (e.g. `obj.a = value`)
-    /// where the write type excludes `undefined` but the source includes it.
-    pub(super) fn has_exact_optional_write_target_mismatch(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        anchor_idx: NodeIndex,
-    ) -> bool {
-        if !self.ctx.compiler_options.exact_optional_property_types {
-            return false;
-        }
-        if !crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, source) {
-            return false;
-        }
-        if crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target) {
-            return false;
-        }
-
-        let anchor_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
-        let Some(anchor_node) = self.ctx.arena.get(anchor_idx) else {
-            return false;
-        };
-
-        let mut write_target_idx = if anchor_node.kind
-            == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || anchor_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            Some(anchor_idx)
-        } else if anchor_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
-            self.ctx
-                .arena
-                .get_expression_statement(anchor_node)
-                .and_then(|stmt| self.ctx.arena.get(stmt.expression))
-                .and_then(|expr_node| {
-                    if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                        return None;
-                    }
-                    let binary = self.ctx.arena.get_binary_expr(expr_node)?;
-                    if !self.is_assignment_operator(binary.operator_token) {
-                        return None;
-                    }
-                    let lhs = self
-                        .ctx
-                        .arena
-                        .skip_parenthesized_and_assertions(binary.left);
-                    let lhs_node = self.ctx.arena.get(lhs)?;
-                    (lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                        .then_some(lhs)
-                })
-        } else if anchor_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            self.ctx
-                .arena
-                .get_binary_expr(anchor_node)
-                .and_then(|binary| {
-                    if !self.is_assignment_operator(binary.operator_token) {
-                        return None;
-                    }
-                    let lhs = self
-                        .ctx
-                        .arena
-                        .skip_parenthesized_and_assertions(binary.left);
-                    let lhs_node = self.ctx.arena.get(lhs)?;
-                    (lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                        .then_some(lhs)
-                })
-        } else {
-            None
-        };
-
-        if write_target_idx.is_none()
-            && let Some(ext) = self.ctx.arena.get_extended(anchor_idx)
-            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-            && (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
-            && access.name_or_argument == anchor_idx
-        {
-            write_target_idx = Some(ext.parent);
-        }
-
-        let Some(write_target_idx) = write_target_idx else {
-            return false;
-        };
-        let Some(write_target_node) = self.ctx.arena.get(write_target_idx) else {
-            return false;
-        };
-
-        let is_property_like_write =
-            if write_target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                true
-            } else if write_target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-                self.ctx
-                    .arena
-                    .get_access_expr(write_target_node)
-                    .is_some_and(|access| {
-                        self.get_literal_index_from_node(access.name_or_argument)
-                            .is_some()
-                            || self
-                                .get_literal_string_from_node(access.name_or_argument)
-                                .is_some()
-                    })
-            } else {
-                false
-            };
-        if !is_property_like_write {
-            return false;
-        }
-
-        let read_target = self
-            .get_type_of_node_with_request(write_target_idx, &crate::context::TypingRequest::NONE);
-        if !crate::query_boundaries::class_type::type_includes_undefined(
-            self.ctx.types,
-            read_target,
-        ) {
-            return false;
-        }
-
-        // TS2412 only applies to true `?`-optional properties. When the read
-        // type includes `undefined` purely because `noUncheckedIndexedAccess`
-        // widened an index-signature lookup, the regular TS2322 path is the
-        // correct diagnostic — fall through. Detect this by checking whether
-        // `target | undefined` equals the read target: that pattern is the
-        // signature of NUIA-widening on a non-optional slot.
-        //
-        // Restrict the bail-out to ELEMENT_ACCESS writes, since NUIA only
-        // widens index-signature lookups; named PROPERTY_ACCESS writes always
-        // see `| undefined` from the property's own `?` optionality marker
-        // (or not at all), so the `target | undefined == read_target`
-        // signature is the *normal* shape there and shouldn't disable TS2412.
-        if self.ctx.compiler_options.no_unchecked_indexed_access
-            && write_target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            let target_with_undef = self
-                .ctx
-                .types
-                .factory()
-                .union(vec![target, TypeId::UNDEFINED]);
-            if target_with_undef == read_target {
-                return false;
-            }
-        }
-
-        true
-    }
-
     /// Get the declaring type name for a property in a target type.
     /// For inherited properties (e.g., from a base class), returns the base class name.
     /// Falls back to formatting the target type if no parent info is available.
@@ -364,6 +61,130 @@ impl<'a> CheckerState<'a> {
                             .cloned()
                     })
             })
+    }
+
+    fn property_info_for_missing_property_satisfaction(
+        &mut self,
+        ty: TypeId,
+        name: tsz_common::interner::Atom,
+    ) -> Option<tsz_solver::PropertyInfo> {
+        let resolved = self.resolve_type_for_property_access(ty);
+        let judged = self.judge_evaluate(resolved);
+        let evaluated = self.evaluate_type_with_env(ty);
+        let evaluated_resolved = self.resolve_type_for_property_access(evaluated);
+
+        [ty, resolved, judged, evaluated, evaluated_resolved]
+            .into_iter()
+            .find_map(|candidate| self.property_info_for_display(candidate, name))
+            .or_else(|| self.property_info_from_current_interface_declarations(ty, name))
+    }
+
+    fn property_info_from_current_interface_declarations(
+        &mut self,
+        ty: TypeId,
+        name: tsz_common::interner::Atom,
+    ) -> Option<tsz_solver::PropertyInfo> {
+        let sym_id = self.ctx.resolve_type_to_symbol_id(ty)?;
+        let declarations = self.ctx.binder.get_symbol(sym_id)?.declarations.clone();
+
+        declarations.into_iter().find_map(|decl_idx| {
+            let is_current_interface = {
+                let arena =
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+                std::ptr::eq(arena, self.ctx.arena)
+                    && arena
+                        .get(decl_idx)
+                        .is_some_and(|node| arena.get_interface(node).is_some())
+            };
+            if !is_current_interface {
+                return None;
+            }
+
+            let diag_count_before = self.ctx.diagnostics.len();
+            let interface_type = self.get_type_of_interface(decl_idx);
+            self.ctx.diagnostics.truncate(diag_count_before);
+            self.property_info_for_display(interface_type, name)
+        })
+    }
+
+    fn property_info_for_any_missing_property_satisfaction_type(
+        &mut self,
+        types: &[TypeId],
+        name: tsz_common::interner::Atom,
+    ) -> Option<tsz_solver::PropertyInfo> {
+        types
+            .iter()
+            .copied()
+            .find_map(|ty| self.property_info_for_missing_property_satisfaction(ty, name))
+    }
+
+    fn missing_property_is_satisfied_by_source(
+        &mut self,
+        source_types: &[TypeId],
+        target_types: &[TypeId],
+        property_name: tsz_common::interner::Atom,
+    ) -> bool {
+        let Some(source_prop) = self
+            .property_info_for_any_missing_property_satisfaction_type(source_types, property_name)
+        else {
+            return false;
+        };
+        if source_prop.optional || source_prop.visibility != tsz_solver::Visibility::Public {
+            return false;
+        }
+
+        let Some(target_prop) = self
+            .property_info_for_any_missing_property_satisfaction_type(target_types, property_name)
+        else {
+            return false;
+        };
+        if target_prop.visibility != tsz_solver::Visibility::Public {
+            return false;
+        }
+
+        let read_ok = if source_prop.is_method || target_prop.is_method {
+            self.is_assignable_to_bivariant(source_prop.type_id, target_prop.type_id)
+        } else {
+            self.is_assignable_to(source_prop.type_id, target_prop.type_id)
+        };
+        let write_ok = target_prop.readonly
+            || self.is_assignable_to(target_prop.write_type, source_prop.write_type);
+
+        read_ok && write_ok
+    }
+
+    fn direct_type_param_alias_application_pair_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<(String, String)> {
+        let (source_base, source_args) = self.application_info_or_display_alias(source)?;
+        let (target_base, target_args) = self.application_info_or_display_alias(target)?;
+        if source_base != target_base || source_args.len() != target_args.len() {
+            return None;
+        }
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let param = crate::query_boundaries::common::type_param_info(self.ctx.types, def.body?)?;
+        let arg_idx = def
+            .type_params
+            .iter()
+            .position(|type_param| type_param.name == param.name)?;
+        let source_arg = *source_args.get(arg_idx)?;
+        let target_arg = *target_args.get(arg_idx)?;
+        Some((
+            self.canonicalize_assignment_numeric_literal_union_display(
+                self.format_type_diagnostic(source_arg),
+            ),
+            self.canonicalize_assignment_numeric_literal_union_display(
+                self.format_type_diagnostic(target_arg),
+            ),
+        ))
     }
 
     fn callback_initializer_for_assignability_anchor(
@@ -514,7 +335,7 @@ impl<'a> CheckerState<'a> {
         let find_missing = |props: &[tsz_solver::PropertyInfo]| {
             props.iter().find_map(|prop| {
                 let prop_name = self.ctx.types.resolve_atom(prop.name);
-                if prop_name.starts_with("__private_brand_")
+                if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name)
                     || required_property_name.is_some_and(|required| prop.name != required)
                     || prop.visibility == tsz_solver::Visibility::Public
                     || source_has_prop(prop.name)
@@ -683,7 +504,7 @@ impl<'a> CheckerState<'a> {
             )
         });
         if needs_downgrade {
-            let src_str = self.format_type_for_assignability_message(source);
+            let src_str = "this".to_string();
             let tgt_str = self.format_type_for_assignability_message(target);
             let (src_str, tgt_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
@@ -711,7 +532,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         keyword_pos: Option<u32>,
     ) {
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        if !self.has_exact_optional_property_mismatch(source, target)
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             return;
         }
 
@@ -808,7 +631,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        if !self.has_exact_optional_property_mismatch(source, target)
+            && self.should_suppress_assignability_diagnostic(source, target)
+        {
             if tracing::enabled!(Level::TRACE) {
                 trace!(
                     source = source.0,
@@ -909,6 +734,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Exact-optional presence checks make `obj.a = obj.a` safe in the present branch.
+        if self.ctx.compiler_options.exact_optional_property_types
+            && self.same_property_self_assignment_in_presence_true_branch_for_anchor(anchor_idx)
+        {
+            return;
+        }
+
         // TS2375: exactOptionalPropertyTypes — undefined assigned to optional property without undefined.
         if self.has_exact_optional_property_mismatch(source, target) {
             let src_str = self.format_type_for_diagnostic_role(
@@ -941,11 +773,16 @@ impl<'a> CheckerState<'a> {
             // `undefined` is not under `exactOptionalPropertyTypes`. Surface
             // that narrowed display when the union strip leaves the target's
             // shape intact.
-            let narrowed_source = self.exact_optional_source_for_message(source, target);
-            let src_str = self.format_type_for_diagnostic_role(
-                narrowed_source,
-                DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
-            );
+            let narrowed_source =
+                self.exact_optional_source_for_message(source, target, anchor_idx);
+            let src_str = if narrowed_source == TypeId::UNDEFINED {
+                self.format_type_diagnostic(narrowed_source)
+            } else {
+                self.format_type_for_diagnostic_role(
+                    narrowed_source,
+                    DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                )
+            };
             let tgt_str = self.format_exact_optional_target_type_for_message(target);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2,
@@ -1031,11 +868,21 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
                 // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
-                if let tsz_solver::SubtypeFailureReason::MissingProperty { property_name, .. } =
-                    &failure_reason
+                if let tsz_solver::SubtypeFailureReason::MissingProperty {
+                    property_name,
+                    source_type,
+                    target_type,
+                } = &failure_reason
                 {
                     let pn = self.ctx.types.resolve_atom_ref(*property_name);
                     if pn.starts_with("[Symbol.") || pn.starts_with("__js_ctor_brand_") {
+                        return;
+                    }
+                    if self.missing_property_is_satisfied_by_source(
+                        &[source, *source_type],
+                        &[target, *target_type],
+                        *property_name,
+                    ) {
                         return;
                     }
                 }
@@ -1094,7 +941,7 @@ impl<'a> CheckerState<'a> {
                             );
                             return;
                         }
-                        if prop_name.starts_with("__private_brand") {
+                        if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                             // Private brand mismatch
                             self.error_type_not_assignable_generic_with_anchor(
                                 source, target, anchor_idx,
@@ -1151,22 +998,36 @@ impl<'a> CheckerState<'a> {
     /// only the `null` / `undefined` (or other non-overlapping) members are
     /// the actual mismatch, and tsc reports just those rather than the full
     /// source union.
-    fn exact_optional_source_for_message(&mut self, source: TypeId, target: TypeId) -> TypeId {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, source)
+    fn exact_optional_source_for_message(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> TypeId {
+        if self.same_property_self_assignment_in_presence_false_branch(anchor_idx) {
+            return TypeId::UNDEFINED;
+        }
+
+        let source_eval = self.evaluate_type_for_assignability(source);
+        let target_eval = self.evaluate_type_for_assignability(target);
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, source_eval)
         else {
             return source;
         };
-        let target_eval = self.evaluate_type_for_assignability(target);
         let mismatched: Vec<TypeId> = members
             .iter()
             .copied()
             .filter(|&m| !self.is_assignable_to(m, target_eval))
             .collect();
-        match mismatched.len() {
-            0 => source,
-            1 => mismatched[0],
-            _ => self.ctx.types.factory().union_preserve_members(mismatched),
+        if mismatched.len() == members.len()
+            && members.len() == 2
+            && members.contains(&TypeId::UNDEFINED)
+            && !crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target)
+        {
+            return TypeId::UNDEFINED;
         }
+        source
     }
 
     fn format_exact_optional_target_type_for_message(&mut self, target: TypeId) -> String {
@@ -1193,13 +1054,20 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> (String, String) {
-        let source_str = self.format_assignability_type_for_message(source, target);
+        let source_str = self
+            .related_generic_indexed_access_source_display(source, target)
+            .unwrap_or_else(|| self.format_assignability_type_for_message(source, target));
         let mut source_str = self.rewrite_source_display_for_non_literal_target_assignability(
             source, target, source_str,
         );
         let target_str = self.format_assignability_type_for_message(target, source);
         let mut target_str =
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
+
+        source_str = self.apply_ts2739_nonliteral(source, source_str);
+        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+            target_str = self.format_type_diagnostic(unfolded);
+        }
 
         let should_prefer_authoritative_name = |display: &str| {
             display.starts_with("{ ")
@@ -1253,9 +1121,7 @@ impl<'a> CheckerState<'a> {
         if let Some(rewritten) = rewrite_application_alias(self, target, &target_str) {
             target_str = rewritten;
         }
-        if let Some(display) = self.evaluated_literal_alias_source_display(source) {
-            source_str = display;
-        }
+        source_str = self.apply_eval_alias_nonliteral(source, source_str);
         if let Some(display) = self.evaluated_literal_alias_source_display(target) {
             target_str = display;
         }
@@ -1268,7 +1134,126 @@ impl<'a> CheckerState<'a> {
         ) {
             source_str = widened;
         }
-        self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str)
+        let (source_str, mut target_str) =
+            self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+        let mut source_str = source_str;
+        if let Some(display) = self.static_schema_array_structural_display(source, target) {
+            source_str = display;
+        }
+        if let Some(display) = self.static_schema_array_structural_display(target, source) {
+            target_str = display;
+        }
+        if let Some((direct_source, direct_target)) =
+            self.direct_type_param_alias_application_pair_display(source, target)
+        {
+            source_str = direct_source;
+            target_str = direct_target;
+        }
+        if let Some(display) =
+            self.contextual_callable_application_target_display(target, source, &target_str)
+        {
+            target_str = display;
+        }
+        (source_str, target_str)
+    }
+
+    fn contextual_callable_application_target_display(
+        &mut self,
+        target: TypeId,
+        source: TypeId,
+        target_display: &str,
+    ) -> Option<String> {
+        // Reverse-mapped contextual targets can re-expand the pair display back
+        // to `Selector<S, T["editable"]>` even after assignability has an
+        // evaluated `Selector<any, {}>` application. Repaint only those indexed
+        // access displays, preserving ordinary explicit `Selector<any, ...>`
+        // annotations.
+        if !(target_display.contains('[') && target_display.contains(']')) {
+            return None;
+        }
+
+        let evaluated_target = self.evaluate_type_for_assignability(target);
+        let db = self.ctx.types;
+        let display_target =
+            if crate::query_boundaries::common::type_application(db, target).is_some() {
+                target
+            } else {
+                self.ctx.types.get_display_alias(target)?
+            };
+        let app_target =
+            if crate::query_boundaries::common::type_application(db, evaluated_target).is_some() {
+                evaluated_target
+            } else {
+                display_target
+            };
+        let app = crate::query_boundaries::common::type_application(db, app_target)?;
+        let target_shape =
+            crate::query_boundaries::common::function_shape_for_type(db, display_target)
+                .or_else(|| crate::query_boundaries::common::function_shape_for_type(db, target))
+                .or_else(|| {
+                    crate::query_boundaries::common::function_shape_for_type(db, evaluated_target)
+                })?;
+        let source_shape = crate::query_boundaries::common::function_shape_for_type(db, source)?;
+        if source_shape.params.len() <= target_shape.params.len() {
+            return None;
+        }
+
+        let mut changed = false;
+        let mut display_args = Vec::with_capacity(app.args.len());
+        for &arg in &app.args {
+            let replacement = target_shape
+                .params
+                .iter()
+                .zip(source_shape.params.iter())
+                .find_map(|(target_param, source_param)| {
+                    (target_param.type_id == arg
+                        || crate::query_boundaries::common::contains_type_by_id(
+                            db,
+                            target_param.type_id,
+                            arg,
+                        ))
+                    .then(|| {
+                        let source_param = crate::query_boundaries::common::widen_type_for_display(
+                            db,
+                            source_param.type_id,
+                        );
+                        if source_param == TypeId::ANY {
+                            TypeId::UNKNOWN
+                        } else {
+                            source_param
+                        }
+                    })
+                })
+                .or_else(|| {
+                    (target_shape.return_type == arg
+                        || crate::query_boundaries::common::contains_type_by_id(
+                            db,
+                            target_shape.return_type,
+                            arg,
+                        ))
+                    .then(|| {
+                        crate::query_boundaries::common::widen_type_for_display(
+                            db,
+                            source_shape.return_type,
+                        )
+                    })
+                })
+                .or_else(|| {
+                    crate::query_boundaries::common::contains_type_parameters(db, arg)
+                        .then_some(TypeId::UNKNOWN)
+                });
+
+            let display_arg = replacement.unwrap_or(arg);
+            changed |= display_arg != arg;
+            display_args.push(display_arg);
+        }
+
+        if !changed {
+            return None;
+        }
+
+        let display_app = self.ctx.types.factory().application(app.base, display_args);
+        Some(self.format_type_for_assignability_message(display_app))
     }
 
     pub(in crate::error_reporter) fn rewrite_standalone_literal_source_for_keyof_display(
@@ -1325,12 +1310,91 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> (String, String) {
-        let (source_str, _) = self.format_top_level_assignability_message_types(source, target);
+        let (mut source_str, _) = self.format_top_level_assignability_message_types(source, target);
+        if self
+            .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
+        {
+            let widened = self.widen_type_for_display(source);
+            source_str = self.format_assignability_type_for_message(widened, target);
+        }
+        let mut source_from_annotation = false;
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && let Some(annotation_text) =
+                self.declared_type_annotation_text_for_expression(expr_idx)
+            && annotation_text.contains('&')
+            && !annotation_text.trim_start().starts_with("keyof ")
+        {
+            source_str = self
+                .declared_intersection_annotation_display_for_expression(expr_idx)
+                .unwrap_or_else(|| {
+                    self.format_declared_annotation_for_diagnostic(&annotation_text)
+                });
+            source_from_annotation = true;
+        }
+        if self
+            .collapsed_anonymous_object_intersection_for_assignability_display(source)
+            .is_some()
+            && let Some(annotation_text) =
+                self.line_rhs_declared_intersection_annotation(anchor_idx)
+        {
+            source_str = self.format_declared_annotation_for_diagnostic(&annotation_text);
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
+            && let Some(object_display) =
+                self.object_literal_source_type_display(anchor_idx, Some(target))
+        {
+            source_str = self.rewrite_source_display_for_non_literal_target_assignability(
+                source,
+                target,
+                object_display,
+            );
+        }
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx));
+        if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
+            && let Some(tuple_display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+        {
+            source_str = tuple_display;
+        }
+        if self
+            .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
+        {
+            let widened = self.widen_type_for_display(source);
+            source_str = self.format_assignability_type_for_message(widened, target);
+        }
+        if let Some(display) = self.literal_assignment_source_display_for_target(target, anchor_idx)
+        {
+            source_str = display;
+        }
         let target_str = self.format_type_for_diagnostic_role(
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
         );
-        self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str)
+        let (source_str, mut target_str) =
+            self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+        let mut source_str = source_str;
+        source_str = self.apply_ts2739_nonliteral(source, source_str);
+        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+            target_str = self.format_type_diagnostic(unfolded);
+        }
+        if let Some(display) = self.static_schema_array_structural_display(source, target) {
+            source_str = display;
+        }
+        if let Some(display) = self.static_schema_array_structural_display(target, source) {
+            target_str = display;
+        }
+        if let Some(display) =
+            self.contextual_callable_application_target_display(target, source, &target_str)
+        {
+            target_str = display;
+        }
+        (source_str, target_str)
     }
 
     pub(super) fn rewrite_source_display_for_non_literal_target_assignability(
@@ -1518,7 +1582,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let rest = &display[i + 2..];
-            if rest.starts_with('"') || rest.starts_with("true") || rest.starts_with("false") {
+            if rest.starts_with('"')
+                || rest.starts_with('\'')
+                || rest.starts_with("true")
+                || rest.starts_with("false")
+            {
                 return true;
             }
             if rest
@@ -1644,7 +1712,6 @@ impl<'a> CheckerState<'a> {
         out
     }
 
-    /// Internal generic error reporting for type assignability failures.
     pub(crate) fn error_type_not_assignable_generic_at(
         &mut self,
         source: TypeId,
@@ -1743,7 +1810,7 @@ impl<'a> CheckerState<'a> {
                         // doesn't report these as missing properties.
                         return;
                     }
-                    if prop_name.starts_with("__private_brand") {
+                    if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                         if let Some((display_prop, owner_name, visibility)) =
                             self.private_or_protected_brand_backing_member_display(target, None)
                         {
@@ -1823,6 +1890,29 @@ impl<'a> CheckerState<'a> {
             );
             let (src_str, tgt_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
+            let mut src_str = src_str;
+            let mut tgt_str = tgt_str;
+            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+                src_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str) {
+                tgt_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(display) = self.static_schema_array_structural_display(source, target) {
+                src_str = display;
+            }
+            if let Some(display) = self.static_schema_array_structural_display(target, source) {
+                tgt_str = display;
+            }
+            if let Some((direct_source, direct_target)) =
+                self.direct_type_param_alias_application_pair_display(source, target)
+            {
+                src_str = direct_source;
+                tgt_str = direct_target;
+            }
+            if let Some(display) = self.type_query_static_array_structural_display(&src_str) {
+                src_str = display;
+            }
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);
@@ -1838,28 +1928,20 @@ impl<'a> CheckerState<'a> {
             // `true` — that lookup wrongly repaints the source as an unrelated
             // boxed/wrapper interface (TypeId-keyed `find_def_for_type` can hand
             // back `Boolean`/`Number` for primitive sources).  Keep the literal.
-            let display_is_literal_value = |s: &str| {
-                if s == "true" || s == "false" || s == "null" || s == "undefined" {
-                    return true;
-                }
-                if s.starts_with('"') || s.starts_with('\'') || s.starts_with('`') {
-                    return true;
-                }
-                let bare = s.strip_prefix('-').unwrap_or(s);
-                let mut chars = bare.chars();
-                chars.next().is_some_and(|c| c.is_ascii_digit())
-                    && chars.all(|c| {
-                        c.is_ascii_digit()
-                            || c == '.'
-                            || c == 'e'
-                            || c == 'E'
-                            || c == '+'
-                            || c == '-'
-                            || c == 'n'
-                    })
-            };
+            let display_is_literal_value = display_is_literal_value;
 
-            let (message, code) = if src_str == tgt_str && !authoritative_names_differ {
+            // TS2719 is reserved for two NOMINAL types that share a name but are
+            // structurally distinct (typically merged-declaration ambiguity).
+            // Literal-value displays — `"foo"`, `42`, `true`, etc. — never carry
+            // a nominal identity, so identical literal-value displays must mean
+            // identical types. Emitting TS2719 with `Type '"name"' is not
+            // assignable to type '"name"'` is misleading. Fall through to TS2322.
+            let pair_is_literal_value =
+                display_is_literal_value(&src_str) && display_is_literal_value(&tgt_str);
+            let (message, code) = if src_str == tgt_str
+                && !authoritative_names_differ
+                && !pair_is_literal_value
+            {
                 (
                     format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
@@ -1877,6 +1959,8 @@ impl<'a> CheckerState<'a> {
                     && authoritative_src.as_deref() == source_generic_base;
                 let source_name = if src_str.starts_with("typeof ")
                     || src_str.starts_with("import(")
+                    || src_str.starts_with('{')
+                    || src_str.contains('<')
                     || preserve_generic_nominal_pair
                     || display_is_literal_value(&src_str)
                 {
@@ -1886,6 +1970,8 @@ impl<'a> CheckerState<'a> {
                 };
                 let target_name = if tgt_str.starts_with("typeof ")
                     || tgt_str.starts_with("import(")
+                    || tgt_str.starts_with('{')
+                    || tgt_str.contains('<')
                     || preserve_generic_nominal_pair
                     || display_is_literal_value(&tgt_str)
                 {
@@ -1907,8 +1993,4 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
-
-    // `render_failure_reason` has been moved to `render_failure.rs`.
-    // The `format_top_level_assignability_message_types` helper remains here
-    // because it is used by both assignability entry points and the render module.
 }

@@ -1,6 +1,7 @@
 //! JS prototype owner expression helpers and constructor body instance type resolution.
 use crate::state::CheckerState;
 use crate::types_domain::computation::complex_constructors::PrototypeMembers;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -133,18 +134,25 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         let owner_text = self.expression_text(owner_expr)?;
 
+        // Resolve the owner identifier in its lexical scope so JS prototype
+        // assignments inside an IIFE or any other nested function still find
+        // the local constructor declaration. `file_locals` only covers
+        // top-level declarations.
         if !owner_text.contains('.')
-            && let Some(sym_id) = self.ctx.binder.file_locals.get(owner_text.as_str())
+            && let Some(sym_id) = self
+                .resolve_identifier_symbol(owner_expr)
+                .or_else(|| self.ctx.binder.file_locals.get(owner_text.as_str()))
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
             let value_decl = symbol.value_declaration;
-            let value_node = self.ctx.arena.get(value_decl)?;
-            if value_node.is_function_like() {
-                return Some(value_decl);
-            }
-            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node) {
-                let init_node = self.ctx.arena.get(var_decl.initializer)?;
-                if init_node.is_function_like() {
+            if let Some(value_node) = self.ctx.arena.get(value_decl) {
+                if value_node.is_function_like() {
+                    return Some(value_decl);
+                }
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node)
+                    && let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+                    && init_node.is_function_like()
+                {
                     return Some(var_decl.initializer);
                 }
             }
@@ -208,22 +216,18 @@ impl<'a> CheckerState<'a> {
             })?;
         let mut properties = rustc_hash::FxHashMap::default();
         self.collect_js_constructor_this_properties(body_idx, &mut properties, None, false);
-        if let Some(func_node) = self.ctx.arena.get(func_idx)
-            && let Some(func) = self.ctx.arena.get_function(func_node)
-            && let Some(func_name) = func.name.into_option().and_then(|name_idx| {
-                self.ctx
-                    .arena
-                    .get(name_idx)
-                    .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
-            })
-            && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
-        {
+        let constructor_property_names: rustc_hash::FxHashSet<_> =
+            properties.keys().copied().collect();
+        if let Some((func_name, sym_id)) = self.js_constructor_function_name_and_symbol(func_idx) {
             let PrototypeMembers {
                 method_bindings,
                 this_props,
                 ..
-            } = self.collect_prototype_members_and_this_properties(func_idx, &func_name, sym_id);
+            } = self.collect_prototype_members_and_this_properties(
+                func_idx,
+                &func_name,
+                Some(sym_id),
+            );
             for (name, prop) in method_bindings {
                 properties.entry(name).or_insert(prop);
             }
@@ -233,6 +237,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(existing) = properties.get_mut(&name) {
                     if existing.write_type == TypeId::ANY {
                         existing.type_id = factory.union2(existing.type_id, widened_prop_type);
+                    } else if !constructor_property_names.contains(&name) {
+                        let merged = factory.union2(existing.type_id, widened_prop_type);
+                        existing.type_id = merged;
+                        existing.write_type = merged;
                     }
                 } else {
                     prop.type_id = widened_prop_type;
@@ -252,5 +260,39 @@ impl<'a> CheckerState<'a> {
                     .object(properties.into_values().collect()),
             )
         }
+    }
+
+    fn js_constructor_function_name_and_symbol(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<(String, SymbolId)> {
+        if let Some(func_node) = self.ctx.arena.get(func_idx)
+            && let Some(func) = self.ctx.arena.get_function(func_node)
+            && let Some(func_name) = func.name.into_option().and_then(|name_idx| {
+                self.ctx
+                    .arena
+                    .get(name_idx)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+            })
+            && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
+        {
+            return Some((func_name, sym_id));
+        }
+
+        let parent = self.ctx.arena.get_extended(func_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        if var_decl.initializer != func_idx {
+            return None;
+        }
+        let name = self
+            .ctx
+            .arena
+            .get(var_decl.name)
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone())?;
+        let sym_id = self.ctx.binder.get_node_symbol(parent)?;
+        Some((name, sym_id))
     }
 }

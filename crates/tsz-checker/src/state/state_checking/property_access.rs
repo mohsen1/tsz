@@ -11,6 +11,96 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn simple_member_name_in_arena(
+        arena: &tsz_parser::parser::node::NodeArena,
+        member_idx: NodeIndex,
+    ) -> Option<String> {
+        let member = arena.get(member_idx)?;
+        let name_idx = arena
+            .get_signature(member)
+            .map(|signature| signature.name)
+            .or_else(|| arena.get_accessor(member).map(|accessor| accessor.name))?;
+        let name_node = arena.get(name_idx)?;
+        if let Some(ident) = arena.get_identifier(name_node) {
+            return Some(ident.escaped_text.clone());
+        }
+        if let Some(lit) = arena.get_literal(name_node) {
+            return Some(lit.text.clone());
+        }
+        None
+    }
+
+    fn recover_lazy_interface_member_type(
+        &mut self,
+        original_object_type: TypeId,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        let def_id =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)
+                .or_else(|| {
+                    self.ctx
+                        .definition_store
+                        .find_def_for_type(original_object_type)
+                })?;
+        let sym_id = self.ctx.def_to_symbol_id(def_id)?;
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
+            return None;
+        }
+
+        let declarations = symbol.declarations.clone();
+        for decl_idx in declarations {
+            if let Some(interface) = self
+                .ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_interface(node))
+            {
+                for &member_idx in &interface.members.nodes {
+                    if Self::simple_member_name_in_arena(self.ctx.arena, member_idx).as_deref()
+                        == Some(prop_name)
+                    {
+                        return Some(self.get_type_of_interface_member_simple(member_idx));
+                    }
+                }
+            }
+
+            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                continue;
+            };
+            for arena in arenas.clone() {
+                let Some(interface) = arena
+                    .get(decl_idx)
+                    .and_then(|node| arena.get_interface(node))
+                else {
+                    continue;
+                };
+                for &member_idx in &interface.members.nodes {
+                    if Self::simple_member_name_in_arena(arena.as_ref(), member_idx).as_deref()
+                        != Some(prop_name)
+                    {
+                        continue;
+                    }
+                    if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                        return Some(self.get_type_of_interface_member_simple(member_idx));
+                    }
+                    if let Some(member_type) = self
+                        .delegate_cross_arena_interface_member_simple_type(
+                            decl_idx,
+                            member_idx,
+                            arena.as_ref(),
+                            None,
+                        )
+                    {
+                        return Some(member_type);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
         use crate::query_boundaries::{assignability, common, property_access};
 
@@ -32,6 +122,108 @@ impl<'a> CheckerState<'a> {
                     || (is_numeric_name && property_access::is_number_type(self.ctx.types, member))
             })
         })
+    }
+
+    fn remapped_name_contains_property(
+        &mut self,
+        remapped_name: TypeId,
+        prop_atom: tsz_common::Atom,
+    ) -> Option<bool> {
+        let remapped_name = self.evaluate_type_with_env(remapped_name);
+        if remapped_name == TypeId::NEVER {
+            return Some(false);
+        }
+        if let Some(name) = query::literal_string(self.ctx.types, remapped_name) {
+            return Some(name == prop_atom);
+        }
+        if let Some(members) = query::union_members(self.ctx.types, remapped_name) {
+            let mut saw_match = false;
+            for member in members {
+                let name = query::literal_string(self.ctx.types, member)?;
+                saw_match |= name == prop_atom;
+            }
+            return Some(saw_match);
+        }
+        None
+    }
+
+    fn resolve_remapped_mapped_property_from_source_union(
+        &mut self,
+        mapped: &tsz_solver::MappedType,
+        constraint: TypeId,
+        prop_name: &str,
+    ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
+        let name_type = mapped.name_type?;
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let source_members =
+            query::union_members(self.ctx.types, constraint).unwrap_or_else(|| vec![constraint]);
+        if source_members.is_empty() {
+            return None;
+        }
+
+        let mut matched_property_types = Vec::new();
+        let mut saw_resolvable_source = false;
+        for source_member in source_members {
+            if source_member == TypeId::ANY
+                || source_member == TypeId::UNKNOWN
+                || source_member == TypeId::ERROR
+            {
+                return None;
+            }
+
+            let subst = crate::query_boundaries::common::TypeSubstitution::single(
+                mapped.type_param.name,
+                source_member,
+            );
+            let remapped_name = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                name_type,
+                &subst,
+            );
+            let contains_property =
+                self.remapped_name_contains_property(remapped_name, prop_atom)?;
+            saw_resolvable_source = true;
+            if !contains_property {
+                continue;
+            }
+
+            let property_type = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                mapped.template,
+                &subst,
+            );
+            let property_type = self.evaluate_type_with_env(property_type);
+            let property_type = match mapped.optional_modifier {
+                Some(tsz_solver::MappedModifier::Add) => self
+                    .ctx
+                    .types
+                    .factory()
+                    .union2(property_type, TypeId::UNDEFINED),
+                Some(tsz_solver::MappedModifier::Remove) | None => property_type,
+            };
+            matched_property_types.push(property_type);
+        }
+
+        if matched_property_types.is_empty() {
+            return saw_resolvable_source.then_some(
+                tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                    type_id: self.ctx.types.factory().mapped(*mapped),
+                    property_name: prop_atom,
+                },
+            );
+        }
+
+        let type_id = match matched_property_types.len() {
+            1 => matched_property_types[0],
+            _ => self.ctx.types.factory().union(matched_property_types),
+        };
+        Some(
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id,
+                write_type: None,
+                from_index_signature: false,
+            },
+        )
     }
 
     pub(crate) fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
@@ -100,6 +292,7 @@ impl<'a> CheckerState<'a> {
         // The solver-internal evaluator has no TypeResolver, so TypeQuery types
         // can't be resolved there. Resolve them here using the checker's environment.
         let object_type = self.resolve_type_query_type(object_type);
+        let original_object_type = object_type;
 
         // Ensure preconditions are ready in the environment for non-trivial
         // property-access inputs. Already-resolved/function-like inputs don't
@@ -135,7 +328,23 @@ impl<'a> CheckerState<'a> {
         // Route through QueryDatabase so repeated property lookups hit QueryCache.
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.
-        let result = self.resolve_property_access_via_boundary(object_type, prop_name);
+        let mut result = self.resolve_property_access_via_boundary(object_type, prop_name);
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                from_index_signature: false,
+                ..
+            }
+        ) && let Some(member_type) =
+            self.recover_lazy_interface_member_type(original_object_type, prop_name)
+        {
+            result = tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type,
+                write_type: None,
+                from_index_signature: false,
+            };
+        }
 
         self.resolve_property_access_with_env_post_query(object_type, prop_name, result)
     }
@@ -467,6 +676,12 @@ impl<'a> CheckerState<'a> {
                     from_index_signature: false,
                 },
             );
+        }
+
+        if let Some(result) =
+            self.resolve_remapped_mapped_property_from_source_union(&mapped, constraint, prop_name)
+        {
+            return Some(result);
         }
 
         if let Some(names) =

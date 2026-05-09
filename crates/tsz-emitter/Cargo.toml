@@ -75,12 +75,68 @@ name = "duplicate_extends_recovery_tests"
 path = "tests/duplicate_extends_recovery_tests.rs"
 
 [[test]]
+name = "debugger_namespace_recovery_tests"
+path = "tests/debugger_namespace_recovery_tests.rs"
+
+[[test]]
 name = "class_member_recovery_tests"
 path = "tests/class_member_recovery_tests.rs"
 
 [[test]]
 name = "expression_with_type_arguments_tests"
 path = "tests/expression_with_type_arguments_tests.rs"
+
+[[test]]
+name = "system_using_es_decorator_default_tests"
+path = "tests/system_using_es_decorator_default_tests.rs"
+
+[[test]]
+name = "system_using_default_tracker_tests"
+path = "tests/system_using_default_tracker_tests.rs"
+
+[[test]]
+name = "parenthesized_type_erasure_tests"
+path = "tests/parenthesized_type_erasure_tests.rs"
+
+[[test]]
+name = "cjs_arbitrary_module_namespace_identifier_tests"
+path = "tests/cjs_arbitrary_module_namespace_identifier_tests.rs"
+
+[[test]]
+name = "cjs_import_equals_export_tests"
+path = "tests/cjs_import_equals_export_tests.rs"
+
+[[test]]
+name = "import_use_before_decl_3597_tests"
+path = "tests/import_use_before_decl_3597_tests.rs"
+
+[[test]]
+name = "cjs_destructuring_export_inline_tests"
+path = "tests/cjs_destructuring_export_inline_tests.rs"
+
+[[test]]
+name = "tc39_named_class_expression_set_function_name_tests"
+path = "tests/tc39_named_class_expression_set_function_name_tests.rs"
+
+[[test]]
+name = "script_mode_import_equals_interface_alias_tests"
+path = "tests/script_mode_import_equals_interface_alias_tests.rs"
+
+[[test]]
+name = "system_top_level_using_env_position_tests"
+path = "tests/system_top_level_using_env_position_tests.rs"
+
+[[test]]
+name = "using_force_strict_mode_3516_tests"
+path = "tests/using_force_strict_mode_3516_tests.rs"
+
+[[test]]
+name = "jsx_cjs_runtime_collision_tests"
+path = "tests/jsx_cjs_runtime_collision_tests.rs"
+
+[[test]]
+name = "async_arrow_default_param_3758_tests"
+path = "tests/async_arrow_default_param_3758_tests.rs"
 
 [lints]
 workspace = true

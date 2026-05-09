@@ -2,26 +2,27 @@ use crate::emitter::ScriptTarget;
 use crate::output::printer::{PrintOptions, Printer};
 use tsz_parser::ParserState;
 
-fn parse_and_print(source: &str) -> String {
+fn parse_and_print_with_opts(source: &str, opts: PrintOptions) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    let mut printer = Printer::new(&parser.arena, opts);
     printer.set_source_text(source);
     printer.print(root);
     printer.finish().code
 }
 
+fn parse_and_print(source: &str) -> String {
+    parse_and_print_with_opts(source, PrintOptions::default())
+}
+
 fn parse_and_print_for_target(source: &str, target: ScriptTarget) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let opts = PrintOptions {
-        target,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    printer.finish().code
+    parse_and_print_with_opts(
+        source,
+        PrintOptions {
+            target,
+            ..Default::default()
+        },
+    )
 }
 
 /// Regression test: trailing comments on static class fields must be
@@ -33,9 +34,12 @@ fn static_field_lowering_preserves_trailing_comment() {
 
     let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
 
-    // The lowered static field should preserve the trailing comment
+    // The lowered static field should preserve the trailing comment even if
+    // the initializer is rewritten to use a class-value alias.
     assert!(
-        output.contains("C3.intance = new C3(); // ok"),
+        output
+            .lines()
+            .any(|line| line.starts_with("C3.intance = ") && line.ends_with(" // ok")),
         "Trailing comment '// ok' should be preserved on lowered static field.\nOutput:\n{output}"
     );
 }
@@ -181,6 +185,48 @@ fn auto_accessor_mixed_static_and_instance_fields_emit_expected_helpers_and_stor
 }
 
 #[test]
+fn private_auto_accessors_emit_accessor_helpers_at_es2015() {
+    let source = "class C1 {\n    accessor #a: any;\n    accessor #b = 1;\n    static accessor #c: any;\n    static accessor #d = 2;\n\n    constructor() {\n        this.#a = 3;\n        this.#b = 4;\n    }\n\n    static {\n        this.#c = 5;\n        this.#d = 6;\n    }\n}\n";
+
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("var _C1_instances, _a, _C1_a_get, _C1_a_set, _C1_b_get, _C1_b_set, _C1_c_get, _C1_c_set, _C1_d_get, _C1_d_set, _C1_a_accessor_storage, _C1_b_accessor_storage, _C1_c_accessor_storage, _C1_d_accessor_storage;"),
+        "Private auto-accessor helper declarations should match tsc order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_instances.add(this);\n        _C1_a_accessor_storage.set(this, void 0);\n        _C1_b_accessor_storage.set(this, 1);\n        __classPrivateFieldSet(this, _C1_instances, 3, \"a\", _C1_a_set);\n        __classPrivateFieldSet(this, _C1_instances, 4, \"a\", _C1_b_set);"),
+        "Instance private auto-accessors should initialize storage and route writes through setters.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_a_accessor_storage = new WeakMap(), _C1_b_accessor_storage = new WeakMap(), _C1_a_get = function _C1_a_get() { return __classPrivateFieldGet(this, _C1_a_accessor_storage, \"f\"); }, _C1_a_set = function _C1_a_set(value) { __classPrivateFieldSet(this, _C1_a_accessor_storage, value, \"f\"); }"),
+        "Private auto-accessors should emit backing storage before extracted accessors.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = C1, _C1_instances = new WeakSet(), _C1_a_accessor_storage = new WeakMap(), _C1_b_accessor_storage = new WeakMap()"),
+        "Private auto-accessor storage should stay in the pre-static private initialization chain.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_c_get = function _C1_c_get() { return __classPrivateFieldGet(_a, _a, \"f\", _C1_c_accessor_storage); }, _C1_c_set = function _C1_c_set(value) { __classPrivateFieldSet(_a, _a, value, \"f\", _C1_c_accessor_storage); }"),
+        "Static private auto-accessors should use the class alias and storage object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_C1_c_accessor_storage = { value: void 0 };\n_C1_d_accessor_storage = { value: 2 };"
+        ),
+        "Static private auto-accessor storage should initialize after extracted accessors.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldSet(_a, _a, 5, \"a\", _C1_c_set);\n    __classPrivateFieldSet(_a, _a, 6, \"a\", _C1_d_set);"),
+        "Static block writes should route through private auto-accessor setters.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__classPrivateFieldSet(this, _a, 5, \"f\""),
+        "Static private auto-accessors must not lower as private fields.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn auto_accessor_fields_emit_private_storage_at_es2022() {
     let source = "class C1 {\n    accessor a: any;\n    accessor b = 1;\n    accessor #c: any;\n    accessor #d = 2;\n    static accessor e: any;\n    static accessor f = 3;\n}\n";
 
@@ -265,10 +311,91 @@ fn auto_accessor_private_storage_avoids_private_name_collisions_at_es2022() {
     );
 }
 
+/// When an ES5-lowered decorated class lives inside a multi-level
+/// wrapper (System module + execute body, or any other indented
+/// context), the `__decorate([\n    dec\n], C);` block must be anchored
+/// at the writer's current indent — not at column 0. The class
+/// transformer used to hardcode `indent_base = 0`, so the inner `dec`
+/// line landed at 8 spaces and the closing `]` at 4 spaces regardless
+/// of how deeply the class was nested in the output. Propagating
+/// `set_indent_level` through to the transformer's `indent_base` keeps
+/// the Raw IR's hardcoded indentation in sync with the parent context.
+#[test]
+fn es5_decorated_class_decorate_block_aligns_with_writer_indent() {
+    use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let source = "@dec\nclass C {\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let class_idx = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root"))
+        .expect("source file")
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&i| {
+            parser
+                .arena
+                .get(i)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        })
+        .expect("class decl");
+
+    let mut emitter = ClassES5Emitter::new(&parser.arena);
+    emitter.set_source_text(source);
+    emitter.set_indent_level(4);
+    emitter.set_decorator_info(ClassDecoratorInfo {
+        class_decorators: vec![class_idx], // any non-empty marker
+        has_member_decorators: false,
+        emit_decorator_metadata: false,
+    });
+    let output = emitter.emit_class(class_idx);
+
+    // With `indent_base` now propagated, the inner `dec` line should
+    // anchor at writer-indent + 2 levels = 24 spaces, and the closing
+    // `]` at writer-indent + 1 level = 20 spaces. The previous (broken)
+    // behavior put them at 8 / 4 spaces, regardless of nesting depth.
+    assert!(
+        !output.contains("\n        dec\n"),
+        "Inner `dec` line must not land at the column-0-anchored 8-space indent.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n    ], C);"),
+        "Closing `], C);` must not land at the column-0-anchored 4-space indent.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: class with lowered static fields followed by another
 /// statement must not produce an extra blank line. The static field
 /// emission ends with `write_line()` after `ClassName.field = value;`,
 /// so the source-file-level loop must not add a second newline.
+/// `this.#staticField` accessed from an instance method is a TS error,
+/// but tsc still emits the JS verbatim — keeping `this` as the receiver
+/// rather than substituting the class alias. The previous lowering was
+/// rewriting `this` to the static-field state var, producing
+/// `__classPrivateFieldGet(_a, _a, ...)` instead of
+/// `__classPrivateFieldGet(this, _a, ...)`. Lock the source-preserving
+/// behavior so we stay in sync with tsc on this error path.
+#[test]
+fn private_static_field_access_via_this_preserves_this_receiver() {
+    let source = "class A {\n    static #myField = \"hello world\";\n    constructor() {\n        console.log(A.#myField);\n        console.log(this.#myField);\n    }\n}\n";
+
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__classPrivateFieldGet(_a, _a, \"f\", _A_myField)"),
+        "Class-name access (`A.#x`) should still substitute to the class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _a, \"f\", _A_myField)"),
+        "`this.#x` for a static field must keep `this` as the receiver, matching tsc.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn no_extra_blank_line_after_static_field_lowering() {
     let source = "class Foo {\n    static x = 1;\n}\nconst y = 2;\n";
@@ -308,18 +435,14 @@ fn no_extra_blank_line_cjs_default_export_with_static_field() {
 
     let source = "export default class MyComponent {\n    static create = 1;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2017,
-        module: ModuleKind::CommonJS,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_with_opts(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2017,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
 
     // Should have `MyComponent.create = 1;\n` followed by
     // `exports.default = MyComponent;` with NO blank line.
@@ -577,6 +700,30 @@ fn computed_property_no_side_effect_for_string_literal() {
     );
 }
 
+#[test]
+fn es5_computed_property_temps_stay_inside_class_iife() {
+    let source = r#"var s: string;
+var n: number;
+var a: any;
+class C {
+    [n] = n;
+    static [s + s]: string;
+    [s + n] = 2;
+    static [s + a] = 0
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("function C() {\n        this[_a] = n;\n        this[_b] = 2;\n    }\n    var _a, _b, _c;\n    _a = n, s + s, _b = s + n, _c = s + a;\n    C[_c] = 0;"),
+        "Computed property temps and side effects should stay inside the class IIFE before static computed assignments.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}());\n_a = n"),
+        "Computed property side effects should not be deferred after the class IIFE.\nOutput:\n{output}"
+    );
+}
+
 /// Trailing comment on class body opening `{` should be suppressed.
 /// tsc: `class E extends A {` (comment dropped)
 #[test]
@@ -769,5 +916,259 @@ fn test_class_expression_static_field_and_block_evaluation_order_preserved() {
         a_pos < block_pos && block_pos < b_pos,
         "static block must be emitted between `a = 1` and `b = 2` to match source order. \
          a_pos={a_pos}, block_pos={block_pos}, b_pos={b_pos}.\nOutput:\n{output}"
+    );
+}
+
+/// Regression: when an *anonymous* class expression with private fields is
+/// assigned to a variable, the binding name (e.g. `C` in `const C = class
+/// { ... }`) is used to derive `WeakMap` names like `_C_field`, but it is the
+/// outer variable, not a class self-binding. References to that name from
+/// inside the class body must NOT be rewritten to the synthesized class
+/// alias (`_a`). Only a *named* class expression (`class N { ... }`) gives
+/// rise to a self-binding that should be aliased.
+#[test]
+fn test_anonymous_class_expr_binding_is_not_rewritten_as_self_alias() {
+    let source = r"const C = class {
+    #field = this.#method();
+    #method() { return 42; }
+    static getInstance() { return new C(); }
+    getField() { return this.#field };
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("return new C()"),
+        "anonymous class expression with const-binding name must preserve `new C()` (the outer const), not rewrite to the synthesized alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return new _a()"),
+        "must not substitute the binding name with the class alias in anonymous class bodies.\nOutput:\n{output}"
+    );
+}
+
+/// Counterpart: a *named* class expression's name is a self-binding that
+/// shadows any outer binding, so references inside the class body must be
+/// rewritten to the synthesized alias when the class is wrapped in the
+/// `(_a = class N { ... }, _a)` form for static-private bookkeeping.
+#[test]
+fn test_named_class_expr_self_reference_uses_alias() {
+    let source = r"const X = class N {
+    static #count = 0;
+    static getCount() { return N.#count; }
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__classPrivateFieldGet(_a"),
+        "named class expression must rewrite self-reference `N` to alias `_a` for static private field access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn class_name_references_in_lowered_static_elements_use_class_value_alias() {
+    let source = r"class Foo {
+    static { console.log(this, Foo) }
+    static x = () => { console.log(this, Foo) }
+    static y = function() { console.log(this, Foo) }
+    #x() { console.log(Foo); }
+    x() { this.#x(); }
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
+
+    let private_init = output
+        .find("_a = Foo, _Foo_instances = new WeakSet(), _Foo_x = function _Foo_x() { console.log(_a); };")
+        .expect("private method initializers should use the class-value alias");
+    let static_block = output
+        .find("console.log(_a, _a);")
+        .expect("static block should use the class-value alias");
+    let static_arrow = output
+        .find("Foo.x = () => { console.log(_a, _a); };")
+        .expect("static arrow initializer should use the class-value alias");
+    let static_function = output
+        .find("Foo.y = function () { console.log(this, _a); };")
+        .expect(
+            "static function initializer should preserve its own this and alias the class name",
+        );
+
+    assert!(
+        private_init < static_block
+            && static_block < static_arrow
+            && static_arrow < static_function,
+        "private initializers should run before lowered static elements, and all lowered class-name references should use the captured class value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_block_only_classes_assign_class_value_alias() {
+    let source = r#"class Thing {
+    static {
+        this.doSomething = () => {};
+    }
+}
+
+class ElementsArray extends Array {
+    static {
+        const superisArray = super.isArray;
+        this.isArray = superisArray;
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
+
+    assert!(
+        output.contains("_a = Thing;\n(() => {\n    _a.doSomething = () => { };\n})();"),
+        "static block `this` should use an assigned class-value alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_b = ElementsArray;\n(() => {\n    const superisArray = Reflect.get(_c, \"isArray\", _b);"
+        ),
+        "static block `super` should use the assigned class-value alias as receiver.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn lowered_static_block_class_name_reference_does_not_create_alias() {
+    let source = r#"export class C {
+    static x: number;
+    static {
+        C.x = 1;
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("export class C {\n}\n(() => {\n    C.x = 1;\n})();"),
+        "Plain class-name references in lowered static blocks should stay on the class value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = C"),
+        "Lowered static blocks should not create a class-value alias unless `this`, `super`, or private state needs one.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn type_only_class_name_in_static_initializer_does_not_create_alias() {
+    let source = r#"class Bug {
+    private static func: Function[] = [
+        (that: Bug, name: string) => {
+            that.foo(name);
+        }
+    ];
+
+    private foo(name: string) {
+        this.name = name;
+    }
+}"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = Bug;"),
+        "Type-only class-name references inside a static initializer should not create a class-value alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Bug.func = ["),
+        "Static initializer should still be emitted on the class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_private_accessor_class_body_references_use_alias() {
+    let source = r#"class A2 {
+    static get #prop() { return ""; }
+    static set #prop(param: string) { }
+
+    constructor() {
+        console.log(A2.#prop);
+        let a: typeof A2 = A2;
+        a.#prop;
+    }
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("let a = _a;"),
+        "class-body references to a class declaration with static private accessors should use the private class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(a, _a, \"a\", _A2_prop_get);"),
+        "subsequent static private accessor reads should keep the receiver variable and use the class alias as state.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = A2"),
+        "post-class alias initialization should still reference the real class name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn lowered_instance_field_jsdoc_is_not_duplicated_on_initializer() {
+    let source = r"class C {
+    /**
+     * Handles text.
+     */
+    visit = (node) => node;
+}
+";
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "/**\n             * Handles text.\n             */\n        this.visit = (node) => node;"
+        ),
+        "JSDoc from a lowered instance field should stay on the constructor assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.visit = /**"),
+        "JSDoc should not be emitted again as part of the field initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_class_expr_with_static_private_field_sets_function_name() {
+    let source = r#"const C = class {
+    static #x;
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__setFunctionName(_a, \"C\")"),
+        "anonymous class expression with static private state should set the inferred function name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_x = { value: void 0 }"),
+        "static private field storage should still initialize in the comma expression.\nOutput:\n{output}"
+    );
+}
+
+/// Counter-regression for `__setFunctionName` over-emission: a class
+/// expression with *only instance-private* members (no static fields, no
+/// static blocks, no static private fields, no decorators) keeps the
+/// engine's automatic assignment-based naming. tsc does not emit the
+/// `__setFunctionName` helper or comma item for this shape, and tsz must
+/// match — neither the helper preamble nor the call should appear.
+#[test]
+fn anonymous_class_expr_instance_private_only_does_not_set_function_name() {
+    let source = r#"const C = class {
+    #field = this.#method();
+    #method() { return 42; }
+    static getInstance() { return new C(); }
+    getField() { return this.#field };
+}
+"#;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        !output.contains("__setFunctionName"),
+        "instance-private-only class expression must not emit the `__setFunctionName` helper or call.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C_field = new WeakMap()"),
+        "instance private field WeakMap should still initialize in the comma expression.\nOutput:\n{output}"
     );
 }

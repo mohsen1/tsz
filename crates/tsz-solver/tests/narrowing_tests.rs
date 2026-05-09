@@ -1445,6 +1445,58 @@ fn test_narrow_by_instance_type_any_target_returns_source_unchanged() {
     );
 }
 
+/// When two non-class union members are mutually-incompatible interfaces and
+/// the instance-type filter rules out both directions of structural
+/// assignability, the unrelated member must be **dropped** — not preserved as
+/// `member & instance_type`. The earlier intersection fallback was leaking
+/// forms like `C2 & C1` into TS2322 displays for the
+/// `typeGuardOfFormInstanceOfOnInterface` repro (interfaces with conflicting
+/// `prototype` and named property shapes), where tsc drops the unrelated
+/// member and prints `'false | D1'` instead of `'false | D1 | C2 & C1'`.
+///
+/// The two interfaces here mirror the test's `C1` / `C2` shapes — disjoint
+/// `prototype` literal types and a clashing named property — so neither
+/// direction of `is_assignable_to` succeeds. The narrowed result must be the
+/// related member alone (the one whose `prototype` matches the instance
+/// type), with no intersection of the unrelated member.
+#[test]
+fn test_narrow_by_instance_type_drops_unrelated_interface_member() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let prototype_name = interner.intern_string("prototype");
+    let p1_name = interner.intern_string("p1");
+    let p2_name = interner.intern_string("p2");
+
+    // `C1 = { prototype: number; p1: string }` — stand-in for the
+    // self-referential `prototype: C1` shape that comes through the binder
+    // for the conformance repro. The structural details (number vs symbol)
+    // don't matter; what matters is that the two interfaces have *disjoint*
+    // prototype types AND distinct extra properties so neither direction of
+    // assignability holds.
+    let c1 = interner.object(vec![
+        PropertyInfo::new(prototype_name, TypeId::NUMBER),
+        PropertyInfo::new(p1_name, TypeId::STRING),
+    ]);
+    let c2 = interner.object(vec![
+        PropertyInfo::new(prototype_name, TypeId::SYMBOL),
+        PropertyInfo::new(p2_name, TypeId::NUMBER),
+    ]);
+
+    let union = interner.union2(c1, c2);
+
+    // Use C1 itself as the instance type. C2 is structurally unrelated to C1
+    // (incompatible prototype and a different extra property), so C2 must be
+    // dropped from the narrowed result rather than retained as `C2 & C1`.
+    let narrowed = ctx.narrow_by_instance_type(union, c1);
+
+    assert_eq!(
+        narrowed, c1,
+        "narrow_by_instance_type should drop the unrelated interface member \
+         (got {narrowed:?}, expected {c1:?})"
+    );
+}
+
 /// Same regression via the public `narrow_type` API with `TypeGuard::Instanceof`.
 /// Confirms the fix is reachable through the checker's actual entry point.
 #[test]

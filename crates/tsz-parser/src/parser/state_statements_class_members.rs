@@ -129,12 +129,12 @@ impl ParserState {
                         diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     );
                 }
-                // TS1029: static must come after accessibility, before certain others
-                if seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
+                // TS1029: static must come after accessibility, before certain others.
+                // `static` with `abstract` is illegal in either order; the checker
+                // emits TS1243 for that pair, so do not also emit an ordering error.
+                if seen_readonly || seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
-                    let other = if seen_abstract {
-                        "abstract"
-                    } else if seen_override {
+                    let other = if seen_override {
                         "override"
                     } else if seen_readonly {
                         "readonly"
@@ -628,10 +628,13 @@ impl ParserState {
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_error_at_current_token(
-                "Type annotation cannot appear on a constructor declaration.",
-                diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
-            );
+            let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
+            if !missing_type {
+                self.parse_error_at_current_token(
+                    "Type annotation cannot appear on a constructor declaration.",
+                    diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                );
+            }
             // Consume the type annotation for recovery (use parse_return_type to match tsc,
             // which parses type predicates even in invalid constructor return types)
             let _ = self.parse_return_type();
@@ -985,10 +988,17 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::AsteriskToken) // generator method
                     && !self.is_property_name()
                 {
-                    self.parse_error_at_current_token(
-                        "Unexpected token. A constructor, method, accessor, or property was expected.",
-                        diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                    );
+                    if self.is_token(SyntaxKind::Unknown) {
+                        self.parse_error_at_current_token(
+                            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                            diagnostic_codes::INVALID_CHARACTER,
+                        );
+                    } else {
+                        self.parse_error_at_current_token(
+                            "Unexpected token. A constructor, method, accessor, or property was expected.",
+                            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                        );
+                    }
                     self.next_token();
                 }
             }
@@ -1006,6 +1016,36 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_try_block
+    }
+
+    fn recover_invalid_character_class_member(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        while self.is_token(SyntaxKind::Unknown) {
+            self.parse_error_at_current_token(
+                diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+        }
+
+        if matches!(
+            self.token(),
+            SyntaxKind::ColonToken
+                | SyntaxKind::QuestionToken
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::EqualsToken
+        ) {
+            while !matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            ) {
+                self.next_token();
+            }
+            self.parse_optional(SyntaxKind::SemicolonToken);
+        }
     }
 
     /// Parse a single class member
@@ -1029,6 +1069,28 @@ impl ParserState {
         // property names in class bodies (e.g., `class C { delete; for; if() {} }`).
         // We do NOT reject them here — they flow through to normal class member parsing
         // where is_property_name() correctly accepts them.
+
+        if self.is_token(SyntaxKind::Unknown) {
+            self.recover_invalid_character_class_member();
+            return NodeIndex::NONE;
+        }
+
+        // `case` and `default` are valid property names by themselves, but when
+        // followed by another property name on the same line they are usually a
+        // misplaced switch clause in a class body. Match tsc's class-member list
+        // recovery by reporting TS1068 at the clause keyword and retrying from
+        // the following token.
+        if matches!(
+            self.token(),
+            SyntaxKind::CaseKeyword | SyntaxKind::DefaultKeyword
+        ) && self.look_ahead_is_property_name_same_line()
+        {
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
+            self.next_token();
+        }
 
         // Handle bare `#` that can't become a PrivateIdentifier.
         // In tsc, the scanner emits TS1127 for a standalone `#` (e.g., `# name` with a
@@ -1562,7 +1624,7 @@ impl ParserState {
         if let Some(name_node) = self.arena.get(name)
             && name_node.kind == SyntaxKind::PrivateIdentifier as u16
             && let Some(ident) = self.arena.get_identifier(name_node)
-            && ident.escaped_text == "#constructor"
+            && (ident.escaped_text == "constructor" || ident.escaped_text == "#constructor")
         {
             self.parse_error_at(
                 name_node.pos,
@@ -1867,7 +1929,22 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::SemicolonToken)
                 && !self.can_parse_semicolon()
             {
-                self.parse_error_for_missing_semicolon_after(name);
+                let name_is_identifier = self
+                    .arena
+                    .get(name)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16);
+                if !name_is_identifier
+                    && matches!(
+                        self.token(),
+                        SyntaxKind::CommaToken
+                            | SyntaxKind::CloseBracketToken
+                            | SyntaxKind::CloseParenToken
+                    )
+                {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                } else {
+                    self.parse_error_for_missing_semicolon_after(name);
+                }
             }
 
             let end_pos = self.token_end();
@@ -1956,6 +2033,18 @@ impl ParserState {
         let current = self.current_token;
         self.next_token();
         let is_match = self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_match
+    }
+
+    fn look_ahead_is_property_name_same_line(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token();
+        let is_match = self.is_property_name() && !self.scanner.has_preceding_line_break();
+
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_match

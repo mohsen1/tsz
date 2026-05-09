@@ -248,6 +248,9 @@ pub(crate) struct InferenceContext<'a> {
     /// Used to decide literal type preservation: `T extends string` preserves `"z"`,
     /// but contextual `Box<boolean>` should NOT preserve `false`.
     pub(crate) declared_constraints: FxHashMap<InferenceVar, TypeId>,
+    /// Constraints whose semantic form preserves fresh literal candidates, even if
+    /// the raw constraint is an alias/conditional that this context cannot expand.
+    pub(crate) literal_preserving_declared_constraints: FxHashSet<InferenceVar>,
     /// Depth counter for `TypeApplication` expansion during inference.
     /// Prevents infinite recursion when inferring through recursive type aliases
     /// like `type Spec<T> = { [P in keyof T]: Spec<T[P]> }`.
@@ -281,6 +284,19 @@ pub(crate) struct InferenceContext<'a> {
     /// Prevents re-visiting the same pair, breaking cycles in
     /// self-referential type hierarchies.
     pub(crate) infer_visited: FxHashSet<(TypeId, TypeId)>,
+    /// Inference variables whose corresponding type parameter appears at the
+    /// top level of the signature's return type and has not yet been "fixed".
+    ///
+    /// Mirrors the `inference.isFixed || !isTypeParameterAtTopLevelInReturnType`
+    /// gate in tsc's `getCovariantInference` (checker.ts ~26595): when a type
+    /// parameter is at top level in the return type and has not been fixed yet,
+    /// fresh literal candidates are NOT widened during covariant resolution.
+    /// This preserves literals across the Round 1 → Round 2 boundary so that
+    /// deferred (context-sensitive) arguments see literal target types matching
+    /// tsc (e.g., `(a: T) => U` becomes `(a: number) => 1` rather than
+    /// `(a: number) => number` for `f<T,U>(x: T, cb: (a: T) => U, y: U)` called
+    /// as `f(1, function(a){return ''}, 1)`).
+    pub(crate) top_level_in_return_type_unfixed: FxHashSet<InferenceVar>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -304,12 +320,14 @@ impl<'a> InferenceContext<'a> {
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
+            literal_preserving_declared_constraints: FxHashSet::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
             source_is_type_annotation: false,
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
+            top_level_in_return_type_unfixed: FxHashSet::default(),
         }
     }
 
@@ -325,13 +343,24 @@ impl<'a> InferenceContext<'a> {
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
             declared_constraints: FxHashMap::default(),
+            literal_preserving_declared_constraints: FxHashSet::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
             reverse_mapped_properties: FxHashMap::default(),
             source_is_type_annotation: false,
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
+            top_level_in_return_type_unfixed: FxHashSet::default(),
         }
+    }
+
+    /// Mark an inference variable as representing a type parameter that
+    /// occurs at the top level of the signature's return type and has not
+    /// yet been fixed. Such variables suppress literal-type widening during
+    /// covariant resolution, matching tsc's `getCovariantInference` gate.
+    pub fn mark_top_level_in_return_type_unfixed(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.top_level_in_return_type_unfixed.insert(root);
     }
 
     /// Create a fresh inference variable
@@ -365,6 +394,12 @@ impl<'a> InferenceContext<'a> {
     /// Record the declared `extends` constraint for an inference variable.
     pub fn set_declared_constraint(&mut self, var: InferenceVar, constraint: TypeId) {
         self.declared_constraints.insert(var, constraint);
+    }
+
+    /// Record that the declared `extends` constraint semantically preserves literals.
+    pub fn mark_declared_constraint_preserves_literals(&mut self, var: InferenceVar) {
+        let root = self.table.find(var);
+        self.literal_preserving_declared_constraints.insert(root);
     }
 
     /// Get the declared `extends` constraint for an inference variable.

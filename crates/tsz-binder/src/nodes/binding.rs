@@ -10,10 +10,137 @@ use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 use crate::state::{BinderState, FileFeatures};
+use smallvec::SmallVec;
+
+type DeclSpan = Option<(u32, u32)>;
+type PreservedDecl = (NodeIndex, DeclSpan);
+type PreservedDeclArenaEntry = (NodeIndex, DeclSpan, SmallVec<[Arc<NodeArena>; 1]>);
+
+/// Lib-symbol meaning carried over to a module-local shadowing symbol.
+///
+/// See [`BinderState::collect_preserved_lib_meaning`].
+#[derive(Default)]
+struct PreservedLibMeaning {
+    /// Lib flags that belong to the namespace the local declaration does NOT
+    /// occupy (e.g. lib's INTERFACE flag when shadowing with `const X = ...`).
+    flags: u32,
+    /// Lib declarations to copy onto the new shadow symbol's `declarations`
+    /// vec. Each entry is `(decl_node_idx, span)`.
+    declarations: Vec<PreservedDecl>,
+    /// Per-declaration arena entries to copy into `declaration_arenas` so the
+    /// checker can resolve each declaration back to its owning lib arena.
+    declaration_arenas: Vec<PreservedDeclArenaEntry>,
+    /// Lib's `value_declaration` to adopt when the local doesn't supply one.
+    value_declaration: Option<PreservedDecl>,
+}
 
 impl BinderState {
     fn declaration_span(arena: &NodeArena, declaration: NodeIndex) -> Option<(u32, u32)> {
         arena.get(declaration).map(|node| (node.pos, node.end))
+    }
+
+    /// Collect lib-symbol meaning that should survive a module-local
+    /// shadow of `existing_id`.
+    ///
+    /// In TypeScript, a module-local declaration only takes over the namespace
+    /// (value vs. type) it occupies. `interface Symbol {}` in a module is
+    /// TYPE-only, so the global VALUE binding `Symbol: SymbolConstructor`
+    /// remains visible; `const Array = 1` is VALUE-only, so the global TYPE
+    /// `Array<T>` remains visible. Our binder collapses each name to a single
+    /// `SymbolId` per scope, so when we shadow a lib symbol we have to
+    /// re-attach the lib's other-namespace flags and declarations onto the new
+    /// shadowing symbol, otherwise the global meaning that the local does NOT
+    /// occupy disappears.
+    ///
+    /// Returns `None` when there is nothing to preserve.
+    fn collect_preserved_lib_meaning(
+        &self,
+        existing_id: SymbolId,
+        local_flags: u32,
+    ) -> Option<PreservedLibMeaning> {
+        let local_has_value = (local_flags & symbol_flags::VALUE) != 0;
+        let local_has_type = (local_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
+
+        // Mixed-namespace local declarations (class, enum, namespace) shadow
+        // the lib symbol entirely; nothing to preserve.
+        let preserve_value = !local_has_value;
+        let preserve_type = !local_has_type;
+        if !preserve_value && !preserve_type {
+            return None;
+        }
+
+        let lib_sym = self.symbols.get(existing_id)?;
+        let lib_flags = lib_sym.flags;
+        let lib_value_decl = lib_sym.value_declaration;
+        let lib_value_span = lib_sym.value_declaration_span;
+        let lib_decls: Vec<PreservedDecl> = lib_sym
+            .declarations
+            .iter()
+            .copied()
+            .zip(lib_sym.stable_declarations.iter().copied())
+            .map(|(d, sd)| {
+                let span = if sd.is_known() {
+                    Some((sd.pos, sd.end))
+                } else {
+                    None
+                };
+                (d, span)
+            })
+            .collect();
+        // The immutable borrow on `lib_sym` ends here so we can peek at
+        // `declaration_arenas` below without overlapping borrows.
+        let _ = lib_sym;
+
+        let mut preserved = PreservedLibMeaning::default();
+
+        for (decl, span) in lib_decls {
+            // Look up the lib's arena for this declaration so we can ask the
+            // node what kind it is. Without the arena we can't classify; skip
+            // such declarations conservatively.
+            let arenas = match self.declaration_arenas.get(&(existing_id, decl)) {
+                Some(a) if !a.is_empty() => a.clone(),
+                _ => continue,
+            };
+            let Some(kind) = arenas
+                .iter()
+                .find_map(|arena| arena.get(decl).map(|n| n.kind))
+            else {
+                continue;
+            };
+
+            let (declares_type, declares_value) = match kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => (true, false),
+                // Skip TYPE_ALIAS_DECLARATION: carrying a lib type alias onto
+                // a module-local shadow symbol pollutes its declarations vec
+                // for indexed-access traversal (see #4687).
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => (false, true),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => (false, true),
+                _ => continue,
+            };
+
+            let want = (preserve_type && declares_type) || (preserve_value && declares_value);
+            if !want {
+                continue;
+            }
+
+            preserved.declarations.push((decl, span));
+            preserved.declaration_arenas.push((decl, span, arenas));
+            if declares_type {
+                preserved.flags |= lib_flags & symbol_flags::TYPE;
+            }
+            if declares_value {
+                preserved.flags |= lib_flags & symbol_flags::VALUE;
+                if preserve_value && preserved.value_declaration.is_none() && lib_value_decl == decl
+                {
+                    preserved.value_declaration = Some((decl, lib_value_span));
+                }
+            }
+        }
+
+        if preserved.declarations.is_empty() && preserved.flags == 0 {
+            return None;
+        }
+        Some(preserved)
     }
 
     fn should_upgrade_merged_value_declaration(
@@ -267,9 +394,29 @@ impl BinderState {
             if node.kind == syntax_kind_ext::BLOCK {
                 // Always recurse into blocks for var hoisting (var is always
                 // function-scoped regardless of target).
-                // Function declarations in blocks are block-scoped in ES6+ modules.
+                // Function declarations directly in a function body are at the
+                // function scope; only nested blocks make them block-scoped.
                 if let Some(block) = arena.get_block(node) {
-                    self.collect_hoisted_declarations_impl(arena, &block.statements, true);
+                    let is_function_body = arena
+                        .get_extended(idx)
+                        .and_then(|ext| arena.get(ext.parent))
+                        .is_some_and(|parent_node| {
+                            matches!(
+                                parent_node.kind,
+                                syntax_kind_ext::FUNCTION_DECLARATION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::METHOD_DECLARATION
+                                    | syntax_kind_ext::CONSTRUCTOR
+                                    | syntax_kind_ext::GET_ACCESSOR
+                                    | syntax_kind_ext::SET_ACCESSOR
+                            )
+                        });
+                    self.collect_hoisted_declarations_impl(
+                        arena,
+                        &block.statements,
+                        !is_function_body,
+                    );
                 }
             } else {
                 // Handle single statement (not wrapped in a block)
@@ -1242,6 +1389,20 @@ impl BinderState {
                 .or_else(|| self.file_locals.get(name));
         }
 
+        if let Some(node) = arena.get(expression)
+            && node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            && let Some(class) = arena.get_class(node)
+        {
+            if class.name.is_some()
+                && let Some(sym_id) = self.node_symbols.get(&class.name.0)
+            {
+                return Some(*sym_id);
+            }
+            if let Some(sym_id) = self.node_symbols.get(&expression.0) {
+                return Some(*sym_id);
+            }
+        }
+
         let mut parts = Vec::new();
         if !collect_qualified_parts(arena, expression, &mut parts) || parts.is_empty() {
             return None;
@@ -1441,6 +1602,19 @@ impl BinderState {
             };
             if should_shadow_lib {
                 let owned_name = name.to_string();
+                // Module-local declarations only take over the namespace they
+                // occupy. `interface Symbol {}` is TYPE-only, so the lib's
+                // VALUE-bearing `var Symbol: SymbolConstructor` should remain
+                // visible through the shadow symbol; `const Array = 1` is
+                // VALUE-only, so the lib's TYPE-bearing `interface Array<T>`
+                // should remain visible. Capture the lib symbol's
+                // other-namespace declarations and flags here, before the
+                // shadow allocation, so we can re-attach them onto the new
+                // symbol below. Without this, e.g. `let xs: Array<number>`
+                // produces a spurious TS2749 because the lib type `Array<T>`
+                // is gone after shadowing.
+                let preserved = self.collect_preserved_lib_meaning(existing_id, flags);
+
                 let sym_id = self.symbols.alloc(flags, owned_name.clone());
                 let container_sym = self
                     .scope_chain
@@ -1455,6 +1629,27 @@ impl BinderState {
                     sym.is_exported = is_exported;
                     if let Some(parent_id) = container_sym {
                         sym.parent = parent_id;
+                    }
+                    if let Some(preserved) = preserved.as_ref() {
+                        sym.flags |= preserved.flags;
+                        for &(d, span) in &preserved.declarations {
+                            sym.add_declaration(d, span);
+                        }
+                        if let Some((vd, vd_span)) = preserved.value_declaration
+                            && sym.value_declaration == NodeIndex::NONE
+                        {
+                            sym.set_value_declaration(vd, vd_span);
+                        }
+                    }
+                }
+                if let Some(preserved) = preserved
+                    && !preserved.declarations.is_empty()
+                {
+                    let arenas_map = Arc::make_mut(&mut self.declaration_arenas);
+                    for (d, _, lib_arenas) in &preserved.declaration_arenas {
+                        arenas_map
+                            .entry((sym_id, *d))
+                            .or_insert_with(|| lib_arenas.clone());
                     }
                 }
                 self.current_scope.set(owned_name.clone(), sym_id);
@@ -1503,6 +1698,40 @@ impl BinderState {
             }
 
             let can_merge = Self::can_merge_flags(existing_flags, flags);
+
+            // Alias declarations conflict with other aliases in TypeScript's
+            // symbol model. Keep the duplicate declaration as a distinct symbol
+            // and make it the visible binding for later references, rather than
+            // appending it to the first alias symbol. This preserves duplicate
+            // diagnostics while allowing later value-bearing aliases like
+            // `import M = Z.M` to shadow an earlier type-only alias
+            // `import M = Z.I` in expression resolution.
+            if !can_merge
+                && (existing_flags & symbol_flags::ALIAS) != 0
+                && (flags & symbol_flags::ALIAS) != 0
+            {
+                let owned_name = name.to_string();
+                let sym_id = self.symbols.alloc(flags, owned_name.clone());
+                let container_sym = self
+                    .scope_chain
+                    .get(self.current_scope_idx)
+                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    let span = Self::declaration_span(arena, declaration);
+                    sym.add_declaration(declaration, span);
+                    if (flags & symbol_flags::VALUE) != 0 {
+                        sym.set_value_declaration(declaration, span);
+                    }
+                    sym.is_exported = is_exported;
+                    if let Some(parent_id) = container_sym {
+                        sym.parent = parent_id;
+                    }
+                }
+                self.current_scope.set(owned_name.clone(), sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
+                self.declare_in_persistent_scope(owned_name, sym_id);
+                return sym_id;
+            }
 
             let combined_flags = if can_merge {
                 existing_flags | flags

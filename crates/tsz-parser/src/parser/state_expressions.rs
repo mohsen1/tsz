@@ -228,7 +228,11 @@ impl ParserState {
 
             let operator_token = op as u16;
             self.next_token();
-            let right = self.parse_assignment_expression();
+            let mut right = self.parse_assignment_expression();
+            if right.is_none() {
+                self.error_expression_expected();
+                right = self.create_missing_expression();
+            }
             let end_pos = self.token_end();
             if deferred_failed_async_arrow_colon_recovery && !self.is_token(SyntaxKind::ColonToken)
             {
@@ -1116,7 +1120,6 @@ impl ParserState {
                         self.count_following_close_braces().saturating_sub(1);
                     self.deferred_module_close_braces =
                         self.deferred_module_close_braces.max(deferred_close_braces);
-                    self.next_token();
                 }
             }
             expr
@@ -2273,12 +2276,19 @@ impl ParserState {
                         } else {
                             self.token_pos()
                         };
-                        self.parse_error_at(
-                            missing_pos,
-                            0,
-                            "Identifier expected.",
-                            tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
-                        );
+                        if self.is_token(SyntaxKind::Unknown) {
+                            self.parse_error_at_current_token(
+                                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                                tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                            );
+                        } else {
+                            self.parse_error_at(
+                                missing_pos,
+                                0,
+                                "Identifier expected.",
+                                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                            );
+                        }
                         NodeIndex::NONE
                     };
                     if is_optional_chain_continuation && let Some(name_node) = self.arena.get(name)
@@ -2437,7 +2447,23 @@ impl ParserState {
                         // through to the property-access path, which would call
                         // parse_identifier_name() and emit the spurious TS1003.
                         self.parse_expected(SyntaxKind::OpenParenToken);
-                        break;
+                        let call_expr = self.arena.add_call_expr(
+                            syntax_kind_ext::CALL_EXPRESSION,
+                            start_pos,
+                            self.token_pos(),
+                            CallExprData {
+                                expression: expr,
+                                type_arguments: Some(type_args),
+                                arguments: Some(self.make_node_list(Vec::new())),
+                            },
+                        );
+                        let optional_chain_flag =
+                            self.u16_from_node_flags(node_flags::OPTIONAL_CHAIN);
+                        if let Some(call_node) = self.arena.get_mut(call_expr) {
+                            call_node.flags |= optional_chain_flag;
+                        }
+                        expr = call_expr;
+                        continue;
                     }
                     if self.is_token(SyntaxKind::OpenBracketToken) {
                         // expr?.[index]
@@ -2589,6 +2615,28 @@ impl ParserState {
                                     expression: expr,
                                     type_arguments: Some(type_args),
                                     arguments: Some(arguments),
+                                },
+                            );
+                        } else if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
+                            || self.is_token(SyntaxKind::TemplateHead)
+                        {
+                            self.parse_error_at_current_token(
+                                tsz_common::diagnostics::diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                                tsz_common::diagnostics::diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                            );
+                            self.in_tagged_template = true;
+                            let template = self.parse_template_literal();
+                            self.in_tagged_template = false;
+                            let end_pos = self.token_end();
+
+                            expr = self.arena.add_tagged_template(
+                                syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+                                start_pos,
+                                end_pos,
+                                TaggedTemplateData {
+                                    tag: expr,
+                                    type_arguments: Some(type_args),
+                                    template,
                                 },
                             );
                         } else if !self.is_token(SyntaxKind::DotToken)
@@ -2941,6 +2989,8 @@ impl ParserState {
                     let (
                         next_token_is_numeric_literal,
                         next_token_is_open_brace,
+                        next_token_is_slash,
+                        next_token_is_dot,
                         next_token_pos,
                         next_token_end,
                     ) = {
@@ -2950,6 +3000,8 @@ impl ParserState {
                         let result = (
                             self.is_token(SyntaxKind::NumericLiteral),
                             self.is_token(SyntaxKind::OpenBraceToken),
+                            self.is_token(SyntaxKind::SlashToken),
+                            self.is_token(SyntaxKind::DotToken),
                             self.token_pos(),
                             self.token_end(),
                         );
@@ -2989,12 +3041,83 @@ impl ParserState {
                     {
                         self.parse_jsx_element_or_self_closing_or_fragment(true)
                     } else {
-                        self.error_expression_expected();
+                        if next_token_is_slash {
+                            let jsx_close_tail = self
+                                .get_source_text()
+                                .get(self.token_pos() as usize..)
+                                .and_then(|tail| {
+                                    let line_len = tail.find(['\n', '\r']).unwrap_or(tail.len());
+                                    tail.get(..line_len)
+                                })
+                                .unwrap_or("")
+                                .to_string();
+                            if jsx_close_tail.starts_with("</.") {
+                                let start = self.token_pos();
+                                self.parse_error_at(
+                                    start,
+                                    1,
+                                    "Expression expected.",
+                                    diagnostic_codes::EXPRESSION_EXPECTED,
+                                );
+                                self.parse_error_at(
+                                    start + 2,
+                                    1,
+                                    "Declaration or statement expected.",
+                                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                                );
+                                while !self.is_token(SyntaxKind::EndOfFileToken)
+                                    && !self.is_token(SyntaxKind::GreaterThanToken)
+                                    && !self.is_token(SyntaxKind::SemicolonToken)
+                                {
+                                    self.next_token();
+                                }
+                                if self.is_token(SyntaxKind::GreaterThanToken) {
+                                    self.next_token();
+                                }
+                                return NodeIndex::NONE;
+                            }
+                            if jsx_close_tail.starts_with("</") && jsx_close_tail.contains('[') {
+                                let start = self.token_pos();
+                                self.parse_error_at(
+                                    start,
+                                    1,
+                                    "Expression expected.",
+                                    diagnostic_codes::EXPRESSION_EXPECTED,
+                                );
+                                while !self.is_token(SyntaxKind::EndOfFileToken)
+                                    && !self.is_token(SyntaxKind::GreaterThanToken)
+                                    && !self.is_token(SyntaxKind::SemicolonToken)
+                                {
+                                    self.next_token();
+                                }
+                                if self.is_token(SyntaxKind::GreaterThanToken) {
+                                    self.next_token();
+                                }
+                                return NodeIndex::NONE;
+                            }
+                        }
+                        if next_token_is_slash
+                            && self.jsx_missing_brace_semicolon_window_start
+                                == Some(self.token_pos())
+                        {
+                            self.parse_error_at_current_token(
+                                "Declaration or statement expected.",
+                                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                            );
+                        } else {
+                            self.error_expression_expected();
+                        }
                         // Match tsc's `"<:a ...>"` TSX recovery: `<` is not a JSX
                         // opener unless the lookahead token is identifier/keyword
                         // or `>`. Consume the invalid namespace head and let the
                         // following identifier surface as the missing-comma site.
                         self.next_token();
+                        if next_token_is_dot && self.is_token(SyntaxKind::DotToken) {
+                            self.parse_error_at_current_token(
+                                "Expression expected.",
+                                diagnostic_codes::EXPRESSION_EXPECTED,
+                            );
+                        }
                         if self.is_token(SyntaxKind::ColonToken) {
                             self.parse_error_at_current_token(
                                 "Expression expected.",
@@ -3022,7 +3145,45 @@ impl ParserState {
             }
             SyntaxKind::TemplateHead => self.parse_template_expression(),
             // Regex literal - rescan / or /= as regex
-            SyntaxKind::SlashToken | SyntaxKind::SlashEqualsToken => self.parse_regex_literal(),
+            SyntaxKind::SlashToken => {
+                let slash_pos = self.token_pos();
+                let malformed_jsx_closing_tail = slash_pos > 0
+                    && self
+                        .get_source_text()
+                        .as_bytes()
+                        .get(slash_pos as usize - 1)
+                        == Some(&b'<')
+                    && self
+                        .get_source_text()
+                        .get(slash_pos as usize - 1..)
+                        .and_then(|tail| {
+                            let line_len = tail.find(['\n', '\r']).unwrap_or(tail.len());
+                            tail.get(..line_len)
+                        })
+                        .is_some_and(|tail| tail.starts_with("</") && tail.contains('['));
+                if malformed_jsx_closing_tail {
+                    let start = slash_pos - 1;
+                    self.parse_error_at(
+                        start,
+                        1,
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                    while !self.is_token(SyntaxKind::EndOfFileToken)
+                        && !self.is_token(SyntaxKind::GreaterThanToken)
+                        && !self.is_token(SyntaxKind::SemicolonToken)
+                    {
+                        self.next_token();
+                    }
+                    if self.is_token(SyntaxKind::GreaterThanToken) {
+                        self.next_token();
+                    }
+                    NodeIndex::NONE
+                } else {
+                    self.parse_regex_literal()
+                }
+            }
+            SyntaxKind::SlashEqualsToken => self.parse_regex_literal(),
             // Dynamic import or import.meta
             SyntaxKind::ImportKeyword => self.parse_import_expression(),
             // `as` and `satisfies` are binary operators but also valid identifiers.
@@ -3223,28 +3384,39 @@ impl ParserState {
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
-            // Use zero-copy accessor and clone only when storing
-            let text = self.scanner.get_token_value_ref().to_string();
+            let has_unicode_escape =
+                (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
+            let text = if !has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    src[start..end].to_string()
+                } else {
+                    self.scanner.get_token_value_ref().to_string()
+                }
+            } else {
+                self.scanner.get_token_value_ref().to_string()
+            };
             // tsc preserves unicode escape sequences in emitted identifiers.
             // Capture the original source text when the scanner detected escapes.
-            let original_text =
-                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
-                    let src = self.scanner.source_text();
-                    let start = self.scanner.get_token_start();
-                    let end = self.scanner.get_token_end();
-                    if start < end && end <= src.len() {
-                        let slice = &src[start..end];
-                        if slice != text {
-                            Some(slice.to_string())
-                        } else {
-                            None
-                        }
+            let original_text = if has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    let slice = &src[start..end];
+                    if slice != text {
+                        Some(slice.to_string())
                     } else {
                         None
                     }
                 } else {
                     None
-                };
+                }
+            } else {
+                None
+            };
             self.next_token();
             (atom, text, original_text)
         } else {
@@ -3275,26 +3447,38 @@ impl ParserState {
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
-            let text = self.scanner.get_token_value_ref().to_string();
+            let has_unicode_escape =
+                (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
+            let text = if !has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    src[start..end].to_string()
+                } else {
+                    self.scanner.get_token_value_ref().to_string()
+                }
+            } else {
+                self.scanner.get_token_value_ref().to_string()
+            };
             // Preserve unicode escape sequences for emission parity with tsc
-            let original_text =
-                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
-                    let src = self.scanner.source_text();
-                    let start = self.scanner.get_token_start();
-                    let end = self.scanner.get_token_end();
-                    if start < end && end <= src.len() {
-                        let slice = &src[start..end];
-                        if slice != text {
-                            Some(slice.to_string())
-                        } else {
-                            None
-                        }
+            let original_text = if has_unicode_escape {
+                let src = self.scanner.source_text();
+                let start = self.scanner.get_token_start();
+                let end = self.scanner.get_token_end();
+                if start < end && end <= src.len() {
+                    let slice = &src[start..end];
+                    if slice != text {
+                        Some(slice.to_string())
                     } else {
                         None
                     }
                 } else {
                     None
-                };
+                }
+            } else {
+                None
+            };
             self.next_token();
             (atom, text, original_text)
         } else {

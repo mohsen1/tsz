@@ -12,6 +12,25 @@ fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
 }
 
+#[test]
+fn local_symbol_property_access_computed_name_is_string_keyed() {
+    let source = r#"
+const Symbol = { tag: "name" } as const;
+
+interface Bag {
+    [key: string]: number;
+    [Symbol.tag]: string;
+}
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2411 && message.contains("[Symbol.tag]") && message.contains("number")
+        }),
+        "expected TS2411 because local Symbol.tag is a string-keyed computed property, got: {diagnostics:?}"
+    );
+}
+
 // =========================================================================
 // Getter without type annotation vs string index signature
 // =========================================================================
@@ -199,6 +218,24 @@ var x: { z: I; [s: string]: { x: any; y: any; } };
     );
 }
 
+#[test]
+fn test_type_literal_union_function_property_vs_index_signature() {
+    let source = r#"
+function test(arg: string | number, whatever: any) {
+  if (typeof arg === "string") {
+    const o: { [k: string]: () => typeof arg; x: (() => boolean) | (() => void) } = whatever;
+  }
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2411
+            && d.1.contains("Property 'x' of type")
+            && d.1.contains("index type '() => string | number'")),
+        "Should emit TS2411 for union function property not assignable to index, got: {diags:?}"
+    );
+}
+
 // Note: Inherited member vs index signature is tested via conformance tests
 // (e.g. inheritedMembersAndIndexSignaturesFromDifferentBases.ts) since it
 // requires full lib type resolution that unit tests don't provide.
@@ -225,5 +262,35 @@ interface foo {
         ts2411.1.contains("{ (): any; (): any; }"),
         "TS2411 must render merged overload type as `{{ (): any; (): any; }}`, got: {}",
         ts2411.1
+    );
+}
+
+// =========================================================================
+// Issue #2871: a local object named `Symbol` must not be treated as the lib
+// global `Symbol` when classifying `[Symbol.tag]` as a symbol-keyed property.
+// With a `[s: symbol]: number` index signature present, the buggy
+// classification routes the `[Symbol.tag]: string` member into the symbol
+// index check and emits TS2411 ("string not assignable to 'symbol' index
+// type 'number'"). After the fix the local `Symbol` is recognized as a
+// shadow, the member is not symbol-keyed, and that diagnostic must not fire.
+// =========================================================================
+
+#[test]
+fn ts2411_shadowed_symbol_computed_property_is_not_symbol_keyed() {
+    let source = r#"
+const Symbol = { tag: "name" } as const;
+
+interface Bag {
+    [s: symbol]: number;
+    [Symbol.tag]: string;
+}
+"#;
+    let ts2411_against_symbol = get_diagnostics(source)
+        .into_iter()
+        .filter(|d| d.0 == 2411 && d.1.contains("'symbol'"))
+        .count();
+    assert_eq!(
+        ts2411_against_symbol, 0,
+        "Expected no symbol-index TS2411 when local Symbol shadows the global, got: {ts2411_against_symbol}"
     );
 }

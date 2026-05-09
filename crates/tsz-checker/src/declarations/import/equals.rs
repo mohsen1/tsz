@@ -18,84 +18,6 @@ enum TypeOnlyKind {
 }
 
 impl<'a> CheckerState<'a> {
-    /// Check for duplicate import alias declarations within a scope.
-    ///
-    /// TS2300: Emitted when multiple `import X = ...` declarations have the same name
-    /// within the same scope (namespace, module, or file).
-    pub(crate) fn check_import_alias_duplicates(&mut self, statements: &[NodeIndex]) {
-        use crate::diagnostics::diagnostic_codes;
-        use std::collections::HashMap;
-
-        // Map from import alias name to list of declaration indices
-        let mut alias_map: HashMap<String, Vec<NodeIndex>> = HashMap::new();
-
-        for &stmt_idx in statements {
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-
-            if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                continue;
-            }
-
-            let Some(import_decl) = self.ctx.arena.get_import_decl(node) else {
-                continue;
-            };
-
-            // Get the import alias name from import_clause (e.g., 'M' in 'import M = Z.I')
-            let Some(alias_node) = self.ctx.arena.get(import_decl.import_clause) else {
-                continue;
-            };
-            let Some(alias_id) = self.ctx.arena.get_identifier(alias_node) else {
-                continue;
-            };
-            let alias_name = alias_id.escaped_text.to_string();
-
-            alias_map.entry(alias_name).or_default().push(stmt_idx);
-        }
-
-        // TS2300: Emit for all declarations with duplicate names
-        for (alias_name, indices) in alias_map {
-            if indices.len() > 1 {
-                for &import_idx in &indices {
-                    let Some(import_node) = self.ctx.arena.get(import_idx) else {
-                        continue;
-                    };
-                    let Some(import_decl) = self.ctx.arena.get_import_decl(import_node) else {
-                        continue;
-                    };
-
-                    // Report error on the alias name (import_clause)
-                    let alias_node = import_decl.import_clause;
-                    let Some(sym_id) = self.resolve_identifier_symbol(alias_node) else {
-                        tracing::trace!("Could not resolve identifier symbol");
-                        continue;
-                    };
-                    let symbol = self
-                        .ctx
-                        .binder
-                        .symbols
-                        .get(sym_id)
-                        .expect("sym_id resolved from resolve_identifier_symbol");
-                    tracing::trace!("Symbol flags: {:?}", symbol.flags);
-                    if self.symbol_is_value_only(sym_id, Some(&alias_name)) {
-                        self.report_wrong_meaning_diagnostic(
-                            &alias_name,
-                            import_decl.import_clause,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                        );
-                    } else {
-                        self.error_at_node(
-                            import_decl.import_clause,
-                            &format!("Duplicate identifier '{alias_name}'."),
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     /// TS2300: `export default N` inside an ambient external module conflicts
     /// with a sibling type-only namespace declaration named `N`.
     ///
@@ -362,7 +284,7 @@ impl<'a> CheckerState<'a> {
             // `declare module "..."` in any file), the import is valid — it's a reference
             // to a global ambient module, not an external file. tsc 6.0 does not emit
             // TS1147 in this case (e.g. privacyImportParseErrors.ts).
-            if inside_namespace {
+            if inside_namespace && !in_wrong_context {
                 let module_is_ambient = require_module_specifier.as_deref().is_some_and(|spec| {
                     // Check current file's declared ambient modules
                     self.ctx.declared_modules_contains(self.ctx.binder, spec)
@@ -680,12 +602,27 @@ impl<'a> CheckerState<'a> {
 
                     // Only check for conflicts within the same scope.
                     // A symbol in a different namespace/module should not conflict.
+                    //
+                    // Some declarations (e.g. TYPE_ALIAS_DECLARATION, FUNCTION_DECLARATION)
+                    // own their own scope for type parameters/locals. Walking from the
+                    // declaration node itself returns that inner scope, which never matches
+                    // the import's enclosing scope. Look at the declaration's parent so
+                    // we compare the scope where the *name* is introduced. This mirrors
+                    // the merged-symbol path above (line 567-576).
                     if let Some(import_scope_id) = import_scope {
                         let decl_in_same_scope = sym.declarations.iter().any(|&decl_idx| {
-                            self.ctx
-                                .binder
-                                .find_enclosing_scope(self.ctx.arena, decl_idx)
-                                == Some(import_scope_id)
+                            let owner_scope =
+                                self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                                    let parent = ext.parent;
+                                    if parent.is_some() {
+                                        self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                                    } else {
+                                        self.ctx
+                                            .binder
+                                            .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                    }
+                                });
+                            owner_scope == Some(import_scope_id)
                         });
                         if !decl_in_same_scope {
                             continue;
@@ -699,7 +636,22 @@ impl<'a> CheckerState<'a> {
                     });
 
                     let is_type_alias = sym.has_any_flags(symbol_flags::TYPE_ALIAS);
-                    if import_has_value && (is_value || is_type_alias) && has_local_declaration {
+                    // tsc treats `export import X = ...` + `export type X` as a
+                    // legitimate dual-namespace merge — no TS2440. The local
+                    // must be type-only (no overlap with the import's value).
+                    let import_is_exported = self
+                        .ctx
+                        .arena
+                        .get_extended(stmt_idx)
+                        .and_then(|ext| self.ctx.arena.get(ext.parent))
+                        .is_some_and(|pn| pn.kind == syntax_kind_ext::EXPORT_DECLARATION);
+                    let dual_ns_merge =
+                        is_type_alias && !is_value && import_is_exported && sym.is_exported;
+                    if import_has_value
+                        && (is_value || is_type_alias)
+                        && has_local_declaration
+                        && !dual_ns_merge
+                    {
                         let message = format_message(
                             diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             &[name],
@@ -826,6 +778,7 @@ impl<'a> CheckerState<'a> {
             && !import.is_type_only
             && !inside_namespace
             && !in_function
+            && !in_wrong_context
         {
             // tsc anchors TS1202 at the outer `export` modifier when the
             // import-equals declaration is the clause of an `export import X =
@@ -908,21 +861,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS1471: require-like import only resolves to an ES module.
-        // For Node16/Node18, `import x = require("...")` must not target ESM.
-        // Node20/NodeNext suppress this diagnostic due newer interop semantics.
+        let request_kind = crate::context::ResolutionRequestKind::CjsRequire;
+        let request_resolution_mode = self.ctx.resolution_mode_for_request(request_kind, None);
+        let request_target_idx = self.ctx.resolve_import_target_from_file_for_request(
+            self.ctx.current_file_idx,
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        );
         if self.ctx.compiler_options.module.is_node16_or_node18()
             && !import.is_type_only
             && !in_wrong_context
             && !inside_namespace
-            && let Some(target_idx) = self
-                .ctx
-                .resolve_import_target_from_file_with_mode(
-                    self.ctx.current_file_idx,
-                    module_name,
-                    Some(crate::context::ResolutionModeOverride::Require),
-                )
-                .or_else(|| self.ctx.resolve_import_target(module_name))
+            && let Some(target_idx) = request_target_idx
         {
             let arena = self.ctx.get_arena_for_file(target_idx as u32);
             if let Some(source_file) = arena.source_files.first() {
@@ -953,7 +904,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(ref resolved) = self.ctx.resolved_modules
+        if request_target_idx.is_some() {
+            return;
+        }
+
+        if self.ctx.resolved_module_request_paths.is_none()
+            && let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
             return;
@@ -982,20 +938,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.).
         let module_key = module_name.to_string();
-        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+        if let Some(error) = self.ctx.get_resolution_error_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
             if !should_emit_module_not_found {
                 return;
             }
 
-            // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
-            let module_kind = self.ctx.compiler_options.module;
-            let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-            if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+            if self.deprecated_mode_suppresses_module_not_found() {
                 return;
             }
-            // Extract error values before mutable borrow
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
             if error_code
@@ -1027,18 +982,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
-        let module_kind = self.ctx.compiler_options.module;
-        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
-        if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+        if self.deprecated_mode_suppresses_module_not_found() {
             return;
         }
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             return;
         }
 
-        // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
-        // suggesting the user switch to nodenext or configure paths.
         let (message, code) =
             self.module_not_found_diagnostic_for_site(module_name, ModuleNotFoundSite::RequireLike);
         self.ctx.modules_with_ts2307_emitted.insert(module_key);

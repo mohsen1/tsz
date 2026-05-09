@@ -401,3 +401,22 @@ fn range_to_span_clamps_character_past_line_end() {
     assert_eq!(span.start, 0);
     assert_eq!(span.end, 3); // clamped to end of line 0
 }
+
+#[test]
+fn test_line_map_treats_u2028_and_u2029_as_line_terminators() {
+    // Issue #3331: scanner/line-map must recognize U+2028 (LINE SEPARATOR) and
+    // U+2029 (PARAGRAPH SEPARATOR) the way tsc does — otherwise single-line
+    // comments and directive suppression eat the next source line.
+    let source = "line1\u{2028}line2\u{2029}line3";
+    let map = LineMap::build(source);
+    assert_eq!(
+        map.line_count(),
+        3,
+        "U+2028 and U+2029 must each create a new line"
+    );
+
+    // U+2028 is 3 bytes; "line1" is 5 bytes. So line2 starts at byte 8.
+    assert_eq!(map.offset_to_position(8, source), Position::new(1, 0));
+    // U+2029 sits at bytes 13..16; line3 starts at byte 16.
+    assert_eq!(map.offset_to_position(16, source), Position::new(2, 0));
+}

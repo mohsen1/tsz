@@ -6,7 +6,11 @@ impl<'a> CheckerState<'a> {
     /// Check if the target module is a pure ESM module (from a package with
     /// `"type": "module"` or using `.mjs`/`.mts` extension).
     pub(crate) fn module_is_esm(&self, module_specifier: &str) -> bool {
-        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
+        let Some(target_idx) = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))
+        else {
             return false;
         };
         let arena = self.ctx.get_arena_for_file(target_idx as u32);
@@ -20,6 +24,9 @@ impl<'a> CheckerState<'a> {
         }
         if file_name.ends_with(".cjs") || file_name.ends_with(".cts") {
             return false;
+        }
+        if self.source_file_idx_is_js_with_esm_syntax(target_idx) {
+            return true;
         }
 
         self.ctx

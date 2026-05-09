@@ -65,11 +65,25 @@ impl<'a> Printer<'a> {
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
             && self
+                .namespace_current_class_fn_enum_names
+                .contains(original_text.as_str())
+        {
+            // Class/function/enum declared in the CURRENT namespace block is
+            // lexically in scope inside the IIFE — emit the bare identifier.
+            // This must run before the `namespace_exported_names` qualifier
+            // branch because the merged-prior-blocks set may include names
+            // that are also in the current block, and tsc keeps same-block
+            // class references unqualified (`extends PullSymbol`, not
+            // `extends TypeScript.PullSymbol`).
+            self.write_identifier(emit_text);
+        } else if self.in_namespace_iife
+            && !self.suppress_ns_qualification
+            && self
                 .namespace_exported_names
                 .contains(original_text.as_str())
             && let Some(ref ns_name) = self.current_namespace_name
         {
-            // Inside namespace IIFE, qualify exported variable references:
+            // Inside namespace IIFE, qualify namespace-object references:
             // `foo` → `ns.foo`
             let ns_name = ns_name.clone();
             self.write(&ns_name);
@@ -88,10 +102,25 @@ impl<'a> Printer<'a> {
             self.write(&parent_name);
             self.write(".");
             self.write_identifier(emit_text);
+        } else if self.in_namespace_iife
+            && !self.suppress_ns_qualification
+            && let Some(qualifier) = self
+                .namespace_ancestor_export_qualifiers
+                .get(original_text.as_str())
+                .cloned()
+        {
+            self.write(&qualifier);
+            self.write(".");
+            self.write_identifier(emit_text);
         } else if !self.suppress_ns_qualification
             && self
                 .commonjs_exported_var_names
                 .contains(original_text.as_str())
+            && !self
+                .commonjs_exported_var_shadow_stack
+                .iter()
+                .rev()
+                .any(|scope| scope.contains(original_text.as_str()))
         {
             // In CJS modules, inline-exported variable references (let/const/var)
             // are rewritten to `exports.X` for both reads and writes.
@@ -181,6 +210,12 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_numeric_literal(&mut self, node: &Node) {
+        if let Some(text) = self.numeric_literal_emit_text(node) {
+            self.write(&text);
+        }
+    }
+
+    pub(in crate::emitter) fn numeric_literal_emit_text(&self, node: &Node) -> Option<String> {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000 → 1000000
             // Only strip for targets below ES2021 — separators are valid ES2021+ syntax.
@@ -191,18 +226,61 @@ impl<'a> Printer<'a> {
                 lit.text.clone()
             };
 
+            if had_separators
+                && !self.ctx.options.target.supports_es2021()
+                && decimal_literal_has_exponent(&text)
+                && let Ok(value) = text.parse::<f64>()
+            {
+                return Some(format_js_number(value));
+            }
+
+            if had_separators && !self.ctx.options.target.supports_es2021() && text.starts_with('.')
+            {
+                return Some(format!("0{text}"));
+            }
+
             // Convert numeric literals that need downleveling:
             // - Binary (0b/0B) and ES2015 octal (0o/0O): only for pre-ES2015 targets
             // - Legacy octal (01, 076): for ALL targets (TSC always converts these)
             // - Any prefixed literal (0b/0o/0x) with numeric separators: for < ES2021 targets
             //   (tsc converts these to decimal because separators are an ES2021 feature)
             if let Some(converted) = self.convert_numeric_literal_downlevel(&text, had_separators) {
-                self.write(&converted);
-                return;
+                return Some(converted);
             }
 
-            self.write(&text);
+            if let Some(converted) =
+                self.convert_decimal_separator_exponent_literal(&text, had_separators)
+            {
+                return Some(converted);
+            }
+
+            return Some(text);
         }
+        None
+    }
+
+    fn convert_decimal_separator_exponent_literal(
+        &self,
+        text: &str,
+        had_separators: bool,
+    ) -> Option<String> {
+        if !had_separators || self.ctx.options.target.supports_es2021() {
+            return None;
+        }
+        if !text.bytes().any(|b| b == b'e' || b == b'E') {
+            return None;
+        }
+        if text.starts_with("0b")
+            || text.starts_with("0B")
+            || text.starts_with("0o")
+            || text.starts_with("0O")
+            || text.starts_with("0x")
+            || text.starts_with("0X")
+        {
+            return None;
+        }
+
+        text.parse::<f64>().ok().map(format_js_number)
     }
 
     /// Convert numeric literals that need downleveling:
@@ -351,11 +429,21 @@ impl<'a> Printer<'a> {
             let quote = bytes[i];
             let mut j = i + 1;
             let mut escaped = false;
+            let mut broke_on_line_terminator = false;
             while j < bytes.len() {
                 let b = bytes[j];
                 if escaped {
                     escaped = false;
-                    j += 1;
+                    // ECMAScript LineContinuation: `\<LineTerminatorSequence>`,
+                    // where the sequence may be `\n`, `\r`, or `\r\n`. Treat
+                    // `\\` followed by `\r\n` as a single escaped unit so the
+                    // raw-string read does not trip the line-terminator
+                    // fallback branch on the trailing `\n`.
+                    if b == b'\r' && bytes.get(j + 1) == Some(&b'\n') {
+                        j += 2;
+                    } else {
+                        j += 1;
+                    }
                     continue;
                 }
 
@@ -371,15 +459,37 @@ impl<'a> Printer<'a> {
 
                 // Unterminated literal fallback: use parser end range.
                 if b == b'\n' || b == b'\r' {
+                    broke_on_line_terminator = true;
                     break;
                 }
 
                 j += 1;
             }
 
-            let end = std::cmp::min(node.end as usize, bytes.len());
+            let mut end = std::cmp::min(node.end as usize, bytes.len());
+            if !broke_on_line_terminator && j >= bytes.len() {
+                end = bytes.len();
+            }
             if end > i {
-                Some(text[i..end].to_string())
+                let mut raw = text[i..end].to_string();
+                if !broke_on_line_terminator && j >= bytes.len() && raw.len() == 1 {
+                    // tsc leaves a separator before the synthesized semicolon for
+                    // EOF-terminated strings, even when trailing source trivia was trimmed.
+                    raw.push(' ');
+                }
+                let mut appended_source_semicolon = false;
+                if broke_on_line_terminator
+                    && end < bytes.len()
+                    && bytes[end] == b';'
+                    && raw.ends_with(quote as char)
+                {
+                    raw.push(';');
+                    appended_source_semicolon = true;
+                }
+                if broke_on_line_terminator && !appended_source_semicolon && raw.ends_with(';') {
+                    raw.push(';');
+                }
+                Some(raw)
             } else {
                 None
             }
@@ -519,13 +629,26 @@ impl<'a> Printer<'a> {
         }
 
         let quote = bytes[0];
-        if (quote != b'\'' && quote != b'"') || bytes[bytes.len() - 1] != quote {
+        if quote != b'\'' && quote != b'"' {
             return None;
         }
 
         let quote_char = quote as char;
-        let inner = &raw[1..bytes.len() - 1];
+        let terminated = bytes[bytes.len() - 1] == quote;
+        if !terminated && !raw[1..].contains("\\u{") {
+            return None;
+        }
+
+        let inner_end = if terminated {
+            bytes.len() - 1
+        } else {
+            bytes.len()
+        };
+        let inner = &raw[1..inner_end];
         let converted = self.downlevel_codepoint_escapes_in_literal_text(inner, quote_char, false);
+        if !terminated && has_unterminated_codepoint_escape(inner) {
+            return Some(format!("{quote_char}{converted}"));
+        }
         Some(format!("{quote_char}{converted}{quote_char}"))
     }
 
@@ -675,7 +798,7 @@ impl<'a> Printer<'a> {
 }
 
 /// Format an f64 value the way JavaScript's `Number.toString()` would.
-/// JavaScript uses exponential notation for integers >= 1e21.
+/// JavaScript uses exponential notation for magnitudes >= 1e21 or < 1e-6.
 fn format_js_number(value: f64) -> String {
     if value.is_infinite() {
         return "Infinity".to_string();
@@ -683,17 +806,15 @@ fn format_js_number(value: f64) -> String {
     if value.is_nan() {
         return "NaN".to_string();
     }
-    // For integers < 1e21, emit as plain integer (no decimal point)
-    // JavaScript switches to exponential notation at 1e21
-    if value == value.trunc() && value.abs() < 1e21 {
+    let abs = value.abs();
+    if value == value.trunc() && abs < 1e21 {
         return (value as i128).to_string();
     }
-    // For large values or non-integers, use JavaScript-style formatting
-    // JavaScript's Number.toString() uses exponential for >= 1e21
-    // Format: significant digits + e+exponent
+    if value == 0.0 || (1e-6..1e21).contains(&abs) {
+        return value.to_string();
+    }
+
     let s = format!("{value:e}");
-    // Rust's {:e} produces lowercase 'e' like "9.671406556917009e24"
-    // JS uses "9.671406556917009e+24" (with explicit + sign)
     if let Some(pos) = s.find('e') {
         let (mantissa, exp_part) = s.split_at(pos);
         let exp_str = &exp_part[1..]; // skip 'e'
@@ -705,12 +826,35 @@ fn format_js_number(value: f64) -> String {
     s
 }
 
+fn decimal_literal_has_exponent(text: &str) -> bool {
+    let lower = text.as_bytes();
+    if lower.len() >= 2
+        && lower[0] == b'0'
+        && matches!(lower[1], b'b' | b'B' | b'o' | b'O' | b'x' | b'X')
+    {
+        return false;
+    }
+    text.contains('e') || text.contains('E')
+}
+
 fn trim_unterminated_regex_recovery_suffix(text: &str) -> &str {
     if !text.starts_with('/') || text[1..].contains('/') {
         return text;
     }
 
     text.trim_end_matches(';').trim_end_matches(')')
+}
+
+fn has_unterminated_codepoint_escape(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 2 < bytes.len() {
+        if bytes[i] == b'\\' && bytes[i + 1] == b'u' && bytes[i + 2] == b'{' {
+            return !bytes[i + 3..].contains(&b'}');
+        }
+        i += 1;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -790,6 +934,108 @@ mod tests {
     }
 
     #[test]
+    fn decimal_numeric_separators_with_exponents_downlevel_to_number_text() {
+        let source = [
+            "1e1_0;",
+            "1e+1_0;",
+            "1e-1_0;",
+            "1.1e10_0;",
+            "1.1e+10_0;",
+            "1.1e-10_0;",
+            "1_2.3_4e5_6;",
+            "1_2.3_4e+5_6;",
+            "1_2.3_4e-5_6;",
+        ]
+        .join("\n");
+
+        let mut parser = ParserState::new("test.ts".to_string(), source);
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.print(root);
+        let output = printer.finish().code;
+
+        for expected in [
+            "10000000000;",
+            "1e-10;",
+            "1.1e+100;",
+            "1.1e-100;",
+            "1.234e+57;",
+            "1.234e-55;",
+        ] {
+            assert!(
+                output.contains(expected),
+                "Expected downleveled decimal separator exponent {expected}\nGot: {output}"
+            );
+        }
+        assert!(
+            !output.contains("1e10;") && !output.contains("12.34e56;"),
+            "Decimal exponent separators should be normalized through the numeric value.\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn unterminated_codepoint_escape_string_downlevels_to_cooked_text() {
+        let source = "var x = \"\\u{00000000000067}\r\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = \"g\";"),
+            "ES5 should downlevel unterminated codepoint escape strings through cooked text.\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn incomplete_codepoint_escape_string_keeps_missing_close_quote() {
+        let source = "var x = \"\\u{00000000000067";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = \"\\u{00000000000067;"),
+            "ES5 should preserve tsc's unterminated invalid codepoint escape shape.\nGot: {output}"
+        );
+        assert!(
+            !output.contains("var x = \"\\u{00000000000067\";"),
+            "ES5 should not synthesize a closing quote for incomplete codepoint escapes.\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn recovered_multiline_string_literals_preserve_source_semicolon_and_eof_space() {
+        use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+
+        let source = "var es1 = \"line 1\n\";\nvar es13 = \" \nvar es14 = \"";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var es1 = \"line 1;\n\";;"),
+            "Recovered multiline string literals should preserve source semicolons.\nGot: {output}"
+        );
+        assert!(
+            output.contains("var es13 = \" ;"),
+            "EOF-terminated string literal recovery should preserve trailing source text.\nGot: {output}"
+        );
+        assert!(
+            output.contains("var es14 = \" ;"),
+            "EOF-terminated string literal recovery should synthesize tsc's separator space.\nGot: {output}"
+        );
+    }
+
+    #[test]
     fn unterminated_regex_in_call_does_not_duplicate_recovery_paren() {
         let source = "foo(/notregexp);";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -857,6 +1103,55 @@ mod tests {
                 "Hex with separators {source} at ES2015 should emit {expected}\nGot: {output}"
             );
         }
+    }
+
+    #[test]
+    fn numeric_separator_decimal_exponents_normalized_below_es2021() {
+        use tsz_common::ScriptTarget;
+        let source = "1e1_0\n1e+1_0\n1.1e10_0\n1_2.3_4e5_6\n1_2.3_4e-5_6";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        for expected in ["10000000000;", "1.1e+100;", "1.234e+57;", "1.234e-55;"] {
+            assert!(
+                output.contains(expected),
+                "Decimal numeric separator exponent should contain {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_separator_leading_decimal_fraction_gets_zero_prefix_below_es2021() {
+        use tsz_common::ScriptTarget;
+        let source = "00.5_5;\n01.5_5;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert_eq!(
+            output.matches("0.55;").count(),
+            2,
+            "Separator downlevel for leading decimal fractions should emit 0.55.\nGot: {output}"
+        );
+        assert!(
+            !output.lines().any(|line| line.trim() == ".55;"),
+            "Separator downlevel should not leave bare .55 fractions.\nGot: {output}"
+        );
     }
 
     /// Octal literals with separators converted to decimal at < ES2021

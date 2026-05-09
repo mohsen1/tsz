@@ -398,6 +398,10 @@ pub struct CliArgs {
     #[arg(long = "alwaysStrict", alias = "always-strict")]
     pub always_strict: Option<bool>,
 
+    /// Suppress deprecation diagnostics for a TypeScript version.
+    #[arg(long = "ignoreDeprecations", alias = "ignore-deprecations")]
+    pub ignore_deprecations: Option<String>,
+
     /// Enable error reporting when local variables aren't read.
     #[arg(long = "noUnusedLocals", alias = "no-unused-locals")]
     pub no_unused_locals: bool,
@@ -533,7 +537,7 @@ pub struct CliArgs {
     #[arg(long = "generateTrace", alias = "generate-trace")]
     pub generate_trace: Option<PathBuf>,
 
-    /// Emit a v8 CPU profile of the compiler run for debugging.
+    /// TypeScript compatibility option. tsz cannot emit V8 CPU profiles; use --generateTrace.
     #[arg(long = "generateCpuProfile", alias = "generate-cpu-profile")]
     pub generate_cpu_profile: Option<PathBuf>,
 
@@ -704,6 +708,20 @@ pub struct CliArgs {
     #[arg(long, hide = true)]
     pub batch: bool,
 
+    // ==================== Internal: explicit-false markers ====================
+    /// Internal side-channel populated by `preprocess_args` when the user passes
+    /// `--flag false` for a plain `bool` compiler-option flag. Each value is the
+    /// canonical flag name (e.g. `noEmit`, `strict`) that was explicitly disabled
+    /// on the command line, so the override pipeline can flip a `true` value
+    /// loaded from `tsconfig.json` to `false`. Hidden from `--help`.
+    #[arg(
+        long = "__explicitly-disabled-bool-flag",
+        value_name = "NAME",
+        hide = true,
+        action = clap::ArgAction::Append
+    )]
+    pub explicitly_disabled_bool_flags: Vec<String>,
+
     // ==================== Input Files ====================
     /// Input files to compile.
     #[arg(value_name = "FILE")]
@@ -712,6 +730,7 @@ pub struct CliArgs {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Target {
+    Es3,
     Es5,
     #[value(alias = "es6")]
     Es2015,
@@ -732,6 +751,7 @@ pub enum Target {
 impl Target {
     pub const fn to_script_target(self) -> ScriptTarget {
         match self {
+            Self::Es3 => ScriptTarget::ES3,
             Self::Es5 => ScriptTarget::ES5,
             Self::Es2015 => ScriptTarget::ES2015,
             Self::Es2016 => ScriptTarget::ES2016,

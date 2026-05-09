@@ -211,6 +211,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // TS2322: Check export attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(export_decl.attributes);
 
+            self.check_import_attributes_commonjs_or_type_only(
+                export_decl.attributes,
+                export_decl.is_type_only,
+            );
+
             // Check module specifier for unresolved modules (TS2792)
             if export_decl.module_specifier.is_some() {
                 self.check_export_module_specifier(export_idx);
@@ -288,18 +293,46 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     && self.ctx.emit_declarations()
                     && !self.ctx.is_declaration_file()
                 {
-                    let expr_type = self.get_type_of_node(clause_idx);
-                    let resolved_type = self.resolve_lazy_type(expr_type);
-                    if let Some((from_path, type_name)) = self
-                        .first_non_portable_object_assign_object_literal_reference(clause_idx)
-                        .or_else(|| self.first_non_portable_type_reference(expr_type))
-                        .or_else(|| self.first_non_portable_type_reference(resolved_type))
-                    {
-                        self.error_at_node_msg(
-                            clause_idx,
-                            crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
-                            &["default", &type_name, &from_path],
-                        );
+                    let default_clause_is_identifier = self
+                        .ctx
+                        .arena
+                        .get(clause_idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+                    if !default_clause_is_identifier {
+                        // Declaration emit runs the authoritative portability check.
+                        // Skipping the checker precheck here avoids duplicate/over-eager
+                        // TS2883 on default-exported local identifiers.
+                        let expr_type = self.get_type_of_node(clause_idx);
+                        let resolved_type = self.resolve_lazy_type(expr_type);
+                        let object_assign_reference = self
+                            .first_non_portable_object_assign_object_literal_reference(clause_idx);
+                        let diagnostic_node = if object_assign_reference.is_some() {
+                            export_idx
+                        } else {
+                            clause_idx
+                        };
+                        let clause_is_call = self
+                            .ctx
+                            .arena
+                            .get(clause_idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION);
+                        let inferred_reference = (!clause_is_call)
+                            .then(|| {
+                                self.first_non_portable_type_reference(expr_type)
+                                    .or_else(|| {
+                                        self.first_non_portable_type_reference(resolved_type)
+                                    })
+                            })
+                            .flatten();
+                        if let Some((from_path, type_name)) =
+                            object_assign_reference.or(inferred_reference)
+                        {
+                            self.error_at_node_msg(
+                                diagnostic_node,
+                                crate::diagnostics::diagnostic_codes::THE_INFERRED_TYPE_OF_CANNOT_BE_NAMED_WITHOUT_A_REFERENCE_TO_FROM_THIS_IS_LIKELY,
+                                &["default", &type_name, &from_path],
+                            );
+                        }
                     }
                 }
 
@@ -843,6 +876,31 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_statement_with_request(&mut self, stmt_idx: NodeIndex, request: &TypingRequest) {
         CheckerState::check_statement_with_request(self, stmt_idx, request);
+    }
+
+    fn check_unreachable_condition_branch_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        let prev_unreachable = self.ctx.is_unreachable;
+        let prev_reported = self.ctx.has_reported_unreachable;
+        let prev_allow_unreachable = self.ctx.compiler_options.allow_unreachable_code;
+
+        self.ctx.is_unreachable = true;
+        self.ctx.has_reported_unreachable = true;
+        self.ctx.compiler_options.allow_unreachable_code = Some(true);
+        CheckerState::check_statement_with_request(self, stmt_idx, request);
+
+        self.ctx.compiler_options.allow_unreachable_code = prev_allow_unreachable;
+        self.ctx.is_unreachable = prev_unreachable;
+        self.ctx.has_reported_unreachable = prev_reported;
+    }
+
+    fn clear_loop_body_recheck_caches(&mut self, stmt_idx: NodeIndex) {
+        self.clear_type_cache_recursive(stmt_idx);
+        self.ctx.flow_analysis_cache.borrow_mut().clear();
+        self.ctx.symbol_flow_confirmed.borrow_mut().clear();
     }
 
     fn check_switch_exhaustiveness(

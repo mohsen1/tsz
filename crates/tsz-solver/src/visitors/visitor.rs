@@ -42,6 +42,7 @@ use crate::def::DefId;
 use crate::types::{IntrinsicKind, StringIntrinsicKind, TupleElement, TypeParamInfo};
 use crate::{LiteralValue, SymbolRef, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 
 // Re-export type data extraction helpers (extracted to visitor_extract.rs)
 pub use super::visitor_extract::*;
@@ -564,13 +565,30 @@ where
     }
 }
 
+// Reusable scratch buffers for `walk_referenced_types`. The visited-set and
+// stack are both keyed by `TypeId` and have no per-call state to preserve, so
+// pool them across calls to avoid one fresh `FxHashSet` + `Vec` allocation
+// per invocation. Reentrant calls (when `f` itself calls
+// `walk_referenced_types`) fall through to fresh allocations because `take()`
+// has already emptied the slot. Per docs/plan/PERFORMANCE_PLAN.md §6.3.
+type WalkPool = (FxHashSet<TypeId>, Vec<TypeId>);
+
+thread_local! {
+    static WALK_POOL: RefCell<Option<WalkPool>> = const { RefCell::new(None) };
+}
+
 /// The callback is invoked once per unique reachable type (including `root`).
 pub fn walk_referenced_types<F>(types: &dyn TypeDatabase, root: TypeId, mut f: F)
 where
     F: FnMut(TypeId),
 {
-    let mut visited = FxHashSet::default();
-    let mut stack = vec![root];
+    let mut pool = WALK_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_else(|| (FxHashSet::default(), Vec::new()));
+    let (visited, stack) = &mut pool;
+    visited.clear();
+    stack.clear();
+    stack.push(root);
 
     while let Some(current) = stack.pop() {
         if !visited.insert(current) {
@@ -592,6 +610,21 @@ where
         };
         for_each_child(types, &key, |child| stack.push(child));
     }
+
+    // Return the pool, keeping whichever allocation has the larger visited-set
+    // capacity (a proxy for "saw the bigger graph"). Reentrant inner calls
+    // race with us here; if they have already deposited their smaller pool,
+    // we still win.
+    WALK_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some((existing, _)) => pool.0.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(pool);
+        }
+    });
 }
 
 /// Collect all unique lazy `DefIds` reachable from `root`.
@@ -978,7 +1011,7 @@ impl<'a> RecursiveTypeCollector<'a> {
         }
 
         self.collected.insert(type_id);
-        self.visit_key(&key);
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || self.visit_key(&key));
         self.guard.leave(type_id);
     }
 
@@ -1244,18 +1277,11 @@ impl<'a> ConstAssertionVisitor<'a> {
         }
 
         let result = match lookup {
-            // Arrays: Convert to readonly tuple
+            // Arrays whose type reached const assertion as an array, rather than
+            // an array-literal tuple, become readonly arrays.
             Some(TypeData::Array(element_type)) => {
                 let const_element = self.apply_const_assertion(element_type);
-                // Arrays become readonly tuples when const-asserted
-                let tuple_elem = TupleElement {
-                    type_id: const_element,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                };
-                let tuple_type = self.db.tuple(vec![tuple_elem]);
-                self.db.readonly_type(tuple_type)
+                self.db.readonly_type(self.db.array(const_element))
             }
 
             // Tuples: Mark readonly and recurse on elements
@@ -1264,7 +1290,11 @@ impl<'a> ConstAssertionVisitor<'a> {
                 let const_elements: Vec<TupleElement> = elements
                     .iter()
                     .map(|elem| {
-                        let const_type = self.apply_const_assertion(elem.type_id);
+                        let const_type = if elem.rest {
+                            self.apply_const_assertion_to_tuple_rest_type(elem.type_id)
+                        } else {
+                            self.apply_const_assertion(elem.type_id)
+                        };
                         TupleElement {
                             type_id: const_type,
                             name: elem.name,
@@ -1297,6 +1327,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 }
@@ -1324,6 +1355,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         parent_id: prop.parent_id,
                         declaration_order: prop.declaration_order,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 }
@@ -1335,7 +1367,8 @@ impl<'a> ConstAssertionVisitor<'a> {
                         .as_ref()
                         .map(|idx| crate::types::IndexSignature {
                             key_type: idx.key_type,
-                            value_type: self.apply_const_assertion(idx.value_type),
+                            value_type: self
+                                .apply_const_assertion_to_index_signature_value(idx.value_type),
                             readonly: true,
                             param_name: idx.param_name,
                         });
@@ -1346,7 +1379,8 @@ impl<'a> ConstAssertionVisitor<'a> {
                         .as_ref()
                         .map(|idx| crate::types::IndexSignature {
                             key_type: idx.key_type,
-                            value_type: self.apply_const_assertion(idx.value_type),
+                            value_type: self
+                                .apply_const_assertion_to_index_signature_value(idx.value_type),
                             readonly: true,
                             param_name: idx.param_name,
                         });
@@ -1372,7 +1406,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                     .iter()
                     .map(|&m| self.apply_const_assertion(m))
                     .collect();
-                self.db.union(const_members)
+                self.db.union_preserve_members(const_members)
             }
 
             // Intersections: Recursively apply to all members
@@ -1391,5 +1425,28 @@ impl<'a> ConstAssertionVisitor<'a> {
 
         self.guard.leave(type_id);
         result
+    }
+
+    fn apply_const_assertion_to_tuple_rest_type(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(TypeData::Array(element_type)) = self.db.lookup(type_id) {
+            let const_element = self.apply_const_assertion(element_type);
+            self.db.array(const_element)
+        } else {
+            self.apply_const_assertion(type_id)
+        }
+    }
+
+    fn apply_const_assertion_to_index_signature_value(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(TypeData::Union(list_id)) = self.db.lookup(type_id) {
+            let members = self.db.type_list(list_id);
+            let mut const_members: Vec<TypeId> = members
+                .iter()
+                .map(|&m| self.apply_const_assertion(m))
+                .collect();
+            let mut seen = FxHashSet::default();
+            const_members.retain(|id| *id != TypeId::NEVER && seen.insert(*id));
+            return self.db.union_from_sorted_vec(const_members);
+        }
+        self.apply_const_assertion(type_id)
     }
 }

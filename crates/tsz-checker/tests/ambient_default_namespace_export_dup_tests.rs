@@ -12,31 +12,26 @@
 //! spurious extra TS2300 at the export-default position
 //! (`namespaceNotMergedWithFunctionDefaultExport.ts`).
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 
 fn diagnostics(source: &str, file_name: &str) -> Vec<u32> {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    tsz_checker::test_utils::check_source(source, file_name, CheckerOptions::default())
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let opts = CheckerOptions::default();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        opts,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+fn diagnostics_for_entry(
+    files: &[(&str, &str)],
+    entry_idx: usize,
+    options: CheckerOptions,
+) -> Vec<(u32, String, u32, String)> {
+    let entry_file = files[entry_idx].0;
+    tsz_checker::test_utils::check_multi_file(files, entry_file, options)
+        .into_iter()
+        .map(|d| (d.code, d.file, d.start, d.message_text))
+        .collect()
 }
 
 /// `export function X` + `export default X` + `namespace X` inside an ambient
@@ -70,5 +65,48 @@ fn type_only_namespace_export_default_still_emits_ts2300() {
     assert!(
         codes.contains(&2300),
         "expected TS2300 for type-only namespace + export default identifier; got: {codes:?}"
+    );
+}
+
+#[test]
+fn ambient_value_default_export_conflicts_with_same_named_default_import_alias() {
+    let package_root = r#"
+declare module "highlight.js" {
+  export interface HighlightAPI {
+    highlight(code: string): string;
+  }
+  const hljs: HighlightAPI;
+  export default hljs;
+}
+"#;
+    let submodule = r#"
+import hljs from "highlight.js";
+export default hljs;
+"#;
+    let diagnostics = diagnostics_for_entry(
+        &[
+            ("/node_modules/highlight.js/index.d.ts", package_root),
+            ("/node_modules/highlight.js/lib/core.d.ts", submodule),
+        ],
+        0,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            es_module_interop: true,
+            allow_synthetic_default_imports: true,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, file, start, message)| *code == 2300
+                && file == "/node_modules/highlight.js/index.d.ts"
+                && *start
+                    == package_root.find("export default hljs").unwrap() as u32
+                        + "export default ".len() as u32
+                && message == "Duplicate identifier 'hljs'."),
+        "expected TS2300 for ambient value default export/default import alias conflict; got: {diagnostics:?}"
     );
 }

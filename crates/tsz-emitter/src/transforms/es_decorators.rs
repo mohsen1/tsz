@@ -84,6 +84,8 @@ enum MemberName {
     Private(String),
 }
 
+use crate::transforms::emit_utils::hygienic_temp_name;
+
 /// TC39 Decorator Emitter
 pub struct TC39DecoratorEmitter<'a> {
     arena: &'a NodeArena,
@@ -93,6 +95,7 @@ pub struct TC39DecoratorEmitter<'a> {
     use_static_blocks: bool,
     /// When true, prefix helper calls with `tslib_1.` (importHelpers + commonjs).
     tslib_prefix: bool,
+    tslib_import_binding: String,
     /// When true, emit as an expression (no `let C = ` wrapper) for class expressions.
     expression_mode: bool,
     /// Function name for class expression named evaluation (__setFunctionName).
@@ -115,13 +118,14 @@ struct DecoratedFieldInfo {
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             source_text: None,
             indent: 0,
             use_static_blocks: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             expression_mode: false,
             function_name: None,
             use_define_for_class_fields: false,
@@ -144,6 +148,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         self.tslib_prefix = prefix;
     }
 
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
+    }
+
     pub const fn set_expression_mode(&mut self, expr: bool) {
         self.expression_mode = expr;
     }
@@ -161,7 +169,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
     /// Returns the helper function name with optional tslib prefix.
     fn helper(&self, name: &str) -> String {
         if self.tslib_prefix {
-            format!("tslib_1.{name}")
+            format!("{}.{name}", self.tslib_import_binding)
         } else {
             name.to_string()
         }
@@ -213,6 +221,31 @@ impl<'a> TC39DecoratorEmitter<'a> {
             next_temp_var(&mut temp_counter) // _a
         };
 
+        // tsc avoids shadowing user bindings inside the transformed class wrapper
+        // by suffixing decorator temporaries that collide with identifiers used
+        // anywhere in the class span (decorators, name, extends, body). Without
+        // this rename, e.g. a class body referring to a user `const _classDescriptor`
+        // would resolve to the generated temp instead. See issue #3091.
+        let class_span_text = self
+            .source_text
+            .map(|src| {
+                let start = class_node.pos as usize;
+                let end = (class_node.end as usize).min(src.len());
+                if start <= end { &src[start..end] } else { "" }
+            })
+            .unwrap_or("");
+        let class_descriptor_var = hygienic_temp_name("_classDescriptor", class_span_text);
+        let class_extra_initializers_var =
+            hygienic_temp_name("_classExtraInitializers", class_span_text);
+        let class_this_var = hygienic_temp_name("_classThis", class_span_text);
+        let class_super_var = hygienic_temp_name("_classSuper", class_span_text);
+        let class_decorators_var = hygienic_temp_name("_classDecorators", class_span_text);
+        let metadata_var = hygienic_temp_name("_metadata", class_span_text);
+        let instance_extra_initializers_var =
+            hygienic_temp_name("_instanceExtraInitializers", class_span_text);
+        let static_extra_initializers_var =
+            hygienic_temp_name("_staticExtraInitializers", class_span_text);
+
         // Compute propKey temp vars for computed members
         let mut computed_key_vars: Vec<(usize, String)> = Vec::new();
         for (i, member) in decorated_members.iter().enumerate() {
@@ -250,16 +283,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // Class decorator variables
         if !class_decorators.is_empty() {
             out.push_str(&format!(
-                "{i1}let _classDecorators = [{}];\n",
+                "{i1}let {class_decorators_var} = [{}];\n",
                 class_decorators.join(", ")
             ));
-            out.push_str(&format!("{i1}let _classDescriptor;\n"));
-            out.push_str(&format!("{i1}let _classExtraInitializers = [];\n"));
-            out.push_str(&format!("{i1}let _classThis;\n"));
+            out.push_str(&format!("{i1}let {class_descriptor_var};\n"));
+            out.push_str(&format!("{i1}let {class_extra_initializers_var} = [];\n"));
+            out.push_str(&format!("{i1}let {class_this_var};\n"));
             // When a decorated class extends a base class, tsc captures the super class
             // in a _classSuper variable so it can be used for metadata and super access.
             if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
-                out.push_str(&format!("{i1}let _classSuper = {extends_text};\n"));
+                out.push_str(&format!("{i1}let {class_super_var} = {extends_text};\n"));
             }
         }
 
@@ -273,10 +306,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .iter()
             .any(|m| m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
         if has_instance_method {
-            out.push_str(&format!("{i1}let _instanceExtraInitializers = [];\n"));
+            out.push_str(&format!(
+                "{i1}let {instance_extra_initializers_var} = [];\n"
+            ));
         }
         if has_static_method {
-            out.push_str(&format!("{i1}let _staticExtraInitializers = [];\n"));
+            out.push_str(&format!("{i1}let {static_extra_initializers_var} = [];\n"));
         }
 
         // Per-member decorator and initializer variables
@@ -315,7 +350,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // - ES2015 with class decorators: `_classThis`
         // - ES2015 without class decorators: the class alias `_a`
         let ctor_ref = if has_class_decorators {
-            "_classThis".to_string()
+            class_this_var.clone()
         } else if self.use_static_blocks {
             "this".to_string()
         } else {
@@ -326,7 +361,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let _member_ctor_ref = if self.use_static_blocks {
             "this".to_string()
         } else if has_class_decorators {
-            "_classThis".to_string()
+            class_this_var.clone()
         } else {
             class_alias.clone()
         };
@@ -337,7 +372,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if self.use_static_blocks {
                 out.push_str(&format!("{i1}var {class_name} = class"));
             } else {
-                out.push_str(&format!("{i1}var {class_name} = _classThis = class"));
+                out.push_str(&format!("{i1}var {class_name} = {class_this_var} = class"));
             }
         } else if self.use_static_blocks {
             if class_name.is_empty() {
@@ -353,7 +388,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         if has_extends {
             if has_class_decorators {
                 // When class decorators + extends, use the _classSuper alias
-                out.push_str(" extends _classSuper");
+                out.push_str(&format!(" extends {class_super_var}"));
             } else if let Some(extends_text) = self.get_extends_text(class_data) {
                 out.push_str(&format!(" extends {extends_text}"));
             }
@@ -363,23 +398,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
         if self.use_static_blocks {
             // ES2022: with class decorators, emit _classThis capture block first
             if has_class_decorators {
-                out.push_str(&format!("{i2}static {{ _classThis = this; }}\n"));
-                // For class expressions, emit __setFunctionName with the class name
-                // or the externally-provided function name (from assignment context)
-                if self.expression_mode {
-                    // Use ONLY the externally-provided function name for __setFunctionName.
-                    // The class's own name (e.g., `class C {}`) is NOT used — it's a
-                    // self-reference, not the named evaluation target.
-                    let function_name = self
-                        .function_name
-                        .clone()
-                        .or_else(|| class_name_was_empty.then(String::new));
-                    if let Some(fn_name) = function_name {
-                        let set_fn = self.helper("__setFunctionName");
-                        out.push_str(&format!(
-                            "{i2}static {{ {set_fn}(_classThis, \"{fn_name}\"); }}\n"
-                        ));
-                    }
+                out.push_str(&format!("{i2}static {{ {class_this_var} = this; }}\n"));
+                // For class expressions, emit `__setFunctionName(_classThis, ...)`
+                // only when the source class was *anonymous*. A named class
+                // expression (`class C { ... }`) carries its own name through
+                // to the engine — tsc does not emit the helper in that case
+                // (e.g. `export const C = @dec class C {}` round-trips to a
+                // bare `var C = class { static { _classThis = this; } ... }`
+                // with no `__setFunctionName` static block).
+                if self.expression_mode && class_name_was_empty {
+                    let fn_name = self.function_name.clone().unwrap_or_default();
+                    let set_fn = self.helper("__setFunctionName");
+                    out.push_str(&format!(
+                        "{i2}static {{ {set_fn}({class_this_var}, \"{fn_name}\"); }}\n"
+                    ));
                 }
             } else if self.expression_mode && self.function_name.is_some() {
                 // Member-only decorators on class expression with a context name:
@@ -435,6 +467,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &i3,
                 &mut out,
                 defer_class_init_inner,
+                &class_descriptor_var,
+                &class_this_var,
+                &class_super_var,
+                &class_decorators_var,
+                &class_extra_initializers_var,
+                &instance_extra_initializers_var,
+                &static_extra_initializers_var,
+                &metadata_var,
             );
             out.push_str(&format!("{i2}}}\n"));
         }
@@ -466,6 +506,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
             member_inner_indent,
             &mut out,
             defer_class_init,
+            &class_this_var,
+            &class_extra_initializers_var,
+            &instance_extra_initializers_var,
         );
 
         if self.use_static_blocks {
@@ -473,7 +516,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{i1}}};\n"));
             if has_class_decorators {
                 // With class decorators: return C = _classThis after the class
-                out.push_str(&format!("{i1}return {class_name} = _classThis;\n"));
+                out.push_str(&format!("{i1}return {class_name} = {class_this_var};\n"));
             }
         } else if has_class_decorators {
             // ES2015 + class decorators: separate statements pattern
@@ -483,7 +526,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // __setFunctionName
             let set_fn_name = self.helper("__setFunctionName");
             out.push_str(&format!(
-                "{i1}{set_fn_name}(_classThis, \"{class_name}\");\n"
+                "{i1}{set_fn_name}({class_this_var}, \"{class_name}\");\n"
             ));
 
             // Decorator application as separate IIFE
@@ -501,6 +544,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &i2,
                 &mut out,
                 false,
+                &class_descriptor_var,
+                &class_this_var,
+                &class_super_var,
+                &class_decorators_var,
+                &class_extra_initializers_var,
+                &instance_extra_initializers_var,
+                &static_extra_initializers_var,
+                &metadata_var,
             );
             out.push_str(&format!("{i1}}})();\n"));
 
@@ -514,7 +565,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
 
             // Return C = _classThis
-            out.push_str(&format!("{i1}return {class_name} = _classThis;\n"));
+            out.push_str(&format!("{i1}return {class_name} = {class_this_var};\n"));
         } else {
             // ES2015 without class decorators: comma expression pattern
             out.push_str(&format!("{i2}}},\n"));
@@ -538,6 +589,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &i3,
                 &mut out,
                 false,
+                &class_descriptor_var,
+                &class_this_var,
+                &class_super_var,
+                &class_decorators_var,
+                &class_extra_initializers_var,
+                &instance_extra_initializers_var,
+                &static_extra_initializers_var,
+                &metadata_var,
             );
             out.push_str(&format!("{i2}}})(),\n"));
 
@@ -568,6 +627,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     /// Emit the decorator application code (metadata, __esDecorate calls, etc.)
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn emit_decorator_application(
         &self,
         decorated_members: &[DecoratedMember],
@@ -582,23 +642,31 @@ impl<'a> TC39DecoratorEmitter<'a> {
         indent: &str,
         out: &mut String,
         defer_class_extra_init: bool,
+        class_descriptor: &str,
+        class_this_var: &str,
+        class_super_var: &str,
+        class_decorators_var: &str,
+        class_extra_initializers_var: &str,
+        instance_extra_initializers_var: &str,
+        static_extra_initializers_var: &str,
+        metadata_var: &str,
     ) {
         // Metadata
         let has_class_decorators = !class_decorators.is_empty();
         if has_extends {
             // When class decorators are present, use _classSuper alias; otherwise use extends text directly
             let super_ref = if has_class_decorators {
-                Some("_classSuper".to_string())
+                Some(class_super_var.to_string())
             } else {
                 self.get_extends_text(class_data)
             };
             if let Some(super_ref) = super_ref {
-                out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({super_ref}[Symbol.metadata] ?? null) : void 0;\n"));
+                out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({super_ref}[Symbol.metadata] ?? null) : void 0;\n"));
             } else {
-                out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+                out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
             }
         } else {
-            out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+            out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
         }
 
         // Emit decorator assignment expressions before __esDecorate calls when
@@ -651,6 +719,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 i,
                 indent,
                 out,
+                instance_extra_initializers_var,
+                static_extra_initializers_var,
+                metadata_var,
             );
         }
 
@@ -658,14 +729,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let es_decorate = self.helper("__esDecorate");
         let run_initializers = self.helper("__runInitializers");
         if !class_decorators.is_empty() {
-            out.push_str(&format!("{indent}{es_decorate}(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
+            out.push_str(&format!("{indent}{es_decorate}(null, {class_descriptor} = {{ value: {class_this_var} }}, {class_decorators_var}, {{ kind: \"class\", name: {class_this_var}.name, metadata: {metadata_var} }}, null, {class_extra_initializers_var});\n"));
             out.push_str(&format!(
-                "{indent}{class_name} = _classThis = _classDescriptor.value;\n"
+                "{indent}{class_name} = {class_this_var} = {class_descriptor}.value;\n"
             ));
         }
 
         // Metadata assignment
-        out.push_str(&format!("{indent}if (_metadata) Object.defineProperty({ctor_ref}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"));
+        out.push_str(&format!("{indent}if ({metadata_var}) Object.defineProperty({ctor_ref}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: {metadata_var} }});\n"));
 
         // Static extra initializers — only for static method/getter/setter decorators
         let has_static_method_decorators = decorated_members
@@ -673,14 +744,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .any(|m| m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
         if has_static_method_decorators {
             out.push_str(&format!(
-                "{indent}{run_initializers}({ctor_ref}, _staticExtraInitializers);\n"
+                "{indent}{run_initializers}({ctor_ref}, {static_extra_initializers_var});\n"
             ));
         }
 
         // Class extra initializers: deferred when user static members exist.
         if !class_decorators.is_empty() && !defer_class_extra_init {
             out.push_str(&format!(
-                "{indent}{run_initializers}({ctor_ref}, _classExtraInitializers);\n"
+                "{indent}{run_initializers}({ctor_ref}, {class_extra_initializers_var});\n"
             ));
         }
     }
@@ -703,6 +774,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         inner_indent: &str,
         out: &mut String,
         defer_class_extra_init: bool,
+        class_this_var: &str,
+        class_extra_initializers_var: &str,
+        instance_extra_initializers_var: &str,
     ) -> (Vec<String>, Vec<String>) {
         let run_init = self.helper("__runInitializers");
         let fields_in_class_body = self.use_static_blocks && self.use_define_for_class_fields;
@@ -1005,7 +1079,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // ES2022 + class decorators: deferred __runInitializers static block
         if defer_class_extra_init {
             out.push_str(&format!(
-                "{indent}static {{\n{inner_indent}{run_init}(_classThis, _classExtraInitializers);\n{indent}}}\n"
+                "{indent}static {{\n{inner_indent}{run_init}({class_this_var}, {class_extra_initializers_var});\n{indent}}}\n"
             ));
         }
 
@@ -1098,7 +1172,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 }
             } else if has_instance_method {
                 ctor_init_calls.push(format!(
-                    "{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"
+                    "{inner_indent}{run_init}(this, {instance_extra_initializers_var});\n"
                 ));
             }
 
@@ -1662,6 +1736,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_es_decorate_call(
         &self,
         member: &DecoratedMember,
@@ -1671,6 +1746,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         member_index: usize,
         indent: &str,
         out: &mut String,
+        instance_extra_initializers_var: &str,
+        static_extra_initializers_var: &str,
+        metadata_var: &str,
     ) {
         let kind_str = match member.kind {
             MemberKind::Method => "method",
@@ -1701,16 +1779,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
             (init.to_string(), extra.to_string())
         } else {
             let extra = if member.is_static {
-                "_staticExtraInitializers"
+                static_extra_initializers_var.to_string()
             } else {
-                "_instanceExtraInitializers"
+                instance_extra_initializers_var.to_string()
             };
-            ("null".to_string(), extra.to_string())
+            ("null".to_string(), extra)
         };
 
         let es_decorate = self.helper("__esDecorate");
         out.push_str(&format!(
-            "{indent}{es_decorate}({ctor_arg}, null, {}, {{ kind: \"{kind_str}\", name: {name_str}, static: {}, private: {}, access: {{ {access_str} }}, metadata: _metadata }}, {init_arg}, {extra_init_arg});\n",
+            "{indent}{es_decorate}({ctor_arg}, null, {}, {{ kind: \"{kind_str}\", name: {name_str}, static: {}, private: {}, access: {{ {access_str} }}, metadata: {metadata_var} }}, {init_arg}, {extra_init_arg});\n",
             var_info.decorators_var,
             member.is_static,
             member.is_private,

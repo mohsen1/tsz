@@ -113,7 +113,13 @@ impl<'a> CheckerState<'a> {
         constraint_type: TypeId,
         param_type_id: TypeId,
         param_name: &str,
+        direct_mapped_constraint: bool,
+        direct_resolution_path_constraint: bool,
     ) -> bool {
+        if constraint_type == TypeId::ERROR || param_type_id == TypeId::ERROR {
+            return false;
+        }
+
         // Direct match
         if constraint_type == param_type_id {
             return true;
@@ -122,7 +128,9 @@ impl<'a> CheckerState<'a> {
         // Check if constraint is a TypeParameter with the same name
         if let Some(info) = type_param_info(self.ctx.types, constraint_type) {
             let name_str = self.ctx.types.resolve_atom(info.name);
-            if name_str == param_name {
+            if name_str == param_name
+                && self.type_parameter_identity_matches(constraint_type, param_type_id)
+            {
                 return true;
             }
         }
@@ -132,15 +140,16 @@ impl<'a> CheckerState<'a> {
         // conditional types, index access). This catches cases like
         // `T extends { [P in T]: number }` without false-positiving on `T extends Array<T>`.
         //
-        let atom = self.ctx.types.intern_string(param_name);
         // For mapped type constraints, only consider it circular if the type parameter
         // appears directly in the key source (e.g., `[P in T]` is circular), not when it
         // appears through `keyof` (e.g., `[K in keyof T]` is valid).
         // `T extends { [K in keyof T]: T[K] }` is a common valid TypeScript pattern.
-        if let Some(mapped) = crate::query_boundaries::property_access::get_mapped_type(
-            self.ctx.types,
-            constraint_type,
-        ) {
+        if direct_mapped_constraint
+            && let Some(mapped) = crate::query_boundaries::property_access::get_mapped_type(
+                self.ctx.types,
+                constraint_type,
+            )
+        {
             let key_source = mapped.constraint;
             // Check if the key source directly contains the type parameter without
             // going through a `keyof` wrapper. Strip keyof from the key source first,
@@ -169,27 +178,62 @@ impl<'a> CheckerState<'a> {
                                     member,
                                 )
                                 .is_none()
-                                    && crate::query_boundaries::common::contains_type_parameter_named_shallow(
-                                        self.ctx.types,
+                                    && self.contains_type_parameter_identity_shallow(
                                         member,
-                                        atom,
+                                        param_type_id,
                                     )
                             })
                         } else {
                             // Not keyof, not intersection - check directly
-                            crate::query_boundaries::common::contains_type_parameter_named_shallow(
-                                self.ctx.types,
-                                key_source,
-                                atom,
-                            )
+                            self.contains_type_parameter_identity_shallow(key_source, param_type_id)
                         }
                     });
             return key_without_keyof;
         }
-        crate::query_boundaries::common::constraint_references_type_param_in_resolution_path(
+        direct_resolution_path_constraint
+            && self.constraint_references_type_param_identity_in_resolution_path(
+                constraint_type,
+                param_type_id,
+            )
+    }
+
+    pub(crate) fn type_parameter_identity_matches(
+        &self,
+        candidate: TypeId,
+        target: TypeId,
+    ) -> bool {
+        candidate == target
+            || self
+                .ctx
+                .definition_store
+                .find_def_for_type(candidate)
+                .zip(self.ctx.definition_store.find_def_for_type(target))
+                .is_some_and(|(candidate_def, target_def)| candidate_def == target_def)
+    }
+
+    pub(crate) fn contains_type_parameter_identity_shallow(
+        &self,
+        root: TypeId,
+        target: TypeId,
+    ) -> bool {
+        crate::query_boundaries::type_parameter_identity::contains_type_parameter_identity_shallow(
             self.ctx.types,
-            constraint_type,
-            atom,
+            &self.ctx.definition_store,
+            root,
+            target,
+        )
+    }
+
+    fn constraint_references_type_param_identity_in_resolution_path(
+        &self,
+        root: TypeId,
+        target: TypeId,
+    ) -> bool {
+        crate::query_boundaries::type_parameter_identity::constraint_references_type_param_identity_in_resolution_path(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            root,
+            target,
         )
     }
 

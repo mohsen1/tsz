@@ -13,6 +13,25 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    const JSDOC_PARAM_TAG_NAMES: [&'static str; 3] = ["param", "arg", "argument"];
+
+    fn strip_jsdoc_param_tag_prefix(text: &str) -> Option<(&'static str, &str)> {
+        Self::JSDOC_PARAM_TAG_NAMES
+            .iter()
+            .find_map(|tag| Self::strip_jsdoc_tag_prefix(text, tag).map(|rest| (*tag, rest)))
+    }
+
+    fn jsdoc_param_tag_offset(text: &str) -> Option<(usize, &'static str)> {
+        Self::JSDOC_PARAM_TAG_NAMES
+            .iter()
+            .filter_map(|tag| Self::jsdoc_tag_offset(text, tag).map(|offset| (offset, *tag)))
+            .min_by_key(|(offset, _)| *offset)
+    }
+
+    const fn jsdoc_tag_source_len(tag: &str) -> usize {
+        1 + tag.len()
+    }
+
     // =========================================================================
     // JSDoc Helpers for Implicit Any Suppression
     // =========================================================================
@@ -197,8 +216,11 @@ impl<'a> CheckerState<'a> {
                     let search_region = &source_text[comment_start..];
                     let mut name_pos = None;
                     let mut search_from = (*tag_offset).min(search_region.len());
-                    while let Some(at_param) = search_region[search_from..].find("@param") {
-                        let after_param = search_from + at_param + "@param".len();
+                    while let Some((at_param, param_tag)) =
+                        Self::jsdoc_param_tag_offset(&search_region[search_from..])
+                    {
+                        let after_param =
+                            search_from + at_param + Self::jsdoc_tag_source_len(param_tag);
                         // Find the name after the @param tag (skip {type} if present)
                         if let Some(n) = Self::find_param_name_in_source(
                             &search_region[after_param..],
@@ -252,11 +274,11 @@ impl<'a> CheckerState<'a> {
         let mut line_start = comment_start;
         for chunk in comment_text.split_inclusive('\n') {
             let raw_line = chunk.trim_end_matches('\n').trim_end_matches('\r');
-            let Some(at_param) = raw_line.find("@param") else {
+            let Some((at_param, param_tag)) = Self::jsdoc_param_tag_offset(raw_line) else {
                 line_start += chunk.len();
                 continue;
             };
-            let after_param_start = at_param + "@param".len();
+            let after_param_start = at_param + Self::jsdoc_tag_source_len(param_tag);
             let after_param = &raw_line[after_param_start..];
             let trimmed_after_param = after_param.trim_start();
             let leading_ws = after_param.len() - trimmed_after_param.len();
@@ -414,11 +436,13 @@ impl<'a> CheckerState<'a> {
 
         for (param_name, tag_offset) in Self::extract_jsdoc_param_names(jsdoc) {
             let search_start = tag_offset;
-            let Some(rel_tag) = comment_text[search_start..].find("@param") else {
+            let Some((rel_tag, param_tag)) =
+                Self::jsdoc_param_tag_offset(&comment_text[search_start..])
+            else {
                 continue;
             };
             let tag_start = search_start + rel_tag;
-            let after_tag = &comment_text[tag_start + "@param".len()..];
+            let after_tag = &comment_text[tag_start + Self::jsdoc_tag_source_len(param_tag)..];
             let trimmed = after_tag.trim_start();
             let leading_ws = after_tag.len() - trimmed.len();
             if !trimmed.starts_with('{') {
@@ -469,7 +493,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let function_rel = tag_start + "@param".len() + leading_ws + 1;
+            let function_rel = tag_start + Self::jsdoc_tag_source_len(param_tag) + leading_ws + 1;
             let function_pos = comment_pos + function_rel as u32;
             self.ctx.error(
                 function_pos,
@@ -936,7 +960,7 @@ impl<'a> CheckerState<'a> {
         let comments = &sf.comments;
 
         if let Some(jsdoc) = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text) {
-            return jsdoc.contains("@satisfies");
+            return Self::jsdoc_contains_tag(&jsdoc, "satisfies");
         }
 
         false
@@ -965,17 +989,7 @@ impl<'a> CheckerState<'a> {
         let Some(jsdoc) = self.try_leading_jsdoc(comments, pos, source_text) else {
             return false;
         };
-        // Match `@type` but not `@typedef` (which uses a different shape).
-        let mut search = jsdoc.as_str();
-        while let Some(pos) = search.find("@type") {
-            let after = &search[pos + "@type".len()..];
-            let next = after.chars().next();
-            if !matches!(next, Some(c) if c.is_ascii_alphanumeric() || c == '_') {
-                return true;
-            }
-            search = &after[next.map_or(0, |c| c.len_utf8())..];
-        }
-        false
+        Self::jsdoc_contains_tag(&jsdoc, "type")
     }
 
     /// Extract the type expression text from a leading `@satisfies {TypeExpr}` JSDoc comment
@@ -1037,8 +1051,7 @@ impl<'a> CheckerState<'a> {
 
         // Look for a JSDoc comment that ends right before or overlaps the parameter position
         if let Some(content) = self.try_leading_jsdoc(comments, param_node.pos, source_text) {
-            // Check if the JSDoc contains @type {something}
-            return content.contains("@type");
+            return Self::jsdoc_contains_tag(&content, "type");
         }
 
         false
@@ -1077,13 +1090,38 @@ impl<'a> CheckerState<'a> {
             };
             if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 && let Some(jsdoc) = self.try_leading_jsdoc(comments, parent_node.pos, source_text)
-                && jsdoc.contains("@type")
+                && Self::jsdoc_contains_tag(&jsdoc, "type")
             {
+                // Issue #3956: `/** @type {*} */(expr)` (and the related
+                // broad casts `any`, `unknown`, `Object`, `Function`) do
+                // NOT provide a contextual parameter type for nested
+                // closures. tsc still reports TS7006 for closure params
+                // in those cases. Only suppress when the cast type
+                // could plausibly contribute a contextual signature.
+                if let Some(type_expr) = Self::extract_jsdoc_type_expression(&jsdoc)
+                    && Self::jsdoc_type_cast_is_broad(type_expr.trim())
+                {
+                    return false;
+                }
                 return true;
             }
             current = parent;
         }
         false
+    }
+
+    /// Whether a JSDoc `@type` cast type expression is "broad" — i.e.
+    /// it does not constrain nested closure parameters and so cannot
+    /// suppress TS7006 implicit-any diagnostics on them.
+    ///
+    /// Mirrors tsc's handling of `*`, `any`, `unknown`, `Object`,
+    /// and `Function` as cast types whose contextual contribution to
+    /// nested closure parameters is empty.
+    fn jsdoc_type_cast_is_broad(type_expr: &str) -> bool {
+        matches!(
+            type_expr,
+            "*" | "?" | "any" | "unknown" | "Object" | "object" | "Function"
+        )
     }
 
     /// Check if a node has a `/** @override */` JSDoc annotation.
@@ -1100,7 +1138,7 @@ impl<'a> CheckerState<'a> {
         let comments = &sf.comments;
 
         self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)
-            .is_some_and(|content| content.contains("@override"))
+            .is_some_and(|content| Self::jsdoc_contains_tag(&content, "override"))
     }
 
     /// Check if a `JSDoc` comment has a `@param {type}` annotation for the given parameter name.
@@ -1127,7 +1165,7 @@ impl<'a> CheckerState<'a> {
 
             let effective = Self::skip_backtick_quoted(trimmed);
 
-            if let Some(rest) = effective.strip_prefix("@param")
+            if let Some((_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(effective)
                 && let Some(param) = Self::parse_jsdoc_param_tag(rest)
                 && param.name == param_name
                 && !param.optional
@@ -1159,7 +1197,7 @@ impl<'a> CheckerState<'a> {
                     }
                     param_text.clear();
                 }
-                if let Some(rest) = effective.strip_prefix("@param") {
+                if let Some((_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(effective) {
                     in_param = true;
                     param_text = rest.to_string();
                 } else {
@@ -1212,6 +1250,13 @@ impl<'a> CheckerState<'a> {
         } else {
             effective_type_expr
         };
+        if let Some(comment_start) = jsdoc_comment_start {
+            self.validate_jsdoc_param_namespace_member_errors(
+                &effective_type_expr,
+                comment_start,
+                type_expr_offset,
+            );
+        }
 
         // Empty generic type parameter list inside the braces, e.g.
         // `@param {<} x`. tsc reports TS1098 at the `<` and TS1139 at the
@@ -1378,6 +1423,159 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|(expr, _)| expr.starts_with("..."))
     }
 
+    pub(crate) fn validate_jsdoc_param_namespace_member_errors(
+        &mut self,
+        type_expr: &str,
+        comment_start: u32,
+        type_expr_offset: usize,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let bytes = type_expr.as_bytes();
+        let mut cursor = 0usize;
+        while cursor < bytes.len() {
+            if !Self::is_jsdoc_identifier_start(bytes[cursor]) {
+                cursor += 1;
+                continue;
+            }
+            let root_start = cursor;
+            cursor += 1;
+            while cursor < bytes.len() && Self::is_jsdoc_identifier_part(bytes[cursor]) {
+                cursor += 1;
+            }
+            let root_end = cursor;
+            if bytes.get(cursor) != Some(&b'.')
+                || !bytes
+                    .get(cursor + 1)
+                    .is_some_and(|b| Self::is_jsdoc_identifier_start(*b))
+            {
+                continue;
+            }
+            let member_start = cursor + 1;
+            cursor = member_start + 1;
+            while cursor < bytes.len() && Self::is_jsdoc_identifier_part(bytes[cursor]) {
+                cursor += 1;
+            }
+            let member_end = cursor;
+            let root = &type_expr[root_start..root_end];
+            let member = &type_expr[member_start..member_end];
+
+            if !self.is_jsdoc_namespace_root(root) {
+                continue;
+            }
+            if self
+                .resolve_namespace_member_from_all_binders(root, member)
+                .is_some()
+                || self.ctx.binder.file_locals.get(root).is_some_and(|sym_id| {
+                    self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol
+                            .exports
+                            .as_ref()
+                            .is_some_and(|exports| exports.get(member).is_some())
+                            || symbol
+                                .members
+                                .as_ref()
+                                .is_some_and(|members| members.get(member).is_some())
+                    })
+                })
+            {
+                continue;
+            }
+
+            let message = format_message(
+                diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                &[root, member],
+            );
+            let start = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|source_file| {
+                    let source_text = source_file.text.as_ref();
+                    source_text
+                        .find(&format!("@param {{{type_expr}}}"))
+                        .map(|offset| offset + "@param {".len() + member_start)
+                })
+                .map(|offset| offset as u32)
+                .unwrap_or(comment_start + type_expr_offset as u32 + member_start as u32);
+            let length = member.len() as u32;
+            let already_reported = self.ctx.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER
+                    && diagnostic.start == start
+                    && diagnostic.length == length
+                    && diagnostic.message_text == message
+            });
+            if !already_reported {
+                self.error_at_position(
+                    start,
+                    length,
+                    &message,
+                    diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+                );
+            }
+            return;
+        }
+    }
+
+    fn is_jsdoc_namespace_root(&self, root: &str) -> bool {
+        use tsz_binder::symbol_flags;
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(root)
+            && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::MODULE)
+            })
+        {
+            return true;
+        }
+        self.resolve_identifier_symbol_from_all_binders(root, |_, symbol| {
+            symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::MODULE)
+        })
+        .is_some()
+    }
+
+    /// Whether the root segment of a qualified JSDoc type expression refers
+    /// to a (possibly aliased) namespace, module, or import alias visible in
+    /// the current file. Used by the JSDoc typedef-base-type diagnostic loop
+    /// to suppress the generic "Cannot find name" emitter for qualified names
+    /// whose validity is owned by namespace-member resolution rather than by
+    /// simple-identifier name lookup.
+    ///
+    /// `import * as s from './m'` binds `s` as an ALIAS symbol with
+    /// `import_module = Some("./m")` but no `NAMESPACE_MODULE` flag on the
+    /// alias itself, so `is_jsdoc_namespace_root` returns false. References
+    /// like `@param {s.X}` are namespace-member accesses; emitting TS2304
+    /// "Cannot find name 's.X'" for them conflicts with tsc, which either
+    /// accepts them silently (when `X` is a valid export) or emits the
+    /// namespace-member-specific TS2694 ("Namespace 's' has no exported
+    /// member 'X'"). Both outcomes are owned by namespace-member resolution
+    /// — not by the generic identifier-not-found emitter.
+    pub(crate) fn jsdoc_qualified_root_is_namespace_or_alias(&self, root_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+        if self.is_jsdoc_namespace_root(root_name) {
+            return true;
+        }
+        let Some(sym_id) = self.ctx.binder.file_locals.get(root_name) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.has_any_flags(
+            symbol_flags::ALIAS
+                | symbol_flags::NAMESPACE_MODULE
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::MODULE_EXPORTS,
+        ) || symbol.import_module.is_some()
+    }
+
+    const fn is_jsdoc_identifier_start(byte: u8) -> bool {
+        byte == b'_' || byte == b'$' || byte.is_ascii_alphabetic()
+    }
+
+    const fn is_jsdoc_identifier_part(byte: u8) -> bool {
+        Self::is_jsdoc_identifier_start(byte) || byte.is_ascii_digit()
+    }
+
     fn required_generic_count_for_jsdoc_type_name(
         &mut self,
         type_expr: &str,
@@ -1530,6 +1728,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: (properties.len() + 1) as u32,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -1564,7 +1763,7 @@ impl<'a> CheckerState<'a> {
             let trimmed = line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
 
-            let Some(rest) = effective.strip_prefix("@param") else {
+            let Some((_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(effective) else {
                 continue;
             };
             let rest = rest.trim();
@@ -1645,7 +1844,7 @@ impl<'a> CheckerState<'a> {
         for line in jsdoc.lines() {
             let trimmed = line.trim();
             let effective = Self::skip_backtick_quoted(trimmed);
-            if let Some(rest) = effective.strip_prefix("@param") {
+            if let Some((_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(effective) {
                 let rest = rest.trim();
                 // Check the name part after optional {type}
                 let name_part_str = if rest.starts_with('{') {
@@ -1697,14 +1896,15 @@ impl<'a> CheckerState<'a> {
                     }
                     param_text.clear();
                 }
-                if let Some(rest) = effective.strip_prefix("@param") {
+                if let Some((param_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(effective) {
                     in_param = true;
                     // Calculate offset of this @param in the original JSDoc string
                     // Find this line in the original to get byte offset
                     if let Some(line_start) = jsdoc.find(line)
-                        && let Some(tag_pos) = line[..].find("@param")
+                        && let Some(effective_pos) = line.find(effective)
+                        && let Some(tag_pos) = Self::jsdoc_tag_offset(effective, param_tag)
                     {
-                        param_offset = line_start + tag_pos;
+                        param_offset = line_start + effective_pos + tag_pos;
                     }
                     param_text = rest.to_string();
                 } else {
@@ -1850,6 +2050,23 @@ impl<'a> CheckerState<'a> {
         rest
     }
 
+    /// Strip `@<tag_name>` from the start of `text` if present and immediately
+    /// followed by a JSDoc tag boundary. Use instead of `text.strip_prefix("@tag")`
+    /// when the text may also start with longer `@tagx` identifiers — the
+    /// boundary check rejects such longer names.
+    pub(crate) fn strip_jsdoc_tag_prefix<'s>(text: &'s str, tag_name: &str) -> Option<&'s str> {
+        let needle = format!("@{tag_name}");
+        let rest = text.strip_prefix(&needle)?;
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return None;
+        }
+        Some(rest)
+    }
+
     /// Like `extract_jsdoc_param_type_expr_from_param_tag`, but returns the matching type expression
     /// and its byte offset within a full JSDoc block.
     fn extract_jsdoc_param_type_expr_with_span(
@@ -1875,13 +2092,12 @@ impl<'a> CheckerState<'a> {
                     }
                     param_text.clear();
                 }
-                if let Some(rest) = effective.strip_prefix("@param") {
+                if let Some((param_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(effective) {
                     in_param = true;
                     param_text = rest.to_string();
-                    let at_pos = raw_line
-                        .find("@param")
-                        .unwrap_or_else(|| effective.find("@param").unwrap_or(0));
-                    text_offset = line_start + at_pos + "@param".len();
+                    let at_pos = raw_line.find(effective).unwrap_or(0)
+                        + Self::jsdoc_tag_offset(effective, param_tag).unwrap_or(0);
+                    text_offset = line_start + at_pos + Self::jsdoc_tag_source_len(param_tag);
                 } else {
                     in_param = false;
                 }
@@ -2041,15 +2257,13 @@ impl<'a> CheckerState<'a> {
         for line in jsdoc.lines() {
             let trimmed = line.trim();
             // @param {type} name
-            if let Some(rest) = trimmed.strip_prefix("@param")
+            if let Some((_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(trimmed)
                 && rest.trim().starts_with('{')
             {
                 return true;
             }
             // @returns {type} or @return {type}
-            if let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
+            if let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed)
                 && rest.trim().starts_with('{')
             {
                 return true;
@@ -2061,7 +2275,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // @template T
-            if trimmed.starts_with("@template") {
+            if Self::jsdoc_line_starts_with_tag(trimmed, "template") {
                 return true;
             }
         }
@@ -2260,10 +2474,23 @@ impl<'a> CheckerState<'a> {
             let trimmed = raw_line.trim().trim_start_matches('*').trim();
             if let Some(rest) = trimmed.strip_prefix("@type") {
                 let rest = rest.trim();
-                if rest.starts_with('{')
-                    && let Some(end) = rest[1..].find('}')
-                {
-                    return Some(rest[1..1 + end].trim().to_string());
+                if let Some(after_open) = rest.strip_prefix('{') {
+                    // Balance nested braces so `{{ a: T }}` (object literal
+                    // type wrapped in `@type {...}`) extracts the full
+                    // `{ a: T }` body, not just `{ a: T`.
+                    let mut depth = 1usize;
+                    for (i, ch) in after_open.char_indices() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    return Some(after_open[..i].trim().to_string());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
         }
@@ -2348,50 +2575,108 @@ impl<'a> CheckerState<'a> {
     /// Supports simple forms like:
     /// - `@template T`
     /// - `@template T,U`
-    /// - `@template T U`
     /// - `@template const T`
     /// - `@template const T, U` (both T and U are const per tsc)
     pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<(String, bool)> {
         let mut out = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed.strip_prefix("@template") else {
+            let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
                 continue;
             };
             // Track whether `const` modifier was seen on this @template line.
             // In tsc, `@template const T, U` makes ALL type params on
             // that line const.
             let mut saw_const = false;
-            for token in rest.split([',', ' ', '\t']) {
-                let name = token.trim();
-                if name.is_empty() {
-                    continue;
+            let mut segment_start = 0usize;
+            let mut depth = 0usize;
+            let mut push_segment = |segment: &str, saw_const: &mut bool| {
+                let bytes = segment.as_bytes();
+                let mut cursor = 0usize;
+                while cursor < bytes.len() {
+                    while cursor < bytes.len() && (bytes[cursor] as char).is_ascii_whitespace() {
+                        cursor += 1;
+                    }
+                    if cursor >= bytes.len() {
+                        break;
+                    }
+                    if bytes[cursor] as char == '{' {
+                        let mut brace_depth = 1usize;
+                        cursor += 1;
+                        while cursor < bytes.len() && brace_depth > 0 {
+                            match bytes[cursor] as char {
+                                '{' => brace_depth += 1,
+                                '}' => brace_depth = brace_depth.saturating_sub(1),
+                                _ => {}
+                            }
+                            cursor += 1;
+                        }
+                        continue;
+                    }
+
+                    // Bracket-default form: `@template [T=string]` declares
+                    // type parameter `T` with default `string`. tsc accepts
+                    // this form; without unwrapping the `[`, the identifier
+                    // scan below sees `[` as a non-identifier byte and skips
+                    // the segment entirely (issue #4005).
+                    if bytes[cursor] as char == '[' {
+                        cursor += 1;
+                        while cursor < bytes.len() && (bytes[cursor] as char).is_ascii_whitespace()
+                        {
+                            cursor += 1;
+                        }
+                    }
+
+                    let start = cursor;
+                    while cursor < bytes.len() {
+                        let ch = bytes[cursor] as char;
+                        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                            cursor += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if start == cursor {
+                        break;
+                    }
+
+                    let name = &segment[start..cursor];
+                    // Track `const` modifier keyword (e.g., `@template const T`).
+                    // tsc treats `const` as a type parameter modifier, not a name.
+                    if name == "const" {
+                        *saw_const = true;
+                        continue;
+                    }
+                    // Skip variance modifier keywords (e.g., `@template in T`,
+                    // `@template out T`, `@template in out T`). tsc treats `in`
+                    // and `out` as type-parameter modifiers, not names. Without
+                    // this skip, downstream consumers see an extra unbound name
+                    // like `in` and emit cascading TS2314/TS7006 false positives.
+                    // (TS1274 — `'in' modifier can only appear on a type
+                    // parameter of a class, interface or type alias` — is
+                    // emitted by a separate validator and is not in scope here.)
+                    if name == "in" || name == "out" {
+                        continue;
+                    }
+                    if !out.iter().any(|(existing, _)| existing == name) {
+                        out.push((name.to_string(), *saw_const));
+                    }
+                    break;
                 }
-                // Track `const` modifier keyword (e.g., `@template const T`).
-                // tsc treats `const` as a type parameter modifier, not a name.
-                if name == "const" {
-                    saw_const = true;
-                    continue;
-                }
-                // Skip variance modifier keywords (e.g., `@template in T`,
-                // `@template out T`, `@template in out T`). tsc treats `in`
-                // and `out` as type-parameter modifiers, not names. Without
-                // this skip, downstream consumers see an extra unbound name
-                // like `in` and emit cascading TS2314/TS7006 false positives.
-                // (TS1274 — `'in' modifier can only appear on a type
-                // parameter of a class, interface or type alias` — is
-                // emitted by a separate validator and is not in scope here.)
-                if name == "in" || name == "out" {
-                    continue;
-                }
-                if name
-                    .chars()
-                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                    && !out.iter().any(|(existing, _)| existing == name)
-                {
-                    out.push((name.to_string(), saw_const));
+            };
+
+            for (idx, ch) in rest.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth = depth.saturating_sub(1),
+                    ',' if depth == 0 => {
+                        push_segment(&rest[segment_start..idx], &mut saw_const);
+                        segment_start = idx + ch.len_utf8();
+                    }
+                    _ => {}
                 }
             }
+            push_segment(&rest[segment_start..], &mut saw_const);
         }
         out
     }
@@ -2416,7 +2701,9 @@ impl<'a> CheckerState<'a> {
         let comment_range = &source_text[comment_pos as usize..comment_end as usize];
 
         let mut scan_start = 0usize;
-        while let Some(template_offset) = comment_range[scan_start..].find("@template") {
+        while let Some(template_offset) =
+            Self::jsdoc_tag_offset(&comment_range[scan_start..], "template")
+        {
             let template_start = scan_start + template_offset;
             let rest = &comment_range[template_start + "@template".len()..];
             let trimmed = rest.trim_start();
@@ -2503,19 +2790,12 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_returns_type_name(jsdoc: &str) -> Option<String> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
-            let rest = rest.trim_start();
-            if !rest.starts_with('{') {
+            let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) else {
                 continue;
-            }
-            let after_open = &rest[1..];
-            let end = after_open.find('}')?;
-            let type_expr = after_open[..end].trim();
+            };
             if !type_expr.is_empty()
                 && type_expr
                     .chars()
@@ -2531,24 +2811,22 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_returns_type_expression(jsdoc: &str) -> Option<String> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
-            let rest = rest.trim_start();
-            if !rest.starts_with('{') {
+            let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) else {
                 continue;
-            }
-            let after_open = &rest[1..];
-            let end = after_open.find('}')?;
-            let type_expr = after_open[..end].trim();
+            };
             if !type_expr.is_empty() {
                 return Some(type_expr.to_string());
             }
         }
         None
+    }
+
+    pub(crate) fn jsdoc_type_expression_is_type_predicate(type_expr: &str) -> bool {
+        let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
+        is_asserts || Self::find_jsdoc_type_predicate_is(remainder).is_some()
     }
 
     /// Extract a type predicate from `@returns {x is Type}` / `@return {this is Entry}`.
@@ -2561,32 +2839,18 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(bool, String, Option<String>)> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
-            let rest = rest.trim_start();
-            if !rest.starts_with('{') {
+            let Some(type_expr) = Self::jsdoc_balanced_braced_type_expr(rest) else {
                 continue;
-            }
-            let after_open = &rest[1..];
-            let end = after_open.find('}')?;
-            let type_expr = after_open[..end].trim();
+            };
 
-            // Check for "asserts" prefix
-            let (is_asserts, remainder) =
-                if let Some(after_asserts) = type_expr.strip_prefix("asserts ") {
-                    (true, after_asserts.trim())
-                } else {
-                    (false, type_expr)
-                };
+            let (is_asserts, remainder) = Self::split_jsdoc_asserts_prefix(type_expr);
 
-            // Look for " is " separator (the type predicate pattern)
-            if let Some(is_pos) = remainder.find(" is ") {
+            if let Some((is_pos, is_end)) = Self::find_jsdoc_type_predicate_is(remainder) {
                 let param_name = remainder[..is_pos].trim();
-                let type_str = remainder[is_pos + 4..].trim();
+                let type_str = remainder[is_end..].trim();
                 // Validate param_name is a simple identifier or "this"
                 if !param_name.is_empty()
                     && (param_name == "this"

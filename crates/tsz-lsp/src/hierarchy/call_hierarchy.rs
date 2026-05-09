@@ -47,9 +47,44 @@ pub struct CallHierarchyOutgoingCall {
     pub to: CallHierarchyItem,
     /// The ranges within the source function where the callee is invoked.
     pub from_ranges: Vec<Range>,
+    /// Set when the callee resolved to an `import` binding rather than a local
+    /// declaration. Carries the module specifier text and the imported name so
+    /// the LSP server can re-resolve the target in the imported module's
+    /// source file (issue #3753).
+    #[serde(skip)]
+    pub import_resolution: Option<ImportResolutionRequest>,
+}
+
+/// Cross-file resolution request emitted by the call-hierarchy provider when
+/// it cannot resolve an outgoing callee within the current file because the
+/// callee is bound by an import statement.
+#[derive(Debug, Clone)]
+pub struct ImportResolutionRequest {
+    /// The module specifier text as it appears in the source — e.g. `"./a"`,
+    /// `"@scope/pkg"`, etc. The LSP server is responsible for resolving this
+    /// to an absolute path before re-running the call-hierarchy lookup.
+    pub module_specifier: String,
+    /// The local name as visible inside the importing file. For default
+    /// imports this is the local binding (which tsc treats as the imported
+    /// `default` export); for named imports this is the imported name.
+    pub local_name: String,
+    /// The exported name to look up in the target module. `None` for
+    /// namespace imports (`import * as ns`), where call hierarchy treats
+    /// the namespace itself as the target.
+    pub exported_name: Option<String>,
 }
 
 define_lsp_provider!(binder CallHierarchyProvider, "Provider for call hierarchy operations.");
+
+/// Aggregated outgoing-call information keyed by callee declaration. Carries
+/// the synthesized hierarchy item, the call-site source ranges, and an
+/// optional cross-file resolution request emitted when the callee resolves
+/// to an `import` binding (issue #3753).
+type OutgoingCalleeEntry = (
+    Option<CallHierarchyItem>,
+    Vec<Range>,
+    Option<ImportResolutionRequest>,
+);
 
 impl<'a> CallHierarchyProvider<'a> {
     const fn is_call_hierarchy_callable_kind(kind: u16) -> bool {
@@ -273,6 +308,210 @@ impl<'a> CallHierarchyProvider<'a> {
         results
     }
 
+    /// Issue #3753: find callers in this file that invoke `target_name` and
+    /// whose binding resolves to `target_decl_idx` (typically the local
+    /// import binding for a cross-file target). Mirrors the within-file
+    /// scan that `incoming_calls` performs but is parameterized by the
+    /// declaration node directly so callers don't need to be a function-
+    /// like node — `import { x } from "./a"` is a valid input here even
+    /// though the import binding is not itself callable in this file.
+    pub fn incoming_calls_for_decl_in_file(
+        &self,
+        target_decl_idx: NodeIndex,
+        target_name: &str,
+    ) -> Vec<CallHierarchyIncomingCall> {
+        let mut results = Vec::new();
+
+        let target_symbol_id = self
+            .binder
+            .get_node_symbol(target_decl_idx)
+            .or_else(|| self.binder.file_locals.get(target_name));
+
+        let mut callers: FxHashMap<u32, Vec<Range>> = FxHashMap::default();
+        let mut script_from_ranges = Vec::new();
+
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let idx = NodeIndex(i as u32);
+            if idx == target_decl_idx {
+                continue;
+            }
+            let ident_data = match self.arena.get_identifier(node) {
+                Some(d) => d,
+                None => continue,
+            };
+            if ident_data.escaped_text != target_name {
+                continue;
+            }
+            if !self.is_inside_call_or_decorator_reference(idx) {
+                continue;
+            }
+            if self.is_property_access_name(idx) {
+                continue;
+            }
+            // Symbol cross-check: when the binder agrees on a target symbol,
+            // require the call site to resolve to the same one. This rejects
+            // local same-name shadowing that doesn't go through the import.
+            if let Some(target_symbol) = target_symbol_id {
+                let reference_symbol = self
+                    .binder
+                    .node_symbols
+                    .get(&idx.0)
+                    .copied()
+                    .or_else(|| self.resolve_callee_symbol(idx).map(|(sym, _, _)| sym));
+                if let Some(reference_symbol) = reference_symbol
+                    && reference_symbol != target_symbol
+                {
+                    continue;
+                }
+            }
+
+            let range = node_range(self.arena, self.line_map, self.source_text, idx);
+            if let Some(containing_func) = self.find_containing_function(idx) {
+                let caller_idx = self
+                    .class_parent_for_constructor(containing_func)
+                    .unwrap_or(containing_func);
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else if let Some(caller_idx) = self.decorated_declaration_caller(idx) {
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else {
+                script_from_ranges.push(range);
+            }
+        }
+
+        for (caller_idx_raw, ranges) in callers {
+            let caller_idx = NodeIndex(caller_idx_raw);
+            if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
+                results.push(CallHierarchyIncomingCall {
+                    from: item,
+                    from_ranges: ranges,
+                });
+            }
+        }
+        if !script_from_ranges.is_empty() {
+            results.push(CallHierarchyIncomingCall {
+                from: self.script_call_hierarchy_item(),
+                from_ranges: script_from_ranges,
+            });
+        }
+        results
+    }
+
+    /// Issue #3753 (namespace imports): find callers in this file that
+    /// invoke `<namespace>.<member_name>(…)` where the namespace
+    /// identifier resolves to `namespace_decl_idx` (typically a
+    /// `NAMESPACE_IMPORT` binding from the importing file).
+    ///
+    /// Mirrors `incoming_calls_for_decl_in_file` but scans for property-
+    /// access call sites instead of bare identifier call sites — needed
+    /// because `ns.target()` is not a direct reference to `target`, it
+    /// is a member access whose receiver is the imported namespace.
+    pub fn incoming_calls_for_namespace_member(
+        &self,
+        namespace_decl_idx: NodeIndex,
+        member_name: &str,
+    ) -> Vec<CallHierarchyIncomingCall> {
+        let mut results = Vec::new();
+        let namespace_local = self
+            .arena
+            .get(namespace_decl_idx)
+            .and_then(|n| self.arena.get_identifier(n))
+            .map(|id| id.escaped_text.clone());
+        let Some(namespace_local) = namespace_local else {
+            return results;
+        };
+        let namespace_symbol = self.binder.get_node_symbol(namespace_decl_idx);
+
+        let mut callers: FxHashMap<u32, Vec<Range>> = FxHashMap::default();
+        let mut script_from_ranges = Vec::new();
+
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let idx = NodeIndex(i as u32);
+            // Match the property-access *name* — `ns.target` puts
+            // `target` here as the name, `ns` as the receiver.
+            if !self.is_property_access_name(idx) {
+                continue;
+            }
+            let ident_data = match self.arena.get_identifier(node) {
+                Some(d) => d,
+                None => continue,
+            };
+            if ident_data.escaped_text != member_name {
+                continue;
+            }
+            let Some(receiver_idx) = self.property_access_receiver(idx) else {
+                continue;
+            };
+            let Some(recv_node) = self.arena.get(receiver_idx) else {
+                continue;
+            };
+            if recv_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(recv_ident) = self.arena.get_identifier(recv_node) else {
+                continue;
+            };
+            if recv_ident.escaped_text != namespace_local {
+                continue;
+            }
+            // When the binder records a symbol for the receiver, require
+            // it to match the namespace decl's symbol. Rejects unrelated
+            // same-named locals that shadow the namespace.
+            if let Some(target_sym) = namespace_symbol {
+                let receiver_sym = self
+                    .binder
+                    .node_symbols
+                    .get(&receiver_idx.0)
+                    .copied()
+                    .or_else(|| self.resolve_callee_symbol(receiver_idx).map(|(s, _, _)| s));
+                if let Some(receiver_sym) = receiver_sym
+                    && receiver_sym != target_sym
+                {
+                    continue;
+                }
+            }
+            // The call site must be a CallExpression with this property
+            // access as its callee.
+            if !self.is_inside_call_or_decorator_reference(idx) {
+                continue;
+            }
+
+            let range = node_range(self.arena, self.line_map, self.source_text, idx);
+            if let Some(containing_func) = self.find_containing_function(idx) {
+                let caller_idx = self
+                    .class_parent_for_constructor(containing_func)
+                    .unwrap_or(containing_func);
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else if let Some(caller_idx) = self.decorated_declaration_caller(idx) {
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else {
+                script_from_ranges.push(range);
+            }
+        }
+
+        for (caller_idx_raw, ranges) in callers {
+            let caller_idx = NodeIndex(caller_idx_raw);
+            if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
+                results.push(CallHierarchyIncomingCall {
+                    from: item,
+                    from_ranges: ranges,
+                });
+            }
+        }
+        if !script_from_ranges.is_empty() {
+            results.push(CallHierarchyIncomingCall {
+                from: self.script_call_hierarchy_item(),
+                from_ranges: script_from_ranges,
+            });
+        }
+        results
+    }
+
     /// Find all outgoing calls from the function at the given position.
     ///
     /// Walks the function's body AST looking for `CallExpression` nodes,
@@ -334,9 +573,8 @@ impl<'a> CallHierarchyProvider<'a> {
         }
 
         // Group calls by the resolved callee.
-        // Key: NodeIndex of the callee's declaration, Value: list of call-site ranges.
-        let mut callees: FxHashMap<u32, (Option<CallHierarchyItem>, Vec<Range>)> =
-            FxHashMap::default();
+        // Key: NodeIndex of the callee's declaration, Value: aggregated callee info.
+        let mut callees: FxHashMap<u32, OutgoingCalleeEntry> = FxHashMap::default();
 
         for call_idx in call_nodes {
             if !self.call_expression_belongs_to_callable(call_idx, func_idx) {
@@ -376,9 +614,10 @@ impl<'a> CallHierarchyProvider<'a> {
 
             if let Some((symbol_id, decl_idx, name)) = resolved {
                 let _ = symbol_id; // used implicitly via decl_idx
+                let import_resolution = self.import_resolution_request_for_decl(decl_idx, &name);
                 let entry = callees.entry(decl_idx.0).or_insert_with(|| {
                     let item = self.make_call_hierarchy_item_for_declaration(decl_idx, &name);
-                    (item, Vec::new())
+                    (item, Vec::new(), import_resolution)
                 });
                 entry.1.push(call_range);
             } else if let Some((decl_idx, name)) =
@@ -386,7 +625,7 @@ impl<'a> CallHierarchyProvider<'a> {
             {
                 let entry = callees.entry(decl_idx.0).or_insert_with(|| {
                     let item = self.make_call_hierarchy_item_for_declaration(decl_idx, &name);
-                    (item, Vec::new())
+                    (item, Vec::new(), None)
                 });
                 entry.1.push(call_range);
             } else if let Some(ident_node) = self.arena.get(callee_ident) {
@@ -404,7 +643,7 @@ impl<'a> CallHierarchyProvider<'a> {
                             selection_range: ident_range,
                             container_name: None,
                         };
-                        (Some(item), Vec::new())
+                        (Some(item), Vec::new(), None)
                     });
                     entry.1.push(call_range);
                 }
@@ -412,11 +651,12 @@ impl<'a> CallHierarchyProvider<'a> {
         }
 
         // Convert grouped callees into CallHierarchyOutgoingCall items
-        for (_decl_idx, (item_opt, ranges)) in callees {
+        for (_decl_idx, (item_opt, ranges, import_resolution)) in callees {
             if let Some(item) = item_opt {
                 results.push(CallHierarchyOutgoingCall {
                     to: item,
                     from_ranges: ranges,
+                    import_resolution,
                 });
             }
         }
@@ -1525,6 +1765,122 @@ impl<'a> CallHierarchyProvider<'a> {
 
     /// Build a `CallHierarchyItem` for a declaration node that may be
     /// a function or may be a variable holding a function expression.
+    /// Issue #3753: detect when a callee's declaration is bound by an import
+    /// statement. Returns enough metadata for the LSP server to re-resolve
+    /// the callee in the imported module's source file:
+    /// `(module_specifier, local_name, exported_name)`.
+    ///
+    /// `local_name` is the name visible inside the importing file. For
+    /// `import { foo as bar } from "..."` the local is `bar` and the
+    /// exported name is `foo`. For `import foo from "..."` the local is
+    /// `foo` and the exported name is `default`. For namespace imports
+    /// (`import * as ns from "..."`) we return `None` for `exported_name`.
+    fn import_resolution_request_for_decl(
+        &self,
+        decl_idx: NodeIndex,
+        local_name: &str,
+    ) -> Option<ImportResolutionRequest> {
+        let node = self.arena.get(decl_idx)?;
+        let kind = node.kind;
+
+        // Walk up to find the containing IMPORT_DECLARATION while remembering
+        // what kind of import-binding the decl participates in.
+        let mut current = decl_idx;
+        let mut exported_name: Option<String> = Some(local_name.to_string());
+        let mut saw_import_kind = false;
+
+        // The decl itself can be the import-binding name — e.g. for an
+        // `import { Foo }` specifier the decl is the IMPORT_SPECIFIER node;
+        // for default imports (`import Foo from "x"`) the decl is the
+        // IMPORT_CLAUSE; for namespace imports the decl is NAMESPACE_IMPORT.
+        if kind == syntax_kind_ext::IMPORT_SPECIFIER {
+            if let Some(specifier) = self.arena.get_specifier(node) {
+                // tsc preserves the property name on aliased imports as
+                // the *exported* name. `import { foo as bar }` → property
+                // name = foo, name = bar; the local visible here is `bar`.
+                if specifier.property_name.is_some()
+                    && let Some(prop_node) = self.arena.get(specifier.property_name)
+                    && let Some(ident) = self.arena.get_identifier(prop_node)
+                {
+                    exported_name = Some(ident.escaped_text.clone());
+                }
+            }
+            saw_import_kind = true;
+        } else if kind == syntax_kind_ext::IMPORT_CLAUSE {
+            // Default import: the local-name binding IS the default export.
+            exported_name = Some("default".to_string());
+            saw_import_kind = true;
+        } else if kind == syntax_kind_ext::NAMESPACE_IMPORT {
+            // Namespace import — no specific exported name.
+            exported_name = None;
+            saw_import_kind = true;
+        }
+
+        // The decl can also be an inner identifier — when the binder records
+        // the IMPORT_SPECIFIER's `name` identifier rather than the specifier
+        // node itself. Walk up via the parent chain to find an enclosing
+        // import construct.
+        let mut steps = 0;
+        while !saw_import_kind {
+            if steps > 8 {
+                break;
+            }
+            steps += 1;
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            current = parent;
+            let parent_kind = parent_node.kind;
+            if parent_kind == syntax_kind_ext::IMPORT_SPECIFIER
+                || parent_kind == syntax_kind_ext::IMPORT_CLAUSE
+                || parent_kind == syntax_kind_ext::NAMESPACE_IMPORT
+            {
+                if parent_kind == syntax_kind_ext::IMPORT_CLAUSE {
+                    exported_name = Some("default".to_string());
+                } else if parent_kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                    exported_name = None;
+                } else if parent_kind == syntax_kind_ext::IMPORT_SPECIFIER
+                    && let Some(specifier) = self.arena.get_specifier(parent_node)
+                    && specifier.property_name.is_some()
+                    && let Some(prop_node) = self.arena.get(specifier.property_name)
+                    && let Some(ident) = self.arena.get_identifier(prop_node)
+                {
+                    exported_name = Some(ident.escaped_text.clone());
+                }
+                saw_import_kind = true;
+            }
+        }
+        if !saw_import_kind {
+            return None;
+        }
+
+        // Walk the rest of the way up to the IMPORT_DECLARATION to read its
+        // `module_specifier`.
+        for _ in 0..8 {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                let import_decl = self.arena.get_import_decl(parent_node)?;
+                let spec_node = self.arena.get(import_decl.module_specifier)?;
+                let spec_lit = self.arena.get_literal(spec_node)?;
+                return Some(ImportResolutionRequest {
+                    module_specifier: spec_lit.text.clone(),
+                    local_name: local_name.to_string(),
+                    exported_name,
+                });
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn make_call_hierarchy_item_for_declaration(
         &self,
         decl_idx: NodeIndex,

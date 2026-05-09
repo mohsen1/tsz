@@ -116,6 +116,52 @@ const x = { b: "hello" };
 }
 
 #[test]
+fn jsdoc_extends_string_literal_type_argument_keeps_closing_brace() {
+    let source = r#"
+// @ts-check
+
+/**
+ * @template T,U
+ */
+class Base {}
+
+/**
+ * @extends {Base<"}">}
+ */
+class Derived extends Base {}
+"#;
+    let diags = check_js_with_jsdoc(source);
+    let ts2314: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2314).collect();
+    assert!(
+        !ts2314.is_empty(),
+        "Expected TS2314 for missing second @extends type argument. Actual diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn jsdoc_extends_longer_underscore_tag_is_not_heritage() {
+    let source = r#"
+// @ts-check
+
+/**
+ * @template T,U
+ */
+class Base {}
+
+/**
+ * @extends_ {Base<"}">}
+ */
+class Derived extends Base {}
+"#;
+    let diags = check_js_with_jsdoc(source);
+    let ts2314: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2314).collect();
+    assert!(
+        ts2314.is_empty(),
+        "Longer @extends_ identifier should not be parsed as @extends. Actual diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn jsdoc_extends_incompatible_property_type_emits_ts2344() {
     // Constraint `b: boolean | string[]`; arg supplies `b: string`. All required
     // props are present but `string` is not assignable to `boolean | string[]`,

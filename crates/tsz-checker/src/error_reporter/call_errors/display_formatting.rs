@@ -12,10 +12,35 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
-    fn sanitized_type_node_display(&mut self, type_node: NodeIndex) -> Option<String> {
+    fn strip_synthetic_optional_from_display(display: String) -> String {
+        if let Some(stripped) = display.strip_suffix(" | undefined")
+            && stripped != "null"
+        {
+            stripped.to_string()
+        } else {
+            display
+        }
+    }
+
+    fn strip_synthetic_optional_from_display_for_arg(
+        &self,
+        display: String,
+        arg_type: TypeId,
+    ) -> String {
+        if arg_type == TypeId::NULL
+            || query_common::union_list_id(self.ctx.types, arg_type)
+                .is_some_and(|list_id| self.ctx.types.type_list(list_id).contains(&TypeId::NULL))
+        {
+            display
+        } else {
+            Self::strip_synthetic_optional_from_display(display)
+        }
+    }
+
+    pub(crate) fn sanitized_type_node_display(&mut self, type_node: NodeIndex) -> Option<String> {
         self.node_text(type_node)
             .and_then(|text| self.sanitize_type_annotation_text_for_diagnostic(text, true))
             .map(|text| self.format_annotation_like_type(&text))
@@ -89,12 +114,45 @@ impl<'a> CheckerState<'a> {
         concrete_type: TypeId,
         replacements: &mut FxHashMap<tsz_common::interner::Atom, TypeId>,
     ) {
+        self.collect_type_param_display_replacements_inner(
+            raw_type,
+            concrete_type,
+            replacements,
+            0,
+        );
+    }
+
+    fn collect_type_param_display_replacements_inner(
+        &mut self,
+        raw_type: TypeId,
+        concrete_type: TypeId,
+        replacements: &mut FxHashMap<tsz_common::interner::Atom, TypeId>,
+        depth: usize,
+    ) {
+        if depth > 32 || raw_type == concrete_type {
+            return;
+        }
+
         if let Some(raw_tp) = crate::query_boundaries::common::type_param_info(
             self.ctx.types.as_type_database(),
             raw_type,
         ) {
             replacements.entry(raw_tp.name).or_insert_with(|| {
-                crate::query_boundaries::common::widen_type(self.ctx.types, concrete_type)
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    concrete_type,
+                ) {
+                    crate::query_boundaries::common::widen_type(self.ctx.types, concrete_type)
+                } else if crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    concrete_type,
+                )
+                .is_some()
+                {
+                    self.widen_object_property_literals_for_call_parameter_display(concrete_type)
+                } else {
+                    concrete_type
+                }
             });
             return;
         }
@@ -102,10 +160,11 @@ impl<'a> CheckerState<'a> {
         let raw_unwrapped = query_common::unwrap_readonly(self.ctx.types, raw_type);
         let concrete_unwrapped = query_common::unwrap_readonly(self.ctx.types, concrete_type);
         if raw_unwrapped != raw_type || concrete_unwrapped != concrete_type {
-            self.collect_type_param_display_replacements(
+            self.collect_type_param_display_replacements_inner(
                 raw_unwrapped,
                 concrete_unwrapped,
                 replacements,
+                depth + 1,
             );
             return;
         }
@@ -114,8 +173,125 @@ impl<'a> CheckerState<'a> {
             query_common::array_element_type(self.ctx.types, raw_type),
             query_common::array_element_type(self.ctx.types, concrete_type),
         ) {
-            self.collect_type_param_display_replacements(raw_elem, concrete_elem, replacements);
+            self.collect_type_param_display_replacements_inner(
+                raw_elem,
+                concrete_elem,
+                replacements,
+                depth + 1,
+            );
             return;
+        }
+
+        if let (Some(raw_shape), Some(concrete_shape)) = (
+            query_common::object_shape_for_type(self.ctx.types, raw_type),
+            query_common::object_shape_for_type(self.ctx.types, concrete_type),
+        ) {
+            for raw_prop in &raw_shape.properties {
+                if let Some(concrete_prop) = concrete_shape
+                    .properties
+                    .iter()
+                    .find(|prop| prop.name == raw_prop.name)
+                {
+                    self.collect_type_param_display_replacements_inner(
+                        raw_prop.type_id,
+                        concrete_prop.type_id,
+                        replacements,
+                        depth + 1,
+                    );
+                }
+            }
+            if let (Some(raw_index), Some(concrete_index)) =
+                (&raw_shape.string_index, &concrete_shape.string_index)
+            {
+                self.collect_type_param_display_replacements_inner(
+                    raw_index.value_type,
+                    concrete_index.value_type,
+                    replacements,
+                    depth + 1,
+                );
+            }
+            if let (Some(raw_index), Some(concrete_index)) =
+                (&raw_shape.number_index, &concrete_shape.number_index)
+            {
+                self.collect_type_param_display_replacements_inner(
+                    raw_index.value_type,
+                    concrete_index.value_type,
+                    replacements,
+                    depth + 1,
+                );
+            }
+        }
+
+        if let (Some(raw_shape), Some(concrete_shape)) = (
+            query_common::callable_shape_for_type(self.ctx.types, raw_type),
+            query_common::callable_shape_for_type(self.ctx.types, concrete_type),
+        ) {
+            for (raw_sig, concrete_sig) in raw_shape
+                .call_signatures
+                .iter()
+                .zip(concrete_shape.call_signatures.iter())
+            {
+                for (raw_param, concrete_param) in
+                    raw_sig.params.iter().zip(concrete_sig.params.iter())
+                {
+                    self.collect_type_param_display_replacements_inner(
+                        raw_param.type_id,
+                        concrete_param.type_id,
+                        replacements,
+                        depth + 1,
+                    );
+                }
+                self.collect_type_param_display_replacements_inner(
+                    raw_sig.return_type,
+                    concrete_sig.return_type,
+                    replacements,
+                    depth + 1,
+                );
+            }
+            for (raw_sig, concrete_sig) in raw_shape
+                .construct_signatures
+                .iter()
+                .zip(concrete_shape.construct_signatures.iter())
+            {
+                for (raw_param, concrete_param) in
+                    raw_sig.params.iter().zip(concrete_sig.params.iter())
+                {
+                    self.collect_type_param_display_replacements_inner(
+                        raw_param.type_id,
+                        concrete_param.type_id,
+                        replacements,
+                        depth + 1,
+                    );
+                }
+                self.collect_type_param_display_replacements_inner(
+                    raw_sig.return_type,
+                    concrete_sig.return_type,
+                    replacements,
+                    depth + 1,
+                );
+            }
+        }
+
+        if let (Some(raw_shape), Some(concrete_shape)) = (
+            query_common::function_shape_for_type(self.ctx.types, raw_type),
+            query_common::function_shape_for_type(self.ctx.types, concrete_type),
+        ) {
+            for (raw_param, concrete_param) in
+                raw_shape.params.iter().zip(concrete_shape.params.iter())
+            {
+                self.collect_type_param_display_replacements_inner(
+                    raw_param.type_id,
+                    concrete_param.type_id,
+                    replacements,
+                    depth + 1,
+                );
+            }
+            self.collect_type_param_display_replacements_inner(
+                raw_shape.return_type,
+                concrete_shape.return_type,
+                replacements,
+                depth + 1,
+            );
         }
 
         if let (Some(raw_app), Some(concrete_app)) = (
@@ -125,7 +301,12 @@ impl<'a> CheckerState<'a> {
             && raw_app.args.len() == concrete_app.args.len()
         {
             for (&raw_arg, &concrete_arg) in raw_app.args.iter().zip(concrete_app.args.iter()) {
-                self.collect_type_param_display_replacements(raw_arg, concrete_arg, replacements);
+                self.collect_type_param_display_replacements_inner(
+                    raw_arg,
+                    concrete_arg,
+                    replacements,
+                    depth + 1,
+                );
             }
         }
     }
@@ -187,17 +368,9 @@ impl<'a> CheckerState<'a> {
 
     fn explicit_type_argument_callback_parameter_display(
         &mut self,
-        param_type: TypeId,
+        _param_type: TypeId,
         arg_idx: NodeIndex,
     ) -> Option<String> {
-        if !crate::query_boundaries::common::contains_type_by_id(
-            self.ctx.types,
-            param_type,
-            TypeId::ERROR,
-        ) {
-            return None;
-        }
-
         let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
         let parent = self.ctx.arena.get(parent_idx)?;
         let (callee_expr, args, type_args): (
@@ -226,14 +399,25 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.resolve_identifier_symbol(callee_expr))
             .map(|sym| self.get_type_of_symbol(sym))
             .unwrap_or(concrete_callee_type);
-        let raw_sig = crate::query_boundaries::checkers::call::get_call_signature(
-            self.ctx.types,
-            raw_callee_type,
-            args.len(),
-        )?;
-        if raw_sig.type_params.len() != type_args.nodes.len() {
-            return None;
-        }
+        let raw_sigs = query_common::get_call_signatures(self.ctx.types, raw_callee_type)?;
+        let accepts_arg_count = |sig: &&tsz_solver::CallSignature| {
+            let required_count = sig.params.iter().filter(|p| !p.optional).count();
+            let has_rest = sig.params.iter().any(|p| p.rest);
+            if has_rest {
+                args.len() >= required_count
+            } else {
+                args.len() >= required_count && args.len() <= sig.params.len()
+            }
+        };
+        let raw_sig = raw_sigs
+            .iter()
+            .filter(|sig| sig.type_params.len() == type_args.nodes.len())
+            .find(accepts_arg_count)
+            .or_else(|| {
+                raw_sigs
+                    .iter()
+                    .find(|sig| sig.type_params.len() == type_args.nodes.len())
+            })?;
 
         let raw_param_type = raw_sig
             .params
@@ -243,10 +427,6 @@ impl<'a> CheckerState<'a> {
                 let last = raw_sig.params.last()?;
                 last.rest.then_some(last.type_id)
             })?;
-        if !crate::query_boundaries::common::is_callable_type(self.ctx.types, raw_param_type) {
-            return None;
-        }
-
         let mut display = self.format_type_for_assignability_message(raw_param_type);
         for (tp, &arg_type_node) in raw_sig.type_params.iter().zip(type_args.nodes.iter()) {
             let replacement = self.sanitized_type_node_display(arg_type_node)?;
@@ -395,11 +575,47 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let raw_display = self.format_type_for_assignability_message(raw_param_type);
-        if !raw_display.contains('<') {
-            return None;
+        // Direct arguments later in the same generic call can fix a callback's
+        // return type more specifically than the instantiated parameter surface.
+        let callback_return_tp = self.raw_callback_return_type_param_name(raw_param_type);
+        let mut replacements = FxHashMap::default();
+        self.collect_type_param_display_replacements(raw_param_type, param_type, &mut replacements);
+
+        if !replacements.is_empty() {
+            let mut display = self.format_type_for_assignability_message(raw_param_type);
+            let raw_display = display.clone();
+            let mut replaced_any = false;
+            for tp in &raw_sig.type_params {
+                let Some(&replacement_type) = replacements.get(&tp.name) else {
+                    continue;
+                };
+                let replacement_type = if callback_return_tp == Some(tp.name) {
+                    self.later_literal_argument_replacement_for_type_param(
+                        &raw_sig, args, arg_index, tp.name,
+                    )
+                    .unwrap_or(replacement_type)
+                } else {
+                    replacement_type
+                };
+                let replacement = self.format_type_for_assignability_message(replacement_type);
+                let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
+                display =
+                    Self::replace_type_param_name_in_display(&display, &tp_name, &replacement);
+                replaced_any = true;
+            }
+            if replaced_any
+                && display != raw_display
+                && (display.contains('<') || !raw_display.contains('<'))
+            {
+                return Some(
+                    Self::widen_member_literals_in_display_text(&display)
+                        .replace("new(", "new (")
+                        .replace("?: unknown | undefined", "?: unknown"),
+                );
+            }
         }
 
+        let raw_display = self.format_type_for_assignability_message(raw_param_type);
         let raw_shape = crate::query_boundaries::checkers::call::get_contextual_signature(
             self.ctx.types,
             raw_param_type,
@@ -410,25 +626,37 @@ impl<'a> CheckerState<'a> {
         )?;
 
         let mut display = raw_display;
+        let original_display = display.clone();
         let mut replaced_any = false;
         for tp in &raw_sig.type_params {
             let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
-            let replacement = raw_shape
-                .params
-                .iter()
-                .zip(concrete_shape.params.iter())
-                .find_map(|(raw_param, concrete_param)| {
-                    let raw_tp = crate::query_boundaries::common::type_param_info(
-                        self.ctx.types.as_type_database(),
-                        raw_param.type_id,
-                    )?;
-                    (raw_tp.name == tp.name).then(|| {
-                        let widened = crate::query_boundaries::common::widen_type(
-                            self.ctx.types,
-                            concrete_param.type_id,
-                        );
-                        self.format_type_for_assignability_message(widened)
-                    })
+            let replacement = replacements
+                .get(&tp.name)
+                .map(|&replacement_type| {
+                    let widened = crate::query_boundaries::common::widen_type(
+                        self.ctx.types,
+                        replacement_type,
+                    );
+                    self.format_type_for_assignability_message(widened)
+                })
+                .or_else(|| {
+                    raw_shape
+                        .params
+                        .iter()
+                        .zip(concrete_shape.params.iter())
+                        .find_map(|(raw_param, concrete_param)| {
+                            let raw_tp = crate::query_boundaries::common::type_param_info(
+                                self.ctx.types.as_type_database(),
+                                raw_param.type_id,
+                            )?;
+                            (raw_tp.name == tp.name).then(|| {
+                                let widened = crate::query_boundaries::common::widen_type(
+                                    self.ctx.types,
+                                    concrete_param.type_id,
+                                );
+                                self.format_type_for_assignability_message(widened)
+                            })
+                        })
                 })
                 .or_else(|| {
                     let raw_tp = crate::query_boundaries::common::type_param_info(
@@ -448,7 +676,193 @@ impl<'a> CheckerState<'a> {
             replaced_any = true;
         }
 
-        replaced_any.then_some(display)
+        (replaced_any
+            && display != original_display
+            && (display.contains('<') || !original_display.contains('<')))
+        .then_some(display)
+    }
+
+    fn raw_callback_return_type_param_name(
+        &self,
+        raw_param_type: TypeId,
+    ) -> Option<tsz_common::interner::Atom> {
+        let shape = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            raw_param_type,
+        )?;
+        crate::query_boundaries::common::type_param_info(
+            self.ctx.types.as_type_database(),
+            shape.return_type,
+        )
+        .map(|tp| tp.name)
+    }
+
+    fn later_literal_argument_replacement_for_type_param(
+        &mut self,
+        raw_sig: &tsz_solver::FunctionShape,
+        args: &[NodeIndex],
+        arg_index: usize,
+        type_param_name: tsz_common::interner::Atom,
+    ) -> Option<TypeId> {
+        raw_sig
+            .params
+            .iter()
+            .zip(args.iter().copied())
+            .enumerate()
+            .skip(arg_index + 1)
+            .find_map(|(_, (raw_param, call_arg_idx))| {
+                let raw_tp = crate::query_boundaries::common::type_param_info(
+                    self.ctx.types.as_type_database(),
+                    raw_param.type_id,
+                )?;
+                (raw_tp.name == type_param_name)
+                    .then(|| self.literal_type_from_initializer(call_arg_idx))
+                    .flatten()
+            })
+    }
+
+    fn instantiated_call_parameter_display(&mut self, arg_idx: NodeIndex) -> Option<String> {
+        let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+        let call = match parent.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.ctx.arena.get_call_expr(parent)?
+            }
+            _ => return None,
+        };
+        let args = call.arguments.as_ref()?;
+        let arg_index = args
+            .nodes
+            .iter()
+            .position(|&candidate| candidate == arg_idx)?;
+
+        let raw_callee_type = self
+            .resolve_qualified_symbol(call.expression)
+            .or_else(|| self.resolve_identifier_symbol(call.expression))
+            .map(|sym| self.get_type_of_symbol(sym))
+            .unwrap_or_else(|| self.get_type_of_node(call.expression));
+        let raw_sig = crate::query_boundaries::checkers::call::get_call_signature(
+            self.ctx.types,
+            raw_callee_type,
+            args.nodes.len(),
+        )?;
+        if raw_sig.type_params.is_empty() {
+            return None;
+        }
+
+        let raw_param_type = raw_sig
+            .params
+            .get(arg_index)
+            .map(|param| param.type_id)
+            .or_else(|| {
+                let last = raw_sig.params.last()?;
+                last.rest.then_some(last.type_id)
+            })?;
+
+        let mut replacements = FxHashMap::default();
+        for (raw_param, &call_arg_idx) in raw_sig.params.iter().zip(args.nodes.iter()) {
+            let actual_arg_type = self
+                .literal_type_from_initializer(call_arg_idx)
+                .unwrap_or_else(|| self.elaboration_source_expression_type(call_arg_idx));
+            self.collect_type_param_display_replacements(
+                raw_param.type_id,
+                actual_arg_type,
+                &mut replacements,
+            );
+        }
+
+        let mut type_args = Vec::with_capacity(raw_sig.type_params.len());
+        for tp in &raw_sig.type_params {
+            if let Some(&replacement) = replacements.get(&tp.name) {
+                type_args.push(replacement);
+            } else {
+                let constraint = tp.constraint?;
+                type_args.push(self.evaluate_type_for_assignability(constraint));
+            }
+        }
+
+        let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &raw_sig.type_params,
+            &type_args,
+        );
+        let instantiated = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            raw_param_type,
+            &subst,
+        );
+        let evaluated = self.evaluate_type_for_assignability(instantiated);
+        let display_type = if evaluated != TypeId::ERROR {
+            evaluated
+        } else {
+            instantiated
+        };
+        if matches!(display_type, TypeId::ANY | TypeId::UNKNOWN) {
+            return None;
+        }
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, display_type) {
+            let mut display = self.format_type_for_assignability_message(raw_param_type);
+            let mut replaced_any = false;
+            for (tp, &type_arg) in raw_sig.type_params.iter().zip(type_args.iter()) {
+                let replacement = self.format_type_for_assignability_message(type_arg);
+                let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
+                display =
+                    Self::replace_type_param_name_in_display(&display, &tp_name, &replacement);
+                replaced_any = true;
+            }
+            return replaced_any.then(|| {
+                Self::widen_member_literals_in_display_text(&display)
+                    .replace("new(", "new (")
+                    .replace("?: unknown | undefined", "?: unknown")
+            });
+        }
+
+        let display_type =
+            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_type)
+                .is_some()
+            {
+                self.widen_object_property_literals_for_call_parameter_display(display_type)
+            } else {
+                display_type
+            };
+
+        let display = self.format_type_for_assignability_message(display_type);
+        let display = if query_common::is_callable_type(self.ctx.types, display_type) {
+            display
+        } else {
+            Self::widen_member_literals_in_display_text(&display)
+        };
+        Some(
+            display
+                .replace("new(", "new (")
+                .replace("?: unknown | undefined", "?: unknown"),
+        )
+    }
+
+    fn widen_object_property_literals_for_call_parameter_display(&mut self, ty: TypeId) -> TypeId {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return ty;
+        };
+        let mut widened_shape = shape.as_ref().clone();
+        let mut changed = false;
+        for prop in &mut widened_shape.properties {
+            let widened_read =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop.type_id);
+            let widened_write = crate::query_boundaries::common::widen_literal_type(
+                self.ctx.types,
+                prop.write_type,
+            );
+            changed |= widened_read != prop.type_id || widened_write != prop.write_type;
+            prop.type_id = widened_read;
+            prop.write_type = widened_write;
+        }
+        if changed {
+            self.ctx.types.factory().object_with_index(widened_shape)
+        } else {
+            ty
+        }
     }
 
     fn property_access_call_parameter_annotation_display(
@@ -1022,6 +1436,7 @@ impl<'a> CheckerState<'a> {
         let prop_node = self.ctx.arena.get(prop_name_idx)?;
 
         let prefer_number_index = prop_node.kind == SyntaxKind::NumericLiteral as u16;
+        let prefer_symbol_index = self.is_symbol_property_name(prop_name_idx);
 
         // For type parameters, also check the constraint for index signatures
         let constraint_target =
@@ -1040,16 +1455,24 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
             })
             .find_map(|shape| {
+                let string_index = shape
+                    .string_index
+                    .as_ref()
+                    .filter(|sig| sig.key_type != TypeId::SYMBOL);
+                let symbol_index = shape
+                    .string_index
+                    .as_ref()
+                    .filter(|sig| sig.key_type == TypeId::SYMBOL);
                 if prefer_number_index {
                     shape
                         .number_index
                         .as_ref()
                         .map(|sig| sig.value_type)
-                        .or_else(|| shape.string_index.as_ref().map(|sig| sig.value_type))
+                        .or_else(|| string_index.map(|sig| sig.value_type))
+                } else if prefer_symbol_index {
+                    symbol_index.map(|sig| sig.value_type)
                 } else {
-                    shape
-                        .string_index
-                        .as_ref()
+                    string_index
                         .map(|sig| sig.value_type)
                         .or_else(|| shape.number_index.as_ref().map(|sig| sig.value_type))
                 }
@@ -1151,6 +1574,176 @@ impl<'a> CheckerState<'a> {
         self.literal_expression_display(arg_idx)
     }
 
+    fn object_literal_call_argument_display_with_target_literals(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        if !self.object_literal_is_missing_required_target_property(arg_idx, param_type) {
+            return None;
+        }
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        let elements = literal.elements.nodes.to_vec();
+        let mut literal_overrides = FxHashMap::default();
+
+        for elem_idx in elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.initializer)
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.name)
+                }
+                _ => continue,
+            };
+            let Some(prop_name) = self
+                .object_literal_property_name_text(prop_name_idx)
+                .or_else(|| self.get_property_name_resolved(prop_name_idx))
+            else {
+                continue;
+            };
+            let Some((target_prop_type, _)) =
+                self.object_literal_target_property_type(param_type, prop_name_idx, &prop_name)
+            else {
+                continue;
+            };
+            if !self.is_literal_sensitive_assignment_target(target_prop_type) {
+                continue;
+            }
+            let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) else {
+                continue;
+            };
+            literal_overrides.insert(self.ctx.types.intern_string(&prop_name), literal_type);
+        }
+
+        if literal_overrides.is_empty() {
+            return None;
+        }
+
+        let display_type = crate::query_boundaries::common::widen_argument_type_for_display(
+            self.ctx.types,
+            arg_type,
+        );
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_type)?;
+        let mut props = shape.properties.clone();
+        props.sort_by_key(|prop| prop.declaration_order);
+
+        let mut rendered = Vec::new();
+        for prop in props {
+            let name = self.ctx.types.resolve_atom(prop.name);
+            let ty_display = if let Some(&literal_type) = literal_overrides.get(&prop.name) {
+                self.format_type_for_assignability_message(literal_type)
+            } else {
+                let widened =
+                    crate::query_boundaries::common::widen_type(self.ctx.types, prop.type_id);
+                let mut formatter = self
+                    .ctx
+                    .create_diagnostic_type_formatter()
+                    .with_preserve_optional_parameter_surface_syntax(true);
+                formatter.format(widened).into_owned()
+            };
+            let optional = if prop.optional { "?" } else { "" };
+            rendered.push(format!("{name}{optional}: {ty_display};"));
+        }
+
+        Some(format!("{{ {} }}", rendered.join(" ")))
+    }
+
+    fn object_literal_is_missing_required_target_property(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(literal) = self.ctx.arena.get_literal_expr(node) else {
+            return false;
+        };
+        let elements = literal.elements.nodes.to_vec();
+        let mut source_names = rustc_hash::FxHashSet::default();
+        for elem_idx in elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let name_idx = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .map(|p| p.name),
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .map(|p| p.name),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.ctx.arena.get_method_decl(elem_node).map(|m| m.name)
+                }
+                _ => None,
+            };
+            let Some(name_idx) = name_idx else {
+                continue;
+            };
+            if let Some(name) = self
+                .object_literal_property_name_text(name_idx)
+                .or_else(|| self.get_property_name_resolved(name_idx))
+            {
+                source_names.insert(name);
+            }
+        }
+
+        let resolved = self.resolve_type_for_property_access(param_type);
+        let evaluated = self.evaluate_type_with_env(resolved);
+        let evaluated = self.resolve_lazy_type(evaluated);
+        let evaluated = self.evaluate_application_type(evaluated);
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+        else {
+            return false;
+        };
+
+        static OBJECT_PROTO_METHODS: &[&str] = &[
+            "constructor",
+            "toString",
+            "toLocaleString",
+            "valueOf",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ];
+
+        shape.properties.iter().any(|prop| {
+            !prop.optional && {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                !source_names.contains(name.as_str())
+                    && !OBJECT_PROTO_METHODS.contains(&name.as_str())
+            }
+        })
+    }
+
     fn jsdoc_constructor_identifier_source_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -1194,12 +1787,26 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
     ) -> String {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let is_array_literal_arg = self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
         if let Some(expr_node) = self.ctx.arena.get(expr_idx)
             && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
             && ident.escaped_text == "arguments"
             && self.has_enclosing_regular_function(expr_idx)
         {
             return "IArguments".to_string();
+        }
+        if query_common::tuple_elements(self.ctx.types, arg_type).is_some()
+            && self
+                .ctx
+                .arena
+                .get(expr_idx)
+                .is_none_or(|node| node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+        {
+            return self.format_type_diagnostic(arg_type);
         }
 
         // When the only literal-sensitive member of the parameter type is
@@ -1208,9 +1815,27 @@ impl<'a> CheckerState<'a> {
         // for the underlying target. Skip the literal-preserving branch in
         // that case so the argument widens to its widened display type
         // (e.g. `string` instead of `'"hello"'`).
+        //
+        // Additionally, only preserve the source literal when the target's
+        // primitive structure makes the literal display informative — for a
+        // mixed-primitive target like `string | "hello"` whose unique base
+        // appears in plain primitive form, the source widens to its base to
+        // match tsc's output. See `literal_widening_policy` for the full
+        // rule.
         if self.is_literal_sensitive_assignment_target(param_type)
             && !self.literal_sensitivity_is_only_synthetic_optional_undefined(param_type, arg_idx)
+            && self.source_literal_primitive_matches_target_literal(arg_type, arg_idx, param_type)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
+        {
+            return display;
+        }
+
+        if self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+            && let Some(display) = self.conditional_callable_union_argument_display(arg_type)
         {
             return display;
         }
@@ -1218,6 +1843,12 @@ impl<'a> CheckerState<'a> {
         if let Some(display) =
             self.contextual_function_argument_display(arg_type, param_type, arg_idx)
         {
+            return display;
+        }
+
+        if let Some(display) = self.object_literal_call_argument_display_with_target_literals(
+            arg_type, param_type, arg_idx,
+        ) {
             return display;
         }
 
@@ -1230,7 +1861,9 @@ impl<'a> CheckerState<'a> {
         {
             return display;
         }
-        if let Some(display) = self.rebuilt_array_source_display(arg_type, param_type) {
+        if !is_array_literal_arg
+            && let Some(display) = self.rebuilt_array_source_display(arg_type, param_type)
+        {
             return display;
         }
         if let Some(display) =
@@ -1240,6 +1873,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.call_target_preserves_literal_argument_surface(param_type, arg_idx)
+            && self.source_literal_primitive_matches_target_literal(arg_type, arg_idx, param_type)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
         {
             if (display == "true" || display == "false")
@@ -1279,10 +1913,51 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let display = self.format_type_for_assignability_message(display_type);
+        let should_widen_display = self
+            .materialize_finite_mapped_call_parameter_display_type(param_type)
+            .is_some()
+            && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_type)
+                .is_some()
+            || (is_array_literal_arg && !self.is_literal_sensitive_assignment_target(param_type));
+
+        let display = if should_widen_display {
+            self.format_type_diagnostic_widened(display_type)
+        } else {
+            self.format_type_for_assignability_message(display_type)
+        };
         self.rewrite_source_display_for_non_literal_target_assignability(
             arg_type, param_type, display,
         )
+    }
+
+    fn conditional_callable_union_argument_display(&mut self, arg_type: TypeId) -> Option<String> {
+        let members = query_common::union_members(self.ctx.types, arg_type)?;
+        let mut parts = Vec::with_capacity(members.len());
+        for member in members {
+            if let Some(shape) = query_common::function_shape_for_type(self.ctx.types, member) {
+                let params = shape
+                    .params
+                    .iter()
+                    .map(|param| {
+                        let name = param
+                            .name
+                            .map(|name| self.ctx.types.resolve_atom(name))
+                            .unwrap_or_else(|| "_".to_string());
+                        let optional = if param.optional { "?" } else { "" };
+                        let rest = if param.rest { "..." } else { "" };
+                        let ty = self.format_type_for_assignability_message(param.type_id);
+                        format!("{rest}{name}{optional}: {ty}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let return_type = self.format_type_for_assignability_message(shape.return_type);
+                parts.push(format!("(({params}) => {return_type})"));
+            } else {
+                parts.push(self.format_type_for_assignability_message(member));
+            }
+        }
+
+        Some(parts.join(" | "))
     }
 
     fn call_target_preserves_literal_argument_surface(
@@ -1627,34 +2302,34 @@ impl<'a> CheckerState<'a> {
         arg_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
+        let direct_param_display = self.format_type_diagnostic(param_type);
+
+        if let Some(display) =
+            self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
+        {
+            return display;
+        }
+
+        if let Some(display) =
+            self.underfilled_generic_variadic_tuple_parameter_display(param_type, arg_type)
+        {
+            return display;
+        }
+
         if let Some(display) =
             self.expanded_rest_tuple_parameter_display_for_call(param_type, arg_idx)
         {
             return display;
         }
 
-        if let Some(display) = self.contextual_generic_call_parameter_display(param_type, arg_idx) {
+        if let Some(display) = self.contextual_generic_call_parameter_display(param_type, arg_idx)
+            && (!display.starts_with('{') || direct_param_display.starts_with('{'))
+        {
             return display;
         }
 
         if let Some(display) =
             self.contextual_function_parameter_display_with_annotation_fallback(param_type, arg_idx)
-        {
-            return display;
-        }
-
-        if let Some(display) = self.generic_call_parameter_alias_display(param_type, arg_idx) {
-            return display;
-        }
-
-        if let Some(display) =
-            self.property_access_call_parameter_annotation_display(param_type, arg_idx)
-        {
-            return display;
-        }
-
-        if let Some(display) =
-            self.property_access_call_parameter_annotation_display(param_type, arg_idx)
         {
             return display;
         }
@@ -1665,11 +2340,47 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display) = self.generic_call_parameter_alias_display(param_type, arg_idx)
+            && (display.contains("IterableIterator<") || !display.contains("IterableIterator"))
+            && (display.contains("Promise<") || !display.contains("Promise"))
+            && (!display.starts_with('{') || direct_param_display.starts_with('{'))
+        {
+            return self.strip_synthetic_optional_from_display_for_arg(display, arg_type);
+        }
+
+        if let Some(display) =
+            self.property_access_call_parameter_annotation_display(param_type, arg_idx)
+        {
+            return display;
+        }
+
+        if let Some(display) =
+            self.property_access_call_parameter_annotation_display(param_type, arg_idx)
+        {
+            return display;
+        }
+
+        if let Some(display) = self.instantiated_call_parameter_display(arg_idx) {
+            return self.strip_synthetic_optional_from_display_for_arg(display, arg_type);
+        }
+
         if let Some(display) = self.contextual_keyof_parameter_display(param_type, arg_idx) {
             return display;
         }
 
+        if let Some(display_type) =
+            self.materialize_finite_mapped_call_parameter_display_type(param_type)
+        {
+            return self.format_type_for_assignability_message(display_type);
+        }
+
         if let Some(display) = self.contextual_constraint_parameter_display(param_type, arg_idx) {
+            return display;
+        }
+
+        if let Some(display) =
+            self.simple_function_call_parameter_annotation_display(param_type, arg_idx)
+        {
             return display;
         }
 
@@ -1679,17 +2390,31 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if direct_param_display.contains("typeof import(") {
+            return direct_param_display;
+        }
+
         if query_common::type_application(self.ctx.types, param_type).is_some() {
             // tsc shows the resolved literal/primitive form (e.g. `'"b"'`) instead
             // of the alias (e.g. `'KeysExtendedBy<M, number>'`) when a generic
             // type-alias application reduces to a literal, primitive, or union of
             // those. Object/interface results keep the alias form.
+            let original_contains_type_parameters =
+                query_common::contains_type_parameters(self.ctx.types, param_type);
             let evaluated = self.evaluate_type_with_env(param_type);
             if evaluated != param_type
                 && query_common::is_literal_or_primitive_or_compound_of_those(
                     self.ctx.types,
                     evaluated,
                 )
+            {
+                return self.format_type_diagnostic(evaluated);
+            }
+            if evaluated != param_type
+                && evaluated != TypeId::ERROR
+                && !matches!(evaluated, TypeId::ANY | TypeId::UNKNOWN)
+                && !original_contains_type_parameters
+                && !query_common::contains_type_parameters(self.ctx.types, evaluated)
             {
                 return self.format_type_diagnostic(evaluated);
             }
@@ -1725,7 +2450,8 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.ctx.types.union2(param_type, TypeId::UNDEFINED)
             };
-            return self.format_assignability_type_for_message(widened_param_type, arg_type);
+            let display = self.format_assignability_type_for_message(widened_param_type, arg_type);
+            return self.strip_synthetic_optional_from_display_for_arg(display, arg_type);
         }
 
         // When the parameter is a union mixing a non-primitive member (e.g.
@@ -1741,7 +2467,105 @@ impl<'a> CheckerState<'a> {
             return self.format_type_for_assignability_message(stripped);
         }
 
-        self.format_assignability_type_for_message_preserving_nullish(param_type, arg_type)
+        let fallback =
+            self.format_assignability_type_for_message_preserving_nullish(param_type, arg_type);
+        if fallback.starts_with('{') && !direct_param_display.starts_with('{') {
+            direct_param_display
+        } else {
+            fallback
+        }
+    }
+
+    fn materialize_finite_mapped_call_parameter_display_type(
+        &mut self,
+        param_type: TypeId,
+    ) -> Option<TypeId> {
+        let display_type = self.evaluate_type_for_assignability(param_type);
+        let constraint = query_common::type_param_info(self.ctx.types, param_type)
+            .and_then(|info| info.constraint);
+        let constraint_display_type =
+            constraint.map(|constraint| self.evaluate_type_for_assignability(constraint));
+        let mapped_id = query_common::mapped_type_id(self.ctx.types, display_type)
+            .or_else(|| query_common::mapped_type_id(self.ctx.types, param_type))
+            .or_else(|| {
+                constraint
+                    .and_then(|constraint| query_common::mapped_type_id(self.ctx.types, constraint))
+            })
+            .or_else(|| {
+                constraint_display_type.and_then(|display_type| {
+                    query_common::mapped_type_id(self.ctx.types, display_type)
+                })
+            })?;
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        let names = crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+            self.ctx.types,
+            mapped_id,
+        )?;
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort_by(|a, b| {
+            self.ctx
+                .types
+                .resolve_atom_ref(*a)
+                .cmp(&self.ctx.types.resolve_atom_ref(*b))
+        });
+
+        let mut properties = Vec::with_capacity(names.len());
+        for name in names {
+            let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
+            let type_id =
+                crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
+                    self.ctx.types,
+                    mapped_id,
+                    &property_name,
+                )?;
+            let mut property = tsz_solver::PropertyInfo::new(name, type_id);
+            property.optional = mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
+            property.readonly = mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+            properties.push(property);
+        }
+
+        Some(self.ctx.types.factory().object(properties))
+    }
+
+    fn simple_function_call_parameter_annotation_display(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        if self.object_literal_is_missing_required_target_property(arg_idx, param_type) {
+            return None;
+        }
+
+        let computed_display = self.format_type_for_assignability_message(param_type);
+        if !computed_display.starts_with('{') && computed_display != "[]" {
+            return None;
+        }
+
+        let parent_idx = self.ctx.arena.get_extended(arg_idx)?.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+        let call = self.ctx.arena.get_call_expr(parent)?;
+        let arg_index = call
+            .arguments
+            .as_ref()?
+            .nodes
+            .iter()
+            .position(|&n| n == arg_idx)?;
+        let callee_sym = self
+            .resolve_identifier_symbol(call.expression)
+            .or_else(|| self.resolve_qualified_symbol(call.expression))?;
+        let callee = self.ctx.binder.get_symbol(callee_sym)?;
+
+        callee.declarations.iter().copied().find_map(|decl_idx| {
+            let node = self.ctx.arena.get(decl_idx)?;
+            let func = self.ctx.arena.get_function(node)?;
+            let param_idx = *func.parameters.nodes.get(arg_index)?;
+            let param_node = self.ctx.arena.get(param_idx)?;
+            let param = self.ctx.arena.get_parameter(param_node)?;
+            param
+                .type_annotation
+                .into_option()
+                .and_then(|annotation| self.sanitized_type_node_display(annotation))
+        })
     }
 
     fn strip_nullish_for_non_primitive_union_target(
@@ -1941,6 +2765,14 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        Some(self.format_tuple_element_display(&elements, readonly))
+    }
+
+    pub(crate) fn format_tuple_element_display(
+        &mut self,
+        elements: &[TupleElement],
+        readonly: bool,
+    ) -> String {
         let parts: Vec<String> = elements
             .iter()
             .map(|element| {
@@ -1967,11 +2799,11 @@ impl<'a> CheckerState<'a> {
             .collect();
         let tuple_display = format!("[{}]", parts.join(", "));
 
-        Some(if readonly {
+        if readonly {
             format!("readonly {tuple_display}")
         } else {
             tuple_display
-        })
+        }
     }
 
     fn contextual_generic_call_parameter_display(

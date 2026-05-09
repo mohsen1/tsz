@@ -22,13 +22,16 @@ pub(crate) mod alias_narrowing;
 pub(crate) mod assignment;
 mod assignment_fallback;
 mod call_condition_narrowing;
+mod comparison_types;
 pub(crate) mod condition_narrowing;
 mod core;
 pub(crate) mod narrowing;
 mod narrowing_helpers;
+mod optional_chain;
 pub(crate) mod references;
 pub(crate) mod type_guards;
 pub(crate) mod var_utils;
+mod zod_literal_helpers;
 
 pub(crate) use self::core::{CallPredicateMap, PredicateSignature, PropertyKey};
 pub use self::core::{FlowAnalyzer, FlowGraph};

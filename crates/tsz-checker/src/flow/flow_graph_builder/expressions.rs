@@ -395,6 +395,11 @@ impl<'a> FlowGraphBuilder<'a> {
 
                     // Check for array mutation and create appropriate flow node
                     if self.is_array_mutation_call(expr_idx) {
+                        if let Some(callee_node) = self.arena.get(call.expression)
+                            && let Some(access) = self.arena.get_access_expr(callee_node)
+                        {
+                            self.record_node_flow(access.expression);
+                        }
                         let flow = self.create_flow_array_mutation(expr_idx);
                         self.current_flow = flow;
                     }
@@ -573,14 +578,22 @@ impl<'a> FlowGraphBuilder<'a> {
             }
         }
 
-        // Clone members to avoid borrow issues
-        let members = class.members.nodes.clone();
+        let member_count = class.members.nodes.len();
 
         // 2. Class members (static fields and blocks execute during class definition)
         // Note: Instance fields execute during construction, but for top-level flow
         // we only care about static side effects. Instance fields are handled
         // when checking the constructor.
-        for &member_idx in &members {
+        for member_offset in 0..member_count {
+            let Some(node) = self.arena.get(idx) else {
+                return;
+            };
+            let Some(class) = self.arena.get_class(node) else {
+                return;
+            };
+            let Some(&member_idx) = class.members.nodes.get(member_offset) else {
+                continue;
+            };
             if member_idx.is_none() {
                 continue;
             }

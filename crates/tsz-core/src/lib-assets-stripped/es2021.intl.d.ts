@@ -9,6 +9,10 @@ declare namespace Intl {
         dayPeriod?: "narrow" | "short" | "long" | undefined;
         fractionalSecondDigits?: 1 | 2 | 3 | undefined;
     }
+    interface DateTimeFormatPart {
+        type: DateTimeFormatPartTypes;
+        value: string;
+    }
     interface DateTimeRangeFormatPart extends DateTimeFormatPart {
         source: "startRange" | "endRange" | "shared";
     }

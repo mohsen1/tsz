@@ -101,6 +101,45 @@ lf.Transaction.prototype.begin = function(scope) {};
     );
 }
 
+#[test]
+fn jsdoc_param_nested_namespace_missing_member_emits_ts2694() {
+    let codes = diagnostics_for_files(
+        &[
+            (
+                "/lovefield-ts.d.ts",
+                r#"
+declare namespace lf {
+  export interface Transaction {
+    begin(scope: Array<schema.Table>): Promise<void>
+  }
+}
+"#,
+            ),
+            (
+                "/lovefield.js",
+                r#"
+lf.Transaction = function() {};
+/**
+ * @param {!Array<!lf.schema.Table>} scope
+ * @return {!IThenable}
+ */
+lf.Transaction.prototype.begin = function(scope) {};
+"#,
+            ),
+        ],
+        "/lovefield.js",
+    );
+
+    assert!(
+        codes.contains(&2694),
+        "Expected TS2694 for missing JSDoc namespace member lf.schema, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2708),
+        "TS2708 should stay suppressed for JS prototype assignments, got: {codes:?}"
+    );
+}
+
 /// The nested variant — `ns.Interface.prototype.method = ...` — exercises the
 /// write-target *chain* walk, not just the direct-write case. The base
 /// access `ns.Interface` is buried under two further property accesses; the

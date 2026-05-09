@@ -10,22 +10,8 @@
 //! those branches out.
 
 use crate::context::CheckerOptions;
+use crate::test_utils::check_source_strict_codes as check_strict;
 use crate::test_utils::check_with_options;
-
-fn check_strict(source: &str) -> Vec<u32> {
-    check_with_options(
-        source,
-        CheckerOptions {
-            strict: true,
-            strict_null_checks: true,
-            no_implicit_any: true,
-            ..Default::default()
-        },
-    )
-    .iter()
-    .map(|d| d.code)
-    .collect()
-}
 
 /// After `if (x === undefined) fail()`, x should be narrowed to exclude undefined.
 /// No TS18048 ('x' is possibly 'undefined') should be emitted on x.length.
@@ -96,6 +82,34 @@ function f(x: { a: string }) {
     assert!(
         !codes.contains(&2339),
         "Expected no TS2339 in unreachable code after never-returning call, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn this_method_returning_never_marks_following_code_unreachable() {
+    let source = r#"
+class C {
+    fail(): never {
+        throw "boom";
+    }
+    f() {
+        this.fail();
+        let x = 1;
+    }
+}
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            allow_unreachable_code: Some(false),
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&7027),
+        "Expected TS7027 after calling a this-method declared as never; got codes: {codes:?}"
     );
 }
 
@@ -222,6 +236,77 @@ function f() {
     assert!(
         codes.contains(&7027),
         "Expected TS7027 after a call to a JSDoc @returns {{never}} function, got codes: {codes:?}"
+    );
+}
+
+/// Regression for issue #3662: a variable declaration whose initializer is a
+/// never-returning call still falls through, so a function with a non-void
+/// declared return type must emit TS2355. tsc only treats bare expression
+/// statements like `fail();` as terminating control flow — `const x = fail();`
+/// completes the statement normally.
+#[test]
+fn var_decl_with_never_initializer_does_not_terminate_function() {
+    let source = r#"
+declare function fail(): never;
+function f(): number {
+    const value = fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2355),
+        "Expected TS2355 for `const value = fail()` falling through; got: {codes:?}"
+    );
+}
+
+/// Same shape as above but with `let` and a different binding name to ensure
+/// the rule is structural and not specific to `const value`.
+#[test]
+fn let_decl_with_never_initializer_does_not_terminate_function() {
+    let source = r#"
+declare function fail(): never;
+function g(): number {
+    let result = fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2355),
+        "Expected TS2355 for `let result = fail()` falling through; got: {codes:?}"
+    );
+}
+
+/// Multiple declarators with one never-typed initializer also fall through.
+/// Different name choices (`a`/`b` vs. `x`/`y`) should not change the rule.
+#[test]
+fn var_decl_list_with_never_initializer_does_not_terminate_function() {
+    let source = r#"
+declare function fail(): never;
+function h(): number {
+    const a = 1, b = fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2355),
+        "Expected TS2355 for `const a = 1, b = fail()` falling through; got: {codes:?}"
+    );
+}
+
+/// Control: a bare `fail();` expression statement still terminates control
+/// flow, so the function must not get TS2355. This pins the scope of the fix.
+#[test]
+fn bare_never_call_still_terminates_function() {
+    let source = r#"
+declare function fail(): never;
+function k(): number {
+    fail();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2355),
+        "Expected no TS2355 for bare `fail();` call; got: {codes:?}"
     );
 }
 

@@ -10,58 +10,11 @@ use tsz_solver::TypeId;
 mod indexed_access_helpers;
 
 use indexed_access_helpers::{
-    has_nonpublic_property, is_broad_index_type, same_object_key_space, same_type_param_name,
+    has_nonpublic_property, indexed_access_object_alias_application_exceeds_depth,
+    is_broad_index_type, same_object_key_space, same_type_param_name,
 };
 
 impl<'a> CheckerState<'a> {
-    fn union_restricted_literal_property_is_missing(
-        &mut self,
-        property_name: &str,
-        object_type: TypeId,
-    ) -> bool {
-        use crate::query_boundaries::state::checking;
-
-        if self.ctx.enclosing_class.is_some() {
-            return false;
-        }
-
-        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
-            return false;
-        };
-        if members.len() < 2 {
-            return false;
-        }
-
-        let is_static = self.is_constructor_type(object_type);
-        let mut has_restricted = false;
-        let mut has_other = false;
-        let mut first_declaring_class: Option<NodeIndex> = None;
-
-        for member in members {
-            let member = self.resolve_type_for_property_access(member);
-            let Some(class_idx) = self.get_class_decl_from_type(member) else {
-                has_other = true;
-                continue;
-            };
-
-            match self.find_member_access_info(class_idx, property_name, is_static) {
-                Some(access_info) => {
-                    has_restricted = true;
-                    if let Some(first_decl) = first_declaring_class {
-                        if first_decl != access_info.declaring_class_idx {
-                            has_other = true;
-                        }
-                    } else {
-                        first_declaring_class = Some(access_info.declaring_class_idx);
-                    }
-                }
-                None => has_other = true,
-            }
-        }
-
-        has_restricted && has_other
-    }
-
     fn is_mapped_key_index_for_current_object(
         &mut self,
         node_idx: NodeIndex,
@@ -706,6 +659,15 @@ impl<'a> CheckerState<'a> {
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
+        if indexed_access_object_alias_application_exceeds_depth(self, data.object_type) {
+            self.error_at_node(
+                data.object_type,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return;
+        }
+
         if object_type == TypeId::ERROR
             && index_type != TypeId::ERROR
             && index_type != TypeId::NEVER
@@ -939,7 +901,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                     &["any"],
                 );
-                self.error_at_node(
+                self.error_at_index_type_span(
                     error_anchor,
                     &message_2538,
                     diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
@@ -1032,6 +994,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let index_type_for_check = self.evaluate_type_with_env(index_type);
+        if let Some(prop_atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+            && self.ctx.types.resolve_atom(prop_atom) == "length"
+            && self.indexed_access_object_allows_length_property(object_type, object_type_for_check)
+        {
+            return;
+        }
         // First check: raw index type against keyof.
         // This handles cases where keyof includes type parameters from mapped types
         // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
@@ -1054,6 +1023,13 @@ impl<'a> CheckerState<'a> {
             data.index_type,
             object_type,
             object_type_for_check,
+        ) {
+            return;
+        }
+        if self.mapped_object_index_matches_own_key_constraint(
+            data.object_type,
+            index_type,
+            index_type_for_check,
         ) {
             return;
         }
@@ -1762,15 +1738,17 @@ impl<'a> CheckerState<'a> {
                 && !self.is_element_indexable(concrete_object_type, false, true)
             {
                 let object_type_str = self.format_type(object_type);
-                let message = format_message(
-                    diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
-                    &[&object_type_str, "number"],
-                );
-                self.error_at_node(
-                    error_anchor,
-                    &message,
-                    diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
-                );
+                for index_kind in ["number", "string"] {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                        &[&object_type_str, index_kind],
+                    );
+                    self.error_at_index_type_span(
+                        error_anchor,
+                        &message,
+                        diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                    );
+                }
                 return true;
             }
             let mut emitted_any = false;
@@ -1781,7 +1759,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                             &[boolean_member],
                         );
-                        self.error_at_node(
+                        self.error_at_index_type_span(
                             error_anchor,
                             &message,
                             diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
@@ -1811,7 +1789,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                 &["any"],
             );
-            self.error_at_node(
+            self.error_at_index_type_span(
                 error_anchor,
                 &message,
                 diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
@@ -1828,7 +1806,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                 &[&index_type_str],
             );
-            self.error_at_node(
+            self.error_at_index_type_span(
                 error_anchor,
                 &message,
                 diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
@@ -1921,7 +1899,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
                     &[&object_type_str, "string"],
                 );
-                self.error_at_node(
+                self.error_at_index_type_span(
                     error_anchor,
                     &message,
                     diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
@@ -1932,7 +1910,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
                     &[&object_type_str, "number"],
                 );
-                self.error_at_node(
+                self.error_at_index_type_span(
                     error_anchor,
                     &message,
                     diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,

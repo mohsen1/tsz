@@ -6,7 +6,7 @@
 //! Uses a match statement instead of a `HashMap` for zero-cost initialization
 //! (no Lazy, no heap allocation, no `once_cell` synchronization).
 
-pub const LIB_FILE_COUNT: usize = 106;
+pub const LIB_FILE_COUNT: usize = 107;
 
 /// Look up embedded lib content by filename (e.g., "dom.d.ts", "es5.d.ts").
 /// Returns None for unknown filenames.
@@ -128,6 +128,9 @@ pub fn get_lib_content(filename: &str) -> Option<&'static str> {
             "../lib-assets-stripped/es2024.sharedmemory.d.ts"
         )),
         "es2024.string.d.ts" => Some(include_str!("../lib-assets-stripped/es2024.string.d.ts")),
+        "es2025.collection.d.ts" => Some(include_str!(
+            "../lib-assets-stripped/es2025.collection.d.ts"
+        )),
         "es2025.intl.d.ts" => Some(include_str!("../lib-assets-stripped/es2025.intl.d.ts")),
         "es5.d.ts" => Some(include_str!("../lib-assets-stripped/es5.d.ts")),
         "es5.full.d.ts" => Some(include_str!("../lib-assets-stripped/es5.full.d.ts")),
@@ -266,6 +269,7 @@ static ALL_LIB_FILENAMES: &[&str] = &[
     "es2024.regexp.d.ts",
     "es2024.sharedmemory.d.ts",
     "es2024.string.d.ts",
+    "es2025.collection.d.ts",
     "es2025.intl.d.ts",
     "es5.d.ts",
     "es5.full.d.ts",
@@ -374,5 +378,13 @@ mod tests {
             content.contains("ZonedDateTime"),
             "esnext.temporal.d.ts should define Temporal.ZonedDateTime"
         );
+    }
+
+    #[test]
+    fn test_es2021_intl_embedded_lib_is_self_contained_for_datetime_range_parts() {
+        let content =
+            get_lib_content("es2021.intl.d.ts").expect("es2021.intl.d.ts should be embedded");
+        assert!(content.contains("interface DateTimeFormatPart"));
+        assert!(content.contains("interface DateTimeRangeFormatPart extends DateTimeFormatPart"));
     }
 }

@@ -84,6 +84,16 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn default_expression_has_safe_nameable_surface_type(&self, expr_idx: NodeIndex) -> bool {
+        if self
+            .call_expression_reused_type_text(expr_idx)
+            .is_some_and(|type_text| {
+                Self::type_text_starts_with_import_type(&type_text)
+                    && !self.import_type_uses_private_package_subpath(&type_text)
+            })
+        {
+            return true;
+        }
+
         let Some(resolved_type) = self.resolve_declaration_type_text(&[expr_idx], Some(expr_idx))
         else {
             return false;
@@ -105,16 +115,17 @@ impl<'a> DeclarationEmitter<'a> {
         let directly_nameable_type_text = Some(selected_type_text)
             .filter(|text| self.type_text_is_directly_nameable_reference(text))
             .or_else(|| {
-                let printed_is_safe_fallback = printed_type_text.starts_with("import(\"")
-                    || printed_type_text.contains('<')
-                    || printed_type_text.contains('.');
+                let printed_is_safe_fallback =
+                    Self::type_text_starts_with_import_type(&printed_type_text)
+                        || printed_type_text.contains('<')
+                        || printed_type_text.contains('.');
                 (printed_is_safe_fallback
                     && self.type_text_is_directly_nameable_reference(&printed_type_text))
                 .then_some(printed_type_text.as_str())
             });
 
         directly_nameable_type_text.is_some_and(|text| {
-            let is_safe_import_type = text.starts_with("import(\"");
+            let is_safe_import_type = Self::type_text_starts_with_import_type(text);
             is_safe_import_type || text.contains('<') || text.contains('.')
         })
     }
@@ -141,15 +152,12 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(name) = self.declaration_import_attribute_text(attr.name) else {
             return true;
         };
-        if name != "resolution-mode" {
-            return true;
-        }
-
-        matches!(
-            self.declaration_import_attribute_text(attr.value)
-                .as_deref(),
-            Some("import" | "require")
-        )
+        name == "resolution-mode"
+            && matches!(
+                self.declaration_import_attribute_text(attr.value)
+                    .as_deref(),
+                Some("import" | "require")
+            )
     }
 
     pub(super) fn emit_declaration_import_attributes(&mut self, attributes: NodeIndex) {
@@ -561,7 +569,57 @@ impl<'a> DeclarationEmitter<'a> {
             } else if expr_node.kind == SyntaxKind::Identifier as u16 {
                 // TS2883: Check for non-portable inferred type references
                 // in `export default <identifier>` expressions.
-                if let Some(file_path) = self.current_file_path.clone()
+                let mut resolved_expr = assign.expression;
+                if let Some(ident_name) = self.get_identifier_text(assign.expression)
+                    && let Some(source_file_idx) = self.current_source_file_idx
+                    && let Some(source_file_node) = self.arena.get(source_file_idx)
+                    && let Some(source_file) = self.arena.get_source_file(source_file_node)
+                {
+                    for &stmt_idx in &source_file.statements.nodes {
+                        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                            continue;
+                        };
+                        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                            continue;
+                        }
+                        let Some(variable) = self.arena.get_variable(stmt_node) else {
+                            continue;
+                        };
+                        for &decl_list_idx in &variable.declarations.nodes {
+                            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                                continue;
+                            };
+                            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                                continue;
+                            };
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                let Some(decl_node) = self.arena.get(decl_idx) else {
+                                    continue;
+                                };
+                                let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                else {
+                                    continue;
+                                };
+                                if self.get_identifier_text(decl.name).as_deref()
+                                    == Some(&ident_name)
+                                    && decl.initializer.is_some()
+                                {
+                                    resolved_expr = decl.initializer;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let is_object_assign_default = self
+                    .arena
+                    .get(resolved_expr)
+                    .and_then(|node| self.arena.get_call_expr(node))
+                    .is_some_and(|call| self.is_object_assign_call(call.expression));
+
+                if !is_object_assign_default
+                    && let Some(file_path) = self.current_file_path.clone()
                     && let Some(type_id) = self
                         .get_node_type_or_names(&[assign.expression])
                         .or_else(|| self.get_type_via_symbol(assign.expression))
@@ -625,9 +683,23 @@ impl<'a> DeclarationEmitter<'a> {
                             if self.default_expression_has_safe_nameable_surface_type(arg_idx) {
                                 continue;
                             }
+                            let arg_type_text =
+                                self.preferred_expression_type_text(arg_idx).or_else(|| {
+                                    self.get_node_type_or_names(&[arg_idx])
+                                        .map(|type_id| self.print_type_id(type_id))
+                                });
+                            let arg_has_nameable_surface =
+                                arg_type_text.as_deref().is_some_and(|text| {
+                                    self.type_text_is_directly_nameable_reference(text)
+                                });
+                            let arg_is_object_literal =
+                                self.arena.get(arg_idx).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                });
                             if let Some(arg_type_id) = self
                                 .get_node_type_or_names(&[arg_idx])
                                 .or_else(|| self.get_type_via_symbol(arg_idx))
+                                && !arg_is_object_literal
                                 && self.emit_non_portable_type_diagnostic(
                                     arg_type_id,
                                     "default",
@@ -638,15 +710,21 @@ impl<'a> DeclarationEmitter<'a> {
                             {
                                 break;
                             }
-                            let arg_type_text =
-                                self.preferred_expression_type_text(arg_idx).or_else(|| {
-                                    self.get_node_type_or_names(&[arg_idx])
-                                        .map(|type_id| self.print_type_id(type_id))
-                                });
                             if let Some(arg_type_text) = arg_type_text
-                                && arg_type_text.starts_with("import(\"")
+                                && Self::type_text_starts_with_import_type(&arg_type_text)
                                 && self.emit_non_portable_import_type_text_diagnostics(
                                     &arg_type_text,
+                                    "default",
+                                    &file_path,
+                                    assign_node.pos,
+                                    assign_node.end - assign_node.pos,
+                                )
+                            {
+                                break;
+                            }
+                            if !arg_has_nameable_surface
+                                && self.emit_non_portable_initializer_declaration_diagnostics(
+                                    arg_idx,
                                     "default",
                                     &file_path,
                                     assign_node.pos,
@@ -665,8 +743,12 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&var_name);
                 self.write(": ");
 
-                // Get the type of the expression
-                if let Some(type_id) = self.get_node_type(assign.expression) {
+                let source_object_type = self
+                    .object_literal_value_typeof_type_text(assign.expression, self.indent_level);
+
+                if let Some(type_text) = source_object_type {
+                    self.write(&type_text);
+                } else if let Some(type_id) = self.get_node_type(assign.expression) {
                     self.write(&self.print_type_id(type_id));
                 } else {
                     self.write("any");
@@ -692,9 +774,16 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(func) = self.arena.get_function(func_node) else {
             return;
         };
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+        let has_late_bound_default_namespace =
+            !late_bound_members.is_empty() && self.get_identifier_text(func.name).is_some();
 
         self.write_indent();
-        self.write("export default function ");
+        if has_late_bound_default_namespace {
+            self.write("declare function ");
+        } else {
+            self.write("export default function ");
+        }
         self.emit_node(func.name);
 
         let jsdoc_template_params = if func
@@ -722,11 +811,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
-        let preferred_return = if func_body.is_some() {
-            self.function_body_preferred_return_type_text(func_body)
-        } else {
-            None
-        };
+        let (preferred_return, direct_function_return) =
+            self.function_body_return_hint(func, func_body);
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -740,6 +826,9 @@ impl<'a> DeclarationEmitter<'a> {
                 &func.parameters,
             )
         {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self.boolean_default_param_return_type_text(func) {
             self.write(": ");
             self.write(&return_type_text);
         } else if func_body.is_some()
@@ -762,13 +851,33 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
-                } else if let Some(type_text) = preferred_return.as_ref()
-                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                } else if let Some(type_text) = func_body
+                    .is_some()
+                    .then(|| {
+                        self.async_returned_function_initializer_promise_type_text(func, func_body)
+                    })
+                    .flatten()
                 {
                     self.write(": ");
-                    self.write(type_text);
+                    self.write(&type_text);
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && (direct_function_return
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
+                        || self.source_return_type_is_function_type_param(func, type_text))
+                {
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    return_type_id,
+                ) {
                 } else {
-                    let printed_type_text = self.print_type_id(return_type_id);
+                    let printed_type_text =
+                        self.inferred_function_return_type_text(func, return_type_id);
                     self.write(": ");
                     self.write(&printed_type_text);
                     if let Some(name_text) = self.get_identifier_text(func_name)
@@ -787,6 +896,11 @@ impl<'a> DeclarationEmitter<'a> {
             } else if func_body.is_some() {
                 if self.body_returns_void(func_body) {
                     self.write(": void");
+                } else if let Some(type_text) =
+                    self.async_returned_function_initializer_promise_type_text(func, func_body)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some(return_text) =
                     self.function_body_preferred_return_type_text(func_body)
                 {
@@ -827,6 +941,11 @@ impl<'a> DeclarationEmitter<'a> {
         } else if func_body.is_some() {
             if self.body_returns_void(func_body) {
                 self.write(": void");
+            } else if let Some(type_text) =
+                self.async_returned_function_initializer_promise_type_text(func, func_body)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(return_text) =
                 self.function_body_preferred_return_type_text(func_body)
             {
@@ -867,6 +986,19 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        if has_late_bound_default_namespace {
+            self.emit_ts_late_bound_function_namespace_from_members(
+                func.name,
+                false,
+                &late_bound_members,
+            );
+            self.write_indent();
+            self.write("export default ");
+            self.emit_node(func.name);
+            self.write(";");
+            self.write_line();
+            return;
+        }
         if self.source_is_js_file {
             self.emit_js_function_like_class_if_needed(
                 func.name,
@@ -954,7 +1086,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        for &member_idx in &class.members.nodes {
+        for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(mn) = self.arena.get(member_idx) {
@@ -1077,9 +1209,21 @@ impl<'a> DeclarationEmitter<'a> {
                     if self.default_expression_has_safe_nameable_surface_type(arg_idx) {
                         continue;
                     }
+                    let arg_type_text =
+                        self.preferred_expression_type_text(arg_idx).or_else(|| {
+                            self.get_node_type_or_names(&[arg_idx])
+                                .map(|type_id| self.print_type_id(type_id))
+                        });
+                    let arg_has_nameable_surface = arg_type_text
+                        .as_deref()
+                        .is_some_and(|text| self.type_text_is_directly_nameable_reference(text));
+                    let arg_is_object_literal = self.arena.get(arg_idx).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    });
                     if let Some(arg_type_id) = self
                         .get_node_type_or_names(&[arg_idx])
                         .or_else(|| self.get_type_via_symbol(arg_idx))
+                        && !arg_is_object_literal
                         && self.emit_non_portable_type_diagnostic(
                             arg_type_id,
                             "default",
@@ -1090,19 +1234,21 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         break;
                     }
-                    let arg_type_text =
-                        self.preferred_expression_type_text(arg_idx).or_else(|| {
-                            self.get_node_type_or_names(&[arg_idx])
-                                .map(|type_id| self.print_type_id(type_id))
-                        });
                     if let Some(arg_type_text) = arg_type_text
-                        && arg_type_text.starts_with("import(\"")
+                        && Self::type_text_starts_with_import_type(&arg_type_text)
                         && self.emit_non_portable_import_type_text_diagnostics(
                             &arg_type_text,
                             "default",
                             &file_path,
                             diag_pos,
                             diag_len,
+                        )
+                    {
+                        break;
+                    }
+                    if !arg_has_nameable_surface
+                        && self.emit_non_portable_initializer_declaration_diagnostics(
+                            arg_idx, "default", &file_path, diag_pos, diag_len,
                         )
                     {
                         break;
@@ -1132,10 +1278,15 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(literal_text) = self.const_literal_initializer_text_deep(expr_idx) {
             self.write(": ");
             self.write(&literal_text);
+        } else if let Some(type_text) =
+            self.object_literal_value_typeof_type_text(expr_idx, self.indent_level)
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
             if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
                 && self.diagnostics.len() == *diagnostics_before
-                && type_text.starts_with("import(\"")
+                && Self::type_text_starts_with_import_type(&type_text)
                 && self.import_type_uses_private_package_subpath(&type_text)
             {
                 let _ = self.emit_non_portable_import_type_text_diagnostics(
@@ -1151,7 +1302,7 @@ impl<'a> DeclarationEmitter<'a> {
             let printed_type = self.print_type_id(type_id);
             if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
                 && self.diagnostics.len() == *diagnostics_before
-                && printed_type.starts_with("import(\"")
+                && Self::type_text_starts_with_import_type(&printed_type)
                 && self.import_type_uses_private_package_subpath(&printed_type)
             {
                 let _ = self.emit_non_portable_import_type_text_diagnostics(
@@ -1398,7 +1549,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        for &member_idx in &class.members.nodes {
+        for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
@@ -1493,11 +1644,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
-        let preferred_return = if func_body.is_some() {
-            self.function_body_preferred_return_type_text(func_body)
-        } else {
-            None
-        };
+        let (preferred_return, direct_function_return) =
+            self.function_body_return_hint(func, func_body);
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -1511,6 +1659,9 @@ impl<'a> DeclarationEmitter<'a> {
                 &func.parameters,
             )
         {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self.boolean_default_param_return_type_text(func) {
             self.write(": ");
             self.write(&return_type_text);
         } else if func_body.is_some()
@@ -1533,11 +1684,30 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
-                } else if let Some(type_text) = preferred_return.as_ref()
-                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                } else if let Some(type_text) = func_body
+                    .is_some()
+                    .then(|| {
+                        self.async_returned_function_initializer_promise_type_text(func, func_body)
+                    })
+                    .flatten()
                 {
                     self.write(": ");
-                    self.write(type_text);
+                    self.write(&type_text);
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && (direct_function_return
+                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
+                        || self.source_return_type_is_function_type_param(func, type_text))
+                {
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    return_type_id,
+                ) {
                 } else {
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)
@@ -1552,7 +1722,8 @@ impl<'a> DeclarationEmitter<'a> {
                         );
                     }
                     self.write(": ");
-                    let printed_type_text = self.print_type_id(return_type_id);
+                    let printed_type_text =
+                        self.inferred_function_return_type_text(func, return_type_id);
                     self.write(&printed_type_text);
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)
@@ -1569,9 +1740,25 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             } else if func_body.is_some() && self.body_returns_void(func_body) {
                 self.write(": void");
+            } else if let Some(type_text) = func_body
+                .is_some()
+                .then(|| {
+                    self.async_returned_function_initializer_promise_type_text(func, func_body)
+                })
+                .flatten()
+            {
+                self.write(": ");
+                self.write(&type_text);
             }
         } else if func_body.is_some() && self.body_returns_void(func_body) {
             self.write(": void");
+        } else if let Some(type_text) = func_body
+            .is_some()
+            .then(|| self.async_returned_function_initializer_promise_type_text(func, func_body))
+            .flatten()
+        {
+            self.write(": ");
+            self.write(&type_text);
         }
 
         self.write(";");

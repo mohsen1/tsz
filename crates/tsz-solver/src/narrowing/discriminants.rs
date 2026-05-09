@@ -44,7 +44,14 @@ impl<'a> NarrowingContext<'a> {
         let resolved = self.resolve_type(type_id);
         let members = match classify_for_union_members(self.db, resolved) {
             UnionMembersKind::Union(list) => list.into_iter().collect::<Vec<_>>(),
-            UnionMembersKind::NotUnion => vec![resolved],
+            // Preserve the original `type_id` (potentially a `Lazy(DefId)`
+            // for built-in interfaces like the global `Function`) so that
+            // callers pushing `member` back into their result set keep the
+            // original type identity. Resolving to the instantiated object
+            // shape erases the boxed-builtin marker that downstream
+            // `typeof === "function"` narrowing relies on
+            // (`is_boxed_def_id`) to recognize callable values.
+            UnionMembersKind::NotUnion => vec![type_id],
         };
         let evaluator = match self.resolver {
             Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
@@ -273,10 +280,16 @@ impl<'a> NarrowingContext<'a> {
             // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment
             // has been populated since the cache entry was created.
             if let Some(prop_type) = cached {
-                if !matches!(self.db.lookup(prop_type), Some(TypeData::Lazy(_))) {
+                if prop_type != TypeId::ERROR
+                    && !matches!(
+                        self.db.lookup(prop_type),
+                        Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+                    )
+                {
                     return cached;
                 }
-                // Re-resolve the Lazy type
+                // Re-resolve symbolic/error property types; an earlier no-resolver
+                // lookup may have run before the checker populated the environment.
                 let re_resolved = self.resolve_type(prop_type);
                 if re_resolved != prop_type {
                     self.cache
@@ -297,7 +310,13 @@ impl<'a> NarrowingContext<'a> {
         // Don't cache unresolved Lazy property types — the TypeEnvironment may be
         // populated later during checking, and we need to re-resolve on next access.
         let should_cache = match result {
-            Some(prop_type) => !matches!(self.db.lookup(prop_type), Some(TypeData::Lazy(_))),
+            Some(prop_type) => {
+                prop_type != TypeId::ERROR
+                    && !matches!(
+                        self.db.lookup(prop_type),
+                        Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+                    )
+            }
             None => true,
         };
         if should_cache {
@@ -408,11 +427,18 @@ impl<'a> NarrowingContext<'a> {
                 if member.is_any_or_unknown() {
                     continue;
                 }
-                let raw_prop_type = self.get_top_level_property_type_fast(member, property)?;
-                let prop_type = is_constructor_property
-                    .then_some(raw_prop_type)
-                    .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
-                    .unwrap_or(raw_prop_type);
+                let resolved_member = self.resolve_type(member);
+                let raw_prop_type =
+                    self.get_top_level_property_type_fast(resolved_member, property)?;
+                let prop_type = self.resolve_type(
+                    is_constructor_property
+                        .then_some(raw_prop_type)
+                        .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
+                        .unwrap_or(raw_prop_type),
+                );
+                if prop_type == TypeId::ANY {
+                    continue;
+                }
                 let is_excluded = if prop_type == literal_value {
                     true
                 } else {
@@ -446,11 +472,18 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
-            let raw_prop_type = self.get_top_level_property_type_fast(member, property)?;
-            let prop_type = is_constructor_property
-                .then_some(raw_prop_type)
-                .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
-                .unwrap_or(raw_prop_type);
+            let resolved_member = self.resolve_type(member);
+            let raw_prop_type = self.get_top_level_property_type_fast(resolved_member, property)?;
+            let prop_type = self.resolve_type(
+                is_constructor_property
+                    .then_some(raw_prop_type)
+                    .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
+                    .unwrap_or(raw_prop_type),
+            );
+            if !keep_matching && prop_type == TypeId::ANY {
+                kept.push(member);
+                continue;
+            }
             let should_keep = if prop_type == literal_value
                 || crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type)
             {
@@ -515,13 +548,24 @@ impl<'a> NarrowingContext<'a> {
                     any_unknown_members.push(member);
                     continue;
                 }
-                match self.get_top_level_property_type_fast(member, property) {
+                let resolved_member = self.resolve_type(member);
+                match self.get_top_level_property_type_fast(resolved_member, property) {
                     Some(prop_type) => {
-                        let prop_type = is_constructor_property
-                            .then_some(prop_type)
-                            .and_then(|ty| construct_return_type_for_type(self.db, ty))
-                            .unwrap_or(prop_type);
-                        index_map.entry(prop_type).or_default().push(member);
+                        let prop_type = self.resolve_type(
+                            is_constructor_property
+                                .then_some(prop_type)
+                                .and_then(|ty| construct_return_type_for_type(self.db, ty))
+                                .unwrap_or(prop_type),
+                        );
+                        // A member whose discriminant property has type `any` can
+                        // hold any literal value, so it must match every bucket
+                        // (just like a top-level any/unknown member). Otherwise
+                        // it would be invisible to literal-value lookups below.
+                        if prop_type == TypeId::ANY {
+                            any_unknown_members.push(member);
+                        } else {
+                            index_map.entry(prop_type).or_default().push(member);
+                        }
                     }
                     None => {
                         // Member doesn't have a simple property lookup — can't index
@@ -755,8 +799,10 @@ impl<'a> NarrowingContext<'a> {
                 ) {
                     Some(t) => t,
                     None => {
-                        // Property doesn't exist -> undefined (falsy)
-                        return !sense;
+                        // A missing property is an invalid access, not useful
+                        // narrowing evidence. Keep the member on both branches
+                        // so downstream property accesses can report TS2339.
+                        return true;
                     }
                 };
 
@@ -1129,6 +1175,14 @@ impl<'a> NarrowingContext<'a> {
                 // CRITICAL: Resolve Lazy types in property type before comparison.
                 let resolved_prop_type = self.resolve_type(prop_type);
 
+                // `any` properties can hold any value, so we can never prove the
+                // property is ALWAYS the excluded value. is_subtype_of(any, T)
+                // returns true for every non-never T (any is universally
+                // assignable), which would incorrectly drop the member here.
+                if resolved_prop_type == TypeId::ANY {
+                    return true;
+                }
+
                 // Exclude member ONLY if property type is subtype of excluded value
                 // This means the property is ALWAYS the excluded value
                 // REVERSE of narrow_by_discriminant logic
@@ -1170,12 +1224,20 @@ impl<'a> NarrowingContext<'a> {
                     true // no member has the property, keep
                 } else if prop_types.len() == 1 {
                     let normalized_prop_type = normalize_constructor_property_type(prop_types[0]);
-                    !is_subtype_of(self.db, normalized_prop_type, excluded_value)
+                    if normalized_prop_type == TypeId::ANY {
+                        true
+                    } else {
+                        !is_subtype_of(self.db, normalized_prop_type, excluded_value)
+                    }
                 } else {
                     let effective_type = self.db.intersection(prop_types);
                     let normalized_effective_type =
                         normalize_constructor_property_type(effective_type);
-                    !is_subtype_of(self.db, normalized_effective_type, excluded_value)
+                    if normalized_effective_type == TypeId::ANY {
+                        true
+                    } else {
+                        !is_subtype_of(self.db, normalized_effective_type, excluded_value)
+                    }
                 }
             } else {
                 // For non-Intersection: check the single member
@@ -1252,6 +1314,14 @@ impl<'a> NarrowingContext<'a> {
 
                 let resolved_prop_type = self.resolve_type(prop_type);
                 let resolved_prop_type = normalize_constructor_property_type(resolved_prop_type);
+
+                // `any` properties can hold any value, so we can never prove the
+                // property is ALWAYS one of the excluded values. is_subtype_of(any, T)
+                // returns true for every non-never T, which would incorrectly drop
+                // the member in this batch path too.
+                if resolved_prop_type == TypeId::ANY {
+                    return true;
+                }
 
                 // Optimization: if property type is directly in excluded set (literal match)
                 if excluded_set.contains(&resolved_prop_type) {

@@ -22,6 +22,11 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.typeof_unique_symbol_source_display(anchor_idx) {
             return display;
         }
+        if let Some(display) =
+            self.js_constructor_instance_assignment_source_display(source, anchor_idx)
+        {
+            return display;
+        }
 
         let has_optional_callable_param =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
@@ -36,6 +41,17 @@ impl<'a> CheckerState<'a> {
                     });
         if has_optional_callable_param {
             return self.format_assignability_type_for_message(source, target);
+        }
+
+        if let Some(display) = self.tuple_structural_source_display(source, target) {
+            return display;
+        }
+
+        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx)
+            && let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+        {
+            return display;
         }
 
         if source == TypeId::UNDEFINED
@@ -83,11 +99,39 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(widened, target);
         }
 
-        if let Some(display) = self.preferred_evaluated_source_display(source, target) {
+        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx)
+            && let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+        {
             return display;
         }
 
         let in_arith_compound = self.in_arithmetic_compound_assignment_context(anchor_idx);
+        if let Some(display) = self.literal_assignment_source_display_for_target(target, anchor_idx)
+        {
+            return display;
+        }
+
+        if let Some(display) = self.preferred_evaluated_source_display(source, target) {
+            return display;
+        }
+
+        if let Some(display_type) = self.string_covered_template_union_source_display(source) {
+            return self.format_assignability_type_for_message(display_type, target);
+        }
+
+        if let Some(display) = self.related_generic_indexed_access_source_display(source, target) {
+            return display;
+        }
+
+        if !in_arith_compound
+            && self.array_literal_element_source_widening_required_for_display(
+                anchor_idx, source, target,
+            )
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
 
         if !in_arith_compound
             && self.is_literal_sensitive_assignment_target(target)
@@ -124,6 +168,12 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
+            if let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+            {
+                return display;
+            }
+
             if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
@@ -134,6 +184,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 expr_type
             };
+            if self.should_preserve_nuia_source_undefined_display(
+                source,
+                target,
+                expr_idx,
+                expr_display_type,
+            ) {
+                return self.format_type_for_assignability_message(source);
+            }
             let node_is_array_of_source = crate::query_boundaries::common::array_element_type(
                 self.ctx.types,
                 expr_display_type,
@@ -147,6 +205,20 @@ impl<'a> CheckerState<'a> {
             let node_type_matches_source =
                 expr_display_type != TypeId::ERROR && !node_is_target_not_source;
             if node_type_matches_source {
+                if !in_arith_compound
+                    && crate::query_boundaries::common::is_template_literal_type(
+                        self.ctx.types,
+                        target,
+                    )
+                    && let Some(display) = self.literal_expression_display(expr_idx)
+                    && literal_display_appropriate_for_undefined_null_target(
+                        self.ctx.types,
+                        target,
+                        &display,
+                    )
+                {
+                    return display;
+                }
                 let preserve_literal_surface = self.target_preserves_literal_surface(target);
                 if let Some(annotation_text) =
                     self.declared_diagnostic_source_annotation_text(expr_idx)
@@ -156,6 +228,11 @@ impl<'a> CheckerState<'a> {
                         &annotation_text,
                     )
                 {
+                    if let Some(display) =
+                        self.declared_intersection_annotation_display_for_expression(expr_idx)
+                    {
+                        return display;
+                    }
                     return self.format_declared_annotation_for_diagnostic(&annotation_text);
                 }
                 let display_type =
@@ -220,10 +297,18 @@ impl<'a> CheckerState<'a> {
             if node_type_matches_source
                 && let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
             {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
         }
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
+            if let Some(display) = self.type_assertion_mapped_alias_source_display(expr_idx) {
+                return display;
+            }
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
                 && display.contains("=>")
             {
@@ -269,6 +354,12 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
+            if let Some(display) =
+                self.array_literal_tuple_source_type_display(expr_idx, source, target)
+            {
+                return display;
+            }
+
             if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
@@ -279,6 +370,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 expr_type
             };
+            if self.should_preserve_nuia_source_undefined_display(
+                source,
+                target,
+                expr_idx,
+                expr_display_type,
+            ) {
+                return self.format_type_for_assignability_message(source);
+            }
             let preserve_literal_surface = self.target_preserves_literal_surface(target);
             if expr_type != TypeId::ERROR
                 && let Some(annotation_text) =
@@ -289,6 +388,11 @@ impl<'a> CheckerState<'a> {
                     &annotation_text,
                 )
             {
+                if let Some(display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return display;
+                }
                 return self.format_declared_annotation_for_diagnostic(&annotation_text);
             }
             let display_type = if expr_display_type != TypeId::ERROR {
@@ -337,6 +441,11 @@ impl<'a> CheckerState<'a> {
             if expr_type == TypeId::ERROR
                 && let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
             {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
 
@@ -409,6 +518,11 @@ impl<'a> CheckerState<'a> {
                     display_type,
                 ) || display.trim() == formatted)
             {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_type)
                     .is_some()
                 {
@@ -448,6 +562,48 @@ impl<'a> CheckerState<'a> {
         self.format_assignability_type_for_message(source, target)
     }
 
+    fn should_preserve_nuia_source_undefined_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        expr_idx: NodeIndex,
+        expr_display_type: TypeId,
+    ) -> bool {
+        if !self.ctx.compiler_options.no_unchecked_indexed_access
+            || expr_display_type == TypeId::ERROR
+        {
+            return false;
+        }
+        if !crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, source)
+            || crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target)
+        {
+            return false;
+        }
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        })
+    }
+
+    fn string_covered_template_union_source_display(&self, source: TypeId) -> Option<TypeId> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, source)?;
+        if !members.contains(&TypeId::STRING) {
+            return None;
+        }
+        members
+            .iter()
+            .all(|&member| self.is_string_covered_template_union_member(member))
+            .then_some(TypeId::STRING)
+    }
+
+    fn is_string_covered_template_union_member(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::STRING
+            || crate::query_boundaries::common::is_template_literal_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_string_intrinsic_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::literal_value(self.ctx.types, type_id)
+                .is_some_and(|value| value.primitive_type_id() == TypeId::STRING)
+    }
+
     pub(in crate::error_reporter) fn format_assignment_target_type_for_diagnostic(
         &mut self,
         target: TypeId,
@@ -466,10 +622,35 @@ impl<'a> CheckerState<'a> {
         let display_target = self
             .strip_nullish_for_assignability_display(target, source)
             .unwrap_or(target);
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, display_target)
+            && crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                display_target,
+            )
+        {
+            return self.format_type_for_assignability_message(display_target);
+        }
+        if let Some(display) = self.static_schema_array_structural_display(display_target, source) {
+            return display;
+        }
 
         let target_expr = self
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
+        if display_target == target
+            && let Some(display) =
+                self.declared_intersection_annotation_display_for_expression(target_expr)
+        {
+            return display;
+        }
+        if display_target == target
+            && let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
+            && display.contains('&')
+            && display.contains('{')
+            && !display.trim_start().starts_with("keyof ")
+        {
+            return self.format_annotation_like_type(&display);
+        }
         if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
             && (display.starts_with("keyof ")
                 || display.contains("[P in ")
@@ -506,6 +687,11 @@ impl<'a> CheckerState<'a> {
         if display_target == target
             && let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
         {
+            if let Some(intersection_display) =
+                self.declared_intersection_annotation_display_for_expression(target_expr)
+            {
+                return intersection_display;
+            }
             if crate::query_boundaries::common::is_index_access_type(self.ctx.types, display_target)
                 && Self::should_evaluate_indexed_access_annotation_for_assignment(&display)
             {
@@ -576,6 +762,47 @@ impl<'a> CheckerState<'a> {
             if target_is_generic_callable {
                 return self.format_annotation_like_type(&display);
             }
+            let display_trimmed = display.trim_start();
+            if display_trimmed.starts_with('[') || display_trimmed.starts_with("readonly [") {
+                return self.format_annotation_like_type(&display);
+            }
+            if self.tuple_target_has_application_display_alias(display_target)
+                && let Some(tuple_display) =
+                    self.raw_tuple_assignment_target_display_without_alias(display_target, true)
+            {
+                return tuple_display;
+            }
+            if !display_trimmed.contains('<')
+                && assignability_display.contains('<')
+                && let Some(tuple_display) =
+                    self.raw_tuple_assignment_target_display_without_alias(display_target, true)
+            {
+                return tuple_display;
+            }
+            // When the target is a generic Application of a Lazy type alias
+            // whose body recursively references the same alias (e.g.
+            // `T2<U>` for `type T2<T> = [42, T2<{ x: T }>]`), expanding to
+            // the alias body produces an unbounded `[42, [42, [..., ...]]]`
+            // cascade because the printer flattens every nested Application
+            // when alias names are skipped. tsc keeps the alias annotation
+            // (`T2<U>`) in this case; preserve it here too.
+            if self.is_recursive_type_alias_application_for_display(target) {
+                return self.format_annotation_like_type(&display);
+            }
+            let preserve_tuple_alias_display = !display_trimmed.starts_with('{')
+                && !display_trimmed.starts_with('(')
+                && !display_trimmed.contains('[')
+                && !display_trimmed.contains("=>")
+                && !display_trimmed.contains(" | ")
+                && !display_trimmed.contains(" & ")
+                && !crate::query_boundaries::common::is_generic_application(self.ctx.types, target)
+                && !self.type_alias_body_is_generic_application(target);
+            if !preserve_tuple_alias_display
+                && let Some(tuple_display) =
+                    self.raw_tuple_assignment_target_display_without_alias(target, true)
+            {
+                return tuple_display;
+            }
             if Self::display_has_member_literals_assignability(&display) {
                 return self.format_annotation_like_type(&display);
             }
@@ -632,6 +859,11 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_target).is_some() {
             return self.format_assignability_type_for_message(display_target, source);
         }
+        if let Some(tuple_display) =
+            self.raw_tuple_assignment_target_display_without_alias(display_target, true)
+        {
+            return tuple_display;
+        }
 
         if self.target_preserves_literal_surface(source) {
             let assignability_display =
@@ -677,8 +909,163 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn tuple_target_has_application_display_alias(&self, target: TypeId) -> bool {
+        crate::query_boundaries::common::is_tuple_type(self.ctx.types, target)
+            && self
+                .ctx
+                .types
+                .get_display_alias(target)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                        .is_some()
+                })
+    }
+
+    /// True when `target` is `Application(Lazy(D), args)` and the alias body
+    /// of `D` reaches another reference to `D` (directly or transitively).
+    /// Used to suppress the `raw_tuple_…_without_alias` expansion path: a
+    /// recursive alias rendered with alias names skipped collapses to an
+    /// unbounded `[..., ...]` cascade rather than a useful structural form.
+    fn is_recursive_type_alias_application_for_display(&self, target: TypeId) -> bool {
+        crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            target,
+        )
+    }
+
+    fn raw_tuple_assignment_target_display_without_alias(
+        &mut self,
+        target: TypeId,
+        allow_direct_tuple: bool,
+    ) -> Option<String> {
+        let mut current = target;
+        let mut saw_generic_application = false;
+        let display_target = 'resolved: {
+            for _ in 0..4 {
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, current) {
+                    if !allow_direct_tuple
+                        && (crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            current,
+                        ) || self.type_alias_body_is_generic_application(current))
+                    {
+                        saw_generic_application = true;
+                        if crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            current,
+                        ) {
+                            let evaluated = self.evaluate_tuple_display_candidate(current);
+                            if evaluated != current && evaluated != TypeId::ERROR {
+                                current = evaluated;
+                                continue;
+                            }
+                        }
+                    }
+                    break 'resolved current;
+                }
+                if current == TypeId::ERROR {
+                    return None;
+                }
+                saw_generic_application |= crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    current,
+                ) || self
+                    .type_alias_body_is_generic_application(current);
+                let evaluated = self.evaluate_tuple_display_candidate(current);
+                if evaluated == current {
+                    return None;
+                }
+                current = evaluated;
+            }
+            if crate::query_boundaries::common::is_tuple_type(self.ctx.types, current) {
+                current
+            } else {
+                return None;
+            }
+        };
+        if !allow_direct_tuple && !saw_generic_application {
+            return None;
+        }
+        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, display_target).is_some() {
+            return None;
+        }
+        self.format_raw_tuple_assignment_target(display_target)
+    }
+
+    fn evaluate_tuple_display_candidate(&mut self, type_id: TypeId) -> TypeId {
+        let evaluated = self.evaluate_application_type(type_id);
+        if evaluated != type_id && evaluated != TypeId::ERROR {
+            return evaluated;
+        }
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        if evaluated != type_id && evaluated != TypeId::ERROR {
+            return evaluated;
+        }
+        let evaluated = self.evaluate_type_with_env(type_id);
+        if evaluated != type_id && evaluated != TypeId::ERROR {
+            return evaluated;
+        }
+        type_id
+    }
+
+    fn format_raw_tuple_assignment_target(&mut self, type_id: TypeId) -> Option<String> {
+        let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)?;
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_skip_application_alias_names()
+            .with_preserve_optional_parameter_surface_syntax(true);
+        Some(formatter.format_tuple_elements_for_diagnostic(&elements))
+    }
+
+    fn type_alias_body_is_generic_application(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
+            .and_then(|def_id| self.ctx.definition_store.get(def_id))
+            .is_some_and(|def| {
+                def.kind == tsz_solver::def::DefKind::TypeAlias
+                    && def.body.is_some_and(|body| {
+                        crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            body,
+                        )
+                    })
+            })
+    }
+
     fn should_evaluate_indexed_access_annotation_for_assignment(display: &str) -> bool {
         display.contains("[keyof ")
+    }
+
+    pub(in crate::error_reporter) fn related_generic_indexed_access_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        let (source_object, source_index) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, source)?;
+        let (target_object, target_index) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, target)?;
+
+        let source_index_info =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, source_index)?;
+        crate::query_boundaries::common::type_param_info(self.ctx.types, target_index)?;
+        if source_index == target_index {
+            return None;
+        }
+
+        let source_object_display = self.format_type_for_assignability_message(source_object);
+        let target_object_display = self.format_type_for_assignability_message(target_object);
+        let source_short = simple_or_namespace_member_name(&source_object_display)?;
+        let target_short = simple_or_namespace_member_name(&target_object_display)?;
+        if source_short != target_short {
+            return None;
+        }
+
+        let source_index_display = self.ctx.types.resolve_atom_ref(source_index_info.name);
+        Some(format!("{source_short}[{source_index_display}]"))
     }
 
     pub(in crate::error_reporter) fn format_nested_assignment_source_type_for_diagnostic(
@@ -699,8 +1086,32 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        // Skip the anchor-expression-derived path when `source` does not
+        // correspond to the anchor's expression type. This happens during
+        // nested elaboration of a structural failure (e.g. function-return
+        // mismatch elaborates with the inner return types as `source`/
+        // `target`, but the anchor still points at the outer assignment
+        // expression). In that case the expression's type is the OUTER
+        // value, which produces the bogus
+        // "Type '(x: Object) => Object' is not assignable to type 'string'."
+        // message — a category-error claim that the outer function is not
+        // assignable to the inner return type.
+        let anchor_expr_type = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .map(|expr_idx| self.get_type_of_node(expr_idx));
+        let source_matches_anchor_expr = anchor_expr_type
+            .is_some_and(|expr_type| expr_type == source || expr_type == TypeId::ERROR);
+        if !source_matches_anchor_expr {
+            return self.format_assignability_type_for_message(source, target);
+        }
+
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
 
@@ -737,6 +1148,11 @@ impl<'a> CheckerState<'a> {
 
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                if let Some(intersection_display) =
+                    self.declared_intersection_annotation_display_for_expression(expr_idx)
+                {
+                    return intersection_display;
+                }
                 return display;
             }
 
@@ -858,6 +1274,71 @@ impl<'a> CheckerState<'a> {
         Some(self.format_property_receiver_type_for_diagnostic(display_type))
     }
 
+    fn js_constructor_instance_assignment_source_display(
+        &mut self,
+        source: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)?;
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let source_sym = self.resolve_identifier_symbol(expr_idx)?;
+        let source_symbol = self
+            .get_cross_file_symbol(source_sym)
+            .or_else(|| self.ctx.binder.get_symbol(source_sym))?;
+        if (source_symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
+            return None;
+        }
+
+        let current_file_idx = self.ctx.current_file_idx as u32;
+        let this_pos = expr_node.pos;
+        source_symbol
+            .stable_declarations
+            .iter()
+            .copied()
+            .chain(std::iter::once(source_symbol.stable_value_declaration))
+            .filter_map(|stable_loc| {
+                if !stable_loc.is_known() {
+                    return None;
+                }
+                let file_idx = if stable_loc.has_file_idx() {
+                    stable_loc.file_idx
+                } else {
+                    current_file_idx
+                };
+                let (decl_idx, arena) = self.ctx.node_at_stable_location(stable_loc)?;
+                let decl_node = arena.get(decl_idx)?;
+                let declaration = arena.get_variable_declaration(decl_node)?;
+                if file_idx == current_file_idx && decl_node.pos > this_pos {
+                    return None;
+                }
+
+                let init_idx = arena.skip_parenthesized_and_assertions(declaration.initializer);
+                let init_node = arena.get(init_idx)?;
+                if init_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+                    return None;
+                }
+                let new_expr = arena.get_call_expr(init_node)?;
+                let ctor_idx = arena.skip_parenthesized_and_assertions(new_expr.expression);
+                let ctor_node = arena.get(ctor_idx)?;
+                let ident = arena.get_identifier(ctor_node)?;
+                Some((
+                    file_idx == current_file_idx,
+                    decl_node.pos,
+                    ident.escaped_text.clone(),
+                ))
+            })
+            .max_by_key(|(same_file, decl_pos, _)| (*same_file, *decl_pos))
+            .map(|(_, _, display)| display)
+    }
+
     fn call_unknown_array_source_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -923,6 +1404,40 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn type_assertion_mapped_alias_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if !matches!(
+            node.kind,
+            syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::TYPE_ASSERTION
+        ) {
+            return None;
+        }
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        let assertion_type = self.get_type_from_type_node(assertion.type_node);
+        let is_generic_mapped_alias =
+            crate::query_boundaries::common::is_generic_application(self.ctx.types, assertion_type)
+                && crate::query_boundaries::common::get_application_lazy_def_id(
+                    self.ctx.types,
+                    assertion_type,
+                )
+                .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                .is_some_and(|def| {
+                    def.kind == tsz_solver::def::DefKind::TypeAlias
+                        && def.body.is_some_and(|body| {
+                            crate::query_boundaries::common::is_mapped_type(self.ctx.types, body)
+                        })
+                });
+        if !is_generic_mapped_alias {
+            return None;
+        }
+        self.node_text(assertion.type_node)
+            .and_then(|text| self.sanitize_type_annotation_text_for_diagnostic(text, false))
+            .map(|text| self.format_annotation_like_type(&text))
+    }
+
     /// Whether to suppress the AST-literal short-circuit for an
     /// object-literal-property elaboration when the property elaboration has
     /// already widened the source (e.g. `1` → `number`). Mirrors tsc's
@@ -951,6 +1466,87 @@ impl<'a> CheckerState<'a> {
         let primitive_kind = source;
         !target_accepts_literal_primitive_kind(self.ctx.types, target, primitive_kind)
     }
+
+    pub(in crate::error_reporter) fn array_elaboration_widening_required_for_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common;
+
+        let source_primitive = if let Some(value) = common::literal_value(self.ctx.types, source) {
+            value.primitive_type_id()
+        } else if matches!(
+            source,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT | TypeId::BOOLEAN
+        ) {
+            source
+        } else {
+            return false;
+        };
+        let target = common::evaluate_type(self.ctx.types, target);
+        if target == TypeId::UNDEFINED || target == TypeId::NULL {
+            return source_primitive != TypeId::BOOLEAN;
+        }
+
+        !target_accepts_literal_primitive_kind(self.ctx.types, target, source_primitive)
+    }
+
+    pub(in crate::error_reporter) fn array_literal_element_source_widening_required_for_display(
+        &self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !self.array_elaboration_widening_required_for_display(source, target) {
+            return false;
+        }
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        self.ctx
+            .arena
+            .parent_of(expr_idx)
+            .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+    }
+
+    pub(in crate::error_reporter) fn literal_assignment_source_display_for_target(
+        &mut self,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        if self.in_arithmetic_compound_assignment_context(anchor_idx)
+            || !crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target)
+        {
+            return None;
+        }
+        let expr_idx = self
+            .assignment_source_expression(anchor_idx)
+            .or_else(|| self.direct_diagnostic_source_expression(anchor_idx))?;
+        let display = self.literal_expression_display(expr_idx)?;
+        literal_display_appropriate_for_undefined_null_target(self.ctx.types, target, &display)
+            .then_some(display)
+    }
+}
+
+fn simple_or_namespace_member_name(display: &str) -> Option<&str> {
+    if display.starts_with("typeof ")
+        || display.starts_with("import(")
+        || display.contains('<')
+        || display.contains('[')
+        || display.contains(' ')
+    {
+        return None;
+    }
+    let name = display.rsplit_once('.').map_or(display, |(_, short)| short);
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    chars
+        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        .then_some(name)
 }
 
 /// Whether `target` accepts a literal whose widened primitive kind is

@@ -28,6 +28,66 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn next_import_type_text(
+        text: &str,
+    ) -> Option<(usize, String, &str)> {
+        let mut search_start = 0usize;
+        while search_start < text.len() {
+            let start = text[search_start..].find("import(")? + search_start;
+            let mut i = start + "import(".len();
+            let bytes = text.as_bytes();
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+
+            let quote = *bytes.get(i)?;
+            if quote != b'"' && quote != b'\'' {
+                search_start = start + "import(".len();
+                continue;
+            }
+            i += 1;
+
+            let specifier_start = i;
+            let mut escaped = false;
+            while i < bytes.len() {
+                if escaped {
+                    escaped = false;
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'\\' {
+                    escaped = true;
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == quote {
+                    let module_specifier = text[specifier_start..i].to_string();
+                    i += 1;
+                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    if bytes.get(i) == Some(&b')') {
+                        return Some((start, module_specifier, &text[i + 1..]));
+                    }
+                    break;
+                }
+                i += 1;
+            }
+
+            search_start = start + "import(".len();
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn type_text_starts_with_import_type(text: &str) -> bool {
+        Self::next_import_type_text(text).is_some_and(|(start, _, _)| start == 0)
+    }
+
+    pub(in crate::declaration_emitter) fn type_text_contains_import_type(text: &str) -> bool {
+        Self::next_import_type_text(text).is_some()
+    }
+
     pub(in crate::declaration_emitter) fn find_non_serializable_property_name_in_printed_type(
         &self,
         printed_type_text: &str,
@@ -47,11 +107,11 @@ impl<'a> DeclarationEmitter<'a> {
             // `import` and emit `[import]` instead of the real symbol
             // name (regressed by PR #2425, see
             // declarationEmitMappedTypeTemplateTypeofSymbol.ts).
-            let after_import_prefix = if let Some(after_open) = rest.strip_prefix("import(\"") {
-                after_open
-                    .find("\")")
-                    .and_then(|close| after_open[close + 2..].strip_prefix('.'))
-                    .unwrap_or(rest)
+            let after_import_prefix = if let Some((start, _, tail)) =
+                Self::next_import_type_text(rest)
+                && start == 0
+            {
+                tail.strip_prefix('.').unwrap_or(rest)
             } else {
                 rest
             };
@@ -111,20 +171,20 @@ impl<'a> DeclarationEmitter<'a> {
         let current_path = self.current_file_path.as_deref()?;
         let mut remaining = printed_type_text;
 
-        while let Some(start) = remaining.find("import(\"") {
-            let after_prefix = &remaining[start + "import(\"".len()..];
-            let Some((module_specifier, tail)) = after_prefix.split_once("\")") else {
-                break;
-            };
-            let Some(tail) = tail.strip_prefix('.') else {
-                remaining = after_prefix;
+        while let Some((_, module_specifier, after_import)) = Self::next_import_type_text(remaining)
+        {
+            let Some(tail) = after_import.strip_prefix('.') else {
+                remaining = after_import;
                 continue;
             };
             let Some(first_name) = tail
-                .split(['.', '<', '[', ' ', '&', '|', '>', ',', ')', ';', '\n', '\r'])
+                .split([
+                    '.', '<', '[', ']', ' ', '&', '|', '>', ',', ')', ';', ':', '?', '{', '}',
+                    '\n', '\r',
+                ])
                 .find(|part| !part.is_empty())
             else {
-                remaining = after_prefix;
+                remaining = tail;
                 continue;
             };
 
@@ -149,7 +209,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some((module_specifier.to_string(), first_name.to_string()));
             }
 
-            remaining = after_prefix;
+            remaining = tail;
         }
 
         None
@@ -177,7 +237,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         while i < bytes.len() {
             let ch = bytes[i] as char;
-            if ch == '"' || ch == '\'' {
+            if ch == '"' || ch == '\'' || ch == '`' {
                 i += 1;
                 while i < bytes.len() {
                     let current = bytes[i] as char;
@@ -516,13 +576,18 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         printed: &str,
     ) -> Option<(String, String)> {
-        let rest = printed.strip_prefix("import(\"")?;
-        let (module_specifier, tail) = rest.split_once("\")")?;
+        let (start, module_specifier, tail) = Self::next_import_type_text(printed)?;
+        if start != 0 {
+            return None;
+        }
         let tail = tail.strip_prefix('.')?;
         let first_name = tail
-            .split(['.', '<', '[', ' ', '&', '|'])
+            .split([
+                '.', '<', '[', ']', ' ', '&', '|', '>', ',', ')', ';', ':', '?', '{', '}', '\n',
+                '\r',
+            ])
             .find(|part| !part.is_empty())?;
-        Some((module_specifier.to_string(), first_name.to_string()))
+        Some((module_specifier, first_name.to_string()))
     }
 
     pub(in crate::declaration_emitter) fn private_import_type_package_root_reference(
@@ -562,11 +627,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let mut remaining = printed;
-        while let Some(start) = remaining.find("import(\"") {
-            let after_prefix = &remaining[start + "import(\"".len()..];
-            let Some((module_specifier, tail)) = after_prefix.split_once("\")") else {
-                break;
-            };
+        while let Some((_, module_specifier, tail)) = Self::next_import_type_text(remaining) {
             remaining = tail;
 
             let Some(root_name) = tail.strip_prefix('.').and_then(|rest| {
@@ -609,10 +670,9 @@ impl<'a> DeclarationEmitter<'a> {
         let node = arena.get(node_idx)?;
         let (left_idx, right_idx) = if let Some(access) = arena.get_access_expr(node) {
             (access.expression, access.name_or_argument)
-        } else if let Some(qn) = arena.get_qualified_name(node) {
-            (qn.left, qn.right)
         } else {
-            return None;
+            let qn = arena.get_qualified_name(node)?;
+            (qn.left, qn.right)
         };
 
         let left_name = Self::rightmost_name_text_in_arena(arena, left_idx)?;
@@ -949,8 +1009,10 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        if printed.starts_with("import(\"") {
-            return printed.contains("\").")
+        if let Some((start, _, tail)) = Self::next_import_type_text(printed)
+            && start == 0
+        {
+            return tail.starts_with('.')
                 && !self.import_type_uses_private_package_subpath(printed)
                 && !printed.contains(" & ")
                 && !printed.contains(" | ")
@@ -989,42 +1051,37 @@ impl<'a> DeclarationEmitter<'a> {
         printed: &str,
     ) -> bool {
         let mut remaining = printed;
-        while let Some(start) = remaining.find("import(\"") {
-            let after_prefix = &remaining[start + 8..]; // skip `import("`
-            if let Some((specifier, rest)) = after_prefix.split_once("\")") {
-                if !specifier.starts_with('.') && !specifier.starts_with('/') {
-                    let mut parts = specifier.split('/');
-                    if let Some(first) = parts.next()
-                        && !first.is_empty()
+        while let Some((_, specifier, rest)) = Self::next_import_type_text(remaining) {
+            if !specifier.starts_with('.') && !specifier.starts_with('/') {
+                let mut parts = specifier.split('/');
+                if let Some(first) = parts.next()
+                    && !first.is_empty()
+                {
+                    let has_subpath = if first.starts_with('@') {
+                        let _scope_pkg = parts.next();
+                        parts.next().is_some()
+                    } else {
+                        parts.next().is_some()
+                    };
+                    if has_subpath
+                        && !self.is_bare_specifier_subpath_publicly_accessible(&specifier)
                     {
-                        let has_subpath = if first.starts_with('@') {
-                            let _scope_pkg = parts.next();
-                            parts.next().is_some()
-                        } else {
-                            parts.next().is_some()
-                        };
-                        if has_subpath
-                            && !self.is_bare_specifier_subpath_publicly_accessible(specifier)
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                 }
-                remaining = rest;
-            } else {
-                break;
             }
+            remaining = rest;
         }
         false
     }
 
     pub(crate) fn import_type_uses_private_package_subpath(&self, printed: &str) -> bool {
-        let Some(rest) = printed.strip_prefix("import(\"") else {
+        let Some((start, specifier, _)) = Self::next_import_type_text(printed) else {
             return false;
         };
-        let Some((specifier, _)) = rest.split_once("\")") else {
+        if start != 0 {
             return false;
-        };
+        }
 
         if specifier.starts_with('.') || specifier.starts_with('/') {
             return false;
@@ -1045,7 +1102,7 @@ impl<'a> DeclarationEmitter<'a> {
             parts.next().is_some()
         };
 
-        has_subpath && !self.is_bare_specifier_subpath_publicly_accessible(specifier)
+        has_subpath && !self.is_bare_specifier_subpath_publicly_accessible(&specifier)
     }
 
     /// Check whether a bare package specifier with a subpath is publicly accessible.
@@ -1388,6 +1445,16 @@ impl<'a> DeclarationEmitter<'a> {
                 visited_nodes,
             ) {
                 return Some(result);
+            }
+            if self.type_application_has_public_surface_reference_with_portable_arguments(
+                app.base,
+                &app.args,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            ) {
+                return None;
             }
         }
 

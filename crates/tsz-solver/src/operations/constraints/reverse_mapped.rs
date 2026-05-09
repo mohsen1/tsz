@@ -8,11 +8,40 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{
-    LiteralValue, MappedModifier, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId,
-    TypeListId, Visibility,
+    IntrinsicKind, LiteralValue, MappedModifier, ObjectShape, PropertyInfo, TupleElement, TypeData,
+    TypeId, TypeListId, Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::trace;
+
+// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
+// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
+// #4805 / #4807 / #4810 / #4816 / #4818 / #4820.
+thread_local! {
+    static REVERSE_MAPPED_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_reverse_mapped_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = REVERSE_MAPPED_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    REVERSE_MAPPED_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Detect a property source type shaped `Inferable | null | undefined | void` —
 /// the union pattern produced by DOM types like `Document | null` for
@@ -26,9 +55,23 @@ fn prop_source_has_nullish_union(interner: &dyn QueryDatabase, ty: TypeId) -> bo
         return false;
     };
     let members = interner.type_list(members_id);
-    members
-        .iter()
-        .any(|m| matches!(*m, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID))
+    let mut has_nullish = false;
+    let mut has_object_like = false;
+
+    for &member in members.iter() {
+        if matches!(member, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
+            has_nullish = true;
+            continue;
+        }
+        if matches!(
+            interner.lookup(member),
+            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_) | TypeData::Lazy(_))
+        ) {
+            has_object_like = true;
+        }
+    }
+
+    has_nullish && has_object_like
 }
 
 fn template_includes_string_primitive(interner: &dyn QueryDatabase, template: TypeId) -> bool {
@@ -49,6 +92,44 @@ fn is_number_literal(interner: &dyn QueryDatabase, ty: TypeId) -> bool {
         interner.lookup(ty),
         Some(TypeData::Literal(LiteralValue::Number(_)))
     )
+}
+
+fn apparent_intrinsic_kind_for_reverse_mapped(
+    interner: &dyn QueryDatabase,
+    ty: TypeId,
+) -> Option<IntrinsicKind> {
+    if let Some(kind) = crate::intrinsic_kind(interner, ty) {
+        return match kind {
+            IntrinsicKind::String
+            | IntrinsicKind::Number
+            | IntrinsicKind::Boolean
+            | IntrinsicKind::Bigint
+            | IntrinsicKind::Symbol => Some(kind),
+            _ => None,
+        };
+    }
+
+    match interner.lookup(ty) {
+        Some(TypeData::Literal(LiteralValue::String(_)) | TypeData::TemplateLiteral(_)) => {
+            Some(IntrinsicKind::String)
+        }
+        Some(TypeData::Literal(LiteralValue::Number(_))) => Some(IntrinsicKind::Number),
+        Some(TypeData::Literal(LiteralValue::BigInt(_))) => Some(IntrinsicKind::Bigint),
+        Some(TypeData::Literal(LiteralValue::Boolean(_))) => Some(IntrinsicKind::Boolean),
+        Some(TypeData::Union(members_id)) => {
+            let mut inferred_kind = None;
+            for &member in interner.type_list(members_id).iter() {
+                let member_kind = apparent_intrinsic_kind_for_reverse_mapped(interner, member)?;
+                match inferred_kind {
+                    Some(kind) if kind != member_kind => return None,
+                    Some(_) => {}
+                    None => inferred_kind = Some(member_kind),
+                }
+            }
+            inferred_kind
+        }
+        _ => None,
+    }
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -172,8 +253,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if var_map.contains_key(&keyof_target) {
                     return Some(keyof_target);
                 }
-                let mut visited = FxHashSet::default();
-                if self.type_contains_placeholder(keyof_target, var_map, &mut visited) {
+                let contains_placeholder = with_reverse_mapped_visited(|visited| {
+                    self.type_contains_placeholder(keyof_target, var_map, visited)
+                });
+                if contains_placeholder {
                     return Some(keyof_target);
                 }
                 None
@@ -303,6 +386,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // reverseMappedTypeLimitedConstraint.ts).
                 declaration_order: prop.declaration_order,
                 is_string_named: prop.is_string_named,
+                is_symbol_named: prop.is_symbol_named,
                 single_quoted_name: prop.single_quoted_name,
             });
         }
@@ -453,6 +537,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             crate::types::InferencePriority::HomomorphicMappedType,
         );
         true
+    }
+
+    fn reverse_mapped_source_object_shape(
+        &mut self,
+        source_value: TypeId,
+    ) -> Option<(ObjectShape, bool)> {
+        if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+            self.interner.lookup(source_value)
+        {
+            return Some((self.interner.object_shape(shape_id).as_ref().clone(), false));
+        }
+
+        let kind = apparent_intrinsic_kind_for_reverse_mapped(self.interner, source_value)?;
+        if let Some(boxed) = crate::caches::db::TypeDatabase::get_boxed_type(self.interner, kind) {
+            let boxed = self.checker.evaluate_type(boxed);
+            if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+                self.interner.lookup(boxed)
+            {
+                let mut shape = self.interner.object_shape(shape_id).as_ref().clone();
+                if kind == IntrinsicKind::String {
+                    shape.number_index = None;
+                }
+                return Some((shape, true));
+            }
+        }
+
+        let mut shape = crate::objects::apparent::apparent_primitive_shape(
+            self.interner,
+            kind,
+            crate::evaluation::evaluate_rules::apparent::make_apparent_method_type,
+        );
+        if kind == IntrinsicKind::String {
+            shape.number_index = None;
+        }
+        Some((shape, true))
     }
 
     /// Reverse-infer a single property value through a mapped type template.
@@ -801,9 +920,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // keyof X → X becomes the new placeholder for recursive reversal
             if let Some(TypeData::KeyOf(inner_placeholder)) =
                 self.interner.lookup(mapped.constraint)
-                && let Some(
-                    TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
-                ) = self.interner.lookup(source_value)
+                && let Some((source_obj, source_is_apparent_primitive)) =
+                    self.reverse_mapped_source_object_shape(source_value)
             {
                 // Detect recursive mapped type patterns (e.g., `Deep<T> = { [K in keyof T]: Deep<T[K]> }`
                 // against a self-referential source like `interface A { a: A }`).
@@ -832,7 +950,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return Some(source_value);
                 }
 
-                let source_obj = self.interner.object_shape(source_shape_id);
                 let source_props = source_obj.properties.clone();
                 let source_string_idx = source_obj.string_index;
                 let source_number_idx = source_obj.number_index;
@@ -860,6 +977,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             any_reversed = true;
                             v
                         }
+                        None if source_is_apparent_primitive
+                            && matches!(
+                                self.interner.lookup(prop.type_id),
+                                Some(TypeData::Function(_) | TypeData::Callable(_))
+                            ) =>
+                        {
+                            any_reversed = true;
+                            // tsc displays these nested primitive callable leaves
+                            // as elided `...` inside reverse-mapped primitive
+                            // objects rather than exposing full call signatures.
+                            let ellipsis = self.interner.intern_string("...");
+                            crate::caches::db::TypeDatabase::unresolved_type_name(
+                                self.interner,
+                                ellipsis,
+                            )
+                        }
                         None => TypeId::UNKNOWN,
                     };
 
@@ -885,9 +1018,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        single_quoted_name: false,
+                        declaration_order: prop.declaration_order,
+                        is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
+                        single_quoted_name: prop.single_quoted_name,
                     });
                 }
 
@@ -1069,6 +1203,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let source = unwrap_readonly(source);
         let target = unwrap_readonly(target);
 
+        if self.array_like_element_for_constraint(source).is_some()
+            && self.array_like_element_for_constraint(target).is_some()
+        {
+            return true;
+        }
+
         if self.checker.promise_like_type_argument(source).is_some()
             && self.checker.promise_like_type_argument(target).is_some()
         {
@@ -1091,6 +1231,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
                 s_app.base == t_app.base
+                    || self
+                        .checker
+                        .promise_like_type_argument(source)
+                        .zip(self.checker.promise_like_type_argument(target))
+                        .is_some()
             }
             (TypeData::Object(_), TypeData::Object(_))
             | (TypeData::ObjectWithIndex(_), TypeData::ObjectWithIndex(_))
@@ -1100,6 +1245,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | (TypeData::Array(_), TypeData::Array(_)) => true,
             _ => false,
         }
+    }
+
+    pub(super) fn array_like_element_for_constraint(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(elem) = crate::type_queries::get_array_element_type(self.interner, type_id) {
+            return Some(elem);
+        }
+
+        if let Some(elem) = self.named_array_object_element_for_constraint(type_id) {
+            return Some(elem);
+        }
+
+        let evaluated = self.checker.evaluate_type(type_id);
+        (evaluated != type_id)
+            .then(|| self.named_array_object_element_for_constraint(evaluated))
+            .flatten()
+    }
+
+    fn named_array_object_element_for_constraint(&self, type_id: TypeId) -> Option<TypeId> {
+        let shape_id = match self.interner.lookup(type_id) {
+            Some(TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return None,
+        };
+        let shape = self.interner.object_shape(shape_id);
+        if shape.symbol.is_none() || shape.number_index.is_none() {
+            return None;
+        }
+
+        let length = self.interner.intern_string("length");
+        if !shape.properties.iter().any(|prop| prop.name == length) {
+            return None;
+        }
+
+        let array_methods =
+            ["slice", "concat", "join"].map(|name| self.interner.intern_string(name));
+        if !shape
+            .properties
+            .iter()
+            .any(|prop| array_methods.contains(&prop.name))
+        {
+            return None;
+        }
+
+        shape.number_index.as_ref().map(|index| index.value_type)
     }
 
     fn type_has_own_then_property_for_constraint(&mut self, type_id: TypeId) -> bool {

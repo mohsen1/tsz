@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use tsz_binder::BinderState;
 use tsz_binder::{FlowNode, FlowNodeArena, FlowNodeId, SymbolId, flow_flags};
 use tsz_common::interner::Atom;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
@@ -19,7 +19,39 @@ type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
-pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>;
+#[derive(Debug, Default)]
+pub struct CallPredicateMap {
+    predicates: FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>,
+    invalid_assertion_calls: FxHashSet<u32>,
+}
+
+impl CallPredicateMap {
+    pub fn iter(&self) -> impl Iterator<Item = (&u32, &(TypePredicate, Vec<ParamInfo>))> {
+        self.predicates.iter()
+    }
+
+    pub(crate) fn get(&self, call_idx: &u32) -> Option<&(TypePredicate, Vec<ParamInfo>)> {
+        self.predicates.get(call_idx)
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        call_idx: u32,
+        predicate: (TypePredicate, Vec<ParamInfo>),
+    ) -> Option<(TypePredicate, Vec<ParamInfo>)> {
+        self.invalid_assertion_calls.remove(&call_idx);
+        self.predicates.insert(call_idx, predicate)
+    }
+
+    pub(crate) fn mark_invalid_assertion_call(&mut self, call_idx: u32) {
+        self.predicates.remove(&call_idx);
+        self.invalid_assertion_calls.insert(call_idx);
+    }
+
+    pub(crate) fn is_invalid_assertion_call(&self, call_idx: u32) -> bool {
+        self.invalid_assertion_calls.contains(&call_idx)
+    }
+}
 
 // Guard against pathological requeue loops in flow traversal.
 // The BFS worklist re-queues CONDITION/NARROWING nodes after scheduling their
@@ -259,6 +291,122 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
         simplified
+    }
+
+    fn reference_is_evolving_array_symbol(&self, reference: NodeIndex) -> bool {
+        let Some(sym_id) = self.reference_symbol(reference) else {
+            return false;
+        };
+        if self.is_control_flow_typed_any_symbol(sym_id) {
+            return true;
+        }
+
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let value_decl = symbol.value_declaration;
+        let Some(mut decl_node) = self.arena.get(value_decl) else {
+            return false;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.arena.get_extended(value_decl)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_node = parent_node;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.type_annotation.is_some() || decl.initializer.is_none() {
+            return false;
+        }
+        self.arena.get(decl.initializer).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && self
+                    .arena
+                    .get_literal_expr(node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+        })
+    }
+
+    fn array_mutation_evolved_type(
+        &self,
+        current_type: TypeId,
+        call: &CallExprData,
+        reference: NodeIndex,
+    ) -> (TypeId, bool) {
+        if !self.reference_is_evolving_array_symbol(reference) {
+            return (current_type, true);
+        }
+
+        let Some(callee_node) = self.arena.get(call.expression) else {
+            return (current_type, true);
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return (current_type, true);
+        };
+        let Some(name_node) = self.arena.get(access.name_or_argument) else {
+            return (current_type, true);
+        };
+        let method_name = if let Some(ident) = self.arena.get_identifier(name_node) {
+            ident.escaped_text.as_str()
+        } else if let Some(literal) = self.arena.get_literal(name_node) {
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                literal.text.as_str()
+            } else {
+                return (current_type, true);
+            }
+        } else {
+            return (current_type, true);
+        };
+        if method_name != "push" && method_name != "unshift" {
+            return (current_type, true);
+        }
+
+        let Some(args) = &call.arguments else {
+            return (current_type, true);
+        };
+        let Some(current_element) = query::get_array_element_type(self.interner, current_type)
+        else {
+            return (current_type, true);
+        };
+
+        let mut element_types = Vec::new();
+        if current_element != TypeId::ANY && current_element != TypeId::NEVER {
+            element_types.push(current_element);
+        }
+        for &arg in &args.nodes {
+            if !arg.is_some() {
+                continue;
+            }
+            let Some(arg_type) = self
+                .node_types
+                .and_then(|node_types| node_types.get(&arg.0).copied())
+                .or_else(|| self.literal_type_from_node(arg))
+            else {
+                return (current_type, false);
+            };
+            if arg_type == TypeId::ERROR {
+                return (current_type, false);
+            }
+            element_types.push(query::widen_literal_to_primitive(self.interner, arg_type));
+        }
+        if element_types.is_empty() {
+            return (current_type, true);
+        }
+
+        let element_type = self.simplify_flow_merge_types(element_types);
+        let element_type = if element_type.len() == 1 {
+            element_type[0]
+        } else {
+            query::union_types(self.interner, element_type)
+        };
+        (query::array_type(self.interner, element_type), true)
     }
 
     /// Returns true when two types represent the same union member set.
@@ -519,6 +667,33 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
     }
 
+    fn flow_chain_contains_switch_clause(&self, flow_id: FlowNodeId) -> bool {
+        let mut worklist = VecDeque::from([flow_id]);
+        let mut visited = FxHashSet::default();
+        let mut steps = 0usize;
+
+        while let Some(current) = worklist.pop_front() {
+            if current.is_none() || !visited.insert(current) {
+                continue;
+            }
+            steps += 1;
+            if steps > 32 {
+                return false;
+            }
+            let Some(flow) = self.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
+                return true;
+            }
+            for &ant in &flow.antecedent {
+                worklist.push_back(ant);
+            }
+        }
+
+        false
+    }
+
     #[inline]
     fn switch_can_affect_reference(&self, switch_expr: NodeIndex, reference: NodeIndex) -> bool {
         // switch(true) can narrow any reference — each case expression is an
@@ -543,6 +718,7 @@ impl<'a> FlowAnalyzer<'a> {
                 .is_some_and(|(path, _)| !path.is_empty())
             // switch (typeof x) narrows x through typeof comparison
             || self.is_typeof_target(switch_expr, reference)
+            || self.is_optional_chain_containing_target(switch_expr, reference)
             // switch (alias) where alias is a const alias for reference.prop
             // (e.g. `const kind = obj.kind; switch(kind)`) or a destructuring alias
             // (e.g. `const { kind } = obj; switch(kind)`) — the aliased discriminant
@@ -1043,6 +1219,8 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     (false, false)
                 };
+            let skip_cache_for_explicit_unknown_switch = initial_type == TypeId::UNKNOWN
+                && self.flow_chain_contains_switch_clause(current_flow);
 
             // Use cache if: 1) not a switch clause, AND
             // 2) either initial type is concrete OR this is a loop label.
@@ -1051,6 +1229,7 @@ impl<'a> FlowAnalyzer<'a> {
             // stack overflow when types contain type parameters.
             if !is_switch_clause
                 && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
+                && !skip_cache_for_explicit_unknown_switch
                 && (!initial_has_type_params || is_loop_label_node)
                 && let Some(cache) = self.flow_cache
             {
@@ -1239,9 +1418,13 @@ impl<'a> FlowAnalyzer<'a> {
                                 })
                             });
                         let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
+                            // Closure START nodes may carry the enclosing flow
+                            // that preserves narrowing for effectively-const captures.
+                            || (ant_flags & flow_flags::START) != 0
                             || (ant_flags & flow_flags::CALL) != 0
                             || (ant_flags & flow_flags::LOOP_LABEL) != 0
                             || (ant_flags & flow_flags::BRANCH_LABEL) != 0
+                            || (ant_flags & flow_flags::SWITCH_CLAUSE) != 0
                             || ant_is_targeting_assignment
                             || ant_is_passthrough_assignment;
                         if ant_needs_defer {
@@ -1341,8 +1524,22 @@ impl<'a> FlowAnalyzer<'a> {
                             && symbol_id
                                 .or_else(|| self.reference_symbol(reference))
                                 .is_some_and(|sid| self.is_unknown_catch_variable_symbol(sid));
-                        if self.assignment_reads_reference_before_write(flow.node, reference) {
-                            if let Some(&ant) = flow.antecedent.first() {
+                        let self_referential_assignment =
+                            self.assignment_reads_reference_before_write(flow.node, reference);
+                        if self_referential_assignment {
+                            // `x = len(x)` still writes the RHS result to `x`.
+                            // When the RHS can be resolved, let loop back-edges
+                            // contribute that result; otherwise fall back to the
+                            // antecedent type until expression checking catches up.
+                            let is_destructuring = self.is_destructuring_assignment(flow.node);
+                            let raw_assigned =
+                                self.get_assigned_type(flow.node, reference, is_destructuring);
+                            if let Some(assigned_type) =
+                                raw_assigned.filter(|&t| t != TypeId::ERROR)
+                            {
+                                cacheable_walk = false;
+                                assigned_type
+                            } else if let Some(&ant) = flow.antecedent.first() {
                                 if let Some(&ant_type) = results.get(&ant) {
                                     ant_type
                                 } else if !visited.contains(&ant) {
@@ -1410,56 +1607,59 @@ impl<'a> FlowAnalyzer<'a> {
                                 if self.is_logical_assignment(flow.node) {
                                     assigned_type
                                 } else if self.is_access_reference(reference) {
-                                    // Property/element access reads should keep their declared read
-                                    // type for constructor-valued and generic callable members.
-                                    // A prior write can be assignment-compatible without changing the
-                                    // member's declared read surface, especially for interface/class
-                                    // members with generic call/construct signatures.
-                                    let widened = query::widen_literal_to_primitive(
-                                        self.interner,
-                                        assigned_type,
-                                    );
-                                    let callable_read_preserves_declared_type = |type_id| {
-                                        let function_shape =
-                                            query::function_shape_for_type(self.interner, type_id);
-                                        let has_generic_call_signatures =
-                                            query::call_signatures_for_type(self.interner, type_id)
+                                    if self.arena.get(reference).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                                    }) && initial_has_type_params
+                                    {
+                                        initial_type
+                                    } else {
+                                        // Property/element access reads should keep their declared read
+                                        // type for constructor-valued and generic callable members.
+                                        // A prior write can be assignment-compatible without changing the
+                                        // member's declared read surface, especially for interface/class
+                                        // members with generic call/construct signatures.
+                                        let widened = query::widen_literal_to_primitive(
+                                            self.interner,
+                                            assigned_type,
+                                        );
+                                        let callable_read_preserves_declared_type = |type_id| {
+                                            let function_shape = query::function_shape_for_type(
+                                                self.interner,
+                                                type_id,
+                                            );
+                                            let has_generic_call_signatures =
+                                                query::call_signatures_for_type(
+                                                    self.interner,
+                                                    type_id,
+                                                )
                                                 .is_some_and(|sigs| {
                                                     sigs.iter()
                                                         .any(|sig| !sig.type_params.is_empty())
                                                 });
-                                        let construct_signatures =
-                                            query::construct_signatures_for_type(
-                                                self.interner,
-                                                type_id,
-                                            );
-                                        function_shape.as_ref().is_some_and(|shape| {
-                                            shape.is_constructor || !shape.type_params.is_empty()
-                                        }) || has_generic_call_signatures
-                                            || construct_signatures
-                                                .as_ref()
-                                                .is_some_and(|sigs| !sigs.is_empty())
-                                    };
-                                    let preserves_declared_callable_read_type =
-                                        callable_read_preserves_declared_type(initial_type)
-                                            || callable_read_preserves_declared_type(widened);
-                                    if preserves_declared_callable_read_type {
-                                        initial_type
-                                    } else if self.is_assignable_to(widened, initial_type) {
-                                        widened
-                                    } else {
-                                        initial_type
+                                            let construct_signatures =
+                                                query::construct_signatures_for_type(
+                                                    self.interner,
+                                                    type_id,
+                                                );
+                                            function_shape.as_ref().is_some_and(|shape| {
+                                                shape.is_constructor
+                                                    || !shape.type_params.is_empty()
+                                            }) || has_generic_call_signatures
+                                                || construct_signatures
+                                                    .as_ref()
+                                                    .is_some_and(|sigs| !sigs.is_empty())
+                                        };
+                                        let preserves_declared_callable_read_type =
+                                            callable_read_preserves_declared_type(initial_type)
+                                                || callable_read_preserves_declared_type(widened);
+                                        if preserves_declared_callable_read_type {
+                                            initial_type
+                                        } else if self.is_assignable_to(widened, initial_type) {
+                                            widened
+                                        } else {
+                                            initial_type
+                                        }
                                     }
-                                } else if is_destructuring
-                                    && self.arena.get(flow.node).is_some_and(|node| {
-                                        node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                    })
-                                {
-                                    // Destructuring-assignment writes already compute a
-                                    // branch-sensitive assigned type for the specific target.
-                                    // Re-reducing against the declared annotation can leak
-                                    // unrelated union members from the old declared type.
-                                    assigned_type
                                 } else if is_control_flow_typed_any {
                                     // Unannotated mutable locals such as `let x;` evolve from
                                     // their writes rather than staying explicit `any`.
@@ -1490,6 +1690,11 @@ impl<'a> FlowAnalyzer<'a> {
                                     // `const e: E = E.ONE` where e should have type E.ONE.
                                     // Only applies to const (not var/let) to avoid changing
                                     // mutable variable semantics.
+                                    //
+                                    // The assigned value must preserve nominal enum identity:
+                                    // bare literals (e.g. `const a: E = 1`) collapse back to
+                                    // the declared enum so cross-enum assignments still report
+                                    // TS2322.
                                     if self.is_const_variable_declaration(flow.node)
                                         && crate::query_boundaries::common::enum_components(
                                             self.interner,
@@ -1498,9 +1703,19 @@ impl<'a> FlowAnalyzer<'a> {
                                         .is_some()
                                         && self.is_assignable_to(assigned_type, narrowing_base)
                                     {
-                                        return assigned_type;
+                                        return self.narrow_enum_assignment_target(
+                                            narrowing_base,
+                                            assigned_type,
+                                            narrowing_base,
+                                        );
                                     }
-                                    self.narrow_assignment(narrowing_base, assigned_type)
+                                    if self
+                                        .is_unannotated_conditional_variable_initializer(flow.node)
+                                    {
+                                        narrowing_base
+                                    } else {
+                                        self.narrow_assignment(narrowing_base, assigned_type)
+                                    }
                                 }
                             } else {
                                 // This walk is provisional: assignment typing has not been computed
@@ -1585,7 +1800,8 @@ impl<'a> FlowAnalyzer<'a> {
                                         f.has_any_flags(
                                             flow_flags::CONDITION
                                                 | flow_flags::CALL
-                                                | flow_flags::LOOP_LABEL,
+                                                | flow_flags::LOOP_LABEL
+                                                | flow_flags::ASSIGNMENT,
                                         )
                                     });
                                 if ant_needs_defer {
@@ -1697,7 +1913,13 @@ impl<'a> FlowAnalyzer<'a> {
                             continue;
                         }
                         // Antecedent is ready - get its result
-                        *results.get(&ant).unwrap_or(&current_type)
+                        let antecedent_type = *results.get(&ant).unwrap_or(&current_type);
+                        let (evolved_type, complete) =
+                            self.array_mutation_evolved_type(antecedent_type, call, reference);
+                        if !complete {
+                            cacheable_walk = false;
+                        }
+                        evolved_type
                     } else {
                         current_type
                     }
@@ -1831,12 +2053,16 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 let ant_types = self.simplify_flow_merge_types(ant_types);
 
-                if ant_types.len() == 1 {
-                    ant_types[0]
-                } else if !ant_types.is_empty() {
-                    query::union_types(self.interner, ant_types)
-                } else {
-                    result_type
+                match ant_types.len() {
+                    0 => result_type,
+                    1 => ant_types[0],
+                    _ if initial_type == TypeId::ANY
+                        && !control_flow_typed_any_symbol
+                        && ant_types.contains(&TypeId::ANY) =>
+                    {
+                        TypeId::ANY
+                    }
+                    _ => self.interner.union_preserve_members(ant_types),
                 }
             } else {
                 result_type
@@ -1853,6 +2079,8 @@ impl<'a> FlowAnalyzer<'a> {
                 && cacheable_walk
                 && (!skip_cache_for_control_flow_typed_any
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
+                && !(initial_type == TypeId::UNKNOWN
+                    && self.flow_chain_contains_switch_clause(current_flow))
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 
@@ -2074,6 +2302,12 @@ impl<'a> FlowAnalyzer<'a> {
             return pre_type;
         };
         if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return pre_type;
+        }
+        if self
+            .call_type_predicates
+            .is_some_and(|calls| calls.is_invalid_assertion_call(flow.node.0))
+        {
             return pre_type;
         }
         let Some(call) = self.arena.get_call_expr(node) else {

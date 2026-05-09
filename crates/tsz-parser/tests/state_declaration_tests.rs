@@ -2,6 +2,7 @@
 use crate::parser::test_fixture::parse_source;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::position::LineMap;
 use tsz_scanner::SyntaxKind;
 
 #[test]
@@ -93,6 +94,59 @@ fn parse_namespace_import_with_while_yields_to_while_statement_recovery() {
 }
 
 #[test]
+fn parse_namespace_import_reserved_statement_starters_yield_to_statement_recovery() {
+    let (parser, root) = parse_source(
+        "import * as do from \"m\";\nimport * as try from \"m\";\nimport * as return from \"m\";\nconst after = 1;\n",
+    );
+    let diags = parser.get_diagnostics();
+
+    const TS1359: u32 =
+        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+
+    for word in ["do", "try", "return"] {
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == TS1359 && d.message.contains(word)),
+            "expected TS1359 for `{word}`, got {diags:?}"
+        );
+    }
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("'while'")),
+        "expected `do` recovery to emit TS1005 `'while' expected`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("'{'")),
+        "expected `try` recovery to emit TS1005 `'{{' expected`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.message.contains("';'")),
+        "expected `return` recovery to emit TS1005 `';' expected`, got {diags:?}"
+    );
+
+    let sf = parser.get_arena().get_source_file_at(root).unwrap();
+    let kinds: Vec<u16> = sf
+        .statements
+        .nodes
+        .iter()
+        .filter_map(|idx| parser.get_arena().get(*idx).map(|node| node.kind))
+        .collect();
+    assert!(
+        kinds.contains(&syntax_kind_ext::DO_STATEMENT)
+            && kinds.contains(&syntax_kind_ext::TRY_STATEMENT)
+            && kinds.contains(&syntax_kind_ext::RETURN_STATEMENT),
+        "reserved namespace import names should be re-parsed as statements, got statement kinds {kinds:?}"
+    );
+}
+
+#[test]
 fn parse_trailing_comma_before_from_recovers_as_next_statement() {
     let (parser, _root) = parse_source("import { a }, from \"m\";");
     let diags = parser.get_diagnostics();
@@ -117,6 +171,143 @@ fn parse_namespace_recovery_from_missing_closing_brace() {
     assert!(
         !parser.get_diagnostics().is_empty(),
         "expected diagnostics for unclosed namespace body"
+    );
+}
+
+#[test]
+fn parse_empty_arrow_body_close_brace_closes_namespace_block() {
+    let (parser, root) = parse_source(
+        "namespace outer {\n  namespace inner {\n    var a = () => };\n    var b = () => }\n  var c = () => };\n}\n",
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    assert_eq!(sf.statements.nodes.len(), 3);
+
+    let outer_node = arena.get(sf.statements.nodes[0]).unwrap();
+    assert_eq!(outer_node.kind, syntax_kind_ext::MODULE_DECLARATION);
+    let outer = arena.get_module(outer_node).unwrap();
+    let outer_block_node = arena.get(outer.body).unwrap();
+    let outer_block = arena.get_module_block(outer_block_node).unwrap();
+    let outer_statements = &outer_block.statements.as_ref().unwrap().nodes;
+    assert_eq!(outer_statements.len(), 3);
+
+    let inner_node = arena.get(outer_statements[0]).unwrap();
+    assert_eq!(inner_node.kind, syntax_kind_ext::MODULE_DECLARATION);
+    let inner = arena.get_module(inner_node).unwrap();
+    let inner_block_node = arena.get(inner.body).unwrap();
+    let inner_block = arena.get_module_block(inner_block_node).unwrap();
+    assert_eq!(inner_block.statements.as_ref().unwrap().nodes.len(), 1);
+
+    let inner_trailing_empty_node = arena.get(outer_statements[1]).unwrap();
+    assert_eq!(
+        inner_trailing_empty_node.kind,
+        syntax_kind_ext::EMPTY_STATEMENT
+    );
+    let outer_var_node = arena.get(outer_statements[2]).unwrap();
+    assert_eq!(outer_var_node.kind, syntax_kind_ext::VARIABLE_STATEMENT);
+    let top_var_node = arena.get(sf.statements.nodes[1]).unwrap();
+    assert_eq!(top_var_node.kind, syntax_kind_ext::VARIABLE_STATEMENT);
+    let stray_close_node = arena.get(sf.statements.nodes[2]).unwrap();
+    assert_eq!(stray_close_node.kind, syntax_kind_ext::EMPTY_STATEMENT);
+}
+
+#[test]
+fn parse_empty_arrow_body_close_brace_terminates_namespace_block() {
+    let (parser, root) = parse_source(
+        "namespace outer {\n  namespace inner {\n    var a = () => };\n  var b = () => }\nvar c = () => ;\n",
+    );
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "expected diagnostics for malformed arrow bodies"
+    );
+
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    assert_eq!(sf.statements.nodes.len(), 2);
+    assert_eq!(
+        arena.get(sf.statements.nodes[0]).unwrap().kind,
+        syntax_kind_ext::MODULE_DECLARATION
+    );
+    assert_eq!(
+        arena.get(sf.statements.nodes[1]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+
+    let outer = arena
+        .get_module(arena.get(sf.statements.nodes[0]).unwrap())
+        .unwrap();
+    let outer_block = arena
+        .get_module_block(arena.get(outer.body).unwrap())
+        .unwrap();
+    let outer_statements = &outer_block.statements.as_ref().unwrap().nodes;
+    assert_eq!(outer_statements.len(), 3);
+    assert_eq!(
+        arena.get(outer_statements[0]).unwrap().kind,
+        syntax_kind_ext::MODULE_DECLARATION
+    );
+    assert_eq!(
+        arena.get(outer_statements[1]).unwrap().kind,
+        syntax_kind_ext::EMPTY_STATEMENT
+    );
+    assert_eq!(
+        arena.get(outer_statements[2]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+
+    let inner = arena
+        .get_module(arena.get(outer_statements[0]).unwrap())
+        .unwrap();
+    let inner_block = arena
+        .get_module_block(arena.get(inner.body).unwrap())
+        .unwrap();
+    let inner_statements = &inner_block.statements.as_ref().unwrap().nodes;
+    assert_eq!(inner_statements.len(), 1);
+    assert_eq!(
+        arena.get(inner_statements[0]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+}
+
+#[test]
+fn stray_close_brace_recovery_preserves_following_namespace_declaration() {
+    let source = concat!(
+        "namespace outer {\n",
+        "  namespace inner {\n",
+        "    var a = () => };\n",
+        "    var b = () => }\n",
+        "  }\n",
+        "}\n",
+        "namespace next {\n",
+        "  var ok = ();\n",
+        "}\n",
+    );
+    let (parser, root) = parse_source(source);
+
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let module_count = sf
+        .statements
+        .nodes
+        .iter()
+        .filter(|idx| {
+            arena
+                .get(**idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
+        })
+        .count();
+
+    assert_eq!(
+        module_count, 2,
+        "stray close-brace recovery should not resync past the following namespace"
+    );
+
+    let final_close = source.rfind('}').unwrap() as u32;
+    assert!(
+        !parser.get_diagnostics().iter().any(|d| {
+            d.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED && d.start == final_close
+        }),
+        "following namespace close should be consumed by its module block, got {:?}",
+        parser.get_diagnostics()
     );
 }
 
@@ -391,6 +582,42 @@ fn import_specifier_string_literal_export_name_with_identifier_alias_is_valid() 
         parser.get_diagnostics().len(),
         0,
         "valid arbitrary module namespace import should parse without diagnostics"
+    );
+}
+
+#[test]
+fn import_specifier_can_use_from_as_binding_name() {
+    let (parser, _root) = parse_source(
+        r#"
+import { from } from "./from";
+import { from as fromObservable } from "./from";
+"#,
+    );
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "`from` is valid as an import specifier binding name"
+    );
+}
+
+#[test]
+fn conditional_tuple_element_inside_conditional_extends_type_parses() {
+    let (parser, _root) = parse_source(
+        r#"
+type ExcludeStrict<
+    T,
+    U extends [U] extends [
+        U extends unknown ? ([T] extends [Exclude<T, U>] ? never : U) : never,
+    ]
+        ? unknown
+        : never,
+> = Exclude<T, U>;
+"#,
+    );
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "conditional tuple elements remain valid inside a conditional extends type"
     );
 }
 
@@ -678,6 +905,43 @@ fn import_async_equals_still_works() {
     );
 }
 
+/// `import defer from = require(...)` should parse as an import declaration
+/// with `defer` as the modifier and `from` as the default import name. The
+/// malformed `=` then reports the missing module-specifier `from` keyword at
+/// that token rather than falling into import-equals recovery.
+#[test]
+fn import_defer_from_equals_reports_from_expected() {
+    let source = r#"import defer from = require("m");"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    let equals_pos = source.find('=').expect("source should contain equals") as u32;
+    let fingerprints: Vec<(u32, u32, &str)> = diags
+        .iter()
+        .map(|d| (d.code, d.start, d.message.as_str()))
+        .collect();
+
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(c, p, m)| *c == TS1005 && *p == equals_pos && m.contains("'from'")),
+        "expected TS1005 `'from' expected.` at `=`, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints
+            .iter()
+            .any(|(c, _, m)| *c == TS1005 && m.contains("'='")),
+        "must not route through import-equals recovery, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints
+            .iter()
+            .any(|(c, _, m)| *c == TS1005 && m.contains("';'")),
+        "must not cascade a semicolon diagnostic, got {fingerprints:?}"
+    );
+}
+
 // === ES Decorator misplacement tests (tsc parity) ===
 
 /// `abstract @dec class C {}` at statement level should emit TS1434
@@ -906,5 +1170,63 @@ fn parse_for_with_var_decl_init_unterminated_emits_comma_expected_at_close_paren
     assert!(
         semi_at_paren,
         "`for (a) {{}}` (expression init) should still emit `';' expected.` at `)`; got {diags:?}"
+    );
+}
+
+#[test]
+fn parse_for_typed_let_header_recovers_through_block_like_tsc() {
+    let source = "for (let x: y) {\n    z(x);\n}\n";
+    let (parser, _root) = parse_source(source);
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            14,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the malformed header close, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            2,
+            6,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the statement recovered as a declaration tail, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            3,
+            1,
+            "Expression expected.".to_string()
+        )),
+        "expected TS1109 at the block close, got {fingerprints:?}"
+    );
+    assert!(
+        !fingerprints.iter().any(|(code, line, col, message)| {
+            *code == diagnostic_codes::EXPRESSION_EXPECTED
+                && *line == 1
+                && *col == 14
+                && message == "Expression expected."
+        }),
+        "should not emit the old TS1109 at the header close, got {fingerprints:?}"
     );
 }

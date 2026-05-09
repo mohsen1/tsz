@@ -643,6 +643,38 @@ impl<'a> Printer<'a> {
         count
     }
 
+    pub(in crate::emitter) fn binding_pattern_read_limit(
+        &self,
+        pattern_node: &Node,
+    ) -> Option<usize> {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return Some(0);
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return Some(0);
+        };
+        let mut count = 0;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                count += 1;
+                continue;
+            }
+            let Some(node) = self.arena.get(elem_idx) else {
+                count += 1;
+                continue;
+            };
+            let Some(element) = self.arena.get_binding_element(node) else {
+                count += 1;
+                continue;
+            };
+            if element.dot_dot_dot_token {
+                return None;
+            }
+            count += 1;
+        }
+        Some(count)
+    }
+
     /// Emit ES5 destructuring: { x, y } = obj → _a = obj, x = _a.x, y = _a.y
     /// When the initializer is a simple identifier, TypeScript skips the temp variable
     /// and uses the identifier directly: var [, name] = robot → var name = robot[1]
@@ -671,6 +703,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.binding_pattern_is_empty(decl.name) {
+            self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+            return;
+        }
+
         let is_simple_ident = self
             .arena
             .get(decl.initializer)
@@ -681,11 +718,64 @@ impl<'a> Printer<'a> {
                 self.arena,
                 decl.initializer,
             );
+            // `var { foo, baz } = foo;` — the LHS pattern reassigns `foo`,
+            // and `var foo = foo.foo, baz = foo.baz` would read the
+            // already-clobbered `foo` for `baz`. Force the fallback path so a
+            // temp captures the original RHS first.
+            if !ident_text.is_empty()
+                && self.binding_pattern_reassigns_identifier(pattern_node, &ident_text)
+            {
+                self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+                return;
+            }
             self.emit_es5_destructuring_pattern_direct(pattern_node, &ident_text, first);
             return;
         }
 
         self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+    }
+
+    /// Walk a binding pattern (object or array) and return true if it
+    /// rebinds the identifier `name` anywhere. Nested patterns are walked
+    /// recursively. Default initializers and computed property names are
+    /// ignored — they're evaluated separately and don't contribute to the
+    /// rebinding hazard we're guarding against.
+    fn binding_pattern_reassigns_identifier(&self, pattern_node: &Node, name: &str) -> bool {
+        let elements = match pattern_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+                    return false;
+                };
+                pattern.elements.nodes.clone()
+            }
+            _ => return false,
+        };
+        for elem_idx in elements {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(elem.name) else {
+                continue;
+            };
+            if name_node.is_identifier() {
+                if crate::transforms::emit_utils::identifier_text_or_empty(self.arena, elem.name)
+                    == name
+                {
+                    return true;
+                }
+            } else if self.binding_pattern_reassigns_identifier(name_node, name) {
+                return true;
+            }
+        }
+        false
     }
 
     pub(in crate::emitter) fn emit_es5_destructuring_fallback(
@@ -1350,17 +1440,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        let element_count = pattern
-            .elements
-            .nodes
-            .iter()
-            .filter(|&&elem_idx| {
-                self.arena
-                    .get(elem_idx)
-                    .and_then(|n| self.arena.get_binding_element(n))
-                    .is_some_and(|e| !e.dot_dot_dot_token)
-            })
-            .count();
+        let read_limit = self.binding_pattern_read_limit(pattern_node);
 
         let read_temp = self.get_temp_var_name();
         self.write(&read_temp);
@@ -1370,7 +1450,9 @@ impl<'a> Printer<'a> {
         self.destructuring_read_depth += 1;
         self.emit(source_expr);
         self.destructuring_read_depth -= 1;
-        if element_count > 0 {
+        if let Some(element_count) = read_limit
+            && element_count > 0
+        {
             self.write(", ");
             self.write(&element_count.to_string());
         }
@@ -1480,14 +1562,16 @@ impl<'a> Printer<'a> {
                             defaulted
                         };
 
-                        let element_count = self.binding_pattern_non_rest_count(unwrapped_node);
+                        let read_limit = self.binding_pattern_read_limit(unwrapped_node);
                         let nested_temp = self.get_temp_var_name();
                         self.write(&nested_temp);
                         self.write(" = ");
                         self.write_helper("__read");
                         self.write("(");
                         self.write(&source_expr);
-                        if element_count > 0 {
+                        if let Some(element_count) = read_limit
+                            && element_count > 0
+                        {
                             self.write(", ");
                             self.write(&element_count.to_string());
                         }
@@ -1547,7 +1631,30 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
-            if elem.name.is_none() || elem.dot_dot_dot_token {
+            if elem.name.is_none() {
+                continue;
+            }
+
+            if elem.dot_dot_dot_token {
+                if self.is_binding_pattern(elem.name) {
+                    let rest_temp = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&rest_temp);
+                    self.write(" = ");
+                    self.write(source_expr);
+                    self.write(".slice(");
+                    self.write(&index.to_string());
+                    self.write(")");
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &rest_temp);
+                } else if self.has_identifier_text(elem.name) {
+                    self.write(", ");
+                    self.emit_expression(elem.name);
+                    self.write(" = ");
+                    self.write(source_expr);
+                    self.write(".slice(");
+                    self.write(&index.to_string());
+                    self.write(")");
+                }
                 continue;
             }
 
@@ -1583,7 +1690,7 @@ impl<'a> Printer<'a> {
                 };
 
                 if nested_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-                    let nested_count = self.binding_pattern_non_rest_count(nested_node);
+                    let read_limit = self.binding_pattern_read_limit(nested_node);
                     let nested_temp = self.get_temp_var_name();
                     self.write(", ");
                     self.write(&nested_temp);
@@ -1591,7 +1698,9 @@ impl<'a> Printer<'a> {
                     self.write_helper("__read");
                     self.write("(");
                     self.write(&elem_source);
-                    if nested_count > 0 {
+                    if let Some(nested_count) = read_limit
+                        && nested_count > 0
+                    {
                         self.write(", ");
                         self.write(&nested_count.to_string());
                     }
@@ -1652,18 +1761,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Count non-rest elements to pass to __read
-        let element_count = pattern
-            .elements
-            .nodes
-            .iter()
-            .filter(|&&elem_idx| {
-                self.arena
-                    .get(elem_idx)
-                    .and_then(|n| self.arena.get_binding_element(n))
-                    .is_some_and(|e| !e.dot_dot_dot_token)
-            })
-            .count();
+        let read_limit = self.binding_pattern_read_limit(pattern_node);
 
         // Emit: _d = __read(expr, N)
         let read_temp = self.get_temp_var_name();
@@ -1673,8 +1771,10 @@ impl<'a> Printer<'a> {
         self.write_helper("__read");
         self.write("(");
         self.write(source_expr);
-        self.write(", ");
-        self.write(&element_count.to_string());
+        if let Some(element_count) = read_limit {
+            self.write(", ");
+            self.write(&element_count.to_string());
+        }
         self.write(")");
 
         // Now emit each element binding
@@ -1691,8 +1791,26 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            // Handle rest elements (not applicable for for-of with __read, but included for completeness)
             if elem.dot_dot_dot_token {
+                if self.is_binding_pattern(elem.name) {
+                    let rest_temp = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&rest_temp);
+                    self.write(" = ");
+                    self.write(&read_temp);
+                    self.write(".slice(");
+                    self.write(&index.to_string());
+                    self.write(")");
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &rest_temp);
+                } else if self.has_identifier_text(elem.name) {
+                    self.write(", ");
+                    self.emit_expression(elem.name);
+                    self.write(" = ");
+                    self.write(&read_temp);
+                    self.write(".slice(");
+                    self.write(&index.to_string());
+                    self.write(")");
+                }
                 continue;
             }
 
@@ -1834,6 +1952,36 @@ mod tests {
         assert!(
             output.contains("new Foo().x"),
             "new Foo() with args should NOT have extra parens.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn empty_binding_patterns_with_identifier_rhs_emit_temp() {
+        let source = "let {} = undefined;\nlet {} = maybe;\nlet [] = xs;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _a = undefined;"),
+            "Empty object binding with `undefined` RHS should still evaluate through a temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _b = maybe;"),
+            "Empty object binding with identifier RHS should still evaluate through a temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _c = xs;"),
+            "Empty array binding with identifier RHS should still evaluate through a temp.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var ;"),
+            "Empty binding patterns must not emit an empty variable declaration.\nOutput:\n{output}"
         );
     }
 }

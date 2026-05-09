@@ -273,6 +273,113 @@ fn test_exports_js_target_substitutes_dts() {
 }
 
 #[test]
+fn test_package_exports_target_cannot_escape_package_root() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let root = dir.path();
+    fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    fs::create_dir_all(root.join("src")).unwrap();
+
+    fs::write(
+        root.join("node_modules/pkg/package.json"),
+        r#"{"name":"pkg","exports":{"./leak":"../leak.d.ts"}}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("node_modules/leak.d.ts"),
+        "export declare const value: number;",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/index.ts"),
+        "import { value } from 'pkg/leak';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &root.join("src/index.ts"),
+        "pkg/leak",
+        &options,
+        root,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved, None,
+        "exports target escaping the package root must not resolve"
+    );
+}
+
+#[test]
+fn test_package_imports_absolute_target_is_invalid() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let root = dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+
+    let abs_target = root.join("abs.d.ts").to_string_lossy().into_owned();
+    fs::write(root.join("abs.d.ts"), "export declare const value: number;").unwrap();
+    fs::write(
+        root.join("package.json"),
+        serde_json::json!({
+            "name": "app",
+            "imports": {
+                "#abs": abs_target
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(root.join("src/index.ts"), "import { value } from '#abs';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_imports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &root.join("src/index.ts"),
+        "#abs",
+        &options,
+        root,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, None, "absolute imports target must not resolve");
+}
+
+#[test]
 fn test_duplicate_package_redirects_prefer_stable_lexical_root_when_depth_ties() {
     use std::fs;
 
@@ -664,6 +771,33 @@ fn test_collect_module_specifiers_finds_plain_require_calls() {
 }
 
 #[test]
+fn test_collect_module_specifiers_finds_require_with_whitespace_before_paren() {
+    let text = r#"const data = require ("./data.json");"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./data.json".to_string()),
+        "Should find spaced require specifier './data.json', got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_finds_jsdoc_import_tags() {
+    let text = r#"
+// @ts-check
+/** @import { "a,b" as CommaName } from "./dep" */
+/** @type {CommaName} */
+const value = "x";
+"#;
+    let path = Path::new("test.js");
+    let specifiers = collect_module_specifiers_from_text(path, text);
+    assert!(
+        specifiers.contains(&"./dep".to_string()),
+        "Should find JSDoc @import specifier './dep', got: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_require_has_correct_kind() {
     use tsz::module_resolver::ImportKind;
     let text = r#"const data = require("./data.json");"#;
@@ -680,6 +814,26 @@ fn test_collect_module_specifiers_require_has_correct_kind() {
     assert!(
         requires.contains(&"./data.json"),
         "Should find CommonJS require, got: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_export_import_require_has_correct_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"export import dep = require("./dep");"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let requires: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::CjsRequire)
+        .map(|(s, _, _, _)| s.as_str())
+        .collect();
+    assert!(
+        requires.contains(&"./dep"),
+        "Should find exported CommonJS require, got: {specifiers:?}"
     );
 }
 
@@ -702,6 +856,65 @@ fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
         "Should find exactly one DynamicImport, got: {specifiers:?}"
     );
     assert_eq!(dynamic_imports[0].0, "./foo");
+}
+
+#[test]
+fn test_collect_module_specifiers_import_defer_has_dynamic_import_kind() {
+    use tsz::module_resolver::ImportKind;
+    let text = r#"import.defer("./foo.js").then(x => x);"#;
+    let file_name = "test.mts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let dynamic_imports: Vec<_> = specifiers
+        .iter()
+        .filter(|(_, _, kind, _)| *kind == ImportKind::DynamicImport)
+        .collect();
+    assert_eq!(
+        dynamic_imports.len(),
+        1,
+        "Should find exactly one import.defer DynamicImport, got: {specifiers:?}"
+    );
+    assert_eq!(dynamic_imports[0].0, "./foo.js");
+}
+
+#[test]
+fn test_module_specifier_detects_type_json_import_attribute() {
+    let text = r#"import data from "./data.json" with { type: "json" };"#;
+    let file_name = "test.mts".to_string();
+    let mut parser = tsz::parser::ParserState::new(file_name, text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+    let specifiers = collect_module_specifiers(&arena, source_file);
+    let (specifier, specifier_idx, _, _) = specifiers
+        .iter()
+        .find(|(specifier, _, _, _)| specifier == "./data.json")
+        .expect("expected JSON import specifier");
+
+    assert_eq!(specifier, "./data.json");
+    assert!(
+        module_specifier_has_type_json_import_attribute(&arena, *specifier_idx),
+        "Expected the JSON module specifier to carry a type=json import attribute"
+    );
+}
+
+#[test]
+fn test_collect_module_requests_from_text_carries_type_json_attribute() {
+    let path = Path::new("test.mts");
+    let requests = collect_module_requests_from_text(
+        path,
+        r#"import data from "./data.json" with { type: "json" };"#,
+    );
+    let (_, _, _, has_type_json_attribute) = requests
+        .iter()
+        .find(|(specifier, _, _, _)| specifier == "./data.json")
+        .expect("expected JSON import request");
+
+    assert!(
+        *has_type_json_attribute,
+        "Expected source-discovery module requests to retain type=json import attributes"
+    );
 }
 
 #[test]
@@ -1131,6 +1344,93 @@ fn test_resolve_module_specifier_paths_without_base_url_use_project_base() {
         &known_files,
     );
     assert_eq!(baz, Some(base.join("types/main.d.ts")));
+}
+
+#[test]
+fn test_path_mapping_selection_cache_preserves_sorted_precedence() {
+    let mut raw_paths = FxHashMap::default();
+    raw_paths.insert("*".to_string(), vec!["fallback/*".to_string()]);
+    raw_paths.insert("@scope/pkg/*".to_string(), vec!["wildcard/*".to_string()]);
+    raw_paths.insert(
+        "@scope/pkg/foo".to_string(),
+        vec!["exact/foo.ts".to_string()],
+    );
+    for i in 0..64 {
+        raw_paths.insert(format!("@scope/pkg-{i}/*"), vec![format!("pkg-{i}/*")]);
+    }
+
+    let compiler_options = CompilerOptions {
+        paths: Some(raw_paths),
+        module_resolution: Some("bundler".to_string()),
+        module: Some("es2015".to_string()),
+        ..Default::default()
+    };
+    let options =
+        resolve_compiler_options(Some(&compiler_options)).expect("resolve compiler options");
+
+    let base = PathBuf::from("/tmp/tsz-test-path-mapping-cache");
+    let mut known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    known_files.insert(base.join("exact/foo.ts"));
+    known_files.insert(base.join("wildcard/foo.ts"));
+    known_files.insert(base.join("fallback/@scope/pkg/foo.ts"));
+
+    let mut cache = ModuleResolutionCache::default();
+    let resolved = resolve_module_specifier(
+        &base.join("src/main.ts"),
+        "@scope/pkg/foo",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, Some(base.join("exact/foo.ts")));
+    let cached = cache
+        .path_mapping_by_specifier
+        .get("@scope/pkg/foo")
+        .and_then(Option::as_ref)
+        .expect("path mapping selection should be cached");
+    assert_eq!(
+        options.paths.as_ref().unwrap()[cached.0].pattern,
+        "@scope/pkg/foo",
+        "exact mapping should win over wildcard mappings before caching"
+    );
+
+    let resolved_again = resolve_module_specifier(
+        &base.join("src/other.ts"),
+        "@scope/pkg/foo",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+    assert_eq!(resolved_again, Some(base.join("exact/foo.ts")));
+    assert_eq!(cache.path_mapping_by_specifier.len(), 1);
+}
+
+#[test]
+fn test_resolve_module_specifier_root_dirs_overlay() {
+    let base = PathBuf::from("/tmp/tsz-test-rootdirs");
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        root_dirs: vec![base.join("src"), base.join("generated")],
+        ..Default::default()
+    };
+
+    let mut known_files = FxHashSet::default();
+    known_files.insert(base.join("generated/generated.ts"));
+    let mut cache = ModuleResolutionCache::default();
+
+    let resolved = resolve_module_specifier(
+        &base.join("src/main.ts"),
+        "./generated",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(resolved, Some(base.join("generated/generated.ts")));
 }
 
 #[test]

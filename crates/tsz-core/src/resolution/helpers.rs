@@ -4,7 +4,45 @@
 //! semver comparison, and pattern matching used by the module resolver.
 
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+
+// Per-thread file-existence cache for module-resolution hot loops.
+// `try_file_with_suffixes_and_extension` and friends probe many candidate
+// paths per import. Within a single `tsz` invocation the filesystem state is
+// stable, so caching `path.is_file()` results saves repeated `stat()`
+// syscalls. The cache is thread-local so rayon workers each have their own
+// (no locking on the hot path); unbounded growth is acceptable for a
+// one-shot CLI compile and tests reset between invocations because each
+// test runs in a fresh thread / a fresh process.
+thread_local! {
+    static FILE_EXISTS: RefCell<FxHashMap<PathBuf, bool>> =
+        RefCell::new(FxHashMap::default());
+}
+
+#[inline]
+pub(crate) fn cached_is_file(path: &Path) -> bool {
+    FILE_EXISTS.with(|cache| {
+        if let Some(&exists) = cache.borrow().get(path) {
+            return exists;
+        }
+        let exists = path.is_file();
+        cache.borrow_mut().insert(path.to_path_buf(), exists);
+        exists
+    })
+}
+
+/// Reset the per-thread file-existence cache. Long-lived hosts (LSP,
+/// `--watch`) should call this between compilation cycles to drop stale
+/// entries when the user edits files on disk. Note: only clears the
+/// caller's thread-local cache; rayon worker threads keep their own,
+/// which is fine for read-mostly resolution but means a long-lived host
+/// that wants strict freshness should pin work to a single thread when
+/// resolving (or skip the cache entirely).
+#[allow(dead_code)]
+pub fn clear_file_exists_cache() {
+    FILE_EXISTS.with(|cache| cache.borrow_mut().clear());
+}
 
 pub(crate) fn parse_package_specifier(specifier: &str) -> (String, Option<String>) {
     // Handle scoped packages (@scope/pkg)
@@ -331,7 +369,7 @@ impl SemVer {
 pub(crate) const TYPES_VERSIONS_COMPILER_VERSION_FALLBACK: SemVer = SemVer {
     major: 6,
     minor: 0,
-    patch: 0,
+    patch: 3,
 };
 
 pub(crate) fn parse_semver(value: &str) -> Option<SemVer> {
@@ -454,7 +492,7 @@ pub(crate) fn try_file_with_suffixes_and_extension(
         let Some(candidate) = path_with_suffix_and_extension(base, suffix, extension) else {
             continue;
         };
-        if candidate.is_file() {
+        if cached_is_file(&candidate) {
             return Some(candidate);
         }
     }
@@ -479,7 +517,7 @@ pub(crate) fn path_with_suffix_and_extension(
 
 pub(crate) fn try_arbitrary_extension_declaration(path: &Path, extension: &str) -> Option<PathBuf> {
     let declaration = path.with_extension(format!("d.{extension}.ts"));
-    if declaration.is_file() {
+    if cached_is_file(&declaration) {
         return Some(declaration);
     }
     None
@@ -490,7 +528,7 @@ pub(crate) fn resolve_explicit_unknown_extension(path: &Path) -> Option<PathBuf>
     if split_path_extension(path).is_some() {
         return None;
     }
-    if path.is_file() {
+    if cached_is_file(path) {
         return Some(path.to_path_buf());
     }
     None
@@ -525,13 +563,20 @@ pub(crate) fn node16_extension_substitution(path: &Path, extension: &str) -> Opt
         "jsx" => &["tsx", "d.ts"],
         "mjs" => &["mts", "d.mts"],
         "cjs" => &["cts", "d.cts"],
+        "d.ts" => &["ts", "tsx"],
+        "d.mts" => &["mts"],
+        "d.cts" => &["cts"],
         _ => return None,
     };
+
+    let base = split_path_extension(path)
+        .map(|(base, _)| base)
+        .unwrap_or_else(|| path.to_path_buf());
 
     Some(
         replacements
             .iter()
-            .map(|ext| path.with_extension(ext))
+            .map(|ext| base.with_extension(ext))
             .collect(),
     )
 }
@@ -698,7 +743,11 @@ mod tests {
         );
         assert_eq!(
             types_versions_compiler_version(None),
-            TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
+            SemVer {
+                major: 6,
+                minor: 0,
+                patch: 3,
+            }
         );
     }
 
@@ -864,6 +913,24 @@ mod tests {
             split_path_extension(Path::new("pkg/index.d.ts")).expect("expected known extension");
         assert_eq!(base, PathBuf::from("pkg/index"));
         assert_eq!(extension, "d.ts");
+    }
+
+    #[test]
+    fn declaration_extension_substitution_probes_sibling_implementations() {
+        let dts = node16_extension_substitution(Path::new("pkg/a.d.ts"), "d.ts")
+            .expect("expected declaration extension substitution");
+        assert_eq!(
+            dts,
+            vec![PathBuf::from("pkg/a.ts"), PathBuf::from("pkg/a.tsx")]
+        );
+
+        let dmts = node16_extension_substitution(Path::new("pkg/a.d.mts"), "d.mts")
+            .expect("expected declaration module substitution");
+        assert_eq!(dmts, vec![PathBuf::from("pkg/a.mts")]);
+
+        let dcts = node16_extension_substitution(Path::new("pkg/a.d.cts"), "d.cts")
+            .expect("expected declaration commonjs substitution");
+        assert_eq!(dcts, vec![PathBuf::from("pkg/a.cts")]);
     }
 
     #[test]

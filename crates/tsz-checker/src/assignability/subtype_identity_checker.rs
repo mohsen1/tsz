@@ -7,7 +7,7 @@
 
 use crate::query_boundaries::assignability::{
     is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
-    subtype_cache_key,
+    mutable_array_element_for_redeclaration, subtype_cache_key,
 };
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -164,6 +164,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -226,6 +227,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -335,6 +337,9 @@ impl<'a> CheckerState<'a> {
         // Ensure Ref/Lazy types are resolved before checking compatibility
         self.ensure_relation_input_ready(prev_type);
         self.ensure_relation_input_ready(current_type);
+
+        let prev_type = self.array_application_to_array_for_redeclaration(prev_type);
+        let current_type = self.array_application_to_array_for_redeclaration(current_type);
 
         // Nominal identity check: when both types come from different named type
         // references (Application with different bases, or Lazy with different DefIds),
@@ -448,6 +453,19 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn array_application_to_array_for_redeclaration(&self, type_id: TypeId) -> TypeId {
+        if crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_none() {
+            return type_id;
+        }
+
+        mutable_array_element_for_redeclaration(
+            self.ctx.types,
+            type_id,
+            Some(self.ctx.definition_store.as_ref()),
+        )
+        .map_or(type_id, |elem| self.ctx.types.array(elem))
     }
 
     /// Widen literal return types within function signatures for TS2403 comparison.

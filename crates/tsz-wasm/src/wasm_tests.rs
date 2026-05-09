@@ -8,10 +8,10 @@ use crate::wasm_api::diagnostics::{
 use crate::wasm_api::emit::{transpile, transpile_module};
 use crate::wasm_api::enums::DiagnosticCategory;
 use crate::wasm_api::language_service::TsLanguageService;
-use crate::wasm_api::program::create_ts_program;
+use crate::wasm_api::program::{TsCompilerOptions, create_ts_program};
 use crate::wasm_api::utilities::{
     create_source_file, is_keyword, is_punctuation, parse_config_file_text_to_json,
-    parse_json_text, syntax_kind_to_name, token_to_string,
+    parse_json_text, scan_tokens, syntax_kind_to_name, token_to_string,
 };
 use crate::{Parser, TsDiagnostic, TsProgram, TsSourceFile, TsSymbol, TsType};
 use tsz_scanner::SyntaxKind;
@@ -265,6 +265,167 @@ fn test_transpile_helpers_emit_contracts() {
 }
 
 #[test]
+fn test_transpile_preserves_empty_module_from_ast() {
+    let output = transpile("export{};", Some(1), Some(5));
+    assert_eq!(output, "export {};\n");
+
+    let json = transpile_module("import type { T } from './types';", r#"{"module":5}"#);
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["outputText"].as_str().unwrap(), "export {};\n");
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn test_transpile_ignores_module_words_in_trivia_and_strings() {
+    let source = "// import type { T } from './types';\nconst text = 'export value';";
+    let output = transpile(source, Some(1), Some(5));
+
+    assert!(output.contains("text = 'export value'"));
+    assert!(!output.contains("export {};"));
+}
+
+#[test]
+fn test_transpile_module_reports_invalid_options_json() {
+    let json = transpile_module("const n = 1;", "{ invalid json");
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["outputText"].as_str().unwrap(), "");
+    let diagnostics = parsed["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["category"].as_u64().unwrap(), 1);
+    assert!(
+        diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid transpile options JSON")
+    );
+}
+
+#[test]
+fn test_transpile_module_accepts_file_name_option() {
+    let json = transpile_module(
+        "export{};",
+        r#"{"module":5,"fileName":"virtual/input.mts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["outputText"].as_str().unwrap(), "export {};\n");
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn test_transpile_module_emits_external_source_map() {
+    let json = transpile_module(
+        "const n: number = 1;\n",
+        r#"{"target":1,"sourceMap":true,"fileName":"virtual/input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+
+    let output = parsed["outputText"].as_str().unwrap();
+    // Source map URL comment must be appended and reference the JS basename.
+    assert!(
+        output.contains("//# sourceMappingURL=input.js.map"),
+        "missing sourceMappingURL comment in output: {output:?}"
+    );
+    // Inline base64 map MUST NOT be present in the external-map case.
+    assert!(
+        !output.contains("data:application/json;base64,"),
+        "external sourceMap should not inline the map: {output:?}"
+    );
+
+    let map_text = parsed["sourceMapText"]
+        .as_str()
+        .expect("sourceMapText should be set when sourceMap is requested");
+    let map: Value = serde_json::from_str(map_text).expect("sourceMapText is valid JSON");
+    assert_eq!(map["version"].as_u64().unwrap(), 3);
+    assert_eq!(map["file"].as_str().unwrap(), "input.js");
+    let sources: Vec<&str> = map["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(sources, vec!["input.ts"]);
+    assert!(!map["mappings"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn test_transpile_module_emits_inline_source_map() {
+    let json = transpile_module(
+        "const n: number = 1;\n",
+        r#"{"target":1,"inlineSourceMap":true,"fileName":"input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+
+    let output = parsed["outputText"].as_str().unwrap();
+    assert!(
+        output.contains("//# sourceMappingURL=data:application/json;base64,"),
+        "missing inline sourceMappingURL data URL in output: {output:?}"
+    );
+    // External `.map` URL must not be present in the inline case.
+    assert!(
+        !output.contains("//# sourceMappingURL=input.js.map"),
+        "inline sourceMap should not reference an external .map: {output:?}"
+    );
+    // Inline form keeps the map embedded; the separate field should be absent.
+    assert!(parsed["sourceMapText"].is_null());
+}
+
+#[test]
+fn test_transpile_module_omits_source_map_when_not_requested() {
+    let json = transpile_module(
+        "const n: number = 1;\n",
+        r#"{"target":1,"fileName":"input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let output = parsed["outputText"].as_str().unwrap();
+
+    assert!(parsed["sourceMapText"].is_null());
+    assert!(
+        !output.contains("//# sourceMappingURL"),
+        "no sourceMappingURL should be emitted without sourceMap option: {output:?}"
+    );
+}
+
+#[test]
+fn test_ts_program_emit_json_uses_module_file_extensions() {
+    let mut program = TsProgram::new();
+    program
+        .set_compiler_options(r#"{"target":2,"module":5}"#)
+        .unwrap();
+    program.add_source_file(
+        "entry.mts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+    program.add_source_file(
+        "worker.cts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+
+    let json = program.emit_json();
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let emitted_names: Vec<&str> = parsed["emittedFiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|file| file["name"].as_str())
+        .collect();
+
+    assert!(emitted_names.contains(&"entry.mjs"), "{emitted_names:?}");
+    assert!(emitted_names.contains(&"worker.cjs"), "{emitted_names:?}");
+    assert!(
+        !emitted_names.contains(&"entry.mts.js"),
+        "{emitted_names:?}"
+    );
+    assert!(
+        !emitted_names.contains(&"worker.cts.js"),
+        "{emitted_names:?}"
+    );
+}
+
+#[test]
 fn test_json_and_syntax_kind_utilities_contracts() {
     let parsed = parse_json_text("{ // comment\n  \"ok\": true\n}");
     let parsed_value: Value = serde_json::from_str(&parsed).unwrap();
@@ -295,6 +456,57 @@ fn test_wasm_utility_kind_predicates_and_token_text() {
 }
 
 #[test]
+fn test_wasm_scan_tokens_returns_token_stream() {
+    let json = scan_tokens("const x = 1;");
+    let tokens: Vec<Value> = serde_json::from_str(&json).unwrap();
+
+    assert!(
+        tokens.len() >= 5,
+        "expected token stream for `const x = 1;`, got {tokens:?}"
+    );
+
+    // Trivia should be skipped: there should be no whitespace token
+    // between `const` and `x`.
+    let kinds: Vec<u64> = tokens.iter().map(|t| t["kind"].as_u64().unwrap()).collect();
+    assert_eq!(kinds[0], SyntaxKind::ConstKeyword as u64);
+    assert_eq!(kinds[1], SyntaxKind::Identifier as u64);
+    assert_eq!(kinds[2], SyntaxKind::EqualsToken as u64);
+    assert_eq!(kinds[3], SyntaxKind::NumericLiteral as u64);
+    assert_eq!(kinds[4], SyntaxKind::SemicolonToken as u64);
+
+    // Spans round-trip back to the source text and are non-decreasing.
+    let mut last_end: u64 = 0;
+    for token in &tokens {
+        let start = token["start"].as_u64().unwrap();
+        let end = token["end"].as_u64().unwrap();
+        let text = token["text"].as_str().unwrap();
+        assert!(start >= last_end, "tokens overlap: {tokens:?}");
+        assert!(end > start, "empty-span token: {token:?}");
+        assert_eq!(
+            &"const x = 1;"[start as usize..end as usize],
+            text,
+            "token text does not match span: {token:?}"
+        );
+        last_end = end;
+    }
+
+    // EOF is not emitted as an explicit token in the stream.
+    assert!(
+        kinds
+            .iter()
+            .all(|k| *k != SyntaxKind::EndOfFileToken as u64),
+        "EOF should not appear in the token stream: {kinds:?}"
+    );
+}
+
+#[test]
+fn test_wasm_scan_tokens_empty_input() {
+    let json = scan_tokens("");
+    let tokens: Vec<Value> = serde_json::from_str(&json).unwrap();
+    assert!(tokens.is_empty());
+}
+
+#[test]
 fn test_wasm_source_file_factory_contract() {
     let mut source_file = create_source_file("mod.tsx", "const value = 1;", None);
 
@@ -302,6 +514,28 @@ fn test_wasm_source_file_factory_contract() {
     let root = source_file.get_root_handle();
     assert_ne!(root, u32::MAX);
     assert!(!source_file.get_statement_handles().is_empty());
+}
+
+#[test]
+fn test_source_file_declaration_file_extension_contract() {
+    for file_name in [
+        "index.d.ts",
+        "index.d.mts",
+        "index.d.cts",
+        "style.d.css.ts",
+        "types/INDEX.D.MTS",
+    ] {
+        let source_file = TsSourceFile::new(
+            file_name.to_string(),
+            "declare const value: string;".to_string(),
+        );
+        assert!(source_file.is_declaration_file(), "{file_name}");
+    }
+
+    for file_name in ["index.ts", "index.tsx", "style.css.ts", "index.d.tsx"] {
+        let source_file = TsSourceFile::new(file_name.to_string(), "const value = 1;".to_string());
+        assert!(!source_file.is_declaration_file(), "{file_name}");
+    }
 }
 
 #[test]
@@ -457,4 +691,109 @@ fn test_byte_offset_to_utf16_conversion() {
     assert_eq!(TsProgram::byte_length_to_utf16(s, 0, 2), 2); // "ab"
     assert_eq!(TsProgram::byte_length_to_utf16(s, 2, 3), 1); // em dash span (3 bytes = 1 char)
     assert_eq!(TsProgram::byte_length_to_utf16(s, 5, 2), 2); // "cd"
+}
+
+#[test]
+fn test_ts_program_target_drives_semantic_diagnostics() {
+    // Issue #3489: `target` from setCompilerOptions must reach the checker
+    // so target-aware semantic diagnostics like TS2737 (BigInt literals
+    // require ES2020+) actually fire. Previously the checker target was
+    // hardcoded to the default and the option was silently dropped.
+
+    // target=1 → ES5: BigInt literal not allowed → TS2737 expected.
+    let mut es5 = TsProgram::new();
+    es5.set_compiler_options(r#"{"target":1}"#).unwrap();
+    es5.add_source_file("a.ts".to_string(), "const x = 1n;".to_string());
+    let codes_es5 = es5.get_all_diagnostic_codes();
+    assert!(
+        codes_es5.contains(&2737),
+        "ES5 target must surface TS2737 for BigInt literal, got {codes_es5:?}"
+    );
+
+    // target=7 → ES2020: BigInt literal allowed → no TS2737.
+    let mut es2020 = TsProgram::new();
+    es2020.set_compiler_options(r#"{"target":7}"#).unwrap();
+    es2020.add_source_file("a.ts".to_string(), "const x = 1n;".to_string());
+    let codes_es2020 = es2020.get_all_diagnostic_codes();
+    assert!(
+        !codes_es2020.contains(&2737),
+        "ES2020 target must not surface TS2737 for BigInt literal, got {codes_es2020:?}"
+    );
+}
+
+#[test]
+fn test_ts_compiler_options_threads_allow_js_and_declaration() {
+    // Issue #4748 / #4734: TsCompilerOptions.to_checker_options previously
+    // hardcoded allow_js:false and emit_declarations:false, silently
+    // dropping the user-supplied allowJs / declaration fields.
+
+    let opts: TsCompilerOptions =
+        serde_json::from_str(r#"{"allowJs":true,"declaration":true}"#).unwrap();
+    let checker_opts = opts.to_checker_options();
+    assert!(
+        checker_opts.allow_js,
+        "allowJs:true must propagate to CheckerOptions.allow_js",
+    );
+    assert!(
+        checker_opts.emit_declarations,
+        "declaration:true must propagate to CheckerOptions.emit_declarations",
+    );
+
+    let opts_off: TsCompilerOptions =
+        serde_json::from_str(r#"{"allowJs":false,"declaration":false}"#).unwrap();
+    let checker_opts_off = opts_off.to_checker_options();
+    assert!(!checker_opts_off.allow_js);
+    assert!(!checker_opts_off.emit_declarations);
+
+    // Defaults remain false when fields are omitted.
+    let opts_default: TsCompilerOptions = serde_json::from_str("{}").unwrap();
+    let checker_opts_default = opts_default.to_checker_options();
+    assert!(!checker_opts_default.allow_js);
+    assert!(!checker_opts_default.emit_declarations);
+}
+
+#[test]
+fn test_ts_program_emit_json_threads_declaration_and_source_map_flags() {
+    // Issue #4748 / #4738: emit_json hardcoded per-file metadata to
+    // declaration:false / sourceMap:false; verify the configured values
+    // now flow through to emittedFiles entries.
+
+    let mut program = TsProgram::new();
+    program
+        .set_compiler_options(r#"{"declaration":true,"sourceMap":true}"#)
+        .unwrap();
+    program.add_source_file(
+        "entry.ts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+
+    let json = program.emit_json();
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let files = parsed["emittedFiles"].as_array().unwrap();
+    assert!(!files.is_empty(), "expected at least one emitted file");
+    for file in files {
+        assert_eq!(
+            file["declaration"],
+            Value::Bool(true),
+            "declaration flag must reflect compiler options",
+        );
+        assert_eq!(
+            file["sourceMap"],
+            Value::Bool(true),
+            "sourceMap flag must reflect compiler options",
+        );
+    }
+
+    // When neither option is set, both flags stay false.
+    let mut program_off = TsProgram::new();
+    program_off.add_source_file(
+        "entry.ts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+    let json_off = program_off.emit_json();
+    let parsed_off: Value = serde_json::from_str(&json_off).unwrap();
+    for file in parsed_off["emittedFiles"].as_array().unwrap() {
+        assert_eq!(file["declaration"], Value::Bool(false));
+        assert_eq!(file["sourceMap"], Value::Bool(false));
+    }
 }

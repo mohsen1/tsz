@@ -11,6 +11,89 @@ impl<'a> Printer<'a> {
     // Class Members
     // =========================================================================
 
+    pub(in crate::emitter) fn has_effective_static_modifier_js(
+        &self,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes
+                .iter()
+                .filter(|&&idx| {
+                    self.arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16)
+                })
+                .count()
+                == 1
+        })
+    }
+
+    fn emit_class_member_name_preserving_class_expression_name(&mut self, name: NodeIndex) {
+        if self
+            .arena
+            .get(name)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            && let Some(ident) = self.arena.get_identifier_at(name)
+        {
+            let private_name = ident.escaped_text.as_str();
+            if private_name.trim_start_matches('#') == "constructor" {
+                if private_name.starts_with('#') {
+                    self.write(private_name);
+                } else {
+                    self.write("#");
+                    self.write(private_name);
+                }
+                return;
+            }
+        }
+
+        let prev_alias = self.scoped_class_expression_self_alias.take();
+        if let Some(name_node) = self.arena.get(name)
+            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && !self.pending_weakmap_inits.is_empty()
+            && let Some(computed) = self.arena.get_computed_property(name_node)
+        {
+            let weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
+            self.write("[(");
+            for (i, init) in weakmap_inits.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(init);
+            }
+            self.write(", ");
+            let expression = self
+                .arena
+                .get(computed.expression)
+                .filter(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+                .and_then(|node| self.arena.get_parenthesized(node))
+                .map_or(computed.expression, |paren| paren.expression);
+            if let Some(temp_name) = self.computed_prop_temp_map.get(&expression) {
+                self.write(&temp_name.clone());
+            } else {
+                self.emit(expression);
+            }
+            self.write(")]");
+        } else {
+            let is_computed = self
+                .arena
+                .get(name)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            // Suppress namespace/CJS-export qualification only when emitting a
+            // non-computed class member name. Object-literal methods and
+            // computed class names are runtime expressions and must still pick
+            // up namespace/export rewrites.
+            let in_class_member = self.class_member_emit_depth > 0 && !is_computed;
+            let prev_ns = self.suppress_ns_qualification;
+            if in_class_member {
+                self.suppress_ns_qualification = true;
+            }
+            self.emit(name);
+            self.suppress_ns_qualification = prev_ns;
+        }
+        self.scoped_class_expression_self_alias = prev_alias;
+    }
+
     /// Emit class member modifiers (static, public, private, etc.)
     pub(in crate::emitter) fn emit_class_member_modifiers(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
@@ -66,12 +149,16 @@ impl<'a> Printer<'a> {
                 .get_identifier(name_node)
                 .is_some_and(|id| id.escaped_text == "(")
         });
+        let is_quoted_constructor_name =
+            self.class_member_emit_depth > 0 && self.is_quoted_constructor_method_name(method.name);
 
         // Skip method declarations without bodies (TypeScript-only overloads)
         if method.body.is_none() {
             // Keep parse-recovery emit for invalid generator member `*() {}`.
             if method.asterisk_token && has_recovery_missing_name {
                 self.write("*() { }");
+            } else if self.has_recovered_declaration_trailing_comma(node) {
+                self.emit_recovered_object_method_without_body(node);
             } else {
                 self.skip_comments_for_erased_node(node);
             }
@@ -101,8 +188,10 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        if method.name.is_some() && !has_recovery_missing_name {
-            self.emit(method.name);
+        if is_quoted_constructor_name {
+            self.write("constructor");
+        } else if method.name.is_some() && !has_recovery_missing_name {
+            self.emit_class_member_name_preserving_class_expression_name(method.name);
         }
 
         // Map opening `(` to its source position
@@ -238,6 +327,17 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn is_quoted_constructor_method_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        name_node.kind == SyntaxKind::StringLiteral as u16
+            && self
+                .arena
+                .get_literal(name_node)
+                .is_some_and(|lit| lit.text == "constructor")
+    }
+
     /// Emit async method body lowered to __awaiter + function* for ES2015 target
     fn emit_method_async_lowered_body(&mut self, body: NodeIndex, params: &[NodeIndex]) {
         let params_have_top_level_await = params
@@ -259,9 +359,45 @@ impl<'a> Printer<'a> {
             })
             .unwrap_or(false);
 
+        // Issue #3759: Emit `super` capture before entering the generator. tsc
+        // pre-binds each referenced `super.<name>` via an `Object.create` block so
+        // the generator body can reach them through `_super.<name>.call(this, …)`
+        // — `super` is not lexically valid inside a nested generator function.
+        let super_property_names = if body_is_empty_single_line {
+            Vec::new()
+        } else {
+            crate::transforms::emit_utils::collect_async_method_super_property_names(
+                self.arena, body,
+            )
+        };
+        let super_alias = if super_property_names.is_empty() {
+            None
+        } else {
+            Some(std::sync::Arc::<str>::from("_super"))
+        };
+
         self.write(" {");
         self.write_line();
         self.increase_indent();
+
+        if !super_property_names.is_empty() {
+            self.write("const _super = Object.create(null, {");
+            self.write_line();
+            self.increase_indent();
+            for (i, name) in super_property_names.iter().enumerate() {
+                self.write(name);
+                self.write(": { get: () => super.");
+                self.write(name);
+                self.write(" }");
+                if i + 1 < super_property_names.len() {
+                    self.write(",");
+                }
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("});");
+            self.write_line();
+        }
 
         self.write("return ");
         self.write_helper("__awaiter");
@@ -293,8 +429,15 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Emit function body with await→yield substitution
+        // Emit function body with await→yield substitution and (issue #3759)
+        // an active `_super` capture alias when the body references super.
         self.ctx.emit_await_as_yield = true;
+        let prev_super_alias = self.scoped_static_super_base_alias.take();
+        let prev_super_direct = self.scoped_static_super_direct_access;
+        if let Some(alias) = super_alias {
+            self.scoped_static_super_base_alias = Some(alias);
+            self.scoped_static_super_direct_access = true;
+        }
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
@@ -307,6 +450,8 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+        self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_direct_access = prev_super_direct;
         self.ctx.emit_await_as_yield = false;
 
         self.decrease_indent();
@@ -395,6 +540,10 @@ impl<'a> Printer<'a> {
                         }
                     } else if mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
                         self.write("async ");
+                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
+                        && self.ctx.options.target == ScriptTarget::ESNext
+                    {
+                        self.write("accessor ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
                         // `export` on a class member is a parse error, but tsc
                         // preserves it in emit for error-recovery fidelity.
@@ -457,7 +606,7 @@ impl<'a> Printer<'a> {
         // For ES2022+ targets, static fields with initializers are emitted as
         // `static { this.fieldName = value; }` blocks (class static initialization blocks).
         // This preserves the correct `this` and `super` binding inside the class body.
-        let is_static = self.arena.is_static(&prop.modifiers);
+        let is_static = self.has_effective_static_modifier_js(&prop.modifiers);
         let target_es2022_plus = (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
 
         let is_private_field = self
@@ -489,16 +638,18 @@ impl<'a> Printer<'a> {
                     if let Some(computed) =
                         name_node.and_then(|n| self.arena.get_computed_property(n))
                     {
-                        self.emit(computed.expression);
+                        self.emit_class_member_name_preserving_class_expression_name(
+                            computed.expression,
+                        );
                     }
                 } else {
-                    self.emit(prop.name);
+                    self.emit_class_member_name_preserving_class_expression_name(prop.name);
                 }
                 self.write("] = ");
             } else {
                 // `static { this.fieldName = value; }`
                 self.write("static { this.");
-                self.emit(prop.name);
+                self.emit_class_member_name_preserving_class_expression_name(prop.name);
                 self.write(" = ");
             }
             self.with_scoped_static_initializer_context_cleared(|this| {
@@ -511,7 +662,7 @@ impl<'a> Printer<'a> {
         // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
 
-        self.emit(prop.name);
+        self.emit_class_member_name_preserving_class_expression_name(prop.name);
 
         // Skip type annotations for JavaScript emit
 
@@ -529,6 +680,21 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_class_member_modifiers_js(
         &mut self,
         modifiers: &Option<NodeList>,
+    ) {
+        self.emit_class_member_modifiers_js_impl(modifiers, true);
+    }
+
+    fn emit_accessor_member_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
+        self.emit_class_member_modifiers_js_impl(
+            modifiers,
+            self.ctx.options.target == ScriptTarget::ESNext,
+        );
+    }
+
+    fn emit_class_member_modifiers_js_impl(
+        &mut self,
+        modifiers: &Option<NodeList>,
+        emit_accessor_keyword: bool,
     ) {
         if let Some(mods) = modifiers {
             let static_count = mods
@@ -553,7 +719,9 @@ impl<'a> Printer<'a> {
                         if !suppress_static {
                             self.write("static ");
                         }
-                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16 {
+                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16
+                        && emit_accessor_keyword
+                    {
                         self.write("accessor ");
                     } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
                         // `export` on a class member is a parse error, but tsc
@@ -1082,9 +1250,20 @@ impl<'a> Printer<'a> {
                 self.write("writable: true,");
                 self.write_line();
                 self.write("value: ");
-                self.with_scoped_static_initializer_context_cleared(|this| {
-                    this.emit_expression(*init_idx);
-                });
+                if init_idx.is_none() {
+                    self.write("void 0");
+                } else {
+                    if let Some(init_node) = self.arena.get(*init_idx) {
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                        {
+                            self.comment_emit_idx += 1;
+                        }
+                    }
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
+                }
                 self.write_line();
                 self.decrease_indent();
                 self.write("});");
@@ -1098,9 +1277,20 @@ impl<'a> Printer<'a> {
                     self.write(name);
                 }
                 self.write(" = ");
-                self.with_scoped_static_initializer_context_cleared(|this| {
-                    this.emit_expression(*init_idx);
-                });
+                if init_idx.is_none() {
+                    self.write("void 0");
+                } else {
+                    if let Some(init_node) = self.arena.get(*init_idx) {
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= init_node.pos
+                        {
+                            self.comment_emit_idx += 1;
+                        }
+                    }
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(*init_idx);
+                    });
+                }
                 self.write(";");
                 // Emit trailing comments from the original class field.
                 // If pre-collected (field appeared before constructor in source), use them.
@@ -1346,11 +1536,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (static only for JavaScript)
-        self.emit_class_member_modifiers_js(&accessor.modifiers);
+        self.emit_accessor_member_modifiers_js(&accessor.modifiers);
 
         self.write("get ");
-        self.emit(accessor.name);
+        self.emit_class_member_name_preserving_class_expression_name(accessor.name);
 
         // Emit type parameters for error recovery (e.g., `get foo<T>() {}`)
         // Getters cannot legally have type parameters, but tsc preserves them in JS output.
@@ -1377,11 +1566,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (static only for JavaScript)
-        self.emit_class_member_modifiers_js(&accessor.modifiers);
+        self.emit_accessor_member_modifiers_js(&accessor.modifiers);
 
         self.write("set ");
-        self.emit(accessor.name);
+        self.emit_class_member_name_preserving_class_expression_name(accessor.name);
 
         // Emit type parameters for error recovery (e.g., `set foo<T>(v) {}`)
         // Setters cannot legally have type parameters, but tsc preserves them in JS output.
@@ -1394,35 +1582,51 @@ impl<'a> Printer<'a> {
         }
 
         self.write("(");
-        let open_paren_pos = {
-            self.map_token_after(
+        let needs_es5_param_transform = self.ctx.target_es5
+            && accessor.parameters.nodes.iter().any(|&param_idx| {
                 self.arena
-                    .get(accessor.name)
-                    .map_or(node.pos, |name| name.end),
-                node.end,
-                b'(',
-            );
-            self.pending_source_pos
-                .map(|source_pos| source_pos.pos)
-                .unwrap_or(node.pos)
-        };
-        let search_start = accessor
-            .parameters
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map_or(node.pos, |n| n.pos);
-        if let Some(body_node) = self.arena.get(accessor.body) {
-            let search_end = body_node.pos;
-            self.emit_function_parameters_with_trailing_comments(
-                &accessor.parameters.nodes,
-                open_paren_pos,
-                search_start,
-                search_end,
-            );
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| {
+                        param.dot_dot_dot_token
+                            || param.initializer.is_some()
+                            || self.is_binding_pattern(param.name)
+                    })
+            });
+        let es5_param_transforms = if needs_es5_param_transform {
+            Some(self.emit_function_parameters_es5(&accessor.parameters.nodes))
         } else {
-            self.emit_function_parameters_js(&accessor.parameters.nodes);
-        }
+            let open_paren_pos = {
+                self.map_token_after(
+                    self.arena
+                        .get(accessor.name)
+                        .map_or(node.pos, |name| name.end),
+                    node.end,
+                    b'(',
+                );
+                self.pending_source_pos
+                    .map(|source_pos| source_pos.pos)
+                    .unwrap_or(node.pos)
+            };
+            let search_start = accessor
+                .parameters
+                .nodes
+                .first()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.pos);
+            if let Some(body_node) = self.arena.get(accessor.body) {
+                let search_end = body_node.pos;
+                self.emit_function_parameters_with_trailing_comments(
+                    &accessor.parameters.nodes,
+                    open_paren_pos,
+                    search_start,
+                    search_end,
+                );
+            } else {
+                self.emit_function_parameters_js(&accessor.parameters.nodes);
+            }
+            None
+        };
         self.write(")");
 
         // Emit return type annotation for error recovery (e.g., `set foo(v): number {}`)
@@ -1432,8 +1636,19 @@ impl<'a> Printer<'a> {
             self.emit(accessor.type_annotation);
         }
 
-        let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
-        self.emit_accessor_body(accessor.body, compact_body);
+        if let Some(transforms) = es5_param_transforms {
+            if transforms.has_transforms() {
+                self.write(" ");
+                self.emit_block_with_param_prologue(accessor.body, &transforms);
+            } else {
+                let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+                self.emit_accessor_body(accessor.body, compact_body);
+            }
+            self.pop_temp_scope();
+        } else {
+            let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+            self.emit_accessor_body(accessor.body, compact_body);
+        }
     }
 
     /// Emit the body of a get/set accessor, handling scope management and fallback to empty body.
@@ -1550,6 +1765,20 @@ mod tests {
     }
 
     #[test]
+    fn namespace_export_does_not_qualify_static_method_name() {
+        let source = "namespace A {\n    export class Point {\n        static Origin() { return { x: 0, y: 0 }; }\n    }\n\n    export namespace Point {\n        export function Origin() { return \"\"; }\n    }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("static Origin()"),
+            "Class method declarations should keep bare member names inside namespace IIFEs.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("static A.Origin()"),
+            "Namespace export qualification must not apply to class method names.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn es_decorator_on_getter_emitted() {
         let source = "class C {\n    @dec\n    get value() { return 1; }\n}";
         let output = emit_ts(source);
@@ -1594,6 +1823,26 @@ mod tests {
         assert!(
             output.contains("constructor(x) { this.x = x; }"),
             "Single-line constructor body should stay on one line.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn quoted_constructor_method_names_emit_as_constructors() {
+        let source = "class C {\n    \"constructor\"() {}\n}\nclass D {\n    \"\\x63onstructor\"() {}\n}\nclass E {\n    ['constructor']() {}\n}\nvar o = { \"constructor\"() {} };";
+        let output = emit_ts(source);
+
+        assert_eq!(
+            output.matches("constructor() { }").count(),
+            2,
+            "Quoted constructor method names should emit as constructors.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("['constructor']() { }"),
+            "Computed constructor property names should remain computed methods.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("var o = { \"constructor\"() { } };"),
+            "Object-literal quoted constructor methods should remain quoted methods.\nOutput: {output}"
         );
     }
 

@@ -215,48 +215,6 @@ pub(super) fn has_no_default_lib_directive(source: &str) -> bool {
     false
 }
 
-pub(super) fn sources_have_no_types_and_symbols(sources: &[SourceEntry]) -> bool {
-    sources.iter().any(source_has_no_types_and_symbols)
-}
-
-pub(super) fn source_has_no_types_and_symbols(source: &SourceEntry) -> bool {
-    if let Some(text) = source.text.as_deref() {
-        return has_no_types_and_symbols_directive(text);
-    }
-    let Ok(text) = std::fs::read_to_string(&source.path) else {
-        return false;
-    };
-    has_no_types_and_symbols_directive(&text)
-}
-
-pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
-    for line in source.lines().take(32) {
-        let trimmed = line.trim_start();
-        if !trimmed.starts_with("//") {
-            continue;
-        }
-
-        let lower = trimmed.to_ascii_lowercase();
-        let Some(idx) = lower.find("@notypesandsymbols") else {
-            continue;
-        };
-
-        let mut rest = &trimmed[idx + "@noTypesAndSymbols".len()..];
-        rest = rest.trim_start();
-        if !rest.starts_with(':') {
-            continue;
-        }
-        rest = rest[1..].trim_start();
-
-        let value = rest
-            .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
-            .find(|s| !s.is_empty())
-            .unwrap_or("");
-        return value.eq_ignore_ascii_case("true");
-    }
-    false
-}
-
 pub(super) fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
     let needle = "no-default-lib";
     let lower = line.to_ascii_lowercase();
@@ -291,35 +249,93 @@ pub(super) struct SourceReadResult {
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
 }
 
-pub(crate) fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
-    let candidate = cwd.join("tsconfig.json");
-    candidate.is_file().then(|| normalize_path(&candidate))
+/// Locate the nearest `tsconfig.json`, starting at `cwd` and walking up parent
+/// directories until one is found or the filesystem root is reached.
+///
+/// Matches TypeScript's no-argument project discovery (`findConfigFile`), where
+/// running `tsc` with no file arguments from a project subdirectory still finds
+/// the parent project's config.
+pub fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
+    let mut current = Some(cwd);
+    while let Some(dir) = current {
+        let candidate = dir.join("tsconfig.json");
+        if candidate.is_file() {
+            return Some(normalize_path(&candidate));
+        }
+        current = dir.parent();
+    }
+    None
 }
 
-pub(crate) fn resolve_tsconfig_path(cwd: &Path, project: Option<&Path>) -> Result<Option<PathBuf>> {
+/// Failure modes for `--project` resolution. Distinguishes the two error
+/// codes tsc emits: TS5057 (existing directory missing tsconfig.json) and
+/// TS5058 (path does not exist on disk). The original user-supplied path is
+/// preserved so the diagnostic message matches tsc's relative-path rendering.
+#[derive(Debug)]
+pub(crate) enum ResolveTsconfigError {
+    /// User-supplied `--project` path does not exist on disk. Maps to TS5058.
+    PathDoesNotExist(PathBuf),
+    /// User-supplied `--project` path is an existing directory that does not
+    /// contain a `tsconfig.json`. Maps to TS5057.
+    NoConfigInDirectory(PathBuf),
+    /// User-supplied `--project` path exists but is neither a file nor a
+    /// directory (e.g., a broken symlink resolved by `exists()` but not by
+    /// `is_file()`). Falls back to TS5058.
+    NotAFile(PathBuf),
+}
+
+impl std::fmt::Display for ResolveTsconfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PathDoesNotExist(p) | Self::NotAFile(p) => {
+                write!(f, "The specified path does not exist: '{}'.", p.display())
+            }
+            Self::NoConfigInDirectory(p) => write!(
+                f,
+                "Cannot find a tsconfig.json file at the specified directory: '{}'.",
+                p.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResolveTsconfigError {}
+
+pub(crate) fn resolve_tsconfig_path(
+    cwd: &Path,
+    project: Option<&Path>,
+) -> std::result::Result<Option<PathBuf>, ResolveTsconfigError> {
     let Some(project) = project else {
         return Ok(find_tsconfig(cwd));
     };
 
-    let mut candidate = if project.is_absolute() {
+    let absolute = if project.is_absolute() {
         project.to_path_buf()
     } else {
         cwd.join(project)
     };
 
-    if candidate.is_dir() {
-        candidate = candidate.join("tsconfig.json");
+    if absolute.is_dir() {
+        let candidate = absolute.join("tsconfig.json");
+        if !candidate.is_file() {
+            return Err(ResolveTsconfigError::NoConfigInDirectory(
+                project.to_path_buf(),
+            ));
+        }
+        return Ok(Some(normalize_path(&candidate)));
     }
 
-    if !candidate.exists() {
-        bail!("tsconfig not found at {}", candidate.display());
+    if !absolute.exists() {
+        return Err(ResolveTsconfigError::PathDoesNotExist(
+            project.to_path_buf(),
+        ));
     }
 
-    if !candidate.is_file() {
-        bail!("project path is not a file: {}", candidate.display());
+    if !absolute.is_file() {
+        return Err(ResolveTsconfigError::NotAFile(project.to_path_buf()));
     }
 
-    Ok(Some(normalize_path(&candidate)))
+    Ok(Some(normalize_path(&absolute)))
 }
 
 pub(crate) fn load_config(path: Option<&Path>) -> Result<Option<TsConfig>> {
@@ -518,6 +534,7 @@ struct ParsedSource {
         String,
         tsz::module_resolver::ImportKind,
         Option<tsz::module_resolver::ImportingModuleKind>,
+        bool,
     )>,
     type_refs: Vec<(String, Option<String>, usize, usize)>,
     reference_paths: Vec<(String, usize, usize)>,
@@ -571,6 +588,8 @@ pub(super) fn read_source_files(
     let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
     let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
     let mut seen = FxHashSet::default();
+    let mut discovery_order: FxHashMap<PathBuf, usize> = FxHashMap::default();
+    let mut next_discovery_order = 0usize;
     let mut pending = VecDeque::new();
     let mut resolution_cache = ModuleResolutionCache::default();
     let mut module_resolver = ModuleResolver::new(options);
@@ -599,6 +618,8 @@ pub(super) fn read_source_files(
     for path in paths {
         let canonical = normalize(path, options);
         if seen.insert(canonical.clone()) {
+            discovery_order.insert(canonical.clone(), next_discovery_order);
+            next_discovery_order += 1;
             pending.push_back(canonical);
         }
     }
@@ -685,6 +706,8 @@ pub(super) fn read_source_files(
                     sources.insert(path.clone(), (None, false, false));
                     for dep in cached_deps {
                         if seen.insert(dep.clone()) {
+                            discovery_order.insert(dep.clone(), next_discovery_order);
+                            next_discovery_order += 1;
                             pending.push_back(dep.clone());
                         }
                     }
@@ -723,7 +746,13 @@ pub(super) fn read_source_files(
             let entry = dependencies.entry(path.clone()).or_default();
 
             if !options.no_resolve {
-                for (specifier, import_kind, resolution_mode_override) in specifiers {
+                for (
+                    specifier,
+                    import_kind,
+                    resolution_mode_override,
+                    has_type_json_import_attribute,
+                ) in specifiers
+                {
                     let request = tsz::module_resolver::ModuleLookupRequest {
                         specifier: &specifier,
                         containing_file: &path,
@@ -736,7 +765,7 @@ pub(super) fn read_source_files(
                     tsz_common::perf_counters::inc(
                         &tsz_common::perf_counters::counters().resolver_lookup_calls,
                     );
-                    let outcome = module_resolver
+                    let mut outcome = module_resolver
                         .lookup(
                             &request,
                             |spec, fp| {
@@ -753,10 +782,37 @@ pub(super) fn read_source_files(
                             Some(&seen),
                         )
                         .classify();
+                    if outcome
+                        .error
+                        .as_ref()
+                        .is_some_and(|error| error.code == 2732)
+                        && has_type_json_import_attribute
+                        && json_type_attribute_enables_json_module(
+                            options,
+                            &path,
+                            base_dir,
+                            &mut resolution_cache,
+                        )
+                        && let Some(resolved_path) = resolve_module_specifier(
+                            &path,
+                            &specifier,
+                            options,
+                            base_dir,
+                            &mut resolution_cache,
+                            &seen,
+                        )
+                        && resolved_path.extension().is_some_and(|ext| ext == "json")
+                    {
+                        outcome.resolved_path = Some(resolved_path);
+                        outcome.is_resolved = true;
+                        outcome.error = None;
+                    }
                     if let Some(resolved) = outcome.resolved_path {
                         let canonical = normalize(&resolved, options);
                         entry.insert(canonical.clone());
                         if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
+                            discovery_order.insert(canonical.clone(), next_discovery_order);
+                            next_discovery_order += 1;
                             pending.push_back(canonical);
                         }
                     }
@@ -842,6 +898,8 @@ pub(super) fn read_source_files(
                         let canonical = normalize(&resolved, options);
                         entry.insert(canonical.clone());
                         if seen.insert(canonical.clone()) {
+                            discovery_order.insert(canonical.clone(), next_discovery_order);
+                            next_discovery_order += 1;
                             pending.push_back(canonical);
                         }
                     } else if !invalid_mode {
@@ -870,6 +928,8 @@ pub(super) fn read_source_files(
                                 let canonical = normalize(&alt, options);
                                 entry.insert(canonical.clone());
                                 if seen.insert(canonical.clone()) {
+                                    discovery_order.insert(canonical.clone(), next_discovery_order);
+                                    next_discovery_order += 1;
                                     pending.push_back(canonical);
                                 }
                             }
@@ -889,7 +949,11 @@ pub(super) fn read_source_files(
                     let direct_reference = base_dir.join(&reference_path);
                     candidates.push(direct_reference);
                     if !reference_path.contains('.') {
-                        for ext in [".ts", ".tsx", ".d.ts"] {
+                        for ext in
+                            tsz::checker::triple_slash_validator::reference_path_probe_extensions(
+                                options.allow_js,
+                            )
+                        {
                             candidates.push(base_dir.join(format!("{reference_path}{ext}")));
                         }
                     }
@@ -903,6 +967,8 @@ pub(super) fn read_source_files(
                     };
                     entry.insert(resolved_reference.clone());
                     if seen.insert(resolved_reference.clone()) {
+                        discovery_order.insert(resolved_reference.clone(), next_discovery_order);
+                        next_discovery_order += 1;
                         pending.push_back(resolved_reference);
                     }
                 }
@@ -922,9 +988,19 @@ pub(super) fn read_source_files(
         )
         .collect();
     list.sort_by(|left, right| {
-        left.path
-            .to_string_lossy()
-            .cmp(&right.path.to_string_lossy())
+        let left_order = discovery_order
+            .get(&left.path)
+            .copied()
+            .unwrap_or(usize::MAX);
+        let right_order = discovery_order
+            .get(&right.path)
+            .copied()
+            .unwrap_or(usize::MAX);
+        left_order.cmp(&right_order).then_with(|| {
+            left.path
+                .to_string_lossy()
+                .cmp(&right.path.to_string_lossy())
+        })
     });
     Ok(SourceReadResult {
         sources: list,
@@ -1025,6 +1101,56 @@ mod tests {
     fn has_source_file_extension_rejects_no_extension_or_empty() {
         assert!(!has_source_file_extension(Path::new("README")));
         assert!(!has_source_file_extension(Path::new("")));
+    }
+
+    #[test]
+    fn read_source_files_preserves_reference_discovery_order() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("src/root.ts");
+        let foo = dir.path().join("node_modules/foo/index.d.ts");
+        let foo_alpha = dir
+            .path()
+            .join("node_modules/foo/node_modules/alpha/index.d.ts");
+        let bar = dir.path().join("node_modules/bar/index.d.ts");
+        let bar_alpha = dir
+            .path()
+            .join("node_modules/bar/node_modules/alpha/index.d.ts");
+
+        for path in [&root, &foo, &foo_alpha, &bar, &bar_alpha] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        }
+        std::fs::write(
+            &root,
+            "/// <reference types=\"foo\" />\n/// <reference types=\"bar\" />\n",
+        )
+        .unwrap();
+        std::fs::write(&foo, "/// <reference types=\"alpha\" />\n").unwrap();
+        std::fs::write(&foo_alpha, "declare var alpha: any;\n").unwrap();
+        std::fs::write(&bar, "/// <reference types=\"alpha\" />\n").unwrap();
+        std::fs::write(&bar_alpha, "declare var alpha: {};\n").unwrap();
+
+        let result = read_source_files(
+            &[root],
+            dir.path(),
+            &ResolvedCompilerOptions::default(),
+            None,
+            None,
+        )
+        .expect("read source files");
+        let paths: Vec<_> = result.sources.iter().map(|source| &source.path).collect();
+
+        let foo_alpha_pos = paths
+            .iter()
+            .position(|path| path.ends_with("node_modules/foo/node_modules/alpha/index.d.ts"))
+            .expect("foo alpha loaded");
+        let bar_alpha_pos = paths
+            .iter()
+            .position(|path| path.ends_with("node_modules/bar/node_modules/alpha/index.d.ts"))
+            .expect("bar alpha loaded");
+        assert!(
+            foo_alpha_pos < bar_alpha_pos,
+            "reference discovery order should load foo's alpha before bar's alpha; got {paths:?}"
+        );
     }
 
     // ---------------- should_skip_js_in_node_modules ----------------
@@ -1319,66 +1445,6 @@ mod tests {
         assert!(!has_no_default_lib_directive(""));
     }
 
-    // ---------------- has_no_types_and_symbols_directive ----------------
-
-    #[test]
-    fn has_no_types_and_symbols_directive_canonical_true() {
-        let src = "// @noTypesAndSymbols: true\nexport {};\n";
-        assert!(has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_case_insensitive_key() {
-        let src = "// @NOTYPESANDSYMBOLS: true\n";
-        assert!(has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_case_insensitive_value() {
-        let src = "// @noTypesAndSymbols: TRUE\n";
-        assert!(has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_false_when_value_false() {
-        let src = "// @noTypesAndSymbols: false\n";
-        assert!(!has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_requires_colon() {
-        // No colon between key and value -> not honored.
-        let src = "// @noTypesAndSymbols true\n";
-        assert!(!has_no_types_and_symbols_directive(src));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_only_first_32_lines_scanned() {
-        // 32 filler lines then the directive on line 33 -> not honored.
-        let mut src = String::new();
-        for _ in 0..32 {
-            src.push_str("// filler\n");
-        }
-        src.push_str("// @noTypesAndSymbols: true\n");
-        assert!(!has_no_types_and_symbols_directive(&src));
-
-        // Same directive on line 32 (within window) -> honored.
-        let mut src_in = String::new();
-        for _ in 0..31 {
-            src_in.push_str("// filler\n");
-        }
-        src_in.push_str("// @noTypesAndSymbols: true\n");
-        assert!(has_no_types_and_symbols_directive(&src_in));
-    }
-
-    #[test]
-    fn has_no_types_and_symbols_directive_false_when_absent() {
-        assert!(!has_no_types_and_symbols_directive(
-            "// some unrelated comment\nexport {};\n"
-        ));
-        assert!(!has_no_types_and_symbols_directive(""));
-    }
-
     // ---------------- parse_reference_no_default_lib_value ----------------
 
     #[test]
@@ -1457,6 +1523,93 @@ mod tests {
                 "/// <reference   no-default-lib   =   \"true\"   />"
             ),
             Some(true)
+        );
+    }
+
+    // ---------------- resolve_tsconfig_path ----------------
+
+    #[test]
+    fn resolve_tsconfig_path_missing_file_reports_path_does_not_exist() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("missing/tsconfig.json")));
+        match result {
+            Err(ResolveTsconfigError::PathDoesNotExist(p)) => {
+                assert_eq!(p, Path::new("missing/tsconfig.json"));
+                assert_eq!(
+                    format!("{}", ResolveTsconfigError::PathDoesNotExist(p)),
+                    "The specified path does not exist: 'missing/tsconfig.json'."
+                );
+            }
+            other => panic!("expected PathDoesNotExist, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_missing_directory_reports_path_does_not_exist() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("missing-dir")));
+        match result {
+            Err(ResolveTsconfigError::PathDoesNotExist(p)) => {
+                assert_eq!(p, Path::new("missing-dir"));
+            }
+            other => panic!("expected PathDoesNotExist, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_existing_dir_without_config_reports_no_config() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::create_dir_all(cwd.join("empty-dir")).unwrap();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("empty-dir")));
+        match result {
+            Err(ResolveTsconfigError::NoConfigInDirectory(p)) => {
+                assert_eq!(p, Path::new("empty-dir"));
+                assert_eq!(
+                    format!("{}", ResolveTsconfigError::NoConfigInDirectory(p)),
+                    "Cannot find a tsconfig.json file at the specified directory: 'empty-dir'."
+                );
+            }
+            other => panic!("expected NoConfigInDirectory, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_existing_dir_with_config_returns_path() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        std::fs::create_dir_all(cwd.join("proj")).unwrap();
+        let tsconfig = cwd.join("proj/tsconfig.json");
+        std::fs::write(&tsconfig, "{}").unwrap();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("proj")));
+        let resolved = result.expect("expected success").expect("expected Some");
+        assert_eq!(resolved, normalize_path(&tsconfig));
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_explicit_file_returns_path() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let tsconfig = cwd.join("custom.json");
+        std::fs::write(&tsconfig, "{}").unwrap();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("custom.json")));
+        let resolved = result.expect("expected success").expect("expected Some");
+        assert_eq!(resolved, normalize_path(&tsconfig));
+    }
+
+    #[test]
+    fn resolve_tsconfig_path_preserves_user_supplied_path_in_error() {
+        // The diagnostic message must use the user-supplied (relative) path,
+        // not the absolute resolved path, so that messages match tsc parity.
+        let dir = tempdir().unwrap();
+        let cwd = dir.path();
+        let result = resolve_tsconfig_path(cwd, Some(Path::new("missing/tsconfig.json")));
+        let err = result.unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "The specified path does not exist: 'missing/tsconfig.json'."
         );
     }
 }

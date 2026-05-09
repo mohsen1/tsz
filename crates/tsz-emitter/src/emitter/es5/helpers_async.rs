@@ -6,9 +6,22 @@
 
 use super::super::*;
 use super::helpers::ArraySegment;
+use crate::emitter::core::PropertyNameEmit;
+use crate::emitter::declarations::class::replace_identifier;
 use crate::transforms::emit_utils;
+use std::sync::Arc;
 
 impl<'a> Printer<'a> {
+    fn next_arguments_capture_name(&mut self) -> String {
+        loop {
+            self.ctx.arguments_capture_counter += 1;
+            let candidate = format!("arguments_{}", self.ctx.arguments_capture_counter);
+            if !self.file_identifiers.contains(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
     fn get_class_expression_name(&self, class_node: NodeIndex) -> Option<String> {
         let mut current = class_node;
         let mut hops = 0;
@@ -59,6 +72,174 @@ impl<'a> Printer<'a> {
         }
 
         None
+    }
+
+    fn es5_static_field_comma_inits(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<(PropertyNameEmit, NodeIndex)> {
+        let mut inits = Vec::new();
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if prop.initializer.is_none()
+                || !self.has_effective_static_modifier_js(&prop.modifiers)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                || self
+                    .arena
+                    .get(prop.name)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                continue;
+            }
+
+            if let Some(name_emit) = self.get_property_name_emit(prop.name) {
+                inits.push((name_emit, prop.initializer));
+            }
+        }
+
+        inits
+    }
+
+    fn es5_class_iife_expression_from_var(output: &str, class_name: &str) -> Option<String> {
+        let prefix = format!("var {class_name} = ");
+        let output = output.trim_end();
+        let output = output.strip_suffix(';').unwrap_or(output);
+        output.strip_prefix(&prefix).map(str::to_string)
+    }
+
+    fn write_multiline_fragment(&mut self, text: &str) {
+        let extra_indent = if self.writer.indent_level() > 0 {
+            " ".repeat(self.writer.indent_width() as usize)
+        } else {
+            String::new()
+        };
+        let mut lines = text.lines();
+        if let Some(first) = lines.next() {
+            self.write(first);
+        }
+        for line in lines {
+            self.write_line();
+            if !line.is_empty() {
+                self.write(&extra_indent);
+                self.write(line);
+            }
+        }
+    }
+
+    fn emit_es5_static_class_expression_comma(
+        &mut self,
+        class_node: NodeIndex,
+        class_name: &str,
+        class_iife_expr: &str,
+        static_field_inits: &[(PropertyNameEmit, NodeIndex)],
+    ) {
+        let temp = if self.class_expression_is_in_loop_body(class_node) {
+            let temp = self.make_unique_name();
+            self.block_scoped_private_temps.push(temp.clone());
+            temp
+        } else {
+            self.make_unique_name_hoisted()
+        };
+
+        self.write("(");
+        self.write(&temp);
+        self.write(" = ");
+        self.write_multiline_fragment(class_iife_expr);
+
+        for (name_emit, init_idx) in static_field_inits {
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(&temp);
+            match name_emit {
+                PropertyNameEmit::Dot(name) => {
+                    self.write(".");
+                    self.write(name);
+                }
+                PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
+                    self.write("[");
+                    self.write(name);
+                    self.write("]");
+                }
+            }
+            self.write(" = ");
+
+            let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+            if !class_name.is_empty() && class_name != temp {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name),
+                    Arc::<str>::from(temp.as_str()),
+                ));
+            }
+            let before = self.writer.len();
+            self.with_scoped_static_initializer_context_cleared(|this| {
+                this.emit_expression(*init_idx);
+            });
+            let after = self.writer.len();
+            self.scoped_class_expression_self_alias = prev_self_alias;
+
+            if !class_name.is_empty() && class_name != temp {
+                let full = self.writer.get_output().to_string();
+                let segment = &full[before..after];
+                let replaced = replace_identifier(segment, class_name, &temp);
+                if replaced != segment {
+                    self.writer.truncate(before);
+                    self.write(&replaced);
+                }
+            }
+            self.decrease_indent();
+        }
+
+        self.write(",");
+        self.write_line();
+        self.increase_indent();
+        self.write(&temp);
+        self.write(")");
+        self.decrease_indent();
+    }
+
+    fn emit_es5_static_class_expression_statements(
+        &mut self,
+        class_name: &str,
+        static_field_inits: &[(PropertyNameEmit, NodeIndex)],
+    ) {
+        for (name_emit, init_idx) in static_field_inits {
+            self.write(class_name);
+            match name_emit {
+                PropertyNameEmit::Dot(name) => {
+                    self.write(".");
+                    self.write(name);
+                }
+                PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
+                    self.write("[");
+                    self.write(name);
+                    self.write("]");
+                }
+            }
+            self.write(" = ");
+            self.with_scoped_static_initializer_context_cleared(|this| {
+                this.emit_expression(*init_idx);
+            });
+            self.write(";");
+            self.write_line();
+        }
     }
 
     /// Emit an async generator function lowered to `__asyncGenerator` wrapper.
@@ -285,6 +466,7 @@ impl<'a> Printer<'a> {
             async_emitter.set_lexical_this(this_expr != "this");
             if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
                 async_emitter.set_tslib_prefix(true);
+                async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
             }
 
             let body_has_await = async_emitter.body_contains_await(body);
@@ -495,9 +677,17 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Emit `var arguments_1 = arguments;` before __awaiter for ES2015 path
+        let arguments_capture_name = if body_captures_arguments {
+            Some(self.next_arguments_capture_name())
+        } else {
+            None
+        };
+
+        // Emit captured `arguments` before __awaiter for ES2015 path.
         if body_captures_arguments {
-            self.write("var arguments_1 = arguments;");
+            self.write("var ");
+            self.write(arguments_capture_name.as_deref().unwrap_or("arguments_1"));
+            self.write(" = arguments;");
             self.write_line();
         }
 
@@ -539,14 +729,22 @@ impl<'a> Printer<'a> {
 
         self.write_line();
         self.increase_indent();
+        let generator_hoist_byte_offset = self.writer.len();
+        let generator_hoist_line = self.writer.current_line();
+        let hoisted_assignment_start = self.hoisted_assignment_temps.len();
+        let hoisted_for_of_start = self.hoisted_for_of_temps.len();
+        let hoisted_value_start = self.hoisted_assignment_value_temps.len();
 
         // Emit function body with await→yield substitution
         let saved_yield = self.ctx.emit_await_as_yield;
         let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+        let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
         self.ctx.emit_await_as_yield = true;
         if body_captures_arguments {
             self.ctx.rewrite_arguments_to_arguments_1 = true;
+            self.ctx.arguments_capture_name = arguments_capture_name;
         }
+        self.function_scope_depth += 1;
         // Emit the block body's statements directly
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
@@ -560,8 +758,38 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(
+            self.hoisted_assignment_temps
+                .drain(hoisted_assignment_start..),
+        );
+        ref_vars.extend(self.hoisted_for_of_temps.drain(hoisted_for_of_start..));
+        if !ref_vars.is_empty() {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+            self.writer.insert_line_at(
+                generator_hoist_byte_offset,
+                generator_hoist_line,
+                &var_decl,
+            );
+        }
+        if !self.hoisted_assignment_value_temps[hoisted_value_start..].is_empty() {
+            let value_vars = self
+                .hoisted_assignment_value_temps
+                .drain(hoisted_value_start..)
+                .collect::<Vec<_>>();
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!("{}var {};", indent, value_vars.join(", "));
+            self.writer.insert_line_at(
+                generator_hoist_byte_offset,
+                generator_hoist_line,
+                &var_decl,
+            );
+        }
+        self.function_scope_depth -= 1;
         self.ctx.emit_await_as_yield = saved_yield;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+        self.ctx.arguments_capture_name = saved_arguments_capture_name;
 
         self.decrease_indent();
         self.write("});");
@@ -586,6 +814,7 @@ impl<'a> Printer<'a> {
         printer.set_indent_level(self.writer.indent_level());
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             printer.set_tslib_prefix(true);
+            printer.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         printer.emit(&ir);
         self.write(&printer.take_output());
@@ -660,6 +889,10 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn is_type_only_declaration_name(&self, name: &str) -> bool {
+        if self.ctx.module_state.value_declaration_names.contains(name) {
+            return false;
+        }
+
         self.arena.nodes.iter().any(|node| {
             if node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION {
                 self.arena.get_type_alias(node).is_some_and(|alias| {
@@ -866,6 +1099,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let static_field_inits = self.es5_static_field_comma_inits(class_data);
+
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter.set_indent_level(0);
@@ -881,8 +1116,15 @@ impl<'a> Printer<'a> {
         }
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
+            es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        let use_static_comma = !static_field_inits.is_empty()
+            && !self.ctx.options.use_define_for_class_fields
+            && class_data.name.is_some();
+        if use_static_comma {
+            es5_emitter.set_skip_static_members(true);
+        }
 
         let (class_name, es5_output) = if class_data.name.is_some() {
             let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
@@ -906,6 +1148,19 @@ impl<'a> Printer<'a> {
         self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
         let es5_mappings = es5_emitter.take_mappings();
 
+        if use_static_comma
+            && let Some(class_iife_expr) =
+                Self::es5_class_iife_expression_from_var(&es5_output, &class_name)
+        {
+            self.emit_es5_static_class_expression_comma(
+                class_node,
+                &class_name,
+                &class_iife_expr,
+                &static_field_inits,
+            );
+            return;
+        }
+
         self.write("(function () {");
         self.write_line();
         self.increase_indent();
@@ -925,6 +1180,9 @@ impl<'a> Printer<'a> {
                 self.write(line);
             }
             self.write_line();
+        }
+        if use_static_comma {
+            self.emit_es5_static_class_expression_statements(&class_name, &static_field_inits);
         }
 
         self.write("return ");
@@ -1019,6 +1277,7 @@ impl<'a> Printer<'a> {
     ///
     /// Examples:
     /// - `foo(...arr)` -> `foo.apply(void 0, arr)`
+    /// - `foo(...iterable)` with downlevelIteration -> `foo.apply(void 0, __spreadArray([], __read(iterable), false))`
     /// - `foo(...arr, 1, 2)` -> `foo.apply(void 0, __spreadArray(__spreadArray([], arr, false), [1, 2], false))`
     /// - `obj.method(...arr)` -> `obj.method.apply(obj, arr)`
     pub(in crate::emitter) fn emit_call_expression_es5_spread(&mut self, node: &Node) {
@@ -1333,15 +1592,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let wrap_spread_with_read = self.ctx.target_es5 && self.ctx.options.downlevel_iteration;
+
         if segments.len() == 1 {
             match &segments[0] {
                 ArraySegment::Spread(spread_idx) => {
                     // Just a single spread with no other arguments:
-                    // TypeScript optimization - pass the array directly without __spreadArray
-                    // Example: foo(...args) -> foo.apply(void 0, args)
-                    // NOT: foo.apply(void 0, __spreadArray([], args, false))
+                    // TypeScript optimization - pass arrays directly unless
+                    // downlevelIteration requires __read for iterable inputs.
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
-                        self.emit_spread_expression(spread_node);
+                        if wrap_spread_with_read {
+                            self.write_helper("__spreadArray");
+                            self.write("([], ");
+                            self.emit_spread_expression_with_read(spread_node, true);
+                            self.write(", false)");
+                        } else {
+                            self.emit_spread_expression(spread_node);
+                        }
                     }
                 }
                 ArraySegment::Elements(elems) => {
@@ -1375,7 +1642,7 @@ impl<'a> Printer<'a> {
                 self.write_helper("__spreadArray");
                 self.write("([], ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                 }
                 self.write(", false)");
             }
@@ -1392,7 +1659,7 @@ impl<'a> Printer<'a> {
                 ArraySegment::Spread(spread_idx) => {
                     self.write(", ");
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
-                        self.emit_spread_expression(spread_node);
+                        self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                     }
                     self.write(", false)");
                 }

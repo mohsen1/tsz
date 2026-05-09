@@ -1,3 +1,6 @@
+mod anonymous_default;
+mod export_default_parens;
+
 use super::super::{ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::emit_utils;
@@ -47,7 +50,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Rewrite a module specifier if rewriteRelativeImportExtensions is enabled.
-    /// Transforms .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs for relative paths.
+    /// Transforms .ts→.js, .tsx→.jsx/.js, .mts→.mjs, .cts→.cjs for relative paths.
     pub(in crate::emitter) fn rewrite_module_spec(&self, spec: &str) -> String {
         if !self.ctx.options.rewrite_relative_import_extensions {
             return spec.to_string();
@@ -59,7 +62,12 @@ impl<'a> Printer<'a> {
             return format!("{base}.js");
         }
         if let Some(base) = spec.strip_suffix(".tsx") {
-            return format!("{base}.jsx");
+            let ext = if self.ctx.options.jsx_preserve_explicit {
+                ".jsx"
+            } else {
+                ".js"
+            };
+            return format!("{base}{ext}");
         }
         if let Some(base) = spec.strip_suffix(".mts") {
             return format!("{base}.mjs");
@@ -130,14 +138,22 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
         let base = crate::transforms::emit_utils::sanitize_module_name(module_spec);
-        let next = self
-            .ctx
-            .module_state
-            .module_temp_counters
-            .entry(base.clone())
-            .and_modify(|n| *n += 1)
-            .or_insert(1);
-        format!("{base}_{next}")
+        loop {
+            let next = self
+                .ctx
+                .module_state
+                .module_temp_counters
+                .entry(base.clone())
+                .and_modify(|n| *n += 1)
+                .or_insert(1);
+            let candidate = format!("{base}_{next}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
     }
 
     /// Emit a CommonJS export with optional hoisting of the export assignment.
@@ -223,6 +239,19 @@ impl<'a> Printer<'a> {
                     .get(*name as usize)
                     .map(|id| id.escaped_text.clone())
                     .unwrap_or_default();
+                if self
+                    .ctx
+                    .module_state
+                    .iife_exported_names
+                    .contains(&name_str)
+                    || self
+                        .ctx
+                        .module_state
+                        .inline_exported_names
+                        .contains(&name_str)
+                {
+                    continue;
+                }
                 self.write_export_binding_start(&name_str);
                 self.write_identifier_by_id(*name);
                 self.write_export_binding_end();
@@ -267,17 +296,20 @@ impl<'a> Printer<'a> {
         idx: NodeIndex,
     ) {
         // For anonymous default function/class declarations, tsc assigns a
-        // synthetic name (`default_1`) and hoists `exports.default = default_1;`
-        // BEFORE the declaration. This works because function declarations are
-        // hoisted in JS.
+        // synthetic name (`default_1`, `default_2`, ...) and hoists
+        // `exports.default = default_N;` BEFORE the declaration. Multiple
+        // anonymous defaults are an error case (see
+        // `exportDefaultInterfaceAndTwoFunctions`) but tsc still emits each
+        // with its own counter rather than colliding on a single name.
         let is_function = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+        let synthetic_name = self.next_anonymous_default_export_name();
         let prev = self.anonymous_default_export_name.take();
-        self.anonymous_default_export_name = Some("default_1".to_string());
+        self.anonymous_default_export_name = Some(synthetic_name.clone());
         if is_function {
             // Function: exports.default before declaration (functions hoist)
             if !self.ctx.module_state.default_func_export_hoisted {
                 self.write_export_binding_start("default");
-                self.write("default_1");
+                self.write(&synthetic_name);
                 self.write_export_binding_end();
                 self.write_line();
             }
@@ -301,7 +333,7 @@ impl<'a> Printer<'a> {
                 self.emit_node_default(node, idx);
                 self.write_line();
                 self.write_export_binding_start("default");
-                self.write("default_1");
+                self.write(&synthetic_name);
                 self.write_export_binding_end();
             }
         }
@@ -337,19 +369,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let temp_name = self.next_anonymous_default_export_name();
         if let Some(output) =
-            self.render_simple_tc39_decorated_class_es5(node, class_node, "default_1", "default")
+            self.render_simple_tc39_decorated_class_es5(node, class_node, &temp_name, "default")
         {
             self.write(&output);
             self.write_line();
             self.write_export_binding_start("default");
-            self.write("default_1");
+            self.write(&temp_name);
             self.write_export_binding_end();
             self.write_line();
             return;
         }
 
-        let temp_name = "default_1".to_string();
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter.set_indent_level(self.writer.indent_level());
@@ -365,6 +397,7 @@ impl<'a> Printer<'a> {
         }
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
+            es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.legacy_decorators
@@ -653,7 +686,21 @@ impl<'a> Printer<'a> {
                     }
                 } else {
                     self.write("export default ");
+                    // `export default (class X {} as any)` — when the source
+                    // wrapped a class/function expression in parens for a
+                    // type cast, tsc preserves the parens after erasure.
+                    // Stripping them would silently change "default-export
+                    // an expression" into "default-export a declaration".
+                    let preserve_paren =
+                        self.export_default_paren_protects_class_or_function(export.export_clause);
+                    let prev = self.ctx.flags.paren_leftmost_function_or_object;
+                    if preserve_paren {
+                        self.ctx.flags.paren_leftmost_function_or_object = true;
+                    }
                     self.emit(export.export_clause);
+                    if preserve_paren {
+                        self.ctx.flags.paren_leftmost_function_or_object = prev;
+                    }
                     if !clause_is_func_or_class {
                         self.write_semicolon();
                     }
@@ -668,6 +715,22 @@ impl<'a> Printer<'a> {
             }
             self.write("export *");
             if export.module_specifier.is_some() {
+                // Preserve any comments between the `*` and `from` (e.g.
+                // `export * /* star */ from "./b"`). Without this, comments
+                // attached to the source range between the star token and the
+                // module specifier are silently dropped.
+                if let Some(mod_spec_node) = self.arena.get(export.module_specifier)
+                    && let Some(text) = self.source_text
+                    && let Ok(slice) = crate::safe_slice::slice(
+                        text,
+                        node.pos as usize,
+                        mod_spec_node.pos as usize,
+                    )
+                    && let Some(rel) = slice.find('*')
+                {
+                    let after_star = node.pos + (rel as u32) + 1;
+                    self.emit_comments_in_range(after_star, mod_spec_node.pos, false, false);
+                }
                 self.write(" from ");
                 self.emit_module_specifier(export.module_specifier);
             }
@@ -694,7 +757,9 @@ impl<'a> Printer<'a> {
             // filtering to skip type-only specifiers (interfaces, type aliases,
             // etc.). For re-exports (`export { x } from "mod"`), only use the
             // checker-based filtering (type_only_nodes).
-            let value_specs = if export.module_specifier.is_none() {
+            let value_specs = if export.module_specifier.is_none()
+                && self.recovered_module_syntax_block_depth == 0
+            {
                 self.collect_local_export_value_specifiers(&named_exports.elements)
             } else {
                 self.collect_value_specifiers(&named_exports.elements)
@@ -712,7 +777,23 @@ impl<'a> Printer<'a> {
             if value_specs.is_empty() {
                 self.write("export {}");
             } else {
-                self.write("export { ");
+                self.write("export {");
+                // Preserve any comments between the open `{` and the first
+                // specifier (e.g. `export { /* before name */ bar }`).
+                if let Some(&first_elem_idx) = value_specs.first()
+                    && let Some(first_elem) = self.arena.get(first_elem_idx)
+                    && let Some(text) = self.source_text
+                    && let Ok(slice) = crate::safe_slice::slice(
+                        text,
+                        clause_node.pos as usize,
+                        first_elem.pos as usize,
+                    )
+                    && let Some(rel) = slice.find('{')
+                {
+                    let after_open_brace = clause_node.pos + (rel as u32) + 1;
+                    self.emit_comments_in_range(after_open_brace, first_elem.pos, false, false);
+                }
+                self.write(" ");
                 self.emit_comma_separated(&value_specs);
                 if self.has_trailing_comma_in_source(clause_node, &named_exports.elements.nodes) {
                     self.write(",");
@@ -720,6 +801,24 @@ impl<'a> Printer<'a> {
                 self.write(" }");
             }
             if export.module_specifier.is_some() {
+                // Preserve any comments between the export clause's closing
+                // `}` and the `from` keyword (e.g.
+                // `export { foo } /* after clause */ from "./b"`). The
+                // NamedExports node's `.end` extends past the `from`
+                // keyword in our AST, so locate the `}` directly from the
+                // source text.
+                if let Some(mod_spec_node) = self.arena.get(export.module_specifier)
+                    && let Some(text) = self.source_text
+                    && let Ok(slice) = crate::safe_slice::slice(
+                        text,
+                        clause_node.pos as usize,
+                        mod_spec_node.pos as usize,
+                    )
+                    && let Some(rel) = slice.rfind('}')
+                {
+                    let after_close_brace = clause_node.pos + (rel as u32) + 1;
+                    self.emit_comments_in_range(after_close_brace, mod_spec_node.pos, false, false);
+                }
                 self.write(" from ");
                 self.emit_module_specifier(export.module_specifier);
             }
@@ -878,7 +977,9 @@ impl<'a> Printer<'a> {
         // (syntactically invalid position), tsc emits it verbatim — no
         // module-system transformation.
         if export_assign.is_export_equals
-            && (self.function_scope_depth > 0 || self.in_namespace_iife)
+            && (self.function_scope_depth > 0
+                || self.in_namespace_iife
+                || self.recovered_module_syntax_block_depth > 0)
         {
             self.write("export = ");
             self.emit_expression(export_assign.expression);
@@ -940,7 +1041,21 @@ impl<'a> Printer<'a> {
             // ES6: export = expr (not valid ES6, but emit as export default)
             //      export default expr → export default expr;
             self.write("export default ");
+            // `export default (class X {} as any)` — when the source wrapped a
+            // class/function expression in parens (because of a type cast),
+            // tsc preserves the parens after erasure. Otherwise stripping them
+            // would silently change `export default (class X {})` (expression
+            // export) into `export default class X {}` (declaration export).
+            let preserve_paren =
+                self.export_default_paren_protects_class_or_function(export_assign.expression);
+            let prev = self.ctx.flags.paren_leftmost_function_or_object;
+            if preserve_paren {
+                self.ctx.flags.paren_leftmost_function_or_object = true;
+            }
             self.emit_expression(export_assign.expression);
+            if preserve_paren {
+                self.ctx.flags.paren_leftmost_function_or_object = prev;
+            }
             self.write_semicolon();
         }
     }
@@ -980,6 +1095,7 @@ impl<'a> Printer<'a> {
     /// `emit_name` preserves unicode escapes from the source to match tsc output.
     pub(in crate::emitter) fn try_collect_inline_cjs_exports(
         &self,
+        node_idx: NodeIndex,
         node: &Node,
     ) -> Option<Vec<(String, String, NodeIndex)>> {
         let var_stmt = self.arena.get_variable(node)?;
@@ -1014,13 +1130,17 @@ impl<'a> Printer<'a> {
                 }
 
                 // tsc uses split form (const x = val; exports.x = x;) for
-                // arrow functions, function expressions, and class expressions.
-                // Only primitive/object/call initializers use inline form.
+                // arrow functions, function expressions, and plain class
+                // expressions. Transformed class expressions can lower to a
+                // comma expression, and tsc emits that directly into
+                // `exports.x = (...)`.
                 if let Some(init_node) = self.arena.get(decl.initializer) {
                     let k = init_node.kind;
                     if k == syntax_kind_ext::ARROW_FUNCTION
                         || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || k == syntax_kind_ext::CLASS_EXPRESSION
+                        || (k == syntax_kind_ext::CLASS_EXPRESSION
+                            && !self.transforms.has_transform(decl.initializer)
+                            && !self.transforms.has_transform(node_idx))
                     {
                         return None;
                     }
@@ -1722,6 +1842,61 @@ impl<'a> Printer<'a> {
             export_decl,
             self.ctx.options.preserve_const_enums,
         )
+    }
+
+    /// Returns true when `target_idx` is a simple identifier that resolves
+    /// at the source-file top level to an `interface` or `type` alias
+    /// declaration. Used by the script-mode `import x = T` preservation
+    /// rule: tsc emits `var x = T;` (broken at runtime) for these cases
+    /// while still eliding alias targets that resolve to non-instantiated
+    /// namespaces or qualified-name chains.
+    pub(in crate::emitter) fn identifier_target_is_interface_or_type_alias(
+        &self,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let Some(target_node) = self.arena.get(target_idx) else {
+            return false;
+        };
+        if !target_node.is_identifier() {
+            return false;
+        }
+        let name = self.get_identifier_text_idx(target_idx);
+        if name.is_empty() {
+            return false;
+        }
+        for stmt_idx in self.scope_statements_for_runtime_lookup(None) {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let inner = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+            } else {
+                Some(stmt_node)
+            };
+            let Some(inner) = inner else {
+                continue;
+            };
+            match inner.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(decl) = self.arena.get_interface(inner)
+                        && self.get_identifier_text_idx(decl.name) == name
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if let Some(decl) = self.arena.get_type_alias(inner)
+                        && self.get_identifier_text_idx(decl.name) == name
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Check if we should emit the __esModule marker.

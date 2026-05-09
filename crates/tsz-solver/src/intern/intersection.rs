@@ -3,6 +3,14 @@
 use super::*;
 use crate::types::IntrinsicKind;
 
+const fn merge_intersection_visibility(a: Visibility, b: Visibility) -> Visibility {
+    match (a, b) {
+        (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
+        (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+        (Visibility::Protected, Visibility::Protected) => Visibility::Protected,
+    }
+}
+
 impl TypeInterner {
     /// Check if a type is an empty object type (no properties, no index signatures).
     ///
@@ -452,21 +460,47 @@ impl TypeInterner {
             }
         }
 
-        // Step 3: Rebuild flat with merged results, preserving declaration order.
-        // tsc preserves the original order of intersection members.
+        // Step 3: Rebuild the member list. Keep the existing canonical rebuild
+        // for non-callable object intersections so `{}`/primitive normalization
+        // remains stable. When callables participate, walk the original list and
+        // replace the first object/callable occurrence with its merged
+        // representative; this keeps tsc's source-order display for mixed
+        // intersections such as `(() => void) & { prop: any }`.
         let mut final_flat: TypeListBuffer = SmallVec::new();
+        if merged_callable.is_some() {
+            let mut emitted_object = false;
+            let mut emitted_callable = false;
+            for &member in &flat {
+                if let Some(obj_id) = merged_object
+                    && matches!(
+                        self.lookup(member),
+                        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                    )
+                {
+                    if !emitted_object {
+                        final_flat.push(obj_id);
+                        emitted_object = true;
+                    }
+                    continue;
+                }
 
-        // Add remaining non-object, non-callable members
-        final_flat.extend(remaining_after_callables.iter().copied());
+                if let Some(call_id) = merged_callable
+                    && crate::type_queries::is_callable_type(self, member)
+                {
+                    if !emitted_callable {
+                        final_flat.push(call_id);
+                        emitted_callable = true;
+                    }
+                    continue;
+                }
 
-        // Add merged object if present
-        if let Some(obj_id) = merged_object {
-            final_flat.push(obj_id);
-        }
-
-        // Add merged callable if present
-        if let Some(call_id) = merged_callable {
-            final_flat.push(call_id);
+                final_flat.push(member);
+            }
+        } else {
+            final_flat.extend(remaining_after_callables.iter().copied());
+            if let Some(obj_id) = merged_object {
+                final_flat.push(obj_id);
+            }
         }
 
         // Early exit if simplified to single type
@@ -719,15 +753,11 @@ impl TypeInterner {
                                 self.intersection2(existing.write_type, prop.write_type);
                         }
                     }
-                    // For visibility: most restrictive wins (Private > Protected > Public)
-                    // { private a: number } & { public a: number } = { private a: number }
-                    existing.visibility = match (existing.visibility, prop.visibility) {
-                        (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
-                        (Visibility::Protected, _) | (_, Visibility::Protected) => {
-                            Visibility::Protected
-                        }
-                        (Visibility::Public, Visibility::Public) => Visibility::Public,
-                    };
+                    // Private remains inaccessible, all-protected remains protected,
+                    // and any public constituent makes the merged intersection
+                    // property public.
+                    existing.visibility =
+                        merge_intersection_visibility(existing.visibility, prop.visibility);
                 } else {
                     let new_idx = merged_props.len();
                     prop_index.insert(prop.name, new_idx);
@@ -746,6 +776,9 @@ impl TypeInterner {
                     });
                 }
                 (Some(idx), Some(existing)) => {
+                    if existing.key_type != idx.key_type {
+                        return None;
+                    }
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
@@ -767,6 +800,9 @@ impl TypeInterner {
                     });
                 }
                 (Some(idx), Some(existing)) => {
+                    if existing.key_type != idx.key_type {
+                        return None;
+                    }
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),

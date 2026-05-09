@@ -18,20 +18,34 @@ function sanitizeLegacyBenchmarkResults(data) {
   return (data?.results || []).filter((row) => row.name !== "large-ts-repo");
 }
 
+function hasSuccessfulTiming(row) {
+  return (
+    !row?.status &&
+    row?.winner !== "error" &&
+    Number.isFinite(row?.tsz_ms) &&
+    row.tsz_ms > 0 &&
+    Number.isFinite(row?.tsgo_ms) &&
+    row.tsgo_ms > 0
+  );
+}
+
 function loadBenchmarks() {
   const artifactsDir = path.join(ROOT, "artifacts");
-  const ciLatest = path.join(artifactsDir, "bench-vs-tsgo-gcs-latest.json");
+  const ciLatest = [
+    "bench-vs-tsgo-github-latest.json",
+    "bench-vs-tsgo-gcs-latest.json",
+  ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => file !== "bench-vs-tsgo-gcs-latest.json")
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
-      return [ciLatest, ...localArtifacts];
+      return [...ciLatest, ...localArtifacts];
     } catch {
-      return [ciLatest];
+      return ciLatest;
     }
   })();
 
@@ -88,7 +102,7 @@ function renderMeanChart(results) {
     return "";
   }
 
-  const valid = results.filter((r) => Number.isFinite(r.tsz_ms) && r.tsz_ms > 0 && Number.isFinite(r.tsgo_ms) && r.tsgo_ms > 0);
+  const valid = results.filter((r) => hasSuccessfulTiming(r));
   if (!valid.length) {
     return "";
   }
@@ -101,7 +115,7 @@ function renderMeanChart(results) {
   const speedupLabel = formatSpeedupLabel(tszTotal, tsgoTotal);
 
   return `<section class="benchmark-mean-card">
-  <p class="bench-category-desc">Sum across ${format(valid.length)} <a href="/benchmarks/">benchmark cases</a>.</p>
+  <p class="bench-category-desc">Sum across ${format(valid.length)} successful <a href="/benchmarks/">benchmark cases</a>.</p>
   <div class="bench-bars">
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>

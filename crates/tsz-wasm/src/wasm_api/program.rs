@@ -85,14 +85,18 @@ impl TsCompilerOptions {
             no_implicit_this: self.no_implicit_this.unwrap_or(strict),
             use_unknown_in_catch_variables: self.strict_null_checks.unwrap_or(strict),
             isolated_modules: false,
-            emit_declarations: false,
+            emit_declarations: self.declaration.unwrap_or(false),
             no_unchecked_indexed_access: false,
             no_unchecked_side_effect_imports: false,
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
             no_lib: self.no_lib.unwrap_or(false),
             no_types_and_symbols: false,
-            target: tsz::checker::context::ScriptTarget::default(),
+            types_explicitly_set: false,
+            // Issue #3489: route the JS-supplied numeric `target` through to
+            // the checker. The hardcoded default silently dropped target-aware
+            // semantic diagnostics like TS2737 (BigInt literals).
+            target: tsz::config::checker_target_from_emitter(target_kind_from_u8(self.target)),
             module: self.resolve_module(),
             es_module_interop: false,
             allow_synthetic_default_imports: false,
@@ -106,7 +110,7 @@ impl TsCompilerOptions {
             always_strict: strict,
             resolve_json_module: false,
             check_js: self.check_js.unwrap_or(false),
-            allow_js: false,
+            allow_js: self.allow_js.unwrap_or(false),
             no_resolve: self.no_resolve.unwrap_or(false),
             isolated_declarations: false,
             no_implicit_override: false,
@@ -522,6 +526,8 @@ impl TsProgram {
         // Determine target and module from options
         let target = target_kind_from_u8(self.options.target);
         let module = module_kind_from_u8(self.options.module);
+        let declaration = self.options.declaration.unwrap_or(false);
+        let source_map = self.options.source_map.unwrap_or(false);
 
         // Emit each file
         for (idx, bound_file) in merged.files.iter().enumerate() {
@@ -540,21 +546,13 @@ impl TsProgram {
                 module,
             );
 
-            // Create output file name (.ts -> .js)
-            let output_name = bound_file
-                .file_name
-                .strip_suffix(".ts")
-                .or_else(|| bound_file.file_name.strip_suffix(".tsx"))
-                .map_or_else(
-                    || format!("{}.js", bound_file.file_name),
-                    |s| format!("{s}.js"),
-                );
+            let output_name = js_output_name(&bound_file.file_name);
 
             emitted_files.push(serde_json::json!({
                 "name": output_name,
                 "text": output,
-                "declaration": false,
-                "sourceMap": false,
+                "declaration": declaration,
+                "sourceMap": source_map,
             }));
         }
 
@@ -616,6 +614,23 @@ impl TsProgram {
         self.type_checker = None;
         self.source_files.clear();
     }
+}
+
+fn js_output_name(file_name: &str) -> String {
+    if let Some(stem) = file_name.strip_suffix(".mts") {
+        return format!("{stem}.mjs");
+    }
+    if let Some(stem) = file_name.strip_suffix(".cts") {
+        return format!("{stem}.cjs");
+    }
+    if let Some(stem) = file_name
+        .strip_suffix(".tsx")
+        .or_else(|| file_name.strip_suffix(".ts"))
+    {
+        return format!("{stem}.js");
+    }
+
+    format!("{file_name}.js")
 }
 
 impl Default for TsProgram {

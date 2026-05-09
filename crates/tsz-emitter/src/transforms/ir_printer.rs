@@ -57,6 +57,8 @@ pub struct IRPrinter<'a> {
     transforms: Option<TransformContext>,
     /// Avoid duplicate trailing comments when a sequence explicitly carries one.
     suppress_function_trailing_extraction: bool,
+    /// Tracks when the last emitted IR node wrote a trailing line comment.
+    last_emit_ended_with_line_comment: bool,
     /// Name of the current ES5 class IIFE constructor, used to force constructor
     /// empty-body formatting without affecting nested function declarations.
     current_class_iife_name: Option<String>,
@@ -70,11 +72,14 @@ pub struct IRPrinter<'a> {
     target_es5: bool,
     /// When true, comments like `/** @class */` are suppressed in output.
     remove_comments: bool,
-    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
+    /// CommonJS `tslib` binding used to prefix runtime helper calls for importHelpers.
     tslib_prefix: bool,
+    tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
+    namespace_ast_name: Option<String>,
+    namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -171,25 +176,35 @@ impl<'a> IRPrinter<'a> {
         if start >= end {
             return None;
         }
-        let mut trailing = None;
-        for (offset, &byte) in bytes[start..end].iter().enumerate() {
-            if byte == b'}' {
-                let comments =
-                    crate::emitter::get_trailing_comment_ranges(source_text, start + offset + 1);
-                if !comments.is_empty() {
-                    trailing = Some(
-                        comments
-                            .iter()
-                            .map(|comment| {
-                                source_text[comment.pos as usize..comment.end as usize].to_string()
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    );
+        let open_brace = bytes[start..end].iter().position(|&byte| byte == b'{')?;
+        let mut depth = 1usize;
+        let mut close_brace = None;
+        for offset in open_brace + 1..end - start {
+            match bytes[start + offset] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_brace = Some(start + offset);
+                        break;
+                    }
                 }
+                _ => {}
             }
         }
-        trailing
+        let close_brace = close_brace?;
+        let comments = crate::emitter::get_trailing_comment_ranges(source_text, close_brace + 1);
+        if comments.is_empty() {
+            return None;
+        }
+
+        Some(
+            comments
+                .iter()
+                .map(|comment| source_text[comment.pos as usize..comment.end as usize].to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 
     fn should_indent_sequence_child(node: &IRNode) -> bool {
@@ -235,15 +250,19 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
+            last_emit_ended_with_line_comment: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
+            namespace_ast_name: None,
+            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -257,15 +276,19 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
+            last_emit_ended_with_line_comment: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
+            namespace_ast_name: None,
+            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -279,15 +302,19 @@ impl<'a> IRPrinter<'a> {
             source_text: Some(source_text),
             transforms: None,
             suppress_function_trailing_extraction: false,
+            last_emit_ended_with_line_comment: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
             target_es5: false,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             base_printer_options: None,
             generator_state_name: "_a",
+            namespace_ast_name: None,
+            namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -301,6 +328,10 @@ impl<'a> IRPrinter<'a> {
         self.tslib_prefix = enable;
     }
 
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
+    }
+
     pub fn set_commonjs_import_substitutions(
         &mut self,
         subs: rustc_hash::FxHashMap<String, String>,
@@ -308,10 +339,28 @@ impl<'a> IRPrinter<'a> {
         self.commonjs_import_substitutions = subs;
     }
 
+    pub fn set_namespace_ast_qualification(
+        &mut self,
+        namespace: String,
+        names: std::collections::HashSet<String>,
+    ) {
+        self.namespace_ast_name = Some(namespace);
+        self.namespace_ast_exported_names = names.into_iter().collect();
+    }
+
+    fn configure_ast_printer_namespace(&self, printer: &mut AstPrinter<'a>) {
+        if let Some(namespace) = self.namespace_ast_name.clone() {
+            printer.in_namespace_iife = true;
+            printer.current_namespace_name = Some(namespace);
+            printer.namespace_exported_names = self.namespace_ast_exported_names.clone();
+        }
+    }
+
     /// Write a runtime helper name, prefixing with `tslib_1.` when `tslib_prefix` is active.
     fn write_helper(&mut self, name: &str) {
         if self.tslib_prefix {
-            self.output.push_str("tslib_1.");
+            self.output.push_str(&self.tslib_import_binding);
+            self.output.push('.');
         }
         self.output.push_str(name);
     }
@@ -676,6 +725,16 @@ impl<'a> IRPrinter<'a> {
                     );
                     if is_assign {
                         self.emit_node(right);
+                        if !self.remove_comments
+                            && let IRNode::FunctionExpr { .. } = right.as_ref()
+                            && let Some(comment) =
+                                self.extract_trailing_comment_from_function(right)
+                        {
+                            self.write(" ");
+                            self.write(&comment);
+                            self.last_emit_ended_with_line_comment =
+                                comment.trim_start().starts_with("//");
+                        }
                     } else {
                         self.emit_sent_aware(right);
                     }
@@ -766,10 +825,16 @@ impl<'a> IRPrinter<'a> {
                 self.indent_level += 1;
                 for (i, expr) in exprs.iter().enumerate() {
                     if i > 0 {
+                        if self.last_emit_ended_with_line_comment {
+                            self.write_line();
+                            self.write_indent();
+                        }
+                        self.last_emit_ended_with_line_comment = false;
                         self.write(",");
                         self.write_line();
                         self.write_indent();
                     }
+                    self.last_emit_ended_with_line_comment = false;
                     self.emit_node(expr);
                 }
                 self.indent_level -= 1;
@@ -1039,6 +1104,21 @@ impl<'a> IRPrinter<'a> {
                 self.write(") ");
                 self.emit_node(body);
             }
+            IRNode::ForInOfStatement {
+                kind,
+                initializer,
+                expression,
+                body,
+            } => {
+                self.write("for (");
+                self.emit_node(initializer);
+                self.write(" ");
+                self.write(kind);
+                self.write(" ");
+                self.emit_node(expression);
+                self.write(") ");
+                self.emit_node(body);
+            }
             IRNode::WhileStatement { condition, body } => {
                 self.write("while (");
                 self.emit_node(condition);
@@ -1143,16 +1223,27 @@ impl<'a> IRPrinter<'a> {
             IRNode::ES5ClassIIFE {
                 name,
                 base_class,
+                super_param,
                 body,
                 weakmap_decls,
                 weakmap_inits,
                 leading_comment,
                 deferred_static_blocks,
+                deferred_block_class_alias,
             } => {
                 // Emit WeakMap declarations if any
                 if !weakmap_decls.is_empty() {
                     self.write("var ");
                     self.write(&weakmap_decls.join(", "));
+                    self.write(";");
+                    self.write_line();
+                }
+                // Issue #3967: declare the class self-reference alias used
+                // by deferred static-block IIFEs, BEFORE the class IIFE so
+                // it is hoisted into scope for the assignment below.
+                if let Some(alias) = deferred_block_class_alias {
+                    self.write("var ");
+                    self.write(alias);
                     self.write(";");
                     self.write_line();
                 }
@@ -1172,7 +1263,7 @@ impl<'a> IRPrinter<'a> {
                     self.write(" = /** @class */ (function (");
                 }
                 if base_class.is_some() {
-                    self.write("_super");
+                    self.write(super_param.as_deref().unwrap_or("_super"));
                 }
                 self.write(") {");
                 self.write_line();
@@ -1203,6 +1294,16 @@ impl<'a> IRPrinter<'a> {
                     self.write(";");
                 }
 
+                // Issue #3967: assign the alias to the class instance
+                // AFTER the IIFE so deferred static-block IIFEs can read it.
+                if let Some(alias) = deferred_block_class_alias {
+                    self.write_line();
+                    self.write_indent();
+                    self.write(alias);
+                    self.write(" = ");
+                    self.write(name);
+                    self.write(";");
+                }
                 // Emit deferred static block IIFEs after the class IIFE
                 for deferred in deferred_static_blocks {
                     self.write_line();
@@ -1228,11 +1329,16 @@ impl<'a> IRPrinter<'a> {
                     self.write("})();");
                 }
             }
-            IRNode::ExtendsHelper { class_name } => {
+            IRNode::ExtendsHelper {
+                class_name,
+                super_name,
+            } => {
                 self.write_helper("__extends");
                 self.write("(");
                 self.write(class_name);
-                self.write(", _super);");
+                self.write(", ");
+                self.write(super_name);
+                self.write(");");
             }
             IRNode::ES5ClassApply {
                 factory,
@@ -1912,6 +2018,7 @@ impl<'a> IRPrinter<'a> {
                         transforms,
                         self.make_ast_printer_options(),
                     );
+                    self.configure_ast_printer_namespace(&mut printer);
                     if let Some(source_text) = self.source_text {
                         printer.set_source_text(source_text);
                     }
@@ -2131,6 +2238,7 @@ impl<'a> IRPrinter<'a> {
                 param_name,
                 default_export_merge,
                 skip_sequence_indent: _,
+                trailing_comment,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
@@ -2145,6 +2253,12 @@ impl<'a> IRPrinter<'a> {
                         param_name: param_name.as_deref(),
                     },
                 );
+                if !self.remove_comments
+                    && let Some(comment) = trailing_comment
+                {
+                    self.write(" ");
+                    self.write(comment);
+                }
             }
             IRNode::NamespaceExport {
                 namespace,

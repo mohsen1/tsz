@@ -235,6 +235,24 @@ function f() {
     }
 
     #[test]
+    fn function_scope_let_var_function_conflict_uses_duplicate_identifier_only() {
+        let source = "function f() {\n    let x1;\n    var x1;\n    function x1() { }\n}";
+        let diagnostics = crate::test_utils::check_source_diagnostics(source);
+        let ts2300: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+        let ts2451: Vec<_> = diagnostics.iter().filter(|d| d.code == 2451).collect();
+
+        assert_eq!(
+            ts2300.len(),
+            3,
+            "expected TS2300 on all three declarations, got: {diagnostics:#?}"
+        );
+        assert!(
+            ts2451.is_empty(),
+            "did not expect TS2451 when the conflict also has a function declaration, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
     fn only_ts2481_errors_present() {
         // Ensure ONLY TS2481 is emitted for this case, nothing else
         let source = "{\n    const x = 0;\n    var x = \"\";\n}";
@@ -294,6 +312,48 @@ mod ts2397_tests {
         let errors = check_and_collect("const undefined = void 0;", 2397);
         assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
     }
+
+    // Module-scoped declarations of `undefined` must NOT get TS2397 — they are
+    // contained within the module and do not conflict with the global built-in.
+    #[test]
+    fn module_const_undefined_no_ts2397() {
+        let errors = check_and_collect("const undefined = \"local\";\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for module-scoped undefined: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn module_let_undefined_no_ts2397() {
+        let errors = check_and_collect("let undefined = 1;\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for module-scoped let undefined: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn module_var_undefined_no_ts2397() {
+        let errors = check_and_collect("var undefined = null;\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for module-scoped var undefined: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn module_global_this_no_ts2397() {
+        let errors = check_and_collect("var globalThis;\nexport {};", 2397);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2397 for module-scoped globalThis: {errors:?}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +366,8 @@ mod ts2403_false_positive_tests {
         let source = r#"
 var c: typeof c;
 var c: any;
+var f: Array<typeof f>;
+var f: any;
 "#;
         let ts2403 = check_source_diagnostics(source)
             .into_iter()
@@ -412,6 +474,42 @@ var v: Pair<1, 2>;
             ts2403.len(),
             0,
             "No TS2403 expected for type alias application: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn array_shorthand_redecl_no_false_ts2403() {
+        let source = r#"
+interface Bullean { }
+interface BulleanConstructor {
+    new(v1?: any): Bullean;
+    <T>(v2?: T): v2 is T;
+}
+interface Ari<T> {
+    filter<S extends T>(cb1: (value: T) => value is S): T extends any ? Ari<any> : Ari<S>;
+    filter(cb2: (value: T) => unknown): Ari<T>;
+}
+declare var Bullean: BulleanConstructor;
+declare let anys: Ari<any>;
+var xs: Ari<any>;
+var xs = anys.filter(Bullean);
+declare let realanys: any[];
+var ys: any[];
+var ys = realanys.filter(Boolean);
+declare let foo: Array<{ name: string }>;
+var foor: Array<{ name: string }>;
+var foor = foo.filter(x => x.name);
+var foos: Array<boolean>;
+var foos = [true, true, false, null].filter((thing): thing is boolean => thing !== null);
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for Array<T> vs T[] redecl: {ts2403:?}"
         );
     }
 
@@ -707,6 +805,26 @@ console.log("test");
             "No TS2403 for module-scoped declare var vs lib global: {ts2403:?}"
         );
     }
+
+    #[test]
+    fn array_shorthand_and_array_type_reference_no_ts2403() {
+        let source = r#"
+var xs: Array<{ name: string }>;
+var xs = [{ name: "x" }];
+var flags: Array<boolean>;
+var flags = [true, false];
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "Array<T> and T[] redeclarations should be TS2403-identical: {ts2403:?}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -819,10 +937,10 @@ var x: 6;
     }
 
     #[test]
-    fn fundule_redecl_widens_literal_return_types_in_message() {
-        // The TS2403 message should display widened literal types in the
-        // function return shape — `{ x: number; y: number; }` not `{ x: 0; y: 0; }`
-        // — matching tsc. Regression test for FunctionAndModuleWithSameNameAndCommonRoot.ts.
+    fn fundule_redecl_uses_typeof_value_display_in_message() {
+        // tsc displays a function+namespace merge as the value side
+        // (`typeof Point`) in TS2403 instead of expanding the callable object.
+        // Regression test for FunctionAndModuleWithSameNameAndCommonRoot.ts.
         let source = r#"
 namespace B {
     export function Point() {
@@ -847,13 +965,12 @@ var fn2 = B.Point;
         );
         let msg = &ts2403[0].message_text;
         assert!(
-            !msg.contains("{ x: 0; y: 0; }"),
-            "TS2403 message should widen literal return types, got: {msg}"
+            msg.contains("here has type 'typeof Point'"),
+            "TS2403 message should display fundule values as 'typeof Point', got: {msg}"
         );
         assert!(
-            msg.contains("{ x: number; y: number; }"),
-            "TS2403 message should display widened return type \
-             '{{ x: number; y: number; }}', got: {msg}"
+            !msg.contains("Origin:") && !msg.contains("{ ():"),
+            "TS2403 message should not expand the merged callable namespace object, got: {msg}"
         );
     }
 }
@@ -915,6 +1032,48 @@ function test<T>(obj: { [K in keyof T]: T[K] }) {
         assert_eq!(
             ts2339_count, 1,
             "Expected 1 TS2339 for deferred mapped property access: {all_diags:?}"
+        );
+    }
+
+    #[test]
+    fn mapped_type_indexed_by_own_keyof_constraint_no_ts2536() {
+        let source = r#"
+type ObjectValueDiff<TValue, TShape> = {
+  [TKey in keyof TValue]: Exclude<TValue[TKey], TShape[TKey & keyof TShape]>;
+}[keyof TValue];
+        "#;
+
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "Expected no TS2536 when indexing a mapped type by its own keyof constraint: {ts2536:?}"
+        );
+    }
+
+    #[test]
+    fn mapped_type_preserves_keyof_constraint_validity_after_evaluation() {
+        let source = r#"
+type CreateTypeOptions<
+  Options extends Required<Options>,
+  OverrideOptions extends Partial<Options>,
+  DefaultOptions extends Required<Options>,
+> = {
+  [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key];
+};
+        "#;
+
+        let ts2322 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2322.len(),
+            0,
+            "Expected no TS2322 for a mapped keyof constraint after evaluation: {ts2322:?}"
         );
     }
 

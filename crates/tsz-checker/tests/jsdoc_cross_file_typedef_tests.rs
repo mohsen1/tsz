@@ -1,8 +1,8 @@
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_checker::context::{CheckerOptions, ScriptTarget};
+use tsz_checker::state::CheckerState;
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -133,6 +133,56 @@ fn check_js_file_with_types(
 }
 
 #[test]
+fn jsdoc_type_assignment_binds_interface_this_to_source_instance() {
+    let codes = check_js_file_with_types(
+        "types.ts",
+        r#"
+interface Lifecycle<Attrs, State extends Lifecycle<Attrs, State>> {
+    oninit?(vnode: Vnode<Attrs, State>): number;
+    [_: number]: any;
+}
+
+interface Vnode<Attrs, State extends Lifecycle<Attrs, State>> {
+    tag: Component<Attrs, State>;
+}
+
+interface Component<Attrs, State extends Lifecycle<Attrs, State>> {
+    view(this: State, vnode: Vnode<Attrs, State>): number;
+}
+
+interface ClassComponent<A> extends Lifecycle<A, ClassComponent<A>> {
+    oninit?(vnode: Vnode<A, this>): number;
+    view(vnode: Vnode<A, this>): number;
+}
+
+interface MyAttrs { id: number }
+class C implements ClassComponent<MyAttrs> {
+    view(v: Vnode<MyAttrs, C>) { return 0; }
+    [_: number]: unknown;
+}
+"#,
+        "file1.js",
+        r#"
+/** @type {ClassComponent<any>} */
+const test9 = new C();
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    for unexpected in [2322, 2416, 2430] {
+        assert!(
+            !codes.contains(&unexpected),
+            "JSDoc assignment should not emit TS{unexpected}; got {codes:?}"
+        );
+    }
+}
+
+#[test]
 fn cross_file_jsdoc_typedef_is_visible_from_ts_type_reference() {
     let codes = check_types_file_with_jsdoc_global(
         r#"
@@ -245,6 +295,47 @@ class C {}
 }
 
 #[test]
+fn jsdoc_named_import_alias_accepts_non_space_whitespace() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "dep.d.ts",
+        r#"
+export interface Foo {
+    value: string;
+}
+"#,
+        "index.js",
+        r#"
+// @ts-check
+
+/** @import { Foo as	LocalFoo } from "./dep" */
+
+/** @type {LocalFoo} */
+const item = { value: 123 };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        !codes.contains(&2304),
+        "Expected LocalFoo to resolve with tab-separated `as` alias, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected resolved LocalFoo to report the property type mismatch, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn exported_js_variable_with_jsdoc_type_is_not_implicit_any() {
     let codes = check_js_file_with_types(
         "types.d.ts",
@@ -301,6 +392,43 @@ module.exports = /** @type {FooFun} */(void 0);
     assert!(
         !codes.contains(&2300),
         "Expected imported JSDoc typedef alias to avoid cross-file TS2300, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn bare_jsdoc_type_does_not_resolve_external_module_export() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "fromage.d.ts",
+        r#"
+export interface Foo {
+  value: string;
+}
+"#,
+        "index.js",
+        r#"
+// @ts-check
+
+/** @type {Foo} */
+const x = { value: 123 };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2022,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2304),
+        "Expected TS2304 for unimported JSDoc type `Foo`, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Bare JSDoc lookup must not leak `Foo` from an external module, got diagnostics: {diagnostics:?}"
     );
 }
 
@@ -384,6 +512,49 @@ d.prop;
 }
 
 #[test]
+fn jsdoc_type_from_required_js_es_module_export_resolves_class_instance() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "ex.js",
+        r#"
+export class Crunch {
+    /** @param {number} n */
+    constructor(n) {
+        this.n = n;
+    }
+}
+"#,
+        "use.js",
+        r#"
+var ex = require("./ex");
+
+/** @param {ex.Crunch} wrap */
+function f(wrap) {
+    wrap.n;
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect();
+
+    for unexpected in [2304, 2339, 2552] {
+        assert!(
+            !diagnostics.iter().any(|d| d.code == unexpected),
+            "Expected no TS{unexpected} for checked-JS require namespace JSDoc class type, got diagnostics: {rendered:?}"
+        );
+    }
+}
+
+#[test]
 fn anonymous_typedef_inherits_name_from_following_declaration() {
     let codes = check_js_file_with_types(
         "enumDef.js",
@@ -427,6 +598,69 @@ var y = "ok";
 }
 
 #[test]
+fn cross_file_jsdoc_enum_member_is_assignable_to_enum_param() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "enumDef.js",
+        r#"
+var Host = {};
+Host.UserMetrics = {};
+/** @enum {number} */
+Host.UserMetrics.Action = {
+    WindowDocked: 1,
+    WindowUndocked: 2,
+};
+/**
+ * @typedef {string} Host.UserMetrics.Bargh
+ */
+/**
+ * @typedef {string}
+ */
+Host.UserMetrics.Blah = {
+    x: 12
+}
+"#,
+        "index.js",
+        r#"
+var Other = {};
+Other.Cls = class {
+    /**
+     * @param {!Host.UserMetrics.Action} p
+     */
+    method(p) {}
+    usage() {
+        this.method(Host.UserMetrics.Action.WindowDocked);
+    }
+}
+
+/**
+ * @type {Host.UserMetrics.Bargh}
+ */
+var x = "ok";
+
+/**
+ * @type {Host.UserMetrics.Blah}
+ */
+var y = "ok";
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics for cross-file JSDoc @enum member calls and sibling typedefs, got diagnostics: {rendered:?}"
+    );
+}
+
+#[test]
 fn jsdoc_import_defer_namespace_reports_from_expected_and_missing_namespace() {
     let diagnostics = check_js_file_with_types_diagnostics(
         "types.ts",
@@ -466,5 +700,58 @@ let a = 2;
     assert!(
         codes.contains(&2503),
         "Expected TS2503 because invalid JSDoc @import should not bind namespace 'ns', got diagnostics: {rendered:?}"
+    );
+}
+
+#[test]
+fn jsdoc_generic_interface_type_rebinds_polymorphic_this_across_files() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "tile1.ts",
+        r#"
+interface Lifecycle<Attrs, State extends Lifecycle<Attrs, State>> {
+    oninit?(vnode: Vnode<Attrs, State>): number;
+    [_: number]: any;
+}
+interface Vnode<Attrs, State extends Lifecycle<Attrs, State>> {
+    tag: Component<Attrs, State>;
+}
+interface Component<Attrs, State extends Lifecycle<Attrs, State>> {
+    view(this: State, vnode: Vnode<Attrs, State>): number;
+}
+interface ClassComponent<A> extends Lifecycle<A, ClassComponent<A>> {
+    oninit?(vnode: Vnode<A, this>): number;
+    view(vnode: Vnode<A, this>): number;
+}
+interface MyAttrs {
+    id: number;
+}
+class C implements ClassComponent<MyAttrs> {
+    view(v: Vnode<MyAttrs, C>) { return 0; }
+    [_: number]: unknown;
+}
+"#,
+        "file1.js",
+        r#"
+/** @type {ClassComponent<any>} */
+const test9 = new C();
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let rendered: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "Expected no TS2322 for JSDoc ClassComponent<any> preserving polymorphic this, got diagnostics: {rendered:?}"
     );
 }

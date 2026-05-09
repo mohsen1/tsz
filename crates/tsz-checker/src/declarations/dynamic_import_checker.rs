@@ -467,8 +467,28 @@ impl<'a> CheckerState<'a> {
                 );
         }
 
-        // Check if the module was resolved by the CLI driver (multi-file mode)
-        if let Some(ref resolved) = self.ctx.resolved_modules
+        let request_kind = crate::context::ResolutionRequestKind::DynamicImport;
+        let request_resolution_mode = self.ctx.resolution_mode_for_request(request_kind, None);
+
+        // Check if this exact dynamic-import request was resolved by the CLI driver.
+        if self
+            .ctx
+            .resolve_import_target_from_file_for_request(
+                self.ctx.current_file_idx,
+                module_name,
+                request_resolution_mode,
+                request_kind,
+            )
+            .is_some()
+        {
+            return;
+        }
+
+        // Fall back to the legacy resolved set only when the driver did not provide
+        // request-keyed paths. Otherwise a successful require/static lookup for the
+        // same specifier can hide a dynamic-import resolution error.
+        if self.ctx.resolved_module_request_paths.is_none()
+            && let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
             return; // Module exists
@@ -500,12 +520,18 @@ impl<'a> CheckerState<'a> {
             return; // Declared module exists
         }
 
-        if self.ctx.resolve_import_target(module_name).is_some() {
+        if self.ctx.resolved_module_request_paths.is_none()
+            && self.ctx.resolve_import_target(module_name).is_some()
+        {
             return; // Module exists via driver/module resolution candidate matching
         }
 
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
-        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+        if let Some(error) = self.ctx.get_resolution_error_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
             // Keep dynamic import diagnostics aligned with the centralized
             // module-not-found upgrader so Node built-ins (e.g. node:path)
             // can surface as TS2580/TS2591 instead of raw TS2307.

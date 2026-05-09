@@ -212,11 +212,12 @@ mod validate_global_symbols {
     fn empty_binder_reports_all_expected_missing() {
         let state = make_state(SymbolArena::new(), SymbolTable::new(), FxHashMap::default());
         let missing = state.validate_global_symbols();
-        // Every entry in EXPECTED_GLOBAL_SYMBOLS should be missing. Spot-check
-        // a few well-known names that the helper expects.
+        // Every baseline global from the shared capability table should be
+        // missing. Spot-check a few well-known names that the helper expects.
         assert!(missing.contains(&"Object".to_string()));
         assert!(missing.contains(&"Promise".to_string()));
-        assert!(missing.contains(&"console".to_string()));
+        // console is provided by DOM libs, not the baseline ES lib set.
+        assert!(!missing.contains(&"console".to_string()));
         // Sanity: at least 25 expected names.
         assert!(missing.len() >= 25);
     }

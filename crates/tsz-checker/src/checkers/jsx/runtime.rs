@@ -3,7 +3,45 @@
 //! pragma extraction, and factory symbol referencing.
 
 use crate::state::CheckerState;
+use std::sync::Arc;
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+
+/// Returns true when the byte at `pos` (or end-of-string) is a JSDoc pragma
+/// tag/value boundary — i.e. ASCII whitespace (matching tsc's `\s+` separator
+/// between pragma name and value, and between value and end-of-comment).
+///
+/// Pragma tags such as `@jsxRuntime`, `@jsxImportSource`, and `@jsxFrag` are
+/// only recognized when followed by such a boundary; otherwise comments like
+/// `@jsxRuntimeautomatic` or `@jsxImportSourcex` would be misparsed as the
+/// real pragma with arbitrary identifier suffixes attached.
+fn is_pragma_boundary(body: &str, pos: usize) -> bool {
+    let bytes = body.as_bytes();
+    pos >= bytes.len() || (bytes[pos] as char).is_ascii_whitespace()
+}
+
+/// Find the first occurrence of the pragma tag `tag` in `body` such that the
+/// character immediately after the tag is a pragma boundary (whitespace or
+/// end-of-body). Returns the byte offset *after* the tag, or `None` if no
+/// complete-tag occurrence exists. Iterates past prefix-only matches like
+/// `@jsxRuntimeautomatic` so that a later valid `@jsxRuntime classic` in the
+/// same comment is still recognized.
+fn find_complete_pragma_tag(body: &str, tag: &str) -> Option<usize> {
+    let mut start = 0;
+    while let Some(rel) = body[start..].find(tag) {
+        let abs = start + rel;
+        let after = abs + tag.len();
+        if is_pragma_boundary(body, after) {
+            return Some(after);
+        }
+        // Advance past this incomplete match and keep scanning.
+        start = abs + tag.len();
+        if start >= body.len() {
+            break;
+        }
+    }
+    None
+}
 
 /// Extract the `@jsx` pragma factory name from a source file's leading comments.
 ///
@@ -83,16 +121,18 @@ pub(crate) fn extract_jsx_frag_pragma(source: &str) -> Option<String> {
             if let Some(end_offset) = text[comment_start..].find("*/") {
                 let comment_body = &text[comment_start..comment_start + end_offset];
                 // tsc accepts `@jsxFrag`, `@jsxfrag`, and `@jsxFragment` as
-                // synonyms for the fragment-factory pragma.
+                // synonyms for the fragment-factory pragma. Prefer the longer
+                // `@jsxFragment` form when present so that a comment like
+                // `@jsxFragment Foo` doesn't get parsed as `@jsxFrag` with an
+                // `ment` suffix on the tag (which would fail the boundary
+                // check below). Both forms must be followed by a pragma
+                // boundary (whitespace / end-of-comment), so neither
+                // `@jsxFragx Foo` nor `@jsxFragmentx Foo` matches.
                 let lowered = comment_body.to_ascii_lowercase();
-                if let Some(jsx_frag_pos) = lowered.find("@jsxfrag") {
-                    let tag_len = if lowered[jsx_frag_pos..].starts_with("@jsxfragment") {
-                        "@jsxfragment".len()
-                    } else {
-                        "@jsxfrag".len()
-                    };
-                    let after = &comment_body[jsx_frag_pos + tag_len..];
-                    let factory: String = after
+                let after_idx = find_complete_pragma_tag(&lowered, "@jsxfragment")
+                    .or_else(|| find_complete_pragma_tag(&lowered, "@jsxfrag"));
+                if let Some(after) = after_idx {
+                    let factory: String = comment_body[after..]
                         .trim_start()
                         .chars()
                         .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '.')
@@ -125,6 +165,10 @@ pub(crate) fn extract_jsx_frag_pragma(source: &str) -> Option<String> {
 /// Scans ALL block comments for `@jsxRuntime classic` or `@jsxRuntime automatic`.
 /// The last occurrence wins (matching tsc behavior).
 pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
+    if !source.contains("@jsxRuntime") {
+        return None;
+    }
+
     let mut result = None;
     let bytes = source.as_bytes();
     let mut pos = 0;
@@ -133,12 +177,27 @@ pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
             let comment_start = pos + 2;
             if let Some(end_offset) = source[comment_start..].find("*/") {
                 let comment_body = &source[comment_start..comment_start + end_offset];
-                if let Some(idx) = comment_body.find("@jsxRuntime") {
-                    let after = comment_body[idx + "@jsxRuntime".len()..].trim_start();
-                    if after.starts_with("classic") {
-                        result = Some("classic");
-                    } else if after.starts_with("automatic") {
-                        result = Some("automatic");
+                if let Some(after) = find_complete_pragma_tag(comment_body, "@jsxRuntime") {
+                    // Skip leading whitespace, then read the value token and
+                    // require it to be terminated by another pragma boundary.
+                    // Together this rejects both `@jsxRuntimeautomatic`
+                    // (no boundary after the tag) and `@jsxRuntime automaticx`
+                    // (no boundary after the value).
+                    let rest = comment_body[after..].trim_start();
+                    let value_end = rest
+                        .char_indices()
+                        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '$'))
+                        .map(|(i, _)| i)
+                        .unwrap_or(rest.len());
+                    let value = &rest[..value_end];
+                    let value_terminated =
+                        value_end == rest.len() || rest.as_bytes()[value_end].is_ascii_whitespace();
+                    if value_terminated {
+                        match value {
+                            "classic" => result = Some("classic"),
+                            "automatic" => result = Some("automatic"),
+                            _ => {}
+                        }
                     }
                 }
                 pos = comment_start + end_offset + 2;
@@ -153,16 +212,39 @@ pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn current_jsx_source_text(&self) -> Option<&str> {
+        self.ctx
+            .get_arena_for_file(self.ctx.current_file_idx as u32)
+            .source_files
+            .first()
+            .or_else(|| self.ctx.arena.source_files.first())
+            .map(|sf| sf.text.as_ref())
+    }
+
+    /// Return whether the current file contains any JSX construct
+    /// (element, self-closing element, or fragment).
+    ///
+    /// Used to decide whether the JSX factory (e.g. `React`) is actually
+    /// referenced by emit/checking. In files without JSX, an unused
+    /// `import React from "react"` should still report TS6133, matching tsc.
+    pub(crate) fn current_file_contains_jsx(&self) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            JSX_ELEMENT, JSX_FRAGMENT, JSX_SELF_CLOSING_ELEMENT,
+        };
+        self.ctx.arena.nodes.iter().any(|node| {
+            node.kind == JSX_ELEMENT
+                || node.kind == JSX_FRAGMENT
+                || node.kind == JSX_SELF_CLOSING_ELEMENT
+        })
+    }
+
     /// Return the effective JSX mode for the current file, taking the
     /// `@jsxRuntime` pragma into account.
     pub(crate) fn effective_jsx_mode(&self) -> tsz_common::checker_options::JsxMode {
         use tsz_common::checker_options::JsxMode;
         let pragma = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_runtime_pragma(&sf.text));
+            .current_jsx_source_text()
+            .and_then(extract_jsx_runtime_pragma);
         match pragma {
             Some("classic") => JsxMode::React,
             Some("automatic") => {
@@ -293,8 +375,7 @@ impl<'a> CheckerState<'a> {
     /// Extract `@jsxImportSource <package>` pragma from the current file's
     /// leading comments. Returns the package name or None.
     pub(crate) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
-        let sf = self.ctx.arena.source_files.first()?;
-        let text = &sf.text;
+        let text = self.current_jsx_source_text()?;
         let scan_limit = text.len().min(4096);
         let scan_text = &text[..scan_limit];
         let bytes = scan_text.as_bytes();
@@ -308,9 +389,13 @@ impl<'a> CheckerState<'a> {
                 let comment_start = pos + 2;
                 if let Some(end_offset) = scan_text[comment_start..].find("*/") {
                     let comment_body = &scan_text[comment_start..comment_start + end_offset];
-                    if let Some(idx) = comment_body.find("@jsxImportSource") {
-                        let after = &comment_body[idx + "@jsxImportSource".len()..];
-                        let pkg: String = after
+                    // Only honor `@jsxImportSource` when followed by a pragma
+                    // boundary. Without this, fake tags like
+                    // `@jsxImportSourcex preact` would slip through and the
+                    // package parser would extract `x` as the source.
+                    if let Some(after) = find_complete_pragma_tag(comment_body, "@jsxImportSource")
+                    {
+                        let pkg: String = comment_body[after..]
                             .trim_start()
                             .chars()
                             .take_while(|c| {
@@ -405,16 +490,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let (pragma_factory, pragma_fragment_factory) = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .map(|sf| {
-                (
-                    extract_jsx_pragma(&sf.text),
-                    extract_jsx_frag_pragma(&sf.text),
-                )
-            })
+            .current_jsx_source_text()
+            .map(|source| (extract_jsx_pragma(source), extract_jsx_frag_pragma(source)))
             .unwrap_or_default();
 
         if pragma_factory.is_some() {
@@ -470,24 +547,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let lib_binders = self.get_lib_binders();
-        let found = self.ctx.binder.resolve_name_with_filter(
-            &root_ident_owned,
-            self.ctx.arena,
-            node_idx,
-            &lib_binders,
-            |_| true,
-        );
+        let found = self.resolve_jsx_factory_symbol_in_scope(&root_ident_owned, node_idx);
         if found.is_some() {
+            // Mark the fragment factory's import as referenced so subsequent
+            // unused-import checks (TS6133 / TS6192) don't flag it.
+            self.mark_jsx_name_as_referenced(&fragment_factory, node_idx);
             return;
         }
-        if self
-            .resolve_global_value_symbol(&root_ident_owned)
-            .is_some()
-        {
-            return;
-        }
-
         use crate::diagnostics::diagnostic_codes;
         self.error_at_node_msg(
             node_idx,
@@ -510,10 +576,62 @@ impl<'a> CheckerState<'a> {
             self.ctx.arena,
             node_idx,
             &lib_binders,
-            |_| true,
+            |sym_id| self.is_jsx_factory_symbol_visible(sym_id, &lib_binders),
         ) {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
+    }
+
+    fn resolve_jsx_factory_symbol_in_scope(
+        &self,
+        root_ident: &str,
+        node_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .resolve_name_with_filter(
+                root_ident,
+                self.ctx.arena,
+                node_idx,
+                &lib_binders,
+                |sym_id| self.is_jsx_factory_symbol_visible(sym_id, &lib_binders),
+            )
+            .or_else(|| {
+                self.resolve_global_value_symbol(root_ident)
+                    .filter(|sym_id| self.is_jsx_factory_symbol_visible(*sym_id, &lib_binders))
+            })
+    }
+
+    fn is_jsx_factory_symbol_visible(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[Arc<BinderState>],
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders) else {
+            return false;
+        };
+        if symbol.is_type_only || !symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS) {
+            return false;
+        }
+        if symbol.decl_file_idx == u32::MAX
+            || symbol.decl_file_idx == self.ctx.current_file_idx as u32
+        {
+            return true;
+        }
+        if symbol.is_umd_export {
+            return true;
+        }
+        if symbol.is_exported || symbol.import_module.is_some() {
+            return false;
+        }
+        let Some(owner_binder) = self.ctx.get_binder_for_file(symbol.decl_file_idx as usize) else {
+            return false;
+        };
+        !owner_binder.is_external_module()
+            || owner_binder
+                .global_augmentations
+                .contains_key(symbol.escaped_name.as_str())
     }
 
     /// Check that the JSX factory is in scope (TS2874).
@@ -580,24 +698,18 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for per-file /** @jsx factory */ pragma
-        let pragma_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_pragma(&sf.text));
+        let pragma_factory = self.current_jsx_source_text().and_then(extract_jsx_pragma);
         let pragma_fragment_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_frag_pragma(&sf.text));
+            .current_jsx_source_text()
+            .and_then(extract_jsx_frag_pragma);
 
         let factory = if is_fragment {
             pragma_fragment_factory
                 .unwrap_or_else(|| self.ctx.compiler_options.jsx_fragment_factory.clone())
         } else {
-            pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
+            pragma_factory
+                .clone()
+                .unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
         };
         let root_ident = factory.split('.').next().unwrap_or(&factory);
 
@@ -607,8 +719,35 @@ impl<'a> CheckerState<'a> {
         // Literal-keyword sentinels (`null`, `undefined`, `true`, `false`) in
         // a `@jsxfrag`/`@jsx` pragma are user-driven opt-outs. tsc does not
         // emit TS2874 for them — other diagnostics (TS17016/TS17017/TS2879)
-        // cover the invalid-identifier case when appropriate.
+        // cover the invalid-identifier case when appropriate. The JSX factory
+        // is still conceptually used (fragments compile to `factory(null, …)`),
+        // so mark its import as referenced before returning.
         if is_fragment && matches!(root_ident, "null" | "undefined" | "true" | "false") {
+            let jsx_factory =
+                pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
+            let jsx_root = jsx_factory.split('.').next().unwrap_or(&jsx_factory);
+            if !jsx_root.is_empty() {
+                let jsx_in_scope = self
+                    .resolve_jsx_factory_symbol_in_scope(jsx_root, node_idx)
+                    .is_some();
+                if jsx_in_scope {
+                    self.mark_jsx_name_as_referenced(&jsx_factory, node_idx);
+                } else {
+                    let error_node = self
+                        .ctx
+                        .arena
+                        .get(node_idx)
+                        .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+                        .map(|jsx| jsx.tag_name)
+                        .unwrap_or(node_idx);
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        error_node,
+                        diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
+                        &[jsx_root],
+                    );
+                }
+            }
             return;
         }
 
@@ -618,21 +757,45 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check full scope chain (accept-all filter to include class members)
-        let lib_binders = self.get_lib_binders();
-        let found = self.ctx.binder.resolve_name_with_filter(
-            root_ident,
-            self.ctx.arena,
-            node_idx,
-            &lib_binders,
-            |_| true, // Accept any symbol, including class members
-        );
-        if found.is_some() {
-            return;
-        }
+        let resolved_in_scope = self
+            .resolve_jsx_factory_symbol_in_scope(root_ident, node_idx)
+            .is_some();
 
-        // Also check global scope as fallback (for lib-loaded symbols)
-        if self.resolve_global_value_symbol(root_ident).is_some() {
+        if resolved_in_scope {
+            // tsc treats a pragma-driven `@jsx` / `@jsxFrag` factory as a use
+            // of the imported identifier — suppress TS6133 / TS6192 on the
+            // import that brought the factory into scope.
+            self.mark_jsx_name_as_referenced(&factory, node_idx);
+            // Fragments compile to `<jsx-factory>(<fragment-factory>, …)`, so the
+            // JSX factory itself is also conceptually used by every fragment.
+            // Mark its import too (and emit TS2874 if it isn't in scope).
+            if is_fragment {
+                let jsx_factory =
+                    pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone());
+                let jsx_root = jsx_factory.split('.').next().unwrap_or(&jsx_factory);
+                if !jsx_root.is_empty() {
+                    let jsx_in_scope = self
+                        .resolve_jsx_factory_symbol_in_scope(jsx_root, node_idx)
+                        .is_some();
+                    if jsx_in_scope {
+                        self.mark_jsx_name_as_referenced(&jsx_factory, node_idx);
+                    } else {
+                        let error_node = self
+                            .ctx
+                            .arena
+                            .get(node_idx)
+                            .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+                            .map(|jsx| jsx.tag_name)
+                            .unwrap_or(node_idx);
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
+                            &[jsx_root],
+                        );
+                    }
+                }
+            }
             return;
         }
 
@@ -661,12 +824,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         // Get the effective factory name (pragma overrides config)
-        let pragma_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| extract_jsx_pragma(&sf.text));
+        let pragma_factory = self.current_jsx_source_text().and_then(extract_jsx_pragma);
         let factory = pragma_factory.or_else(|| {
             if self.ctx.compiler_options.jsx_factory_from_config {
                 Some(self.ctx.compiler_options.jsx_factory.clone())
@@ -732,5 +890,203 @@ impl<'a> CheckerState<'a> {
         }
 
         self.resolve_namespace_member_from_all_binders(root_name, "JSX")
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn extract_jsx_import_source_pragma_text_only_for_test(text: &str) -> Option<String> {
+    // Mirrors `CheckerState::extract_jsx_import_source_pragma` but operates on
+    // a raw `&str`, so we can unit-test the boundary handling without
+    // constructing a checker. Kept in sync with the real implementation.
+    let scan_limit = text.len().min(4096);
+    let scan_text = &text[..scan_limit];
+    let bytes = scan_text.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = scan_text[comment_start..].find("*/") {
+                let comment_body = &scan_text[comment_start..comment_start + end_offset];
+                if let Some(after) = find_complete_pragma_tag(comment_body, "@jsxImportSource") {
+                    let pkg: String = comment_body[after..]
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| {
+                            c.is_alphanumeric()
+                                || *c == '_'
+                                || *c == '-'
+                                || *c == '/'
+                                || *c == '@'
+                                || *c == '.'
+                        })
+                        .collect();
+                    if !pkg.is_empty() {
+                        return Some(pkg);
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            if let Some(nl) = scan_text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        break;
+    }
+    None
+}
+
+#[cfg(test)]
+mod pragma_boundary_tests {
+    //! Regression coverage for issue #2942: JSDoc pragmas like `@jsxRuntime`,
+    //! `@jsxImportSource`, and `@jsxFrag` must be parsed as complete tags
+    //! followed by a whitespace boundary, not as raw substrings/prefixes.
+    //!
+    //! Each invalid case here was previously misrecognized by tsz and changed
+    //! JSX checking even though tsc treats them as unrelated tags.
+    use super::{extract_jsx_frag_pragma, extract_jsx_import_source_pragma_text_only_for_test};
+    use super::{extract_jsx_pragma, extract_jsx_runtime_pragma};
+
+    // ---- @jsxRuntime --------------------------------------------------------
+
+    #[test]
+    fn jsx_runtime_classic_recognized() {
+        assert_eq!(
+            extract_jsx_runtime_pragma("/* @jsxRuntime classic */\nconst x = 1;"),
+            Some("classic")
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_automatic_recognized() {
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime automatic */\n"),
+            Some("automatic")
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_prefix_tag_is_ignored() {
+        // `@jsxRuntimeautomatic` is not the @jsxRuntime tag — it is some
+        // unknown JSDoc tag. Must not switch to automatic mode.
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntimeautomatic */\n"),
+            None
+        );
+        assert_eq!(
+            extract_jsx_runtime_pragma("/* @jsxRuntimeclassic */\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_invalid_value_with_suffix_is_ignored() {
+        // Tag boundary holds, but the value `automaticx` is not `automatic`.
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime automaticx */\n"),
+            None
+        );
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime classicx */\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_unknown_value_is_ignored() {
+        assert_eq!(
+            extract_jsx_runtime_pragma("/** @jsxRuntime hybrid */\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_runtime_later_valid_pragma_still_wins_after_invalid_prefix() {
+        // tsc keeps the last valid occurrence; a junk `@jsxRuntimeautomatic`
+        // earlier must not poison a later real `@jsxRuntime classic`.
+        let src = "/** @jsxRuntimeautomatic */\n/** @jsxRuntime classic */\n";
+        assert_eq!(extract_jsx_runtime_pragma(src), Some("classic"));
+    }
+
+    // ---- @jsxImportSource ---------------------------------------------------
+
+    #[test]
+    fn jsx_import_source_recognized() {
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test("/** @jsxImportSource preact */\n"),
+            Some("preact".to_string())
+        );
+    }
+
+    #[test]
+    fn jsx_import_source_prefix_tag_is_ignored() {
+        // `@jsxImportSourcex preact` is an unrelated tag — must not yield
+        // package `x` (the previous bug) or `preact`.
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test(
+                "/** @jsxImportSourcex preact */\n"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn jsx_import_source_scoped_package_recognized() {
+        assert_eq!(
+            extract_jsx_import_source_pragma_text_only_for_test(
+                "/* @jsxImportSource @emotion/react */\n"
+            ),
+            Some("@emotion/react".to_string())
+        );
+    }
+
+    // ---- @jsxFrag / @jsxFragment --------------------------------------------
+
+    #[test]
+    fn jsx_frag_recognized() {
+        assert_eq!(
+            extract_jsx_frag_pragma("/** @jsxFrag Fragment */\n"),
+            Some("Fragment".to_string())
+        );
+    }
+
+    #[test]
+    fn jsx_fragment_long_form_recognized() {
+        // tsc accepts `@jsxFragment` as a synonym; previously the longer form
+        // would be parsed as `@jsxFrag` plus an `ment` suffix, which now
+        // (correctly) fails the boundary check — so the longer form must be
+        // tried first.
+        assert_eq!(
+            extract_jsx_frag_pragma("/** @jsxFragment Foo */\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn jsx_frag_prefix_tag_is_ignored() {
+        assert_eq!(extract_jsx_frag_pragma("/** @jsxFragx Fragment */\n"), None);
+        assert_eq!(extract_jsx_frag_pragma("/** @jsxFragmentx Foo */\n"), None);
+    }
+
+    // ---- @jsx (control: existing behavior preserved) ------------------------
+
+    #[test]
+    fn jsx_factory_pragma_still_recognized() {
+        assert_eq!(extract_jsx_pragma("/** @jsx h */\n"), Some("h".to_string()));
+        assert_eq!(
+            extract_jsx_pragma("/** @jsx React.createElement */\n"),
+            Some("React.createElement".to_string())
+        );
     }
 }

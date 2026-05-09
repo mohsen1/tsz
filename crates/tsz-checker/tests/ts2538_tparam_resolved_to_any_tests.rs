@@ -12,37 +12,11 @@
 //! `type_parameter_scope` does not carry the enclosing function's K — a
 //! common shape inside lazy/deferred indexed-access evaluation.
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn check_without_lib(source: &str) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
 }
 
 #[test]

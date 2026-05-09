@@ -29,6 +29,20 @@ fn object_rest_without_initializer_recovery_stays_syntactically_valid() {
 }
 
 #[test]
+fn rest_parameter_object_binding_with_rest_emits_body_preamble() {
+    let source =
+        "function e(...{0: a = 1, 1: b = true, ...rest: rest}: [boolean, string, number]) { }";
+    let output = parse_and_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains(
+            "function e(..._a) { var { 0: a = 1, 1: b = true } = _a, rest = __rest(_a, [\"0\", \"1\"]); }"
+        ),
+        "rest parameter object binding should preserve rest syntax and emit the object-rest preamble.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_empty_variable_initializer_preserves_equals() {
     let source = "var NUMBER1 = var NUMBER-;";
     let output = parse_and_print(source);
@@ -47,5 +61,27 @@ fn malformed_void_qualified_type_recovers_following_declaration() {
     assert!(
         output.contains("\"use strict\";\nvar v, x;"),
         "unexpected output: {output}"
+    );
+}
+
+#[test]
+fn string_literal_with_crlf_line_continuation_does_not_double_semicolon() {
+    // Regression for `sourceMap-StringLiteralWithNewLine` and the `literals`
+    // / `sourceMap-LineBreaks` baselines: when a string literal uses an
+    // ECMAScript LineContinuation (`\` followed by `\r\n`) inside a CRLF
+    // source file, the raw-string read in `get_raw_string_literal` was
+    // consuming only one byte after `\\` (the `\r`), then tripping the
+    // line-terminator break on the trailing `\n`. The recovery branch then
+    // appended an extra `;` after the surviving quote, producing `";;`.
+    let source = "namespace Foo {\r\n    var y = \"test\\\r\nfun\";\r\n}\r\n";
+    let output = parse_and_print(source);
+
+    assert!(
+        !output.contains("\";;"),
+        "CRLF line continuation must not append an extra semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("\"test\\\nfun\";") || output.contains("\"test\\\r\nfun\";"),
+        "Continuation string body should be preserved.\nOutput:\n{output}"
     );
 }

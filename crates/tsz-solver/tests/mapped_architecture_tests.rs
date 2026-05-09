@@ -71,6 +71,7 @@ fn classify_source_plain_object() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     assert_eq!(
@@ -281,6 +282,7 @@ fn collect_source_props_from_object() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -295,6 +297,7 @@ fn collect_source_props_from_object() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

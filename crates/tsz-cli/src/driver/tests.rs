@@ -1,11 +1,16 @@
+use super::CompilationCache;
 use super::FileReadResult;
 use super::check_module_resolution_compatibility;
 use super::check_module_resolution_compatibility_mut;
+use super::compilation_cache_to_build_info;
 use super::compile;
+use super::find_tsconfig;
+use super::is_declaration_emit_blocking_diagnostic_code;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::args::CliArgs;
-use crate::config::ResolvedCompilerOptions;
+use crate::config::{CompilerOptions, ResolvedCompilerOptions};
+use crate::incremental::compute_file_version;
 use clap::Parser;
 use std::fs;
 use std::io::Write;
@@ -66,6 +71,44 @@ const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
                 | 1489
         )
         || matches!(code, 2458 | 2754)
+}
+
+#[test]
+fn find_tsconfig_walks_up_from_project_subdirectory() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let config = dir.path().join("tsconfig.json");
+    fs::write(&config, "{}").expect("write tsconfig");
+    let nested = dir.path().join("packages/zod/src");
+    fs::create_dir_all(&nested).expect("create nested project dir");
+
+    assert_eq!(find_tsconfig(&nested), Some(config));
+}
+
+#[test]
+fn compilation_cache_build_info_uses_source_hash_for_file_version() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let source_path = dir.path().join("src/index.ts");
+    fs::create_dir_all(source_path.parent().unwrap()).expect("create source dir");
+    fs::write(&source_path, "export const value = 1;").expect("write source");
+
+    let mut cache = CompilationCache::default();
+    cache.export_hashes.insert(source_path.clone(), 0x1234);
+
+    let build_info = compilation_cache_to_build_info(
+        &cache,
+        std::slice::from_ref(&source_path),
+        dir.path(),
+        &ResolvedCompilerOptions::default(),
+    );
+    let file_info = build_info
+        .get_file_info("src/index.ts")
+        .expect("source file should be recorded");
+
+    assert_eq!(
+        file_info.version,
+        compute_file_version(&source_path).unwrap()
+    );
+    assert_eq!(file_info.signature.as_deref(), Some("0000000000001234"));
 }
 
 #[test]
@@ -250,6 +293,587 @@ fn test_no_input_diagnostics_preserve_config_errors() {
     );
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert_eq!(codes, vec![5052, 18003]);
+}
+
+/// `--jsxFragmentFactory 234` is invalid (digits aren't a valid identifier
+/// chain) and tsc falls back to `React.Fragment` for emit while still
+/// surfacing the option-level diagnostic. `--jsxFactory` is asymmetric:
+/// tsc preserves it verbatim even when invalid (mirrors the
+/// `reactNamespaceInvalidInput` baseline). This test pins the fragment
+/// fallback by checking the resolved emitter option after parsing CLI args.
+#[test]
+fn test_invalid_jsx_fragment_factory_falls_back_to_react_fragment() {
+    let args = CliArgs::try_parse_from(["tsz", "--jsxFactory", "h", "--jsxFragmentFactory", "234"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert_eq!(options.checker.jsx_factory, "h");
+    assert_eq!(
+        options.checker.jsx_fragment_factory, "React.Fragment",
+        "Invalid jsxFragmentFactory must fall back to React.Fragment"
+    );
+}
+
+/// Asymmetric to the test above: invalid `--jsxFactory` is preserved
+/// verbatim, matching tsc's `reactNamespaceInvalidInput` baseline where
+/// `my-React-Lib.createElement` is emitted unchanged despite the dashes.
+#[test]
+fn test_invalid_jsx_factory_preserved_verbatim() {
+    let args = CliArgs::try_parse_from(["tsz", "--jsxFactory", "my-React-Lib.createElement"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert_eq!(
+        options.checker.jsx_factory, "my-React-Lib.createElement",
+        "Invalid jsxFactory should be preserved (matches tsc reactNamespace behavior)"
+    );
+}
+
+#[test]
+fn test_cli_module_resolution_recomputes_package_json_defaults() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--moduleResolution", "node16", "--module", "node16"])
+            .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(
+        options.module_resolution,
+        Some(ModuleResolutionKind::Node16)
+    );
+    assert!(options.resolve_package_json_exports);
+    assert!(options.resolve_package_json_imports);
+    assert!(!options.checker.implied_classic_resolution);
+}
+
+#[test]
+fn test_cli_explicit_package_json_resolution_false_overrides_derived_default() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--moduleResolution",
+        "node16",
+        "--module",
+        "node16",
+        "--resolvePackageJsonExports",
+        "false",
+        "--resolvePackageJsonImports",
+        "false",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(!options.resolve_package_json_exports);
+    assert!(!options.resolve_package_json_imports);
+}
+
+#[test]
+fn test_cli_module_resolution_preserves_config_package_json_resolution_false() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--moduleResolution", "node16", "--module", "node16"])
+            .expect("parse args");
+    let mut options = ResolvedCompilerOptions {
+        resolve_package_json_exports: false,
+        resolve_package_json_imports: false,
+        ..Default::default()
+    };
+    let config_options = CompilerOptions {
+        resolve_package_json_exports: Some(false),
+        resolve_package_json_imports: Some(false),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert!(!options.resolve_package_json_exports);
+    assert!(!options.resolve_package_json_imports);
+}
+
+/// `--strict false` on the command line must override `strict: true` from
+/// `tsconfig.json`. `preprocess_args` forwards the explicit-false intent
+/// through the hidden `--__explicitly-disabled-bool-flag` side-channel; this
+/// test simulates the post-preprocess args directly. Issue #3861.
+#[test]
+fn test_cli_strict_false_overrides_config_strict_true() {
+    let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=strict"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict = true;
+    options.checker.no_implicit_any = true;
+    options.checker.strict_null_checks = true;
+    options.checker.always_strict = true;
+    let config_options = CompilerOptions {
+        strict: Some(true),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert!(
+        !options.checker.strict,
+        "--strict false must flip checker.strict to false"
+    );
+    assert!(
+        !options.checker.no_implicit_any,
+        "--strict false must reset the strict-family expansion"
+    );
+    assert!(!options.checker.strict_null_checks);
+    assert!(!options.checker.always_strict);
+    assert!(!options.printer.always_strict);
+}
+
+#[test]
+fn test_cli_no_emit_false_overrides_config_no_emit_true() {
+    let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=noEmit"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions {
+        no_emit: true,
+        ..Default::default()
+    };
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        !options.no_emit,
+        "--noEmit false must flip no_emit to false (issue #3861)"
+    );
+}
+
+#[test]
+fn test_cli_no_unused_locals_false_overrides_config() {
+    let args = CliArgs::try_parse_from(["tsz", "--__explicitly-disabled-bool-flag=noUnusedLocals"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.no_unused_locals = true;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(!options.checker.no_unused_locals);
+}
+
+/// An explicit `--strictNullChecks true` after `--strict false` must still
+/// re-enable strictNullChecks — the `Option<bool>` family override is applied
+/// after the `--strict` expansion/contraction, matching tsc's "individual
+/// flags win" rule. This guards the order between
+/// `apply_explicitly_disabled_bool_flags` and the strict-family CLI overrides.
+#[test]
+fn test_cli_strict_false_then_strict_null_checks_true_keeps_strict_null_checks() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--__explicitly-disabled-bool-flag=strict",
+        "--strictNullChecks=true",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict = true;
+    options.checker.strict_null_checks = true;
+    options.checker.no_implicit_any = true;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(!options.checker.strict);
+    assert!(!options.checker.no_implicit_any, "expansion still reset");
+    assert!(
+        options.checker.strict_null_checks,
+        "explicit --strictNullChecks true wins over --strict false expansion reset"
+    );
+}
+
+/// `--strictBuiltinIteratorReturn=false` must reach `checker.strict_builtin_iterator_return`.
+/// Previously the CLI parsed the flag but never applied it, so the option was silently
+/// ignored — `BuiltinIteratorReturn` kept resolving to `undefined` regardless. (issue #3522)
+#[test]
+fn test_cli_strict_builtin_iterator_return_false_applied() {
+    let args = CliArgs::try_parse_from(["tsz", "--strictBuiltinIteratorReturn=false"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict_builtin_iterator_return = true;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        !options.checker.strict_builtin_iterator_return,
+        "--strictBuiltinIteratorReturn=false must flip the option to false"
+    );
+}
+
+#[test]
+fn test_cli_strict_builtin_iterator_return_true_applied() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--strictBuiltinIteratorReturn=true"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict_builtin_iterator_return = false;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        options.checker.strict_builtin_iterator_return,
+        "--strictBuiltinIteratorReturn=true must flip the option to true"
+    );
+}
+
+/// `--strict` should expand to `strict_builtin_iterator_return = true` to match tsc's
+/// strict-family expansion. The config-loader path already does this; the CLI path was
+/// missing the assignment.
+#[test]
+fn test_cli_strict_expands_strict_builtin_iterator_return() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.strict_builtin_iterator_return = false;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        options.checker.strict_builtin_iterator_return,
+        "--strict must enable strict_builtin_iterator_return as part of the strict-family expansion"
+    );
+}
+
+/// An explicit `--strictBuiltinIteratorReturn=false` after `--strict` must still
+/// disable the option — individual flag overrides win over the strict expansion.
+#[test]
+fn test_cli_strict_then_strict_builtin_iterator_return_false_keeps_false() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict", "--strictBuiltinIteratorReturn=false"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        options.checker.strict,
+        "--strict still enables checker.strict"
+    );
+    assert!(
+        !options.checker.strict_builtin_iterator_return,
+        "explicit --strictBuiltinIteratorReturn=false wins over --strict expansion"
+    );
+}
+
+#[test]
+fn test_cli_no_unchecked_side_effect_imports_overrides_config_false() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--noUncheckedSideEffectImports"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.no_unchecked_side_effect_imports = false;
+    let config_options = CompilerOptions {
+        no_unchecked_side_effect_imports: Some(false),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert!(options.checker.no_unchecked_side_effect_imports);
+}
+
+#[test]
+fn test_compile_no_unchecked_side_effect_imports_cli_reenables_ts2882() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("index.ts"), "import \"./missing.css\";\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "noEmit": true,
+    "noUncheckedSideEffectImports": false
+  },
+  "files": ["index.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let config_args = CliArgs::try_parse_from(["tsz", "-p", "tsconfig.json"]).expect("parse args");
+    let config_result = compile(&config_args, dir.path()).expect("compile config");
+    assert!(
+        config_result
+            .diagnostics
+            .iter()
+            .all(|diag| diag.code != 2882),
+        "config false should suppress TS2882, got: {:?}",
+        config_result.diagnostics
+    );
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--noUncheckedSideEffectImports",
+    ])
+    .expect("parse args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli override");
+    assert!(
+        cli_result.diagnostics.iter().any(|diag| diag.code == 2882),
+        "CLI override should re-enable TS2882, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_source_map_satisfies_config_map_root_validation() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "export const x = 1;\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "files": ["a.ts"],
+  "compilerOptions": {
+    "mapRoot": "maps"
+  }
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let config_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse config args");
+    let config_result = compile(&config_args, dir.path()).expect("compile config");
+    assert!(
+        config_result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "mapRoot without sourceMap/declarationMap should still report TS5069, got: {:?}",
+        config_result.diagnostics
+    );
+
+    let cli_args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--sourceMap",
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse cli args");
+    let cli_result = compile(&cli_args, dir.path()).expect("compile cli override");
+    assert!(
+        cli_result.diagnostics.iter().all(|diag| {
+            diag.code
+                != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "CLI --sourceMap should satisfy mapRoot validation, got: {:?}",
+        cli_result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_emit_declaration_only_inherits_config_declaration() {
+    // Regression for #3500: `--emitDeclarationOnly` on the CLI must not
+    // report TS5069 when `declaration: true` (or `composite: true`) is
+    // supplied via tsconfig.json. The early CLI-only short-circuit was
+    // removed in favor of the driver/config validation merge, which already
+    // honors the prerequisite.
+    for (key, value) in [("declaration", "true"), ("composite", "true")] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+        fs::write(
+            dir.path().join("tsconfig.json"),
+            format!(
+                r#"{{
+  "files": ["a.ts"],
+  "compilerOptions": {{
+    "{key}": {value},
+    "outDir": "dist"
+  }}
+}}"#
+            ),
+        )
+        .expect("write tsconfig");
+
+        let args = CliArgs::try_parse_from([
+            "tsz",
+            "-p",
+            "tsconfig.json",
+            "--emitDeclarationOnly",
+            "--pretty",
+            "false",
+        ])
+        .expect("parse args");
+        let result = compile(&args, dir.path()).expect("compile");
+        assert!(
+            result.diagnostics.iter().all(|diag| {
+                diag.code
+                    != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+            }),
+            "config {key}:{value} should satisfy --emitDeclarationOnly TS5069 prerequisite, got: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn test_cli_declaration_map_inherits_config_declaration() {
+    // Regression for #3712: `--declarationMap` on the CLI must not report
+    // TS5069 when `declaration: true` is supplied via tsconfig.json. The CLI
+    // validation shim has to merge the config's effective declaration/composite
+    // state before checking TS5069 prerequisites.
+    for (key, value) in [("declaration", "true"), ("composite", "true")] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+        fs::write(
+            dir.path().join("tsconfig.json"),
+            format!(
+                r#"{{
+  "files": ["a.ts"],
+  "compilerOptions": {{
+    "{key}": {value},
+    "outDir": "dist"
+  }}
+}}"#
+            ),
+        )
+        .expect("write tsconfig");
+
+        let args = CliArgs::try_parse_from([
+            "tsz",
+            "-p",
+            "tsconfig.json",
+            "--declarationMap",
+            "--pretty",
+            "false",
+        ])
+        .expect("parse args");
+        let result = compile(&args, dir.path()).expect("compile");
+        assert!(
+            result.diagnostics.iter().all(|diag| {
+                diag.code
+                    != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+            }),
+            "config {key}:{value} should satisfy --declarationMap TS5069 prerequisite, got: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn test_cli_declaration_map_without_declaration_still_reports_ts5069() {
+    // Counter-test for #3712: when neither CLI nor tsconfig.json supplies
+    // `declaration` or `composite`, `--declarationMap` must still report
+    // TS5069. Otherwise the merge would silently swallow the legitimate error.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "files": ["a.ts"],
+  "compilerOptions": {
+    "outDir": "dist"
+  }
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--declarationMap",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "--declarationMap with no declaration/composite should still report TS5069, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_isolated_declarations_inherits_config_declaration() {
+    // Mirror of #3712 for `--isolatedDeclarations`: also a Group-1 TS5069
+    // trigger that must merge config-level `declaration`/`composite`.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "export const x: number = 1;\n").expect("write source");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "files": ["a.ts"],
+  "compilerOptions": {
+    "declaration": true,
+    "outDir": "dist"
+  }
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "-p",
+        "tsconfig.json",
+        "--isolatedDeclarations",
+        "--pretty",
+        "false",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+    assert!(
+        result.diagnostics.iter().all(|diag| {
+            diag.code
+                != diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION
+        }),
+        "config declaration:true should satisfy --isolatedDeclarations TS5069 prerequisite, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_overrides_apply_type_and_declaration_options() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--types",
+        "node,jest",
+        "--typeRoots",
+        "types,node_modules/@types",
+        "--declarationDir",
+        "declarations",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(
+        options.types,
+        Some(vec!["node".to_string(), "jest".to_string()])
+    );
+    assert_eq!(
+        options.type_roots,
+        Some(vec![
+            Path::new("types").to_path_buf(),
+            Path::new("node_modules/@types").to_path_buf()
+        ])
+    );
+    assert_eq!(
+        options.declaration_dir.as_deref(),
+        Some(Path::new("declarations"))
+    );
+}
+
+#[test]
+fn test_cli_overrides_apply_umd_and_synthetic_default_interop_options() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--allowUmdGlobalAccess",
+        "--allowSyntheticDefaultImports",
+        "false",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions {
+        allow_synthetic_default_imports: true,
+        checker: tsz::checker::context::CheckerOptions {
+            allow_synthetic_default_imports: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(options.checker.allow_umd_global_access);
+    assert!(!options.allow_synthetic_default_imports);
+    assert!(!options.checker.allow_synthetic_default_imports);
 }
 
 #[test]
@@ -688,6 +1312,57 @@ var spread1 = <div x='' {...foo} y='' />;"#,
         compile(&args, Path::new(env!("CARGO_MANIFEST_DIR"))).expect("batch compile succeeds");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&7005), "expected TS7005, got: {codes:?}");
+}
+
+#[test]
+fn test_project_mode_reports_global_nan_equality_ts2845() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "noEmit": true
+  },
+  "include": ["*.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("test.ts"),
+        r#"declare const x: number;
+
+if (x === NaN) {}
+if (NaN === x) {}
+
+function t1(value: number, NaN: number) {
+    return value === NaN;
+}
+"#,
+    )
+    .expect("write test");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let ts2845 = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2845)
+        .count();
+    assert_eq!(
+        ts2845, 2,
+        "expected TS2845 for global NaN comparisons only, got: {:?}",
+        result.diagnostics
+    );
 }
 
 #[test]
@@ -1160,6 +1835,160 @@ fn js_only_syntactic_error_suppresses_semantic_diagnostics_program_wide() {
             "TS{} should be suppressed program-wide when any JS-only-syntactic error exists; got diagnostics: {:?}",
             suppressed,
             result.diagnostics,
+        );
+    }
+}
+
+/// Regression test for `conformance/salsa/plainJSGrammarErrors.ts`.
+///
+/// When a JavaScript file emits a TS-only-syntactic diagnostic (e.g. `TS8009`
+/// for a `const` modifier in a class body), tsc's `emitFilesAndReportErrors`
+/// short-circuits `getSemanticDiagnostics` program-wide. Checker/binder
+/// grammar checks like the break/continue family (`TS1104`/`TS1105`/`TS1107`)
+/// must therefore NOT be reported alongside the gate-trigger `TS8xxx` codes.
+#[test]
+fn js_only_syntactic_gate_suppresses_break_continue_grammar_checks() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    // A `const` field in a class is TS-only syntax in a JS file → TS8009.
+    // The break/continue at top level and the cross-function-boundary jump
+    // would normally trigger TS1104/TS1105/TS1107 — but tsc skips all
+    // semantic diagnostics once any TS8xxx fires from
+    // `getJSSyntacticDiagnosticsForFile`.
+    fs::write(
+        base.join("test.js"),
+        "class C {\n    const x = 1\n}\nfunction crossFunctionBoundary() {\n    outer: for(;;) {\n        function test() {\n            break outer\n        }\n    }\n}\nbreak\ncontinue\n",
+    )
+    .expect("write test.js");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "esnext",
+            "allowJs": true,
+            "noEmit": true
+          },
+          "files": ["test.js"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    // The gate trigger must still be reported.
+    assert!(
+        codes.contains(&8009),
+        "Expected TS8009 'The const modifier can only be used in TypeScript files' to be reported, got: {:?}",
+        result.diagnostics,
+    );
+
+    // tsc skips semantic checking program-wide when any JS-only-syntactic
+    // error is present, so these checker-emitted grammar checks must NOT
+    // appear (each one would otherwise be a fingerprint mismatch with tsc).
+    for &suppressed in &[1104_u32, 1105, 1107] {
+        assert!(
+            !codes.contains(&suppressed),
+            "TS{} should be suppressed program-wide when any JS-only-syntactic error exists; got diagnostics: {:?}",
+            suppressed,
+            result.diagnostics,
+        );
+    }
+}
+
+#[test]
+fn module_preserve_checked_js_resolved_require_does_not_emit_missing_node_global() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::create_dir_all(base.join("node_modules/dep")).expect("create dep package");
+    fs::write(
+        base.join("node_modules/dep/package.json"),
+        r#"{
+          "name": "dep",
+          "exports": {
+            "import": "./import.mjs",
+            "require": "./require.js"
+          }
+        }"#,
+    )
+    .expect("write package");
+    fs::write(
+        base.join("node_modules/dep/import.d.mts"),
+        "export const esm: \"esm\";\n",
+    )
+    .expect("write import types");
+    fs::write(
+        base.join("node_modules/dep/require.d.ts"),
+        "declare const cjs: \"cjs\";\nexport = cjs;\n",
+    )
+    .expect("write require types");
+    fs::write(
+        base.join("index.ts"),
+        "import { esm } from \"dep\";\nimport cjs = require(\"dep\");\n",
+    )
+    .expect("write index");
+    fs::write(
+        base.join("main.js"),
+        "import { esm } from \"dep\";\nconst cjs = require(\"dep\");\n",
+    )
+    .expect("write main");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "preserve",
+            "target": "esnext",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.ts", "main.js"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let node_global_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2591)
+        .collect();
+    assert!(
+        node_global_diags.is_empty(),
+        "module preserve require forms should not emit TS2591 when the package resolves; got: {node_global_diags:?}; all diagnostics: {:?}",
+        result.diagnostics,
+    );
+}
+
+#[test]
+fn isolated_declaration_codes_block_declaration_emit() {
+    // Issue #3709 follow-up: TS9007/TS9011/etc. must suppress `.d.ts`
+    // emission for the affected source file. tsc refuses to write a
+    // declaration file when isolated-declaration constraints are violated.
+    for code in [9007, 9008, 9010, 9011, 9012, 9013, 9015, 9019, 9039] {
+        assert!(
+            is_declaration_emit_blocking_diagnostic_code(code),
+            "TS{code} (isolated-declarations family) should block declaration emit"
+        );
+    }
+}
+
+#[test]
+fn non_isolated_declaration_codes_do_not_block_declaration_emit() {
+    // Codes outside the 9007–9039 range and TS4020 must not be flagged as
+    // declaration-emit blockers — they're either pure type errors or
+    // syntactic diagnostics that don't gate `.d.ts` writing.
+    for code in [2322, 2339, 2345, 2741, 7006, 9006, 9040] {
+        assert!(
+            !is_declaration_emit_blocking_diagnostic_code(code),
+            "TS{code} should not block declaration emit"
         );
     }
 }

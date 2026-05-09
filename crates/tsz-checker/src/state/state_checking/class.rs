@@ -932,6 +932,16 @@ impl<'a> CheckerState<'a> {
             .map(|(name, _, _)| name.clone())
             .collect();
 
+        // Class expressions are strict-mode class definitions too. Their
+        // names and base expressions participate in the same recovered
+        // reserved-word and constructor diagnostics as class declarations.
+        self.check_class_name_strict_mode_reserved(class.name);
+        self.check_heritage_clauses_for_unresolved_names(
+            &class.heritage_clauses,
+            true,
+            &class_type_param_names,
+        );
+
         // Check heritage clauses for primitive type keywords (TS2863/TS2864).
         // Uses the lightweight check to avoid triggering constructor accessibility (TS2675)
         // side effects that the full check_heritage_clauses_for_unresolved_names would cause
@@ -1224,6 +1234,22 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
         ) {
+            return false;
+        }
+
+        if prop.type_annotation.is_some()
+            && let Some(class_info) = self.ctx.enclosing_class.as_ref()
+            && let Some(property_name) =
+                crate::types_domain::queries::core::get_literal_property_name(
+                    self.ctx.arena,
+                    prop.name,
+                )
+            && self.indexed_access_references_owner_property(
+                prop.type_annotation,
+                &class_info.name,
+                &property_name,
+            )
+        {
             return false;
         }
 
@@ -2356,6 +2382,34 @@ export class Monitor extends mix(AnonBase) {
         assert!(
             codes.contains(&4094),
             "TS4094 expected for named exported class extending mixin of anonymous class, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts4094_exported_function_returning_anon_class_with_private_base() {
+        // The inferred return type of an exported function can be an anonymous
+        // class constructor whose declaration emit surface includes private
+        // members inherited from the base.
+        let codes = check_with_declaration(
+            r#"
+export class Base {
+    private property = "";
+}
+
+export type Constructor<T> = new (...args: any[]) => T;
+export function WithTags<T extends Constructor<Base>>(BaseCtor: T) {
+    return class extends BaseCtor {
+        tags(): void {}
+    };
+}
+
+export class Test extends WithTags(Base) {}
+"#,
+        );
+        let ts4094_count = codes.iter().filter(|&&code| code == 4094).count();
+        assert!(
+            ts4094_count >= 2,
+            "TS4094 expected for exported function return and named class heritage, got: {codes:?}"
         );
     }
 

@@ -22,6 +22,7 @@
 use crate::transforms::emit_utils::{
     identifier_text as get_identifier_text, is_valid_identifier_name, specifier_name_text,
 };
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -153,7 +154,7 @@ fn resolve_entity_chain_has_value(
                             arena,
                             m.body,
                             preserve_const_enums,
-                        );
+                        ) || module_body_is_empty(arena, m.body);
                     }
                     if let Some(body) = arena.get(m.body)
                         && let Some(block) = arena.get_module_block(body)
@@ -227,13 +228,255 @@ fn resolve_entity_chain_has_value(
     !found_type_only
 }
 
+fn module_body_is_empty(arena: &NodeArena, body_idx: NodeIndex) -> bool {
+    arena
+        .get(body_idx)
+        .and_then(|body| arena.get_module_block(body))
+        .and_then(|block| block.statements.as_ref())
+        .is_none_or(|statements| statements.nodes.is_empty())
+}
+
+/// Helper function to collect export name from a single declaration node
+/// Walk a qualified `import = X.Y.Z` reference and return true only when the
+/// final identifier `Z` resolves to an *exported* type-only member inside the
+/// preceding namespace chain. Non-exported type members are not reachable from
+/// outside the namespace, so tsc keeps the (broken) runtime emit; mirror that
+/// here by returning false for such cases.
+pub(crate) fn import_alias_resolves_to_exported_type_only(
+    arena: &NodeArena,
+    entity_name_idx: NodeIndex,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> bool {
+    let mut parts: Vec<String> = Vec::new();
+    fn flatten(arena: &NodeArena, idx: NodeIndex, parts: &mut Vec<String>) {
+        let Some(node) = arena.get(idx) else { return };
+        if let Some(qn) = arena.get_qualified_name(node) {
+            flatten(arena, qn.left, parts);
+            if let Some(name) = get_identifier_text(arena, qn.right) {
+                parts.push(name);
+            }
+        } else if let Some(name) = get_identifier_text(arena, idx) {
+            parts.push(name);
+        }
+    }
+    flatten(arena, entity_name_idx, &mut parts);
+    if parts.len() < 2 {
+        return false;
+    }
+    chain_resolves_to_exported_type_only(arena, &parts, statements, false, preserve_const_enums)
+}
+
+fn import_alias_identifier_resolves_to_exported_type_only_namespace(
+    arena: &NodeArena,
+    entity_name_idx: NodeIndex,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> bool {
+    let Some(alias_target) = get_identifier_text(arena, entity_name_idx) else {
+        return false;
+    };
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        let inner_node = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                arena.get(ed.export_clause)
+            } else {
+                None
+            }
+        } else {
+            Some(node)
+        };
+        let Some(inner) = inner_node else {
+            continue;
+        };
+        if inner.kind == syntax_kind_ext::MODULE_DECLARATION
+            && let Some(module) = arena.get_module(inner)
+            && get_identifier_text(arena, module.name).as_deref() == Some(alias_target.as_str())
+            && !super::emit_utils::is_instantiated_module_ext(
+                arena,
+                module.body,
+                preserve_const_enums,
+            )
+            && module_body_has_exported_type_only_member(arena, module.body)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn module_body_has_exported_type_only_member(arena: &NodeArena, module_body: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(module_body) else {
+        return false;
+    };
+    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+        return arena
+            .get_module(body_node)
+            .is_some_and(|module| module_body_has_exported_type_only_member(arena, module.body));
+    }
+    let Some(block) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(ref statements) = block.statements else {
+        return false;
+    };
+    statements.nodes.iter().any(|&stmt_idx| {
+        let Some(node) = arena.get(stmt_idx) else {
+            return false;
+        };
+        let (inner_node, has_export_wrapper) = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            if let Some(ed) = arena.get_export_decl(node)
+                && !ed.is_type_only
+                && ed.module_specifier.is_none()
+            {
+                (arena.get(ed.export_clause), true)
+            } else {
+                (None, false)
+            }
+        } else {
+            (Some(node), false)
+        };
+        let Some(inner) = inner_node else {
+            return false;
+        };
+        match inner.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                has_export_wrapper
+                    || arena.get_interface(inner).is_some_and(|i| {
+                        arena.has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
+                    })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                has_export_wrapper
+                    || arena.get_type_alias(inner).is_some_and(|t| {
+                        arena.has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
+                    })
+            }
+            _ => false,
+        }
+    })
+}
+
+fn chain_resolves_to_exported_type_only(
+    arena: &NodeArena,
+    parts: &[String],
+    statements: &[NodeIndex],
+    require_export: bool,
+    preserve_const_enums: bool,
+) -> bool {
+    if parts.is_empty() {
+        return false;
+    }
+    let target_name = &parts[0];
+    let rest = &parts[1..];
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        let (inner_node, has_export_decl_wrapper) =
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(ed) = arena.get_export_decl(node)
+                    && !ed.is_type_only
+                    && ed.module_specifier.is_none()
+                {
+                    (arena.get(ed.export_clause), true)
+                } else {
+                    continue;
+                }
+            } else {
+                (Some(node), false)
+            };
+        let Some(inner) = inner_node else {
+            continue;
+        };
+        let has_export_modifier = match inner.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => arena
+                .get_interface(inner)
+                .map(|i| arena.has_modifier(&i.modifiers, SyntaxKind::ExportKeyword))
+                .unwrap_or(false),
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
+                .get_type_alias(inner)
+                .map(|t| arena.has_modifier(&t.modifiers, SyntaxKind::ExportKeyword))
+                .unwrap_or(false),
+            k if k == syntax_kind_ext::MODULE_DECLARATION => arena
+                .get_module(inner)
+                .map(|m| arena.has_modifier(&m.modifiers, SyntaxKind::ExportKeyword))
+                .unwrap_or(false),
+            _ => false,
+        } || has_export_decl_wrapper;
+        match inner.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                if rest.is_empty()
+                    && arena
+                        .get_interface(inner)
+                        .and_then(|i| get_identifier_text(arena, i.name))
+                        .as_deref()
+                        == Some(target_name.as_str())
+                    && (!require_export || has_export_modifier)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                if rest.is_empty()
+                    && arena
+                        .get_type_alias(inner)
+                        .and_then(|t| get_identifier_text(arena, t.name))
+                        .as_deref()
+                        == Some(target_name.as_str())
+                    && (!require_export || has_export_modifier)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(m) = arena.get_module(inner)
+                    && let Some(n) = get_identifier_text(arena, m.name)
+                    && n == *target_name
+                    && (!require_export || has_export_modifier)
+                {
+                    if rest.is_empty() {
+                        return !super::emit_utils::is_instantiated_module_ext(
+                            arena,
+                            m.body,
+                            preserve_const_enums,
+                        );
+                    }
+                    if let Some(body) = arena.get(m.body)
+                        && let Some(block) = arena.get_module_block(body)
+                        && let Some(ref stmts) = block.statements
+                    {
+                        // Inside the namespace body, members must be exported to
+                        // be reachable from the outer alias chain.
+                        return chain_resolves_to_exported_type_only(
+                            arena,
+                            rest,
+                            &stmts.nodes,
+                            true,
+                            preserve_const_enums,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Helper function to collect export name from a single declaration node
 fn collect_export_name_from_declaration(
     arena: &NodeArena,
     decl_node: &Node,
     exports: &mut Vec<String>,
     preserve_const_enums: bool,
-    _statements: &[NodeIndex],
+    statements: &[NodeIndex],
 ) {
     match decl_node.kind {
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -312,8 +555,37 @@ fn collect_export_name_from_declaration(
                 if import_decl.is_type_only {
                     return;
                 }
-                // `export import A = X.Y` gets a runtime export assignment even
-                // when the alias target is type-only.
+                if import_equals_uses_external_module_ref(arena, import_decl.module_specifier) {
+                    return;
+                }
+                // For a qualified `export import A = X.Y` chain, the alias
+                // is type-only when *the exported member* `Y` of namespace
+                // `X` is itself an interface or type alias. A non-exported
+                // type member inside `X` cannot be reached from outside, so
+                // tsc resolves the chain to nothing and preserves the
+                // (broken-at-runtime) `exports.A = X.Y;`. Mirror that:
+                // only elide when the inner member is an *exported*
+                // type-only declaration.
+                if import_alias_resolves_to_exported_type_only(
+                    arena,
+                    import_decl.module_specifier,
+                    statements,
+                    preserve_const_enums,
+                ) {
+                    return;
+                }
+                if arena
+                    .get(import_decl.module_specifier)
+                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                    && import_alias_identifier_resolves_to_exported_type_only_namespace(
+                        arena,
+                        import_decl.module_specifier,
+                        statements,
+                        preserve_const_enums,
+                    )
+                {
+                    return;
+                }
                 exports.push(name);
             }
         }
@@ -321,6 +593,13 @@ fn collect_export_name_from_declaration(
             // Interface, Type Alias, etc. don't need runtime exports
         }
     }
+}
+
+fn import_equals_uses_external_module_ref(arena: &NodeArena, module_specifier: NodeIndex) -> bool {
+    arena.get(module_specifier).is_some_and(|node| {
+        node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+    })
 }
 
 /// Build a set of names that have runtime value declarations in the file.
@@ -474,6 +753,148 @@ pub fn build_value_declaration_names(
     value_names
 }
 
+/// Build a set of local names whose declarations emit runtime bindings.
+///
+/// This is intentionally stricter than `build_value_declaration_names`: ambient
+/// declarations are value-space declarations for type checking and export
+/// initialization, but they do not emit local JavaScript bindings.
+pub fn build_runtime_declaration_names(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> rustc_hash::FxHashSet<String> {
+    let mut runtime_names = rustc_hash::FxHashSet::default();
+
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        let decl_node = if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let Some(export_decl) = arena.get_export_decl(node) else {
+                continue;
+            };
+            if export_decl.is_type_only || export_decl.module_specifier.is_some() {
+                continue;
+            }
+            arena.get(export_decl.export_clause)
+        } else {
+            Some(node)
+        };
+        let Some(decl_node) = decl_node else {
+            continue;
+        };
+
+        match decl_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = arena.get_variable(decl_node) {
+                    if arena.is_declare(&var_stmt.modifiers) {
+                        continue;
+                    }
+                    for &decl_idx in &var_stmt.declarations.nodes {
+                        let mut names = Vec::new();
+                        collect_declaration_names(arena, decl_idx, &mut names);
+                        runtime_names.extend(names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = arena.get_function(decl_node)
+                    && !arena.is_declare(&func.modifiers)
+                    && func.body.is_some()
+                    && let Some(name) = get_identifier_text(arena, func.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = arena.get_class(decl_node)
+                    && !arena.is_declare(&class.modifiers)
+                    && let Some(name) = get_identifier_text(arena, class.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = arena.get_enum(decl_node)
+                    && !arena.is_declare(&enum_decl.modifiers)
+                    && (preserve_const_enums
+                        || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
+                    && let Some(name) = get_identifier_text(arena, enum_decl.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = arena.get_module(decl_node)
+                    && !arena.is_declare(&module.modifiers)
+                    && super::emit_utils::is_instantiated_module_ext(
+                        arena,
+                        module.body,
+                        preserve_const_enums,
+                    )
+                    && let Some(name) = get_identifier_text(arena, module.name)
+                {
+                    runtime_names.insert(name);
+                }
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(decl_node)
+                    && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+                    && !import_decl.is_type_only
+                    && let Some(ref_node) = arena.get(import_decl.module_specifier)
+                {
+                    if ref_node.kind == SyntaxKind::StringLiteral as u16
+                        || is_import_alias_referencing_value(
+                            arena,
+                            import_decl.module_specifier,
+                            statements,
+                            preserve_const_enums,
+                        )
+                    {
+                        runtime_names.insert(name);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(decl_node)
+                    && !import_decl.is_type_only
+                    && let Some(clause_node) = arena.get(import_decl.import_clause)
+                    && let Some(clause) = arena.get_import_clause(clause_node)
+                    && !clause.is_type_only
+                {
+                    if let Some(name) = get_identifier_text(arena, clause.name) {
+                        runtime_names.insert(name);
+                    }
+                    if let Some(nb_node) = arena.get(clause.named_bindings) {
+                        if nb_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                            if let Some(ns) = arena.get_named_imports(nb_node)
+                                && let Some(name) = get_identifier_text(arena, ns.name)
+                            {
+                                runtime_names.insert(name);
+                            }
+                        } else if nb_node.kind == syntax_kind_ext::NAMED_IMPORTS
+                            && let Some(named) = arena.get_named_imports(nb_node)
+                        {
+                            for &spec_idx in &named.elements.nodes {
+                                if let Some(spec) = arena.get_specifier_at(spec_idx)
+                                    && !spec.is_type_only
+                                    && let Some(name) = get_identifier_text(arena, spec.name)
+                                {
+                                    runtime_names.insert(name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    runtime_names
+}
+
 /// Build a set of names that are only type-level declarations (interface, type alias)
 /// in the current file. Used to distinguish "confirmed type-only" from "cross-file
 /// reference" when deciding whether to skip `export { X }` from void 0 initialization.
@@ -519,6 +940,7 @@ pub fn build_type_only_declaration_names(
                         module.body,
                         preserve_const_enums,
                     )
+                    && !module_body_is_empty(arena, module.body)
                     && let Some(name) = get_identifier_text(arena, module.name)
                 {
                     type_only_names.insert(name);
@@ -599,11 +1021,11 @@ fn collect_value_names_from_declaration(
         }
         k if k == syntax_kind_ext::MODULE_DECLARATION => {
             if let Some(module) = arena.get_module(decl_node)
-                && super::emit_utils::is_instantiated_module_ext(
+                && (super::emit_utils::is_instantiated_module_ext(
                     arena,
                     module.body,
                     preserve_const_enums,
-                )
+                ) || module_body_is_empty(arena, module.body))
                 && let Some(name) = get_identifier_text(arena, module.name)
             {
                 value_names.insert(name);
@@ -638,13 +1060,14 @@ fn collect_value_names_from_declaration(
 ///
 /// Returns a list of exported names (e.g., ["foo", "bar"])
 pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<String> {
-    collect_export_names_with_options(arena, statements, false)
+    collect_export_names_with_options(arena, statements, false, &FxHashSet::default())
 }
 
 pub fn collect_export_names_with_options(
     arena: &NodeArena,
     statements: &[NodeIndex],
     preserve_const_enums: bool,
+    type_only_nodes: &FxHashSet<NodeIndex>,
 ) -> Vec<String> {
     let mut exports = Vec::new();
 
@@ -686,7 +1109,7 @@ pub fn collect_export_names_with_options(
                                     let Some(spec) = arena.get_specifier_at(spec_idx) else {
                                         continue;
                                     };
-                                    if spec.is_type_only {
+                                    if spec.is_type_only || type_only_nodes.contains(&spec_idx) {
                                         continue;
                                     }
                                     if let Some(name) = specifier_name_text(arena, spec.name) {
@@ -725,6 +1148,9 @@ pub fn collect_export_names_with_options(
                                     continue;
                                 };
                                 if spec.is_type_only {
+                                    continue;
+                                }
+                                if type_only_nodes.contains(&spec_idx) {
                                     continue;
                                 }
                                 // The local name is property_name if present, otherwise name
@@ -800,6 +1226,20 @@ pub fn collect_export_names_with_options(
                     exports.push(name);
                 }
             }
+            // export import Foo = require("foo")
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if let Some(import_decl) = arena.get_import_decl(node)
+                    && arena.has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+                {
+                    collect_export_name_from_declaration(
+                        arena,
+                        node,
+                        &mut exports,
+                        preserve_const_enums,
+                        statements,
+                    );
+                }
+            }
             // export enum E {} / export const enum E {} (when preserveConstEnums)
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node)
@@ -859,11 +1299,24 @@ pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
     preserve_const_enums: bool,
+    type_only_nodes: &FxHashSet<NodeIndex>,
 ) -> CategorizedExports {
     let mut func_exports: Vec<(String, String)> = Vec::new(); // (exported_name, local_name)
     let mut other_exports = Vec::new();
     let mut default_func_exports: Vec<String> = Vec::new();
-    let all = collect_export_names_with_options(arena, statements, preserve_const_enums);
+    // Counter for synthetic names used by anonymous `export default function`
+    // declarations. tsc emits `default_1`, `default_2`, ... in source order
+    // when more than one anonymous default function appears (an error case
+    // surfaced by `exportDefaultInterfaceAndTwoFunctions`); a single shared
+    // `"default_1"` would collide and produce identical helper names.
+    let mut anonymous_default_counter: u32 = 0;
+    let all =
+        collect_export_names_with_options(arena, statements, preserve_const_enums, type_only_nodes);
+    let mut reserved_default_names: FxHashSet<String> = arena
+        .identifiers
+        .iter()
+        .map(|ident| ident.escaped_text.clone())
+        .collect();
 
     // First pass: collect all function declaration names in the file (including
     // non-exported ones and `declare function` names) so we can resolve
@@ -957,7 +1410,15 @@ pub fn collect_export_names_categorized(
                 .filter(|name| {
                     !name.is_empty() && name != "function" && is_valid_identifier_name(name)
                 })
-                .unwrap_or_else(|| "default_1".to_string());
+                .unwrap_or_else(|| {
+                    loop {
+                        anonymous_default_counter += 1;
+                        let candidate = format!("default_{anonymous_default_counter}");
+                        if reserved_default_names.insert(candidate.clone()) {
+                            break candidate;
+                        }
+                    }
+                });
             default_func_exports.push(name);
         }
         // Named export specifiers: export { f } where f is a function declaration
@@ -1087,6 +1548,7 @@ pub fn collect_export_names_categorized(
 pub fn collect_inline_exported_var_names(
     arena: &NodeArena,
     statements: &[NodeIndex],
+    preserve_const_enums: bool,
 ) -> Vec<String> {
     let mut names = Vec::new();
     for &stmt_idx in statements {
@@ -1126,6 +1588,17 @@ pub fn collect_inline_exported_var_names(
                 && let Some(import_decl) = arena.get_import_decl(clause_node)
                 && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
             {
+                if import_decl.is_type_only {
+                    continue;
+                }
+                if import_alias_resolves_to_exported_type_only(
+                    arena,
+                    import_decl.module_specifier,
+                    statements,
+                    preserve_const_enums,
+                ) {
+                    continue;
+                }
                 names.push(name);
             }
         }

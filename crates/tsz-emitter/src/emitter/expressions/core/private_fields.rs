@@ -13,6 +13,11 @@ struct PrivateFieldAccess {
     weakmap_name: String,
 }
 
+enum DeleteOptionalChainSegment {
+    Property(NodeIndex),
+    Element(NodeIndex),
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Expressions
@@ -202,15 +207,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(crate) fn emit_private_receiver(&mut self, expression: NodeIndex, clean_name: &str) {
+    pub(crate) fn emit_private_receiver(&mut self, expression: NodeIndex, _clean_name: &str) {
         let alias_replacement =
             self.private_static_class_alias
                 .as_ref()
                 .and_then(|(cls_name, alias)| {
-                    let info = self.private_member_info.get(clean_name)?;
-                    if !info.is_static {
-                        return None;
-                    }
                     let expr_node = self.arena.get(expression)?;
                     if !expr_node.is_identifier() {
                         return None;
@@ -225,6 +226,11 @@ impl<'a> Printer<'a> {
         if let Some(alias) = alias_replacement {
             self.write(&alias);
         } else {
+            // Preserve the source-level receiver. For `this.#staticField`,
+            // tsc keeps `this` rather than substituting the class alias —
+            // even though that's a type error, the emitted JS mirrors the
+            // source. The class-name → alias substitution above only fires
+            // when the source explicitly names the class (e.g. `A.#x`).
             self.emit(expression);
         }
     }
@@ -414,7 +420,31 @@ impl<'a> Printer<'a> {
                     self.write(" ");
                     self.write(&base_op);
                     self.write(" ");
-                    self.emit(binary.right);
+                    // For logical-assignment lowering (`??=`/`||=`/`&&=`),
+                    // wrap a lower-precedence RHS in parens so
+                    // `get() ?? rhs ? a : b` doesn't reparse as
+                    // `(get() ?? rhs) ? a : b`. `??`, `||`, and `&&` all bind
+                    // tighter than the conditional operator, so a ternary
+                    // RHS would silently rebind without these parens.
+                    let needs_logical_parens = matches!(
+                        binary.operator_token,
+                        t if t == SyntaxKind::QuestionQuestionEqualsToken as u16
+                            || t == SyntaxKind::BarBarEqualsToken as u16
+                            || t == SyntaxKind::AmpersandAmpersandEqualsToken as u16,
+                    ) && self.arena.get(binary.right).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                            || n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                && self.arena.get_binary_expr(n).is_some_and(|b| {
+                                    b.operator_token == SyntaxKind::CommaToken as u16
+                                })
+                    });
+                    if needs_logical_parens {
+                        self.write("(");
+                        self.emit(binary.right);
+                        self.write(")");
+                    } else {
+                        self.emit(binary.right);
+                    }
                 }
 
                 self.emit_private_field_set_close(&clean_name);
@@ -474,6 +504,11 @@ impl<'a> Printer<'a> {
 
         if is_nullish && !self.ctx.options.target.supports_es2020() {
             self.emit_nullish_coalescing_expression(binary);
+            return;
+        }
+
+        if binary.operator_token == SyntaxKind::SatisfiesKeyword as u16 {
+            self.emit(binary.left);
             return;
         }
 
@@ -734,6 +769,13 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if unary.operator == SyntaxKind::DeleteKeyword as u16
+            && !self.ctx.options.target.supports_es2020()
+            && self.emit_delete_optional_chain(unary.operand)
+        {
+            return;
+        }
+
         self.write(get_operator_text(unary.operator));
         if unary.operator == SyntaxKind::AsteriskToken as u16 {
             self.write_space();
@@ -771,6 +813,132 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.ctx.flags.in_binary_operand = prev;
+    }
+
+    fn emit_delete_optional_chain(&mut self, operand: NodeIndex) -> bool {
+        let mut tail = Vec::new();
+        self.emit_delete_optional_chain_inner(operand, &mut tail)
+    }
+
+    fn emit_delete_optional_chain_inner(
+        &mut self,
+        idx: NodeIndex,
+        tail: &mut Vec<DeleteOptionalChainSegment>,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            let before_len = self.writer.len();
+            let before_tail_len = tail.len();
+            self.write("(");
+            let emitted = self.emit_delete_optional_chain_inner(paren.expression, tail);
+            if emitted {
+                self.write(")");
+            } else {
+                self.writer.truncate(before_len);
+                tail.truncate(before_tail_len);
+            }
+            return emitted;
+        }
+
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            if access.question_dot_token {
+                self.emit_delete_optional_access(
+                    node.kind,
+                    access.expression,
+                    access.name_or_argument,
+                    tail,
+                );
+                return true;
+            }
+
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                tail.push(DeleteOptionalChainSegment::Property(
+                    access.name_or_argument,
+                ));
+            } else {
+                tail.push(DeleteOptionalChainSegment::Element(access.name_or_argument));
+            }
+            return self.emit_delete_optional_chain_inner(access.expression, tail);
+        }
+
+        false
+    }
+
+    fn emit_delete_optional_access(
+        &mut self,
+        access_kind: u16,
+        base: NodeIndex,
+        name_or_argument: NodeIndex,
+        tail: &[DeleteOptionalChainSegment],
+    ) {
+        if self.is_simple_nullish_expression(base) {
+            self.emit(base);
+            self.write(" === null || ");
+            self.emit(base);
+            self.write(" === void 0 ? true : delete ");
+            self.emit(base);
+            self.emit_delete_optional_access_segment(access_kind, name_or_argument);
+            self.emit_delete_optional_chain_tail(tail);
+            return;
+        }
+
+        let before = self.writer.len();
+        self.emit(base);
+        let after = self.writer.len();
+        let full = self.writer.get_output().to_string();
+        let base_expr = full[before..after].trim_start().to_string();
+        self.writer.truncate(before);
+
+        let base_temp = self.make_unique_name_hoisted();
+        self.write("(");
+        self.write(&base_temp);
+        self.write(" = ");
+        self.write(&base_expr);
+        self.write(") === null || ");
+        self.write(&base_temp);
+        self.write(" === void 0 ? true : delete ");
+        self.write(&base_temp);
+        self.emit_delete_optional_access_segment(access_kind, name_or_argument);
+        self.emit_delete_optional_chain_tail(tail);
+    }
+
+    fn emit_delete_optional_access_segment(
+        &mut self,
+        access_kind: u16,
+        name_or_argument: NodeIndex,
+    ) {
+        if access_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit_property_name_without_import_substitution(name_or_argument);
+        } else {
+            self.write("[");
+            self.emit(name_or_argument);
+            self.write("]");
+        }
+    }
+
+    fn emit_delete_optional_chain_tail(&mut self, tail: &[DeleteOptionalChainSegment]) {
+        for segment in tail.iter().rev() {
+            match segment {
+                DeleteOptionalChainSegment::Property(name) => {
+                    self.write(".");
+                    self.emit_property_name_without_import_substitution(*name);
+                }
+                DeleteOptionalChainSegment::Element(argument) => {
+                    self.write("[");
+                    self.emit(*argument);
+                    self.write("]");
+                }
+            }
+        }
     }
 
     pub(in crate::emitter) fn emit_postfix_unary(&mut self, node: &Node) {

@@ -6,6 +6,35 @@ use crate::instantiation::instantiate::TypeSubstitution;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{FunctionShape, TupleElement, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
+
+// Reusable scratch `FxHashSet<TypeId>` for the three DFS walkers in this
+// module. Mirrors the pool pattern from #4722 / #4790 / #4801 / #4805 /
+// #4807 / #4810 / #4816 / #4818.
+thread_local! {
+    static RETURN_CONTEXT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_return_context_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = RETURN_CONTEXT_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    RETURN_CONTEXT_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(super) fn hoist_resolved_type_params_into_return_type(
@@ -133,8 +162,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // not outer-scope type parameters. Outer-scope type parameters (e.g., `U`
         // from an enclosing `function test<U>(...)`) are concrete in this context
         // and should not trigger the contextual return substitution override.
-        let mut visited = FxHashSet::default();
-        if self.type_contains_placeholder(inferred, var_map, &mut visited)
+        let contains_placeholder = with_return_context_visited(|visited| {
+            self.type_contains_placeholder(inferred, var_map, visited)
+        });
+        if contains_placeholder
             || crate::type_queries::contains_infer_types_db(
                 self.interner.as_type_database(),
                 inferred,
@@ -204,8 +235,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Only check for inference placeholders from the CURRENT generic call,
         // not outer-scope type parameters.
-        let mut visited = FxHashSet::default();
-        self.type_contains_placeholder(inferred, var_map, &mut visited)
+        let contains_placeholder = with_return_context_visited(|visited| {
+            self.type_contains_placeholder(inferred, var_map, visited)
+        });
+        contains_placeholder
             || crate::type_queries::contains_infer_types_db(
                 self.interner.as_type_database(),
                 inferred,
@@ -422,6 +455,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else {
                 for (i, source_param) in source_fn.params.iter().enumerate() {
                     if source_param.rest {
+                        if let Some(target_param) = target_fn.params.get(i)
+                            && target_param.rest
+                            && i + 1 == target_fn.params.len()
+                        {
+                            self.collect_return_context_substitution(
+                                source_param.type_id,
+                                target_param.type_id,
+                                tracked_type_params,
+                                substitution,
+                                visited,
+                            );
+                            break;
+                        }
                         // Source has a rest parameter — collect remaining target
                         // params into a tuple so `Args` infers as e.g. `[string]`
                         // instead of `string`.
@@ -431,7 +477,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 type_id: p.type_id,
                                 name: p.name,
                                 optional: p.optional,
-                                rest: false,
+                                rest: p.rest,
                             })
                             .collect();
                         if !remaining.is_empty() {

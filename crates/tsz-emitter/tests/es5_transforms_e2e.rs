@@ -4,20 +4,103 @@
 //! correct ES5 output for destructuring, class, and async transforms.
 
 use crate::output::printer::{PrintOptions, lower_and_print};
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 
-fn emit_es5(source: &str) -> String {
+fn emit_with_target(source: &str, target: ScriptTarget) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let mut opts = PrintOptions::es5();
+    let mut opts = PrintOptions {
+        target,
+        ..PrintOptions::default()
+    };
     opts.remove_comments = true;
     lower_and_print(&parser.arena, root, opts).code
+}
+
+fn emit_es5(source: &str) -> String {
+    emit_with_target(source, ScriptTarget::ES5)
 }
 
 fn emit_es5_with_comments(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     lower_and_print(&parser.arena, root, PrintOptions::es5()).code
+}
+
+#[test]
+fn async_es5_for_loop_captured_let_with_await_uses_loop_generator() {
+    let output = emit_es5(
+        "async function f() {\n\
+             var ar = [];\n\
+             for (let i = 0; i < 1; i++) {\n\
+                 await 1;\n\
+                 ar.push(() => i);\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var ar, _loop_1, i;"),
+        "Captured loop helper and loop variable should be hoisted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_loop_1 = function (i)"),
+        "Captured loop body should move into a loop helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [5 /*yield**/, _loop_1(i)];"),
+        "Outer async loop should delegate to the loop helper generator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("ar.push(function () { return i; });"),
+        "Captured arrow should close over the loop helper parameter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
+    let output = emit_es5(
+        "type MyPromise<T> = Promise<T>;\n\
+         declare var MyPromise: typeof Promise;\n\
+         async function f(): MyPromise<void> { }\n\
+         var g = async (): MyPromise<void> => { };\n\
+         class C { async m(): MyPromise<void> { } }\n",
+    );
+
+    assert!(
+        output.matches("MyPromise, function").count() >= 3,
+        "Async functions, arrows, and methods should pass the ambient value constructor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_labeled_block_break_after_await_lowers_to_generator_jump() {
+    let output = emit_es5(
+        "async function f() {\n\
+             block: {\n\
+                 await 1;\n\
+                 break block;\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        !output.contains("block:") && !output.contains("await 1"),
+        "Raw labeled block and await syntax should not remain in ES5 output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, 1];"),
+        "Await should lower to the initial yield case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 2];"),
+        "Labeled break should jump to the post-block case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [2 /*return*/];"),
+        "Post-block case should contain the final generator return.\nOutput:\n{output}"
+    );
 }
 
 // =============================================================================
@@ -89,6 +172,202 @@ fn test_assignment_object_rest_uses_es5_lowering() {
     assert!(
         output.contains("__rest"),
         "Expected __rest helper for object rest.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn assignment_object_rest_strips_redundant_paren_around_object_rhs() {
+    // Regression for `destructuringObjectBindingPatternAndAssignment5`: when the
+    // RHS of an assignment-form object-rest destructuring is a parenthesized
+    // type-erased object literal (`({ } as any)`), the lowering threads the
+    // RHS into a temp inside a comma expression — never at statement-leading
+    // position, so the outer paren is redundant. tsc emits `_a = {}` here, not
+    // `_a = ({})`.
+    let output = emit_with_target(
+        r#"
+function a() {
+    let x: number;
+    let y: any;
+    ({ x, ...y } = ({ } as any));
+}
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        output.contains("_a = {}, "),
+        "RHS object literal must be unwrapped from its redundant paren.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a = ({})"),
+        "Redundant paren must not be preserved at non-statement-leading position.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_computed_exclusion_reuses_key_temp() {
+    let output = emit_es5(
+        r#"
+declare function getKey(): string;
+const source: any = {};
+const { [getKey()]: value = 1, ...rest } = source;
+console.log(value);
+"#,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "Computed rest key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" = source[_"),
+        "Computed property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "Computed property default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "__rest exclusion should use TypeScript's symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__rest(source, [getKey()])"),
+        "__rest exclusion must not re-evaluate the computed key expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_assignment_computed_exclusion_reuses_key_temp() {
+    let output = emit_es5(
+        r#"
+declare function getKey(): string;
+let value: any;
+let rest: any;
+const source: any = {};
+({ [getKey()]: value = 1, ...rest } = source);
+console.log(value);
+"#,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "Computed rest assignment key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("source[_"),
+        "Computed assignment property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "Computed assignment default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "Assignment __rest exclusion should use symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("source[\"\"]") && !output.contains("__rest(source, [])"),
+        "Assignment lowering must not drop the computed key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_es2017_computed_default_reuses_key_temp() {
+    let output = emit_with_target(
+        r#"
+declare function getKey(): string;
+const source: any = {};
+const { [getKey()]: value = 1, ...rest } = source;
+console.log(value);
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "ES2017 computed rest key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[_"),
+        "ES2017 computed property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "ES2017 computed property default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "ES2017 __rest exclusion should use symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_assignment_es2017_computed_exclusion_reuses_key_temp() {
+    let output = emit_with_target(
+        r#"
+declare function getKey(): string;
+let value: any;
+let rest: any;
+const source: any = {};
+({ [getKey()]: value = 1, ...rest } = source);
+console.log(value);
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert_eq!(
+        output.matches("getKey()").count(),
+        1,
+        "ES2017 computed rest assignment key expression must be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("source[_"),
+        "ES2017 computed assignment property read should use a temp key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === void 0 ? 1 : "),
+        "ES2017 computed assignment default should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(" === \"symbol\" ? ") && output.contains(" + \"\""),
+        "ES2017 assignment __rest exclusion should use symbol-safe computed-key coercion.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__rest(source, [])") && !output.contains("__rest(source, [getKey()])"),
+        "ES2017 assignment lowering must not drop or re-evaluate the computed key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_object_rest_lowers_when_outer_pattern_has_no_rest() {
+    // Regression for `narrowingDestructuring`: when the outer object pattern has
+    // no rest element but a nested element does (e.g. `{ f: { a, ...spread } }`),
+    // the lowering pass must still introduce a nested temp and a `__rest` call.
+    // The bug was a partial `needs_temp` predicate that only fired when the outer
+    // pattern itself carried a rest element, leaving the source un-lowered.
+    let output = emit_with_target(
+        r#"
+declare const value: { f: { a: number; b: string; c: number } };
+const { f: { a, ...spread } } = value;
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        output.contains("__rest("),
+        "Nested object rest must be lowered to a __rest() call.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("...spread"),
+        "Lowered output must not retain the rest spread syntax.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value.f"),
+        "Lowering should thread `value.f` into a temp before the __rest call.\nOutput:\n{output}"
     );
 }
 
@@ -279,6 +558,34 @@ fn test_async_function_awaiter() {
     assert!(
         !output.contains("async "),
         "async keyword should not appear in ES5.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_with_await_lowers_loop_body() {
+    let output = emit_es5(
+        "async function f(xs) {\n    while (xs.length) {\n        await g(xs.pop());\n    }\n}\n",
+    );
+
+    assert!(
+        !output.contains("while (xs.length)"),
+        "Source while loop should be lowered into generator cases.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "await keyword should not appear in ES5.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
+        "Loop condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, g(xs.pop())];"),
+        "Await in the loop body should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Loop body should jump back to the condition case.\nOutput:\n{output}"
     );
 }
 

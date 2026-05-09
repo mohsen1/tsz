@@ -4,7 +4,7 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::emitter::Printer;
+use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 
 /// `projectInfo`-only view of inferred-project lib/target/noLib settings.
 /// Kept parallel to `Server.inferred_check_options` so we can surface the
@@ -16,11 +16,51 @@ pub(crate) struct InferredProjectInfoOptions {
     pub target: Option<String>,
     pub no_lib: bool,
 }
+
+struct CompileOnSaveProject {
+    config_path: String,
+    config_dir: std::path::PathBuf,
+    enabled: bool,
+    file_names: Vec<String>,
+    uses_out_file: bool,
+    out_dir: Option<String>,
+    module: ModuleKind,
+}
+
+impl CompileOnSaveProject {
+    fn output_path_for(&self, file: &str) -> std::path::PathBuf {
+        let input = std::path::Path::new(file);
+        let mut relative = input
+            .strip_prefix(&self.config_dir)
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|_| {
+                input
+                    .file_name()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from(file))
+            });
+        relative.set_extension("js");
+        if let Some(out_dir) = self.out_dir.as_deref() {
+            let out_dir = std::path::Path::new(out_dir);
+            let out_dir = if out_dir.is_absolute() {
+                out_dir.to_path_buf()
+            } else {
+                self.config_dir.join(out_dir)
+            };
+            out_dir.join(relative)
+        } else {
+            input.with_extension("js")
+        }
+    }
+}
 use tsz::lsp::code_actions::CodeActionProvider;
 use tsz::lsp::editor_decorations::inlay_hints::{InlayHintKind, InlayHintsProvider};
 use tsz::lsp::editor_ranges::folding::FoldingRangeProvider;
 use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
-use tsz::lsp::hierarchy::call_hierarchy::CallHierarchyProvider;
+use tsz::lsp::hierarchy::call_hierarchy::{
+    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyProvider,
+    ImportResolutionRequest,
+};
 use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
 use tsz::lsp::rename::file_rename::FileRenameProvider;
@@ -109,10 +149,7 @@ impl Server {
                     libs = Some(parsed);
                 }
             }
-            let target = options
-                .get("target")
-                .and_then(serde_json::Value::as_str)
-                .map(std::string::ToString::to_string);
+            let target = Self::project_info_target_option(options.get("target"));
             let no_lib = options
                 .get("noLib")
                 .and_then(serde_json::Value::as_bool)
@@ -131,6 +168,21 @@ impl Server {
                 .is_some_and(Self::inferred_module_option_is_none);
             self.auto_imports_allowed_for_inferred_projects =
                 Self::inferred_auto_imports_allowed(options);
+        }
+    }
+
+    fn project_info_target_option(value: Option<&serde_json::Value>) -> Option<String> {
+        match value? {
+            serde_json::Value::String(target) => Some(target.clone()),
+            serde_json::Value::Number(number) => {
+                let mapped = number
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .and_then(ScriptTarget::from_ts_numeric)
+                    .map(ScriptTarget::as_ts_str);
+                Some(mapped.map_or_else(|| number.to_string(), str::to_string))
+            }
+            _ => None,
         }
     }
 
@@ -279,6 +331,176 @@ impl Server {
         )
     }
 
+    /// Implement the `encodedSyntacticClassifications-full` tsserver
+    /// command. Walks the source text via the scanner and emits
+    /// `(start, length, classificationId)` triples for every non-trivia
+    /// token. Classification IDs match tsc's `TokenClass` (0 = punctuation,
+    /// 1 = comment, 2 = identifier, 3 = keyword, 4 = numericLiteral,
+    /// 5 = operator, 6 = stringLiteral, 7 = regexLiteral, 10 = punctuation).
+    ///
+    /// `start` and `length` are UTF-16 unit counts (matching tsserver). For
+    /// ASCII source, byte == UTF-16 unit; multi-byte content widens
+    /// correctly via `len_utf16()`. See #3717.
+    pub(crate) fn handle_encoded_syntactic_classifications_full(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let span_start_byte = request
+                .arguments
+                .get("start")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize;
+            let span_length_byte = request
+                .arguments
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(u32::MAX as u64) as usize;
+            let span_end_byte = span_start_byte.saturating_add(span_length_byte);
+
+            let source_text = self.open_files.get(file)?.clone();
+
+            // UTF-16 prefix counts so each token's byte offset translates to
+            // a UTF-16 offset in O(1) after a single pass.
+            let mut utf16_prefix: Vec<u32> = Vec::with_capacity(source_text.len() + 1);
+            utf16_prefix.push(0);
+            let mut count: u32 = 0;
+            for ch in source_text.chars() {
+                count = count.saturating_add(ch.len_utf16() as u32);
+                for _ in 0..ch.len_utf8() {
+                    utf16_prefix.push(count);
+                }
+            }
+            let to_utf16 = |byte: usize| -> u32 {
+                let idx = byte.min(utf16_prefix.len().saturating_sub(1));
+                utf16_prefix[idx]
+            };
+
+            let mut scanner = tsz_scanner::scanner_impl::ScannerState::new(source_text, false);
+            let mut spans: Vec<u32> = Vec::new();
+
+            loop {
+                let token = scanner.scan();
+                if token == tsz_scanner::SyntaxKind::EndOfFileToken {
+                    break;
+                }
+                let token_start = scanner.get_token_start();
+                let token_end = scanner.get_token_end();
+
+                if token_start >= span_end_byte {
+                    break;
+                }
+                if token_end <= span_start_byte {
+                    continue;
+                }
+
+                let class_id = match Self::classify_syntactic_token(token) {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                let utf16_start = to_utf16(token_start);
+                let utf16_end = to_utf16(token_end);
+                let length = utf16_end.saturating_sub(utf16_start);
+                if length == 0 {
+                    continue;
+                }
+                spans.push(utf16_start);
+                spans.push(length);
+                spans.push(class_id);
+            }
+
+            Some(serde_json::json!({
+                "spans": spans,
+                "endOfLineState": 0,
+            }))
+        })();
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({"spans": [], "endOfLineState": 0}))),
+        )
+    }
+
+    /// Map a scanner `SyntaxKind` to tsc's syntactic-classification token
+    /// class id. Returns `None` for trivia/EOF that should be skipped.
+    fn classify_syntactic_token(token: tsz_scanner::SyntaxKind) -> Option<u32> {
+        use tsz_scanner::{SyntaxKind, token_is_keyword};
+        // Trivia and EOF: skip.
+        if matches!(
+            token,
+            SyntaxKind::EndOfFileToken
+                | SyntaxKind::NewLineTrivia
+                | SyntaxKind::WhitespaceTrivia
+                | SyntaxKind::ShebangTrivia
+                | SyntaxKind::ConflictMarkerTrivia
+                | SyntaxKind::NonTextFileMarkerTrivia
+        ) {
+            return None;
+        }
+        // Comments → class 1.
+        if matches!(
+            token,
+            SyntaxKind::SingleLineCommentTrivia | SyntaxKind::MultiLineCommentTrivia
+        ) {
+            return Some(1);
+        }
+        // Identifiers → class 2.
+        if token == SyntaxKind::Identifier
+            || token == SyntaxKind::PrivateIdentifier
+            || token == SyntaxKind::JsxText
+        {
+            return Some(2);
+        }
+        // Keywords → class 3.
+        if token_is_keyword(token) {
+            return Some(3);
+        }
+        // Literals.
+        match token {
+            SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => return Some(4),
+            SyntaxKind::StringLiteral
+            | SyntaxKind::NoSubstitutionTemplateLiteral
+            | SyntaxKind::TemplateHead
+            | SyntaxKind::TemplateMiddle
+            | SyntaxKind::TemplateTail => {
+                return Some(6);
+            }
+            SyntaxKind::RegularExpressionLiteral => return Some(7),
+            _ => {}
+        }
+        // Punctuation/operators. tsc folds `=`, `+`, `-`, etc. into class 5
+        // (operator) and structural punctuation (`,`, `;`, `(`, `)`, `{`, `}`,
+        // `[`, `]`, `.`, `:`, `?`, `=>`) into class 10. The `SyntaxKind`
+        // numeric ranges aren't ideal for this distinction, so use a small
+        // explicit set for class-10 punctuation; everything else punctuation
+        // -shaped becomes class 5.
+        if matches!(
+            token,
+            SyntaxKind::CommaToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::OpenParenToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::CloseBraceToken
+                | SyntaxKind::OpenBracketToken
+                | SyntaxKind::CloseBracketToken
+                | SyntaxKind::DotToken
+                | SyntaxKind::DotDotDotToken
+                | SyntaxKind::ColonToken
+                | SyntaxKind::QuestionToken
+                | SyntaxKind::EqualsGreaterThanToken
+                | SyntaxKind::AtToken
+                | SyntaxKind::HashToken
+                | SyntaxKind::BacktickToken
+        ) {
+            return Some(10);
+        }
+        Some(5)
+    }
+
     pub(crate) fn handle_emit_output(
         &mut self,
         seq: u64,
@@ -288,16 +510,36 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
 
-            let mut printer = Printer::with_source_text_len(&arena, source_text.len());
+            // Issue #3784: tsc honors the owning project's `module` and
+            // `outDir` for emit-output. Reuse the compile-on-save project
+            // lookup (ignoring the `compileOnSave` flag) so the printer
+            // module kind and output path match tsserver's behavior.
+            let project = self.compile_on_save_project(file);
+
+            let module = project
+                .as_ref()
+                .map_or_else(|| self.emit_output_module_kind(), |p| p.module);
+
+            let mut printer = Printer::with_source_text_len_and_options(
+                &arena,
+                source_text.len(),
+                PrinterOptions {
+                    module,
+                    ..Default::default()
+                },
+            );
             printer.set_source_text(&source_text);
             printer.emit(root);
             let output = printer.take_output();
 
-            let out_name = file
-                .strip_suffix(".ts")
-                .or_else(|| file.strip_suffix(".tsx"))
-                .map(|base| format!("{base}.js"))
-                .unwrap_or_else(|| format!("{file}.js"));
+            let out_name = if let Some(ref project) = project {
+                project.output_path_for(file).to_string_lossy().into_owned()
+            } else {
+                file.strip_suffix(".ts")
+                    .or_else(|| file.strip_suffix(".tsx"))
+                    .map(|base| format!("{base}.js"))
+                    .unwrap_or_else(|| format!("{file}.js"))
+            };
 
             Some(serde_json::json!({
                 "outputFiles": [{
@@ -315,6 +557,167 @@ impl Server {
         )
     }
 
+    pub(crate) fn handle_compile_on_save_affected_file_list(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let project = self.compile_on_save_project(file)?;
+            if !project.enabled {
+                return Some(serde_json::json!([]));
+            }
+            Some(serde_json::json!([{
+                "projectFileName": project.config_path,
+                "fileNames": project.file_names,
+                "projectUsesOutFile": project.uses_out_file,
+            }]))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    pub(crate) fn handle_compile_on_save_emit_file(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let rich_response = request
+            .arguments
+            .get("richResponse")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let emitted = (|| -> Option<bool> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let project = self.compile_on_save_project(file)?;
+            if !project.enabled {
+                return Some(false);
+            }
+            self.emit_compile_on_save_file(file, &project).ok()?;
+            Some(true)
+        })()
+        .unwrap_or(false);
+        let body = if rich_response {
+            serde_json::json!({
+                "emitSkipped": !emitted,
+                "diagnostics": [],
+            })
+        } else {
+            serde_json::json!(emitted)
+        };
+        self.stub_response(seq, request, Some(body))
+    }
+
+    fn emit_output_module_kind(&self) -> ModuleKind {
+        self.inferred_check_options
+            .module
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .map(|module| match module.as_str() {
+                "none" => ModuleKind::None,
+                "commonjs" => ModuleKind::CommonJS,
+                "amd" => ModuleKind::AMD,
+                "umd" => ModuleKind::UMD,
+                "system" => ModuleKind::System,
+                "es2015" => ModuleKind::ES2015,
+                "es2020" => ModuleKind::ES2020,
+                "es2022" => ModuleKind::ES2022,
+                "node16" => ModuleKind::Node16,
+                "node18" => ModuleKind::Node18,
+                "node20" => ModuleKind::Node20,
+                "nodenext" => ModuleKind::NodeNext,
+                "preserve" => ModuleKind::Preserve,
+                _ => ModuleKind::ESNext,
+            })
+            .unwrap_or(ModuleKind::ESNext)
+    }
+
+    fn module_kind_from_config(config_json: &serde_json::Value) -> ModuleKind {
+        config_json
+            .get("compilerOptions")
+            .and_then(|opts| opts.get("module"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_ascii_lowercase)
+            .map(|module| match module.as_str() {
+                "none" => ModuleKind::None,
+                "commonjs" => ModuleKind::CommonJS,
+                "amd" => ModuleKind::AMD,
+                "umd" => ModuleKind::UMD,
+                "system" => ModuleKind::System,
+                "es2015" | "es6" => ModuleKind::ES2015,
+                "es2020" => ModuleKind::ES2020,
+                "es2022" => ModuleKind::ES2022,
+                "node16" => ModuleKind::Node16,
+                "node18" => ModuleKind::Node18,
+                "node20" => ModuleKind::Node20,
+                "nodenext" => ModuleKind::NodeNext,
+                "preserve" => ModuleKind::Preserve,
+                _ => ModuleKind::ESNext,
+            })
+            .unwrap_or(ModuleKind::ESNext)
+    }
+
+    fn compile_on_save_project(&self, file: &str) -> Option<CompileOnSaveProject> {
+        let config_path = self.find_project_config_file(file)?;
+        let config_json = self.read_config_json(&config_path)?;
+        let enabled = config_json
+            .get("compileOnSave")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let compiler_options = config_json.get("compilerOptions");
+        let uses_out_file = compiler_options
+            .and_then(|opts| opts.get("outFile").or_else(|| opts.get("out")))
+            .and_then(serde_json::Value::as_str)
+            .is_some();
+        let out_dir = compiler_options
+            .and_then(|opts| opts.get("outDir"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let config_dir = std::path::Path::new(&config_path)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("/"));
+        let (_, _, mut file_names) = self.parse_tsconfig_for_project_info(&config_path);
+        if file_names.is_empty() {
+            file_names.push(Self::normalize_path_string(std::path::Path::new(file)));
+        }
+        Some(CompileOnSaveProject {
+            config_path,
+            config_dir,
+            enabled,
+            file_names,
+            uses_out_file,
+            out_dir,
+            module: Self::module_kind_from_config(&config_json),
+        })
+    }
+
+    fn emit_compile_on_save_file(
+        &self,
+        file: &str,
+        project: &CompileOnSaveProject,
+    ) -> std::io::Result<()> {
+        let (arena, _binder, root, source_text) = self
+            .parse_and_bind_file(file)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, file.to_string()))?;
+        let mut printer = Printer::with_source_text_len_and_options(
+            &arena,
+            source_text.len(),
+            PrinterOptions {
+                module: project.module,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(&source_text);
+        printer.emit(root);
+        let output = printer.take_output();
+        let out_path = project.output_path_for(file);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(out_path, output)
+    }
+
     pub(crate) fn handle_get_applicable_refactors(
         &mut self,
         seq: u64,
@@ -322,10 +725,13 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
-            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
-            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
-            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+            // Issue #3718: tsserver accepts FileLocationOrRangeRequestArgs.
+            // The position-only form sends `{ line, offset }` and the range
+            // form sends `{ startLine, startOffset, endLine, endOffset }`.
+            // Treat a position as a zero-length range that anchors both
+            // ends at the same coordinate.
+            let (start_line, start_offset, end_line, end_offset) =
+                Self::parse_refactor_request_range(request)?;
 
             let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&content);
@@ -348,13 +754,71 @@ impl Server {
 
             // Check if extract variable is applicable
             if provider.extract_variable(root, range).is_some() {
+                // Issue #3803: tsc emits one extract action per *applicable*
+                // scope and attaches a range. Approximate "applicable scopes"
+                // by detecting whether the request's expression has an
+                // enclosing function in its ancestor chain.
+                let action_range = serde_json::json!({
+                    "start": { "line": start_line, "offset": start_offset },
+                    "end": { "line": end_line, "offset": end_offset },
+                });
+                let inside_function =
+                    Self::request_is_inside_function(&arena, &line_map, &content, range);
+                let function_actions: Vec<serde_json::Value> = if inside_function {
+                    vec![
+                        serde_json::json!({
+                            "name": "function_scope_0",
+                            "description": "Extract to function in enclosing scope",
+                            "kind": "refactor.extract.function",
+                            "range": action_range,
+                        }),
+                        serde_json::json!({
+                            "name": "function_scope_1",
+                            "description": "Extract to function in global scope",
+                            "kind": "refactor.extract.function",
+                            "range": action_range,
+                        }),
+                    ]
+                } else {
+                    vec![serde_json::json!({
+                        "name": "function_scope_0",
+                        "description": "Extract to function in global scope",
+                        "kind": "refactor.extract.function",
+                        "range": action_range,
+                    })]
+                };
+                let constant_actions: Vec<serde_json::Value> = if inside_function {
+                    vec![
+                        serde_json::json!({
+                            "name": "constant_scope_0",
+                            "description": "Extract to constant in enclosing scope",
+                            "kind": "refactor.extract.constant",
+                            "range": action_range,
+                        }),
+                        serde_json::json!({
+                            "name": "constant_scope_1",
+                            "description": "Extract to constant in global scope",
+                            "kind": "refactor.extract.constant",
+                            "range": action_range,
+                        }),
+                    ]
+                } else {
+                    vec![serde_json::json!({
+                        "name": "constant_scope_0",
+                        "description": "Extract to constant in enclosing scope",
+                        "kind": "refactor.extract.constant",
+                        "range": action_range,
+                    })]
+                };
                 refactors.push(serde_json::json!({
                     "name": "Extract Symbol",
-                    "description": "Extract expression to variable",
-                    "actions": [{
-                        "name": "constant_extractedConstant",
-                        "description": "Extract to constant in enclosing scope"
-                    }]
+                    "description": "Extract function",
+                    "actions": function_actions,
+                }));
+                refactors.push(serde_json::json!({
+                    "name": "Extract Symbol",
+                    "description": "Extract constant",
+                    "actions": constant_actions,
                 }));
             }
 
@@ -362,6 +826,71 @@ impl Server {
         })();
 
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Parse the request's range fields, falling back to a position
+    /// (`line`/`offset`) when the explicit range fields are absent. tsserver
+    /// accepts `FileLocationOrRangeRequestArgs` for refactor commands; a
+    /// position is treated as a zero-length range. Issue #3718.
+    pub(super) fn parse_refactor_request_range(
+        request: &TsServerRequest,
+    ) -> Option<(u32, u32, u32, u32)> {
+        let line_only = request
+            .arguments
+            .get("line")
+            .and_then(serde_json::Value::as_u64)
+            .map(|line| line as u32);
+        let offset_only = request
+            .arguments
+            .get("offset")
+            .and_then(serde_json::Value::as_u64)
+            .map(|offset| offset as u32);
+
+        let pick = |range_key: &str, position: Option<u32>| -> Option<u32> {
+            request
+                .arguments
+                .get(range_key)
+                .and_then(serde_json::Value::as_u64)
+                .map(|n| n as u32)
+                .or(position)
+        };
+
+        let start_line = pick("startLine", line_only)?;
+        let start_offset = pick("startOffset", offset_only)?;
+        let end_line = pick("endLine", line_only)?;
+        let end_offset = pick("endOffset", offset_only)?;
+        Some((start_line, start_offset, end_line, end_offset))
+    }
+
+    /// Walk the AST upward from the request range looking for an
+    /// enclosing function-like node (function/method/arrow/constructor/
+    /// accessor). Returns `true` when one is found, `false` when the
+    /// request range is at module level. Used by
+    /// `handle_get_applicable_refactors` to decide which extract scopes
+    /// to advertise. Issue #3803.
+    fn request_is_inside_function(
+        arena: &tsz::parser::node::NodeArena,
+        line_map: &LineMap,
+        source_text: &str,
+        range: Range,
+    ) -> bool {
+        let Some(start_offset) = line_map.position_to_offset(range.start, source_text) else {
+            return false;
+        };
+        let mut current = tsz::lsp::utils::find_node_at_offset(arena, start_offset);
+        while current.is_some() {
+            let Some(node) = arena.get(current) else {
+                return false;
+            };
+            if node.is_function_like() {
+                return true;
+            }
+            let Some(ext) = arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+        false
     }
 
     pub(crate) fn handle_get_edits_for_refactor(
@@ -372,10 +901,11 @@ impl Server {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
             let refactor = request.arguments.get("refactor")?.as_str()?;
-            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
-            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
-            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
-            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+            // Issue #3718: accept either the range form (startLine etc.) or
+            // a position-only form ({ line, offset }) per
+            // FileLocationOrRangeRequestArgs.
+            let (start_line, start_offset, end_line, end_offset) =
+                Self::parse_refactor_request_range(request)?;
 
             let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&content);
@@ -567,13 +1097,14 @@ impl Server {
     }
 
     fn normalize_module_path(path: &std::path::Path) -> String {
-        let s = path.to_string_lossy();
+        let normalized = Self::normalize_path_string(path);
+        let s = normalized.as_str();
         let s = s
             .strip_suffix(".ts")
             .or_else(|| s.strip_suffix(".tsx"))
             .or_else(|| s.strip_suffix(".js"))
             .or_else(|| s.strip_suffix(".jsx"))
-            .unwrap_or(&s);
+            .unwrap_or(s);
         s.to_string()
     }
 
@@ -928,6 +1459,10 @@ impl Server {
     /// Project files are filtered to those present in `open_files` (virtual VFS
     /// membership) to match tsserver's behavior of excluding non-existent files.
     pub(crate) fn compute_project_info(&self, active_file: &str) -> (String, Vec<String>) {
+        if let Some(project_info) = self.external_project_info(active_file) {
+            return project_info;
+        }
+
         let config_file_name = self.find_project_config_file(active_file);
         let (lib_names, no_lib, project_files) = match config_file_name.as_deref() {
             Some(config_path) => self.parse_tsconfig_for_project_info(config_path),
@@ -937,7 +1472,7 @@ impl Server {
         let mut file_names: Vec<String> = Vec::new();
 
         if !no_lib {
-            for path in self.resolve_virtual_lib_files(&lib_names) {
+            for path in self.resolve_virtual_lib_files(&lib_names, Some(active_file)) {
                 file_names.push(path);
             }
         }
@@ -951,6 +1486,21 @@ impl Server {
         }
 
         (config_file_name.unwrap_or_default(), file_names)
+    }
+
+    fn external_project_info(&self, active_file: &str) -> Option<(String, Vec<String>)> {
+        let mut projects: Vec<(&String, &Vec<String>)> =
+            self.external_project_files.iter().collect();
+        projects.sort_by_key(|(project_name, _)| *project_name);
+
+        let (project_name, files) = projects
+            .into_iter()
+            .find(|(_, files)| files.iter().any(|file| file == active_file))?;
+        let mut file_names = files.clone();
+        file_names.sort();
+        file_names.dedup();
+
+        Some((project_name.clone(), file_names))
     }
 
     /// Parse a tsconfig (from `open_files` or disk) and return its lib list,
@@ -987,31 +1537,155 @@ impl Server {
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
 
-        let mut project_files: Vec<String> = Vec::new();
+        let project_files = self.tsconfig_project_files(&config_json, &config_dir);
+
+        (lib_names, no_lib, project_files)
+    }
+
+    fn tsconfig_project_files(
+        &self,
+        config_json: &serde_json::Value,
+        config_dir: &std::path::Path,
+    ) -> Vec<String> {
         if let Some(files) = config_json
             .get("files")
             .and_then(serde_json::Value::as_array)
         {
-            for entry in files {
-                let Some(name) = entry.as_str() else {
-                    continue;
-                };
-                let absolute = if std::path::Path::new(name).is_absolute() {
-                    std::path::PathBuf::from(name)
-                } else {
-                    config_dir.join(name)
-                };
-                let absolute_str = Self::normalize_path_string(&absolute);
-                // tsserver excludes files that don't physically exist.
-                if self.open_files.contains_key(&absolute_str)
-                    || std::path::Path::new(&absolute_str).exists()
-                {
-                    project_files.push(absolute_str);
+            return self.explicit_tsconfig_files(files, config_dir);
+        }
+
+        let includes = config_json
+            .get("include")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|arr| !arr.is_empty())
+            .unwrap_or_else(|| vec!["**/*"]);
+        let excludes = config_json
+            .get("exclude")
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec!["node_modules", "bower_components", "jspm_packages"]);
+
+        let Some(include_set) = Self::tsconfig_glob_set(&includes, true) else {
+            return Vec::new();
+        };
+        let exclude_set = Self::tsconfig_glob_set(&excludes, false);
+
+        let mut candidates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for file in self.open_files.keys() {
+            if Self::path_is_under(file, config_dir) && Self::is_supported_project_source_file(file)
+            {
+                candidates.insert(file.clone());
+            }
+        }
+
+        if config_dir.exists() {
+            for entry in walkdir::WalkDir::new(config_dir)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_file())
+            {
+                let normalized = Self::normalize_path_string(entry.path());
+                if Self::is_supported_project_source_file(&normalized) {
+                    candidates.insert(normalized);
                 }
             }
         }
 
-        (lib_names, no_lib, project_files)
+        candidates
+            .into_iter()
+            .filter(|path| {
+                let relative = Self::relative_slash_path(config_dir, path);
+                include_set.is_match(&relative)
+                    && !exclude_set
+                        .as_ref()
+                        .is_some_and(|exclude_set| exclude_set.is_match(&relative))
+            })
+            .collect()
+    }
+
+    fn explicit_tsconfig_files(
+        &self,
+        files: &[serde_json::Value],
+        config_dir: &std::path::Path,
+    ) -> Vec<String> {
+        let mut project_files = Vec::new();
+        for entry in files {
+            let Some(name) = entry.as_str() else {
+                continue;
+            };
+            let absolute = if std::path::Path::new(name).is_absolute() {
+                std::path::PathBuf::from(name)
+            } else {
+                config_dir.join(name)
+            };
+            let absolute_str = Self::normalize_path_string(&absolute);
+            // tsserver excludes files that don't physically exist.
+            if self.open_files.contains_key(&absolute_str)
+                || std::path::Path::new(&absolute_str).exists()
+            {
+                project_files.push(absolute_str);
+            }
+        }
+        project_files
+    }
+
+    fn tsconfig_glob_set(patterns: &[&str], include: bool) -> Option<globset::GlobSet> {
+        let mut builder = globset::GlobSetBuilder::new();
+        for pattern in patterns {
+            let normalized = pattern.trim().trim_start_matches("./").replace('\\', "/");
+            if normalized.is_empty() {
+                continue;
+            }
+            let has_wildcard = normalized.contains('*') || normalized.contains('?');
+            let expanded = if has_wildcard {
+                normalized
+            } else if include || !Self::is_supported_project_source_file(&normalized) {
+                format!("{normalized}/**/*")
+            } else {
+                normalized
+            };
+            let glob = globset::GlobBuilder::new(&expanded)
+                .literal_separator(true)
+                .build()
+                .ok()?;
+            builder.add(glob);
+        }
+        builder.build().ok()
+    }
+
+    fn relative_slash_path(config_dir: &std::path::Path, file: &str) -> String {
+        let file_path = std::path::Path::new(file);
+        file_path
+            .strip_prefix(config_dir)
+            .map(Self::normalize_path_string)
+            .unwrap_or_else(|_| file.trim_start_matches('/').to_string())
+    }
+
+    fn path_is_under(path: &str, dir: &std::path::Path) -> bool {
+        std::path::Path::new(path).starts_with(dir)
+    }
+
+    fn is_supported_project_source_file(path: &str) -> bool {
+        path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".d.ts")
+            || path.ends_with(".mts")
+            || path.ends_with(".cts")
+            || path.ends_with(".d.mts")
+            || path.ends_with(".d.cts")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".mjs")
+            || path.ends_with(".cjs")
     }
 
     /// For an inferred project (no tsconfig), produce (libs, noLib, [`active+transitive_deps`]).
@@ -1221,15 +1895,26 @@ impl Server {
         vec![default_lib_name_for_target(emitter_target).to_string()]
     }
 
-    /// Resolve lib names to their fourslash VFS paths (e.g. "es5" →
-    /// `/home/src/tslibs/TS/Lib/lib.es5.d.ts`). Uses the real lib directory on
-    /// disk (via tsz-core's resolver) to follow `<reference lib="..." />`
-    /// directives transitively, then rewrites paths to the virtual folder.
-    fn resolve_virtual_lib_files(&self, lib_names: &[String]) -> Vec<String> {
+    /// Resolve lib names to file paths, branching on whether the originating
+    /// file is part of the fourslash harness's virtual filesystem.
+    ///
+    /// - Fourslash paths (e.g. `/tests/cases/fourslash/foo.ts`): rewrite to
+    ///   the harness's virtual lib folder so expected paths line up with the
+    ///   VFS mount (`/home/src/tslibs/TS/Lib/lib.es5.d.ts`).
+    /// - Real on-disk paths: return the actual lib file paths the server is
+    ///   using, matching tsserver's `projectInfo` protocol behavior.
+    fn resolve_virtual_lib_files(
+        &self,
+        lib_names: &[String],
+        active_file: Option<&str>,
+    ) -> Vec<String> {
         use tsz_cli::config::resolve_lib_files_from_dir;
         if lib_names.is_empty() {
             return Vec::new();
         }
+        let use_virtual = active_file
+            .map(Self::is_fourslash_virtual_harness_path)
+            .unwrap_or(false);
         let lib_dirs = [self.lib_dir.as_path(), self.tests_lib_dir.as_path()];
         let mut last_err: Option<anyhow::Error> = None;
         for dir in lib_dirs {
@@ -1238,17 +1923,21 @@ impl Server {
                     return paths
                         .into_iter()
                         .filter_map(|p| {
-                            p.file_name().and_then(|s| s.to_str()).map(|name| {
-                                // tsz stores libs without the `lib.` prefix in some
-                                // layouts (source tree). Ensure the emitted name
-                                // matches tsc's runtime convention `lib.<id>.d.ts`.
-                                let out = if name.starts_with("lib.") {
-                                    name.to_string()
-                                } else {
-                                    format!("lib.{name}")
-                                };
-                                format!("{}/{}", Self::FOURSLASH_LIB_FOLDER, out)
-                            })
+                            if use_virtual {
+                                p.file_name().and_then(|s| s.to_str()).map(|name| {
+                                    // tsz stores libs without the `lib.` prefix in some
+                                    // layouts (source tree). Ensure the emitted name
+                                    // matches tsc's runtime convention `lib.<id>.d.ts`.
+                                    let out = if name.starts_with("lib.") {
+                                        name.to_string()
+                                    } else {
+                                        format!("lib.{name}")
+                                    };
+                                    format!("{}/{}", Self::FOURSLASH_LIB_FOLDER, out)
+                                })
+                            } else {
+                                Some(p.to_string_lossy().into_owned())
+                            }
                         })
                         .collect();
                 }
@@ -1286,7 +1975,48 @@ impl Server {
         self.lib_cache.clear();
         self.unified_lib_cache = None;
 
-        // Re-read open files from disk
+        let reload_finished = if let Some(file) = request
+            .arguments
+            .get("file")
+            .and_then(|value| value.as_str())
+        {
+            let source_path = request
+                .arguments
+                .get("tmpfile")
+                .and_then(|value| value.as_str())
+                .unwrap_or(file);
+            if let Ok(content) = std::fs::read_to_string(source_path) {
+                self.open_files.insert(file.to_string(), content);
+                true
+            } else {
+                false
+            }
+        } else {
+            // Re-read all open files for reload-project style requests.
+            let paths: Vec<String> = self.open_files.keys().cloned().collect();
+            for path in &paths {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    self.open_files.insert(path.clone(), content);
+                }
+            }
+            true
+        };
+
+        self.stub_response(
+            seq,
+            request,
+            Some(serde_json::json!({ "reloadFinished": reload_finished })),
+        )
+    }
+
+    pub(crate) fn handle_reload_projects(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.lib_cache.clear();
+        self.unified_lib_cache = None;
+
         let paths: Vec<String> = self.open_files.keys().cloned().collect();
         for path in &paths {
             if let Ok(content) = std::fs::read_to_string(path) {
@@ -1294,7 +2024,7 @@ impl Server {
             }
         }
 
-        self.stub_response(seq, request, Some(serde_json::json!(true)))
+        self.stub_response(seq, request, None)
     }
 
     pub(crate) fn handle_compiler_options_for_inferred(
@@ -1422,7 +2152,176 @@ impl Server {
             _ => {}
         }
 
-        self.stub_response(seq, request, None)
+        let body = match request.command.as_str() {
+            "openExternalProject" | "openExternalProjects" => Some(serde_json::json!(true)),
+            _ => None,
+        };
+        self.stub_response(seq, request, body)
+    }
+
+    pub(crate) fn handle_synchronize_project_list(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let include_redirect_info = request
+            .arguments
+            .get("includeProjectReferenceRedirectInfo")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mut body: Vec<serde_json::Value> = Vec::new();
+
+        let mut projects: Vec<(&String, &Vec<String>)> =
+            self.external_project_files.iter().collect();
+        projects.sort_by_key(|(left, _)| *left);
+
+        for (project_name, files) in projects {
+            body.push(Self::synchronize_project_list_entry(
+                project_name,
+                false,
+                serde_json::json!({}),
+                files.clone(),
+                include_redirect_info,
+            ));
+        }
+
+        let external_files: rustc_hash::FxHashSet<String> = self
+            .external_project_files
+            .values()
+            .flat_map(|files| files.iter().cloned())
+            .collect();
+        let mut configured_projects: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
+        let mut inferred_roots: Vec<String> = Vec::new();
+
+        let mut open_files: Vec<&String> = self.open_files.keys().collect();
+        open_files.sort();
+        for file in open_files {
+            if external_files.contains(file) || !Self::is_supported_project_source_file(file) {
+                continue;
+            }
+            match self.find_project_config_file(file) {
+                Some(config_path) => {
+                    configured_projects
+                        .entry(config_path.clone())
+                        .or_insert_with(|| {
+                            let options = self
+                                .read_config_json(&config_path)
+                                .and_then(|config| config.get("compilerOptions").cloned())
+                                .unwrap_or_else(|| serde_json::json!({}));
+                            let (_, file_names) = self.compute_project_info(file);
+                            Self::synchronize_project_list_entry(
+                                &config_path,
+                                false,
+                                options,
+                                file_names,
+                                include_redirect_info,
+                            )
+                        });
+                }
+                None => inferred_roots.push(file.clone()),
+            }
+        }
+
+        body.extend(configured_projects.into_values());
+
+        if !inferred_roots.is_empty() {
+            let mut file_names: Vec<String> = Vec::new();
+            let (lib_names, no_lib, _) = self.inferred_project_info(&inferred_roots[0]);
+            if !no_lib {
+                file_names
+                    .extend(self.resolve_virtual_lib_files(&lib_names, Some(&inferred_roots[0])));
+            }
+
+            let mut visited: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+            let mut project_files = Vec::new();
+            for root in inferred_roots {
+                self.collect_reachable_files(&root, &mut visited, &mut project_files);
+            }
+            project_files.sort();
+            project_files.dedup();
+            file_names.extend(project_files);
+
+            body.push(Self::synchronize_project_list_entry(
+                "/dev/null/inferredProject1*",
+                true,
+                self.inferred_project_options_json(),
+                file_names,
+                include_redirect_info,
+            ));
+        }
+
+        self.stub_response(seq, request, Some(serde_json::json!(body)))
+    }
+
+    fn synchronize_project_list_entry(
+        project_name: &str,
+        is_inferred: bool,
+        options: serde_json::Value,
+        files: Vec<String>,
+        include_redirect_info: bool,
+    ) -> serde_json::Value {
+        let files: Vec<serde_json::Value> = if include_redirect_info {
+            files
+                .iter()
+                .map(|file_name| {
+                    serde_json::json!({
+                        "fileName": file_name,
+                        "isSourceOfProjectReferenceRedirect": false,
+                    })
+                })
+                .collect()
+        } else {
+            files
+                .iter()
+                .map(|file_name| serde_json::json!(file_name))
+                .collect()
+        };
+
+        serde_json::json!({
+            "info": {
+                "projectName": project_name,
+                "isInferred": is_inferred,
+                "version": 1,
+                "options": options,
+                "languageServiceDisabled": false,
+            },
+            "files": files,
+            "projectErrors": [],
+        })
+    }
+
+    fn inferred_project_options_json(&self) -> serde_json::Value {
+        let mut options = serde_json::Map::new();
+        let (lib, target, no_lib) = match self.inferred_projectinfo_options.as_ref() {
+            Some(opts) => (opts.lib.as_ref(), opts.target.as_ref(), opts.no_lib),
+            None => (
+                self.inferred_check_options.lib.as_ref(),
+                self.inferred_check_options.target.as_ref(),
+                self.inferred_check_options.no_lib,
+            ),
+        };
+
+        if let Some(lib) = lib {
+            options.insert("lib".to_string(), serde_json::json!(lib));
+        }
+        if let Some(target) = target {
+            options.insert("target".to_string(), serde_json::json!(target));
+        }
+        if no_lib {
+            options.insert("noLib".to_string(), serde_json::json!(true));
+        }
+        if let Some(module) = self.inferred_check_options.module.as_ref() {
+            options.insert("module".to_string(), serde_json::json!(module));
+        }
+        if self.inferred_check_options.allow_js {
+            options.insert("allowJs".to_string(), serde_json::json!(true));
+        }
+        if self.inferred_check_options.check_js {
+            options.insert("checkJs".to_string(), serde_json::json!(true));
+        }
+
+        serde_json::Value::Object(options)
     }
 
     pub(crate) fn handle_inlay_hints(
@@ -1444,63 +2343,99 @@ impl Server {
                 file.to_string(),
             );
 
-            // Extract the range from arguments, default to entire file
-            let start = match request
+            let protocol_span = request
                 .arguments
                 .get("start")
                 .and_then(serde_json::Value::as_u64)
-            {
-                Some(_) => {
-                    let line = request
+                .zip(
+                    request
                         .arguments
-                        .get("startLine")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(1) as u32;
-                    let offset = request
-                        .arguments
-                        .get("startOffset")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(1) as u32;
-                    Self::tsserver_to_lsp_position(line, offset)
-                }
-                None => Position::new(0, 0),
+                        .get("length")
+                        .and_then(serde_json::Value::as_u64),
+                )
+                .map(|(start, length)| {
+                    let source_len = source_text.len() as u64;
+                    let start = start.min(source_len) as u32;
+                    let end = start
+                        .saturating_add(length.min(u32::MAX as u64) as u32)
+                        .min(source_text.len() as u32);
+                    (start, end)
+                });
+
+            let range = if let Some((start, end)) = protocol_span {
+                Range::new(
+                    line_map.offset_to_position(start, &source_text),
+                    line_map.offset_to_position(end, &source_text),
+                )
+            } else {
+                let start = request
+                    .arguments
+                    .get("startLine")
+                    .and_then(serde_json::Value::as_u64)
+                    .zip(
+                        request
+                            .arguments
+                            .get("startOffset")
+                            .and_then(serde_json::Value::as_u64),
+                    )
+                    .map_or(Position::new(0, 0), |(line, offset)| {
+                        Self::tsserver_to_lsp_position(line as u32, offset as u32)
+                    });
+                let end = request
+                    .arguments
+                    .get("endLine")
+                    .and_then(serde_json::Value::as_u64)
+                    .zip(
+                        request
+                            .arguments
+                            .get("endOffset")
+                            .and_then(serde_json::Value::as_u64),
+                    )
+                    .map_or(Position::new(u32::MAX, u32::MAX), |(line, offset)| {
+                        Self::tsserver_to_lsp_position(line as u32, offset as u32)
+                    });
+                Range::new(start, end)
             };
-            let end = match request
-                .arguments
-                .get("end")
-                .and_then(serde_json::Value::as_u64)
-            {
-                Some(_) => {
-                    let line = request
-                        .arguments
-                        .get("endLine")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(u32::MAX as u64) as u32;
-                    let offset = request
-                        .arguments
-                        .get("endOffset")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(u32::MAX as u64) as u32;
-                    Self::tsserver_to_lsp_position(line, offset)
-                }
-                None => Position::new(u32::MAX, u32::MAX),
-            };
-            let range = Range::new(start, end);
 
             let hints = provider.provide_inlay_hints(root, range);
+            // tsserver default for `includeInlayParameterNameHints` is `"none"`:
+            // parameter hints are suppressed unless the client explicitly opts
+            // in via `configure`. Type/Generic hints are unaffected by this
+            // preference. See #3793.
+            let parameter_hints_enabled = matches!(
+                self.include_inlay_parameter_name_hints.as_deref(),
+                Some("literals") | Some("all")
+            );
             let body: Vec<serde_json::Value> = hints
                 .iter()
+                .filter(|hint| {
+                    if matches!(hint.kind, InlayHintKind::Parameter) && !parameter_hints_enabled {
+                        return false;
+                    }
+                    protocol_span.is_none_or(|(start, end)| {
+                        line_map
+                            .position_to_offset(hint.position, &source_text)
+                            .is_some_and(|position| position >= start && position < end)
+                    })
+                })
                 .map(|hint| {
                     let kind = match hint.kind {
                         InlayHintKind::Parameter => "Parameter",
                         InlayHintKind::Type => "Type",
                         InlayHintKind::Generic => "Enum",
                     };
+                    // tsserver-shape parameter hints carry no trailing space in
+                    // `text` and don't include `whitespaceBefore` (the default
+                    // is `false`, so the field is omitted). See #3793.
+                    let text = if matches!(hint.kind, InlayHintKind::Parameter) {
+                        hint.label.trim_end_matches(' ').to_string()
+                    } else {
+                        hint.label.clone()
+                    };
                     serde_json::json!({
-                        "text": hint.label,
+                        "text": text,
                         "position": Self::lsp_to_tsserver_position(hint.position),
                         "kind": kind,
-                        "whitespaceBefore": false,
                         "whitespaceAfter": true,
                     })
                 })
@@ -1532,24 +2467,41 @@ impl Server {
                 .collect();
 
             let ranges = provider.get_selection_ranges(&positions);
+            let full_protocol = request.command.ends_with("-full");
 
             fn selection_range_to_json(
                 sr: &tsz::lsp::editor_ranges::selection_range::SelectionRange,
+                line_map: &LineMap,
+                source_text: &str,
+                full_protocol: bool,
             ) -> serde_json::Value {
-                let text_span = serde_json::json!({
-                    "start": {
-                        "line": sr.range.start.line + 1,
-                        "offset": sr.range.start.character + 1,
-                    },
-                    "end": {
-                        "line": sr.range.end.line + 1,
-                        "offset": sr.range.end.character + 1,
-                    },
-                });
+                let text_span = if full_protocol {
+                    let start = line_map
+                        .position_to_offset(sr.range.start, source_text)
+                        .unwrap_or(0);
+                    let end = line_map
+                        .position_to_offset(sr.range.end, source_text)
+                        .unwrap_or(start);
+                    serde_json::json!({
+                        "start": start,
+                        "length": end.saturating_sub(start),
+                    })
+                } else {
+                    serde_json::json!({
+                        "start": {
+                            "line": sr.range.start.line + 1,
+                            "offset": sr.range.start.character + 1,
+                        },
+                        "end": {
+                            "line": sr.range.end.line + 1,
+                            "offset": sr.range.end.character + 1,
+                        },
+                    })
+                };
                 if let Some(ref parent) = sr.parent {
                     serde_json::json!({
                         "textSpan": text_span,
-                        "parent": selection_range_to_json(parent),
+                        "parent": selection_range_to_json(parent, line_map, source_text, full_protocol),
                     })
                 } else {
                     serde_json::json!({
@@ -1563,7 +2515,9 @@ impl Server {
                 .map(|opt_sr| {
                     opt_sr
                         .as_ref()
-                        .map(selection_range_to_json)
+                        .map(|sr| {
+                            selection_range_to_json(sr, &line_map, &source_text, full_protocol)
+                        })
                         .unwrap_or(serde_json::json!(null))
                 })
                 .collect();
@@ -1645,6 +2599,419 @@ impl Server {
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
+    /// Issue #3753: resolve an outgoing-call import-binding to the actual
+    /// exported declaration in the target module.
+    ///
+    /// Returns `None` when the module specifier can't be resolved (bare
+    /// package imports, missing files, parse failures, no matching export).
+    /// In that case the caller falls back to the local-import-binding item.
+    pub(crate) fn resolve_import_call_hierarchy_target(
+        &mut self,
+        importer_file: &str,
+        request: &ImportResolutionRequest,
+    ) -> Option<CallHierarchyItem> {
+        // Only handle relative-path specifiers for now. Bare specifiers
+        // would need module-resolution machinery the LSP server doesn't
+        // wire up yet.
+        let spec = &request.module_specifier;
+        if !(spec.starts_with("./") || spec.starts_with("../")) {
+            return None;
+        }
+
+        let importer_path = std::path::Path::new(importer_file);
+        let importer_dir = importer_path.parent()?;
+        let resolved_path = self.resolve_relative_module_specifier(importer_dir, spec)?;
+        let resolved_str = resolved_path.to_string_lossy().into_owned();
+
+        let (arena, binder, _root, source_text) = self.parse_and_bind_file(&resolved_str)?;
+        let line_map = LineMap::build(&source_text);
+        let provider = CallHierarchyProvider::new(
+            &arena,
+            &binder,
+            &line_map,
+            resolved_str.clone(),
+            &source_text,
+        );
+
+        // Find the exported binding by name. Default imports map to a
+        // declaration tagged as default; named imports map to the named
+        // export. Namespace imports are not resolved here (no specific
+        // export to point at).
+        let target_name = request.exported_name.as_deref()?;
+        let decl_idx = Self::find_exported_callable(&arena, &binder, target_name)?;
+
+        // Use the provider's prepare-by-position path: locate any identifier
+        // at the resolved declaration's position, then build a hierarchy
+        // item for it. Falls back to a synthesized item if prepare doesn't
+        // recognize the position.
+        let decl_node = arena.get(decl_idx)?;
+        let pos = line_map.offset_to_position(decl_node.pos, &source_text);
+        if let Some(item) = provider.prepare(_root, pos) {
+            return Some(CallHierarchyItem {
+                uri: resolved_str,
+                ..item
+            });
+        }
+        let span_pos = line_map.offset_to_position(decl_node.pos, &source_text);
+        let span_end = line_map.offset_to_position(decl_node.end, &source_text);
+        Some(CallHierarchyItem {
+            name: target_name.to_string(),
+            kind: tsz_lsp::SymbolKind::Function,
+            uri: resolved_str,
+            range: tsz_common::position::Range::new(span_pos, span_end),
+            selection_range: tsz_common::position::Range::new(span_pos, span_end),
+            container_name: None,
+        })
+    }
+
+    /// Locate an exported callable (function declaration / class declaration
+    /// / variable initializer) by exported name within the bound source
+    /// file. Searches `binder.symbols` for symbols tagged as exported with a
+    /// matching name and returns the first declaration `NodeIndex`.
+    fn find_exported_callable(
+        arena: &tsz_parser::parser::node::NodeArena,
+        binder: &tsz_binder::BinderState,
+        target_name: &str,
+    ) -> Option<tsz_parser::NodeIndex> {
+        if let Some(sym_id) = binder.file_locals.get(target_name)
+            && let Some(symbol) = binder.symbols.get(sym_id)
+            && let Some(&decl) = symbol.declarations.first()
+        {
+            // Skip the symbol if its first declaration is itself an import-binding.
+            let kind = arena.get(decl).map(|n| n.kind);
+            let is_import_binding = matches!(
+                kind,
+                Some(k) if k == tsz_parser::syntax_kind_ext::IMPORT_SPECIFIER
+                    || k == tsz_parser::syntax_kind_ext::IMPORT_CLAUSE
+                    || k == tsz_parser::syntax_kind_ext::NAMESPACE_IMPORT
+            );
+            if !is_import_binding {
+                return Some(decl);
+            }
+        }
+        None
+    }
+
+    /// Issue #3753 follow-up: report whether `target_name` (a top-level local
+    /// in `target_file`) is also the file's default export — i.e. the same
+    /// declaration backs both `module_exports[target_file][target_name]` and
+    /// `module_exports[target_file]["default"]`. tsc treats `import x from
+    /// "./a"` and `import { x } from "./a"` as both reaching such a function,
+    /// so the cross-file caller scan needs to accept default-import bindings
+    /// in addition to named-import bindings.
+    ///
+    /// Returns false when the file can't be parsed/bound, when no `default`
+    /// export exists, or when `target_name` and `default` resolve to disjoint
+    /// declaration nodes (the typical case for plain `export function`).
+    fn target_is_default_export(&self, target_file: &str, target_name: &str) -> bool {
+        if target_name == "default" {
+            return false;
+        }
+        let Some((_arena, binder, _root, _src)) = self.parse_and_bind_file(target_file) else {
+            return false;
+        };
+        let Some(file_exports) = binder.module_exports.get(target_file) else {
+            return false;
+        };
+        let Some(default_sid) = file_exports.get("default") else {
+            return false;
+        };
+        let Some(target_sid) = file_exports.get(target_name) else {
+            return false;
+        };
+        if default_sid == target_sid {
+            return true;
+        }
+        let Some(default_sym) = binder.symbols.get(default_sid) else {
+            return false;
+        };
+        let Some(target_sym) = binder.symbols.get(target_sid) else {
+            return false;
+        };
+        // Same declaration node backs both keys: `export default function NAME`,
+        // `function NAME() {}; export { NAME as default }`, etc.
+        for &decl in &default_sym.declarations {
+            if target_sym.declarations.contains(&decl) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Issue #3753: scan the other open files for cross-file callers that
+    /// reach `target_item` via an `import` binding. tsc reports those as
+    /// incoming calls; without this scan tsz only saw within-file callers
+    /// because each `parse_and_bind_file` call only sees one file's
+    /// arena/binder.
+    ///
+    /// For every other open file:
+    /// 1. Parse + bind it.
+    /// 2. Walk its `IMPORT_DECLARATION` nodes.
+    /// 3. For each import whose module specifier resolves to the target's
+    ///    file, find the local binding for `target_item.name` (matching by
+    ///    exported-name when the spec uses `import { foo as bar }`).
+    /// 4. Run that file's `incoming_calls` provider with the local-binding
+    ///    position so callers within that file get aggregated correctly.
+    pub(crate) fn collect_cross_file_incoming_calls(
+        &mut self,
+        target_file: &str,
+        target_item: &CallHierarchyItem,
+    ) -> Vec<CallHierarchyIncomingCall> {
+        let mut results: Vec<CallHierarchyIncomingCall> = Vec::new();
+        let target_file_canon = Self::canonicalize_path_str(target_file);
+        let target_name = target_item.name.clone();
+        // Issue #3753 follow-up: a function exported as `export default
+        // function NAME` (or `export { NAME as default }`) is reachable in
+        // other files via either `import { NAME } from "./a"` or `import
+        // <local> from "./a"`. tsc reports both as incoming calls of NAME.
+        // Detect whether the target is the file's default export so the
+        // default-import / `default`-aliased-named-import branches below also
+        // bind to it, not just exported-name matches.
+        let target_is_default_export = self.target_is_default_export(target_file, &target_name);
+        // Snapshot the keys so we don't iterate while parse_and_bind_file
+        // potentially mutates `open_files`.
+        let other_files: Vec<String> = self
+            .open_files
+            .keys()
+            .filter(|k| Self::canonicalize_path_str(k) != target_file_canon)
+            .cloned()
+            .collect();
+
+        for other_file in other_files {
+            let Some((arena, binder, root, source_text)) = self.parse_and_bind_file(&other_file)
+            else {
+                continue;
+            };
+            let line_map = LineMap::build(&source_text);
+            let provider = CallHierarchyProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                other_file.clone(),
+                &source_text,
+            );
+
+            // Find IMPORT_DECLARATION nodes whose module specifier resolves
+            // to the target file, and collect the matching local-binding
+            // identifier positions.
+            // Collect (binding identifier NodeIndex, local name) for each
+            // matching import binding so we can ask the provider which
+            // callers reference that local within this file.
+            let mut local_bindings: Vec<(tsz_parser::NodeIndex, String)> = Vec::new();
+            // Issue #3753 follow-up: collect namespace-import bindings
+            // (`import * as ns from "./a"`). For these the import
+            // doesn't bind `target_name` directly; we scan for
+            // `<ns>.<target_name>(…)` member calls instead.
+            let mut namespace_bindings: Vec<tsz_parser::NodeIndex> = Vec::new();
+            for node in arena.nodes.iter() {
+                if node.kind != tsz_parser::syntax_kind_ext::IMPORT_DECLARATION {
+                    continue;
+                }
+                let Some(import_decl) = arena.get_import_decl(node) else {
+                    continue;
+                };
+                let Some(spec_node) = arena.get(import_decl.module_specifier) else {
+                    continue;
+                };
+                let Some(spec_lit) = arena.get_literal(spec_node) else {
+                    continue;
+                };
+                let spec_text = &spec_lit.text;
+                if !(spec_text.starts_with("./") || spec_text.starts_with("../")) {
+                    continue;
+                }
+                let importer_dir = std::path::Path::new(&other_file)
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(""));
+                let Some(resolved_path) =
+                    self.resolve_relative_module_specifier(importer_dir, spec_text)
+                else {
+                    continue;
+                };
+                let resolved_canon = Self::canonicalize_path_str(&resolved_path.to_string_lossy());
+                if resolved_canon != target_file_canon {
+                    continue;
+                }
+
+                // Found an import from target_file. Walk its named-imports
+                // / default-import / namespace-import bindings to find the
+                // local-name identifier whose exported name matches
+                // `target_name`. Capture the identifier's position so we
+                // can re-run the provider's incoming_calls there.
+                if let Some(clause_node) = arena.get(import_decl.import_clause)
+                    && clause_node.kind == tsz_parser::syntax_kind_ext::IMPORT_CLAUSE
+                {
+                    let clause = arena.get_import_clause(clause_node);
+                    if let Some(clause) = clause {
+                        // Default binding (`import target from "./a"`):
+                        // fires when the user asked for incoming calls on a
+                        // symbol literally named "default", or when the
+                        // resolved target is the file's default export — both
+                        // forms are reachable from any default-import binding.
+                        if !clause.name.is_none()
+                            && (target_name == "default" || target_is_default_export)
+                            && let Some(name_node) = arena.get(clause.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                        {
+                            local_bindings.push((clause.name, ident.escaped_text.clone()));
+                        }
+                        // Namespace import (`import * as ns from "./a"`):
+                        // record the local namespace identifier so the
+                        // caller scan can match `<ns>.<target_name>()`
+                        // member calls. NamespaceImport reuses
+                        // `NamedImportsData` storage with the local name
+                        // in the `name` field and an empty elements list.
+                        if !clause.named_bindings.is_none()
+                            && let Some(nb_node) = arena.get(clause.named_bindings)
+                            && nb_node.kind == tsz_parser::syntax_kind_ext::NAMESPACE_IMPORT
+                            && let Some(ns_import) = arena.get_named_imports(nb_node)
+                            && !ns_import.name.is_none()
+                            && let Some(name_node) = arena.get(ns_import.name)
+                            && arena.get_identifier(name_node).is_some()
+                        {
+                            namespace_bindings.push(ns_import.name);
+                        }
+                        // Named bindings — walk the named_bindings child for
+                        // `NamedImports` (`import { foo } from "./a"`).
+                        if !clause.named_bindings.is_none()
+                            && let Some(nb_node) = arena.get(clause.named_bindings)
+                            && nb_node.kind == tsz_parser::syntax_kind_ext::NAMED_IMPORTS
+                            && let Some(named) = arena.get_named_imports(nb_node)
+                        {
+                            {
+                                for &spec_idx in &named.elements.nodes {
+                                    let Some(specifier_node) = arena.get(spec_idx) else {
+                                        continue;
+                                    };
+                                    let Some(specifier) = arena.get_specifier(specifier_node)
+                                    else {
+                                        continue;
+                                    };
+                                    // Matched exported name (property_name when aliased,
+                                    // otherwise the binding name).
+                                    let exported = if !specifier.property_name.is_none()
+                                        && let Some(prop_node) = arena.get(specifier.property_name)
+                                        && let Some(ident) = arena.get_identifier(prop_node)
+                                    {
+                                        ident.escaped_text.clone()
+                                    } else if let Some(name_node) = arena.get(specifier.name)
+                                        && let Some(ident) = arena.get_identifier(name_node)
+                                    {
+                                        ident.escaped_text.clone()
+                                    } else {
+                                        continue;
+                                    };
+                                    let exported_matches = exported == target_name
+                                        || (target_is_default_export && exported == "default");
+                                    if !exported_matches {
+                                        continue;
+                                    }
+                                    let Some(name_node) = arena.get(specifier.name) else {
+                                        continue;
+                                    };
+                                    let local = arena
+                                        .get_identifier(name_node)
+                                        .map(|i| i.escaped_text.clone())
+                                        .unwrap_or_else(|| target_name.clone());
+                                    local_bindings.push((specifier.name, local));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let _ = root;
+            for (decl_idx, local_name) in local_bindings {
+                let calls = provider.incoming_calls_for_decl_in_file(decl_idx, &local_name);
+                for call in calls {
+                    results.push(call);
+                }
+            }
+            for ns_decl_idx in namespace_bindings {
+                let calls = provider.incoming_calls_for_namespace_member(ns_decl_idx, &target_name);
+                for call in calls {
+                    results.push(call);
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Best-effort canonical form for path comparison: prefer
+    /// `std::fs::canonicalize`, fall back to the raw normalized string.
+    fn canonicalize_path_str(path: &str) -> String {
+        let p = std::path::Path::new(path);
+        if let Ok(canon) = std::fs::canonicalize(p) {
+            return canon.to_string_lossy().into_owned();
+        }
+        Self::normalize_path(p).to_string_lossy().into_owned()
+    }
+
+    /// Strip `.` segments and resolve `..` segments from a path while
+    /// preserving the root. Used to normalize the result of
+    /// `Path::join("/foo", "./bar")` (which yields `/foo/./bar`) into the
+    /// canonical `/foo/bar` so it matches `open_files` keys and `exists()`.
+    fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+        use std::path::Component;
+        let mut out = std::path::PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !out.pop() {
+                        out.push("..");
+                    }
+                }
+                other => out.push(other.as_os_str()),
+            }
+        }
+        if out.as_os_str().is_empty() {
+            out.push(".");
+        }
+        out
+    }
+
+    /// Resolve a relative module specifier (e.g. `"./a"`, `"../foo/bar"`)
+    /// against the importing file's directory. Tries `.ts`, `.tsx`,
+    /// `.d.ts`, `.js`, `.jsx`, `.mts`, `.cts`, then bare path. Returns the
+    /// first candidate that exists on disk or matches a key in the
+    /// `open_files` map (so unsaved buffers count for resolution).
+    fn resolve_relative_module_specifier(
+        &self,
+        importer_dir: &std::path::Path,
+        specifier: &str,
+    ) -> Option<std::path::PathBuf> {
+        let base = Self::normalize_path(&importer_dir.join(specifier));
+        const EXTS: &[&str] = &["ts", "tsx", "d.ts", "js", "jsx", "mts", "cts", "mjs", "cjs"];
+        let exists_anywhere = |p: &std::path::Path| -> bool {
+            if p.exists() {
+                return true;
+            }
+            let key = p.to_string_lossy().into_owned();
+            self.open_files.contains_key(&key)
+        };
+        if base.extension().is_some() && exists_anywhere(&base) {
+            return Some(base);
+        }
+        for ext in EXTS {
+            let candidate = base.with_extension(ext);
+            if exists_anywhere(&candidate) {
+                return Some(candidate);
+            }
+        }
+        if base.is_dir() {
+            for ext in EXTS {
+                let candidate = base.join(format!("index.{ext}"));
+                if exists_anywhere(&candidate) {
+                    return Some(candidate);
+                }
+            }
+        }
+        Some(base)
+    }
+
     pub(crate) fn handle_call_hierarchy(
         &mut self,
         seq: u64,
@@ -1656,7 +3023,7 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
-                CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
+                CallHierarchyProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
 
             let is_incoming = request.command == "provideCallHierarchyIncomingCalls";
             // TypeScript treats absolute position 0 as a source-file call hierarchy query.
@@ -1678,6 +3045,28 @@ impl Server {
                     calls = provider.incoming_calls(root, *probe);
                     if !calls.is_empty() {
                         break;
+                    }
+                }
+
+                // Issue #3753: scan the other open files for cross-file
+                // callers that reach this target via an `import` binding.
+                // tsc reports those as incoming calls from the importing
+                // file; tsz only saw within-file callers before.
+                let prepared_target = positions
+                    .iter()
+                    .find_map(|probe| provider.prepare(root, *probe));
+                if let Some(target_item) = prepared_target {
+                    let cross_calls = self.collect_cross_file_incoming_calls(&file, &target_item);
+                    for call in cross_calls {
+                        // Avoid duplicates if the caller's local resolution already
+                        // produced an entry pointing at the same span.
+                        let already_present = calls.iter().any(|existing| {
+                            existing.from.uri == call.from.uri
+                                && existing.from.selection_range == call.from.selection_range
+                        });
+                        if !already_present {
+                            calls.push(call);
+                        }
                     }
                 }
                 let body: Vec<serde_json::Value> = calls
@@ -1735,6 +3124,28 @@ impl Server {
                         }
                     }
                 }
+                // Issue #3753: when an outgoing callee resolves to an `import`
+                // binding, follow it across to the imported module's source
+                // file and replace `to` with the actual export's location.
+                // tsc points at the exported declaration, not at the
+                // local import binding.
+                let mut resolved_calls: Vec<tsz_lsp::CallHierarchyOutgoingCall> =
+                    Vec::with_capacity(calls.len());
+                for call in calls {
+                    if let Some(import_req) = call.import_resolution.clone()
+                        && let Some(resolved_to) =
+                            self.resolve_import_call_hierarchy_target(&file, &import_req)
+                    {
+                        resolved_calls.push(CallHierarchyOutgoingCall {
+                            to: resolved_to,
+                            from_ranges: call.from_ranges,
+                            import_resolution: None,
+                        });
+                    } else {
+                        resolved_calls.push(call);
+                    }
+                }
+                let calls = resolved_calls;
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {
@@ -1820,56 +3231,60 @@ impl Server {
                 _ => &[file_ext],
             };
 
-            // Collect candidate files from open files and project files
-            let mut files: Vec<String> = Vec::new();
-            for open_path in self.open_files.keys() {
-                if open_path == file {
-                    continue;
+            let push_candidate = |files: &mut Vec<String>,
+                                  candidate: &str,
+                                  compatible_exts: &[&str]| {
+                if candidate == file || files.iter().any(|p| p == candidate) {
+                    return;
                 }
-                // Skip declaration files and lib files
-                if open_path.ends_with(".d.ts")
-                    || open_path.ends_with(".d.mts")
-                    || open_path.ends_with(".d.cts")
+                if candidate.ends_with(".d.ts")
+                    || candidate.ends_with(".d.mts")
+                    || candidate.ends_with(".d.cts")
                 {
-                    continue;
+                    return;
                 }
-                if let Some(ext) = std::path::Path::new(open_path.as_str())
+                if candidate.contains("/node_modules/") || candidate.contains("\\node_modules\\") {
+                    return;
+                }
+                if let Some(ext) = std::path::Path::new(candidate)
                     .extension()
                     .and_then(|e| e.to_str())
                     && compatible_exts.contains(&ext)
                 {
-                    files.push(open_path.clone());
+                    files.push(candidate.to_string());
+                }
+            };
+
+            // Collect candidate files from open files, the configured tsconfig
+            // project (issue #3798), and external project lists.
+            let mut files: Vec<String> = Vec::new();
+            for open_path in self.open_files.keys() {
+                push_candidate(&mut files, open_path, compatible_exts);
+            }
+            // Issue #3798: include files from the owning tsconfig project, not
+            // just open files. tsc's language service ranges over the whole
+            // project file set when ranking move-to-file targets.
+            if let Some(project) = self.compile_on_save_project(file) {
+                for pf in &project.file_names {
+                    push_candidate(&mut files, pf, compatible_exts);
                 }
             }
-
-            // Also check external project files
             for project_files in self.external_project_files.values() {
                 for pf in project_files {
-                    if pf == file || files.contains(pf) {
-                        continue;
-                    }
-                    if pf.ends_with(".d.ts") || pf.ends_with(".d.mts") || pf.ends_with(".d.cts") {
-                        continue;
-                    }
-                    // Skip node_modules
-                    if pf.contains("/node_modules/") || pf.contains("\\node_modules\\") {
-                        continue;
-                    }
-                    if let Some(ext) = std::path::Path::new(pf.as_str())
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        && compatible_exts.contains(&ext)
-                    {
-                        files.push(pf.clone());
-                    }
+                    push_candidate(&mut files, pf, compatible_exts);
                 }
             }
 
             files.sort();
 
-            // Suggest a new filename based on the source file's directory
+            // Issue #3798: derive the suggested new-file name from the
+            // declaration's identifier in the requested range, falling back
+            // to "newFile" when no identifier is found. tsc names the
+            // suggestion after the moved symbol (e.g. "moveMe.ts").
             let parent = file_path.parent().unwrap_or(std::path::Path::new(""));
-            let new_file_name = parent.join(format!("newFile.{file_ext}"));
+            let symbol_stub = Self::move_to_file_symbol_name(self, request)
+                .unwrap_or_else(|| "newFile".to_string());
+            let new_file_name = parent.join(format!("{symbol_stub}.{file_ext}"));
 
             Some(serde_json::json!({
                 "newFileName": new_file_name.to_string_lossy(),
@@ -1884,6 +3299,59 @@ impl Server {
         )
     }
 
+    /// Extract the leading declaration identifier inside the request's
+    /// range. Used by `move-to-file` suggestions to name the new file
+    /// after the moved symbol (issue #3798). Falls back to None when no
+    /// matching declaration is found in the source slice.
+    fn move_to_file_symbol_name(&self, request: &TsServerRequest) -> Option<String> {
+        let file = request.arguments.get("file")?.as_str()?;
+        let source_text = self.open_files.get(file)?;
+        let line_map = LineMap::build(source_text);
+        let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
+        let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
+        let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
+        let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
+        let start_pos = Self::tsserver_to_lsp_position(start_line, start_offset);
+        let end_pos = Self::tsserver_to_lsp_position(end_line, end_offset);
+        let start_byte = line_map.position_to_offset(start_pos, source_text)? as usize;
+        let end_byte = line_map.position_to_offset(end_pos, source_text)? as usize;
+        let slice = source_text.get(start_byte..end_byte.min(source_text.len()))?;
+        // Look for the leading exported declaration's name. The text-search
+        // approximation matches tsc's typical move-to-file behavior for the
+        // common cases (function/class/const/let/var/interface/type/enum).
+        let after_export = slice
+            .trim_start()
+            .strip_prefix("export ")
+            .map_or(slice.trim_start(), str::trim_start);
+        for keyword in [
+            "function ",
+            "class ",
+            "interface ",
+            "enum ",
+            "type ",
+            "const ",
+            "let ",
+            "var ",
+            "namespace ",
+            "module ",
+            "abstract class ",
+            "default function ",
+            "default class ",
+        ] {
+            if let Some(rest) = after_export.strip_prefix(keyword) {
+                let name: String = rest
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                    .collect();
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+        None
+    }
+
     /// `preparePasteEdits` — checks whether paste-with-imports is available.
     ///
     /// Returns `true` if the pasted content comes from a known source file
@@ -1894,12 +3362,29 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let result = (|| -> Option<bool> {
-            // If copiedFromFile is provided and we know that file, we can offer paste edits
+            if let Some(copied_text_span) = request
+                .arguments
+                .get("copiedTextSpan")
+                .and_then(|value| value.as_array())
+            {
+                let file = request
+                    .arguments
+                    .get("file")
+                    .and_then(|value| value.as_str())?;
+                let has_source =
+                    self.open_files.contains_key(file) || std::path::Path::new(file).exists();
+                let has_non_empty_span = copied_text_span.iter().any(|span| {
+                    span.get("length")
+                        .and_then(|value| value.as_u64())
+                        .is_some_and(|length| length > 0)
+                });
+                return Some(has_source && has_non_empty_span);
+            }
+
             let copied_from = request
                 .arguments
                 .get("copiedFromFile")
                 .and_then(|v| v.as_str())?;
-            // Check if we have the source file open or can read it
             if self.open_files.contains_key(copied_from)
                 || std::path::Path::new(copied_from).exists()
             {
@@ -1930,8 +3415,18 @@ impl Server {
                 .arguments
                 .get("pastedText")
                 .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|v| v.as_str())?;
+                .and_then(|arr| {
+                    let texts = arr
+                        .iter()
+                        .filter_map(|value| value.as_str())
+                        .collect::<Vec<_>>();
+                    (!texts.is_empty()).then_some(texts)
+                })?;
+            let pasted_text_joined = pasted_text.join("\n");
+            let paste_locations = request
+                .arguments
+                .get("pasteLocations")
+                .and_then(|value| value.as_array());
 
             let copied_from = request
                 .arguments
@@ -1996,7 +3491,7 @@ impl Server {
             let mut names_to_import: Vec<String> = Vec::new();
             for export_name in &source_exports {
                 // Check if the export name appears in pasted code
-                if !pasted_text.contains(export_name.as_str()) {
+                if !pasted_text_joined.contains(export_name.as_str()) {
                     continue;
                 }
                 // Check if the target already imports/declares it
@@ -2026,17 +3521,11 @@ impl Server {
             names_to_import.dedup();
 
             // Compute relative import path from target to source
-            let import_path = Self::compute_relative_import(
-                std::path::Path::new(target_file),
-                std::path::Path::new(copied_from),
-            );
-
-            // Build import statement
-            let import_text = format!(
-                "import {{ {} }} from \"{}\";\n",
-                names_to_import.join(", "),
-                import_path
-            );
+            let target_dir = std::path::Path::new(target_file)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""));
+            let import_path =
+                Self::compute_relative_import(target_dir, std::path::Path::new(copied_from));
 
             // Find insertion point: after last import line, or at top of file
             let mut insert_line = 0u32;
@@ -2047,18 +3536,55 @@ impl Server {
                 }
             }
 
-            let text_change = serde_json::json!({
-                "start": { "line": insert_line + 1, "offset": 1 },
-                "end": { "line": insert_line + 1, "offset": 1 },
+            // Build import statement
+            let import_suffix = if insert_line == 0 { "\n\n" } else { "\n" };
+            let import_text = format!(
+                "import {{ {} }} from \"{}\";{}",
+                names_to_import.join(", "),
+                import_path,
+                import_suffix
+            );
+            let line_map = LineMap::build(&target_content);
+            let import_offset = line_map.position_to_offset(
+                Position {
+                    line: insert_line,
+                    character: 0,
+                },
+                &target_content,
+            )?;
+            let mut text_changes = vec![serde_json::json!({
+                "span": { "start": import_offset, "length": 0 },
                 "newText": import_text
-            });
+            })];
+
+            if let Some(paste_locations) = paste_locations {
+                for (index, location) in paste_locations.iter().enumerate() {
+                    let start = location.get("start")?;
+                    let start_line = start.get("line")?.as_u64()? as u32;
+                    let start_offset = start.get("offset")?.as_u64()? as u32;
+                    let start_pos = Position {
+                        line: start_line.saturating_sub(1),
+                        character: start_offset.saturating_sub(1),
+                    };
+                    let start_offset = line_map.position_to_offset(start_pos, &target_content)?;
+                    let new_text = pasted_text
+                        .get(index)
+                        .or_else(|| pasted_text.first())
+                        .copied()
+                        .unwrap_or("");
+                    text_changes.push(serde_json::json!({
+                        "span": { "start": start_offset, "length": 0 },
+                        "newText": new_text
+                    }));
+                }
+            }
 
             Some(serde_json::json!({
                 "edits": [{
                     "fileName": target_file,
-                    "textChanges": [text_change]
+                    "textChanges": text_changes
                 }],
-                "fixId": "paste"
+                "fixId": "providePostPasteEdits"
             }))
         })();
 

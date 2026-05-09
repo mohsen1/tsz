@@ -22,7 +22,26 @@ use tsz_solver::{
     TypePredicate, TypePredicateTarget, Visibility,
 };
 impl<'a> CheckerState<'a> {
-    pub(in crate::jsdoc::resolution) fn jsdoc_enum_annotation_type_for_symbol_decl(
+    pub(crate) fn jsdoc_enum_annotation_type_for_symbol_decl(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        decl: NodeIndex,
+    ) -> Option<TypeId> {
+        // `/** @enum {E} */ const E = ...` recurses through name resolution
+        // back into this function for the same symbol. Without this guard the
+        // resolver overflows the stack instead of bottoming out (#3767). The
+        // cycle is broken by returning `None` on re-entry; `name_resolution`
+        // then falls through to the variable's intrinsic value type and the
+        // surrounding type-alias self-reference check emits TS2456.
+        if !self.ctx.jsdoc_enum_resolution_set.insert(sym_id) {
+            return None;
+        }
+        let result = self.jsdoc_enum_annotation_type_for_symbol_decl_inner(sym_id, decl);
+        self.ctx.jsdoc_enum_resolution_set.remove(&sym_id);
+        result
+    }
+
+    fn jsdoc_enum_annotation_type_for_symbol_decl_inner(
         &mut self,
         sym_id: tsz_binder::SymbolId,
         decl: NodeIndex,
@@ -81,9 +100,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let type_expr = Self::extract_jsdoc_enum_type_expression(&jsdoc)?.trim();
+        self.jsdoc_enum_type_from_comment(&jsdoc, node.pos)
+    }
+
+    fn jsdoc_enum_type_from_comment(&mut self, jsdoc: &str, anchor_pos: u32) -> Option<TypeId> {
+        let type_expr = Self::extract_jsdoc_enum_type_expression(jsdoc)?.trim();
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
-        self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
+        self.ctx.jsdoc_typedef_anchor_pos.set(anchor_pos);
         let result = self.resolve_jsdoc_reference(type_expr);
         self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
         result.filter(|ty| *ty != TypeId::ERROR && *ty != TypeId::UNKNOWN)
@@ -129,10 +152,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
         allow_prototype_only_fallback: bool,
+        allow_rhs_assignment_fallback: bool,
     ) -> Option<TypeId> {
-        if let Some(ty) =
-            self.resolve_jsdoc_assigned_value_type_in_arena(name, allow_prototype_only_fallback)
-        {
+        if let Some(ty) = self.resolve_jsdoc_assigned_value_type_in_arena(
+            name,
+            allow_prototype_only_fallback,
+            allow_rhs_assignment_fallback,
+        ) {
             return Some(ty);
         }
 
@@ -170,9 +196,11 @@ impl<'a> CheckerState<'a> {
                     tsz_common::perf_counters::CheckerCreationReason::JsDocTypeConstruction,
                 );
 
-                if let Some(ty) = checker
-                    .resolve_jsdoc_assigned_value_type_in_arena(name, allow_prototype_only_fallback)
-                {
+                if let Some(ty) = checker.resolve_jsdoc_assigned_value_type_in_arena(
+                    name,
+                    allow_prototype_only_fallback,
+                    allow_rhs_assignment_fallback,
+                ) {
                     self.ctx.merge_symbol_file_targets_from(&checker.ctx);
                     return Some(ty);
                 }
@@ -186,6 +214,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
         allow_prototype_only_fallback: bool,
+        allow_rhs_assignment_fallback: bool,
     ) -> Option<TypeId> {
         let prototype_type = self.resolve_jsdoc_prototype_assignment_type(name);
 
@@ -225,6 +254,24 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
+            // `@enum` on a property assignment contributes the enum element
+            // type in JSDoc type-position lookup, but value-space reads still
+            // need the assigned object type for member access.
+            if allow_rhs_assignment_fallback
+                && let Some(stmt_idx) = self.enclosing_expression_statement(idx)
+                && let Some(jsdoc_type) = (|| {
+                    let sf = self.source_file_data_for_node(stmt_idx)?;
+                    let source_text = sf.text.to_string();
+                    let comments = sf.comments.clone();
+                    let jsdoc =
+                        self.try_jsdoc_with_ancestor_walk(stmt_idx, &comments, &source_text)?;
+                    self.jsdoc_enum_type_from_comment(&jsdoc, self.ctx.arena.get(stmt_idx)?.pos)
+                })()
+            {
+                let combined =
+                    self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
+                return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
+            }
             if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(idx) {
                 let combined =
                     self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
@@ -252,7 +299,7 @@ impl<'a> CheckerState<'a> {
                     self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type);
                 return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
             }
-            if let Some(instance_type) = right_type {
+            if allow_rhs_assignment_fallback && let Some(instance_type) = right_type {
                 let combined =
                     self.combine_jsdoc_instance_and_prototype_type(instance_type, prototype_type);
                 return Some(self.relabel_jsdoc_assigned_value_type(name, combined));
@@ -331,14 +378,21 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
-        self.resolve_jsdoc_assigned_value_type_inner(name, true)
+        self.resolve_jsdoc_assigned_value_type_inner(name, true, true)
+    }
+
+    pub(crate) fn resolve_jsdoc_declared_assigned_value_type(
+        &mut self,
+        name: &str,
+    ) -> Option<TypeId> {
+        self.resolve_jsdoc_assigned_value_type_inner(name, true, false)
     }
 
     pub(crate) fn resolve_jsdoc_assigned_value_type_for_write(
         &mut self,
         name: &str,
     ) -> Option<TypeId> {
-        self.resolve_jsdoc_assigned_value_type_inner(name, false)
+        self.resolve_jsdoc_assigned_value_type_inner(name, false, false)
     }
 
     /// Resolve an anonymous `@typedef {type}` attached to a declaration matching
@@ -607,9 +661,12 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            use crate::query_boundaries::common::instantiate_generic;
-            let instantiated =
-                instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+            let instantiated = self.instantiate_jsdoc_generic_symbol_type(
+                sym_id,
+                body_type,
+                &type_params,
+                &type_args,
+            );
             self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
             return Some(instantiated);
         }
@@ -658,8 +715,8 @@ impl<'a> CheckerState<'a> {
         // Do NOT evaluate here — the caller (jsdoc_satisfies_annotation_with_pos)
         // calls judge_evaluate, which will expand mapped types while preserving
         // Lazy(DefId) references in value positions for correct type name display.
-        use crate::query_boundaries::common::instantiate_generic;
-        let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+        let instantiated =
+            self.instantiate_jsdoc_generic_symbol_type(sym_id, body_type, &type_params, &type_args);
         // Register a display def `Name<Args>` so diagnostics format the
         // instantiated type with its original alias plus the supplied args
         // (`ClassComponent<any>`), matching tsc behavior. The typedef path
@@ -687,6 +744,31 @@ impl<'a> CheckerState<'a> {
             .join(", ");
         let display_name = format!("{base_name}<{args_display}>");
         let _ = self.ensure_jsdoc_instantiated_display_def(&display_name, instantiated);
+    }
+
+    fn instantiate_jsdoc_generic_symbol_type(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        body_type: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        type_args: &[TypeId],
+    ) -> TypeId {
+        use crate::query_boundaries::common::{
+            contains_this_type, instantiate_generic, substitute_this_type,
+        };
+
+        let mut instantiated =
+            instantiate_generic(self.ctx.types, body_type, type_params, type_args);
+        if contains_this_type(self.ctx.types, instantiated) {
+            let base_type = self.ctx.create_lazy_type_ref(sym_id);
+            let self_type = self
+                .ctx
+                .types
+                .factory()
+                .application(base_type, type_args.to_vec());
+            instantiated = substitute_this_type(self.ctx.types, instantiated, self_type);
+        }
+        instantiated
     }
     pub(in crate::jsdoc::resolution) fn parse_jsdoc_tuple_type(
         &mut self,
@@ -820,8 +902,8 @@ impl<'a> CheckerState<'a> {
             if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
                 let mut raw_name = prop_str[..colon_idx].trim();
                 let type_str = prop_str[colon_idx + 1..].trim();
-                let readonly = if let Some(rest) = raw_name.strip_prefix("readonly ") {
-                    raw_name = rest.trim();
+                let readonly = if let Some(rest) = Self::strip_jsdoc_readonly_modifier(raw_name) {
+                    raw_name = rest;
                     true
                 } else {
                     false
@@ -833,7 +915,9 @@ impl<'a> CheckerState<'a> {
                 {
                     index_sig.readonly |= readonly;
                     match index_sig.key_type {
-                        TypeId::STRING => object_shape.string_index = Some(index_sig),
+                        TypeId::STRING | TypeId::SYMBOL => {
+                            object_shape.string_index = Some(index_sig);
+                        }
                         TypeId::NUMBER => object_shape.number_index = Some(index_sig),
                         _ => {}
                     }
@@ -859,6 +943,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: (properties.len() + 1) as u32,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -883,26 +968,85 @@ impl<'a> CheckerState<'a> {
         raw_name: &str,
         type_str: &str,
     ) -> Option<IndexSignature> {
-        let (raw_name, readonly) = if let Some(rest) = raw_name.trim().strip_prefix("readonly ") {
-            (rest.trim(), true)
+        let (raw_name, readonly) = if let Some(rest) = Self::strip_jsdoc_readonly_modifier(raw_name)
+        {
+            (rest, true)
         } else {
             (raw_name.trim(), false)
         };
         let inner = raw_name.strip_prefix('[')?.strip_suffix(']')?.trim();
         let colon_idx = Self::find_top_level_char(inner, ':')?;
         let param_name = inner[..colon_idx].trim();
-        let key_type = self.resolve_jsdoc_type_str(inner[colon_idx + 1..].trim())?;
-        if key_type != TypeId::STRING && key_type != TypeId::NUMBER {
-            return None;
-        }
+        let key_type_expr = inner[colon_idx + 1..].trim();
+        let resolved_key_type = self.resolve_jsdoc_type_str(key_type_expr);
+        let key_type = match resolved_key_type {
+            Some(key_type @ (TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL)) => key_type,
+            _ => {
+                self.emit_jsdoc_index_signature_diagnostic_once(
+                    self.ctx.jsdoc_typedef_anchor_pos.get(),
+                    raw_name.len() as u32,
+                    crate::diagnostics::diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                    crate::diagnostics::diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                );
+                if resolved_key_type.is_none() && Self::is_bare_jsdoc_identifier(key_type_expr) {
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::CANNOT_FIND_NAME,
+                        &[key_type_expr],
+                    );
+                    self.emit_jsdoc_index_signature_diagnostic_once(
+                        self.ctx.jsdoc_typedef_anchor_pos.get(),
+                        key_type_expr.len() as u32,
+                        &message,
+                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                }
+                TypeId::STRING
+            }
+        };
 
-        let value_type = self.resolve_jsdoc_type_str(type_str)?;
+        let value_type = self.resolve_jsdoc_type_str(type_str).unwrap_or(TypeId::ANY);
         Some(IndexSignature {
             key_type,
             value_type,
             readonly,
             param_name: (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
         })
+    }
+
+    fn emit_jsdoc_index_signature_diagnostic_once(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+    ) {
+        let already_reported = self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == code && diag.start == start && diag.length == length);
+        if !already_reported {
+            self.error_at_position(start, length, message, code);
+        }
+    }
+
+    fn is_bare_jsdoc_identifier(expr: &str) -> bool {
+        let mut chars = expr.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_' || first == '$')
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+    }
+
+    fn strip_jsdoc_readonly_modifier(raw_name: &str) -> Option<&str> {
+        let raw_name = raw_name.trim();
+        let rest = raw_name.strip_prefix("readonly")?;
+        rest.chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+            .then(|| rest.trim())
+            .filter(|name| !name.is_empty())
     }
 
     fn parse_jsdoc_mapped_type(&mut self, type_expr: &str) -> Option<TypeId> {
@@ -940,15 +1084,16 @@ impl<'a> CheckerState<'a> {
         };
         let template_str = after_bracket.strip_prefix(':')?.trim();
 
-        let in_idx = header.find(" in ")?;
+        let in_idx = Self::find_jsdoc_mapped_in_keyword(header)?;
         let type_param_name = header[..in_idx].trim();
-        let constraint_str = header[in_idx + 4..].trim();
+        let constraint_str = header[in_idx + 2..].trim();
         if type_param_name.is_empty() || constraint_str.is_empty() || template_str.is_empty() {
             return None;
         }
 
-        let constraint = if let Some(rest) = constraint_str.strip_prefix("keyof") {
-            let operand = self.resolve_jsdoc_type_str(rest.trim())?;
+        let constraint = if let Some(operand_str) = Self::strip_jsdoc_keyof_keyword(constraint_str)
+        {
+            let operand = self.resolve_jsdoc_type_str(operand_str)?;
             self.ctx.types.factory().keyof(operand)
         } else {
             self.resolve_jsdoc_type_str(constraint_str)?
@@ -986,6 +1131,26 @@ impl<'a> CheckerState<'a> {
                 optional_modifier,
             })
         })
+    }
+
+    fn find_jsdoc_mapped_in_keyword(header: &str) -> Option<usize> {
+        for (idx, _) in header.match_indices("in") {
+            let before = header[..idx].chars().next_back();
+            let after = header[idx + 2..].chars().next();
+            if before.is_some_and(char::is_whitespace) && after.is_some_and(char::is_whitespace) {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    fn strip_jsdoc_keyof_keyword(type_expr: &str) -> Option<&str> {
+        let rest = type_expr.strip_prefix("keyof")?;
+        rest.chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+            .then(|| rest.trim())
+            .filter(|operand| !operand.is_empty())
     }
 
     pub(in crate::jsdoc::resolution) fn parse_jsdoc_conditional_type(
@@ -1222,6 +1387,7 @@ impl<'a> CheckerState<'a> {
             parent_id: None,
             declaration_order: (existing_props.len() + 1) as u32,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         })
     }
@@ -1402,6 +1568,10 @@ impl<'a> CheckerState<'a> {
         info: JsdocTypedefInfo,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let factory = self.ctx.types.factory();
+        let import_alias_body = info
+            .base_type
+            .as_deref()
+            .is_some_and(|expr| expr.trim_start().starts_with("import("));
         let mut type_param_infos = Vec::with_capacity(info.template_params.len());
         let mut scope_updates = Vec::with_capacity(info.template_params.len());
         for template in &info.template_params {
@@ -1439,7 +1609,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        result.map(|type_id| (type_id, type_param_infos))
+        if result.is_none() && import_alias_body {
+            return None;
+        }
+        Some((result.unwrap_or(TypeId::ANY), type_param_infos))
     }
 
     fn type_from_jsdoc_callback(
@@ -1547,7 +1720,15 @@ impl<'a> CheckerState<'a> {
                 TypeId::BOOLEAN
             }
         } else if let Some(ref ret_expr) = cb.return_type {
+            let ret_expr = ret_expr.trim();
             self.jsdoc_type_from_expression(ret_expr)
+                .or_else(|| {
+                    if ret_expr.starts_with('{') && ret_expr.ends_with('}') {
+                        self.parse_jsdoc_object_literal_type(ret_expr)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(TypeId::ANY)
         } else {
             TypeId::VOID
@@ -1627,6 +1808,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }

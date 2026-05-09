@@ -489,12 +489,28 @@ impl<'a> LoweringPass<'a> {
         // (type aliases, interfaces, type annotations, etc.) don't
         // cause unnecessary helper emission.
         let value_haystack = crate::import_usage::strip_type_only_content(haystack);
-        names
+        let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+            &value_haystack,
+            &self.ctx.options.external_const_enum_bindings,
+        );
+        if names
             .iter()
             .any(|name| crate::import_usage::contains_identifier_occurrence(&value_haystack, name))
-            || (self.ctx.target_es5
-                && self
-                    .async_return_type_uses_imported_promise_constructor_after_node(node, &names))
+        {
+            return true;
+        }
+        // Under `--emitDecoratorMetadata`, type annotations on decorated class
+        // members become *value* references via `__metadata("design:type", X)`.
+        // Don't elide imports whose binding appears in such an annotation.
+        if self.ctx.options.emit_decorator_metadata
+            && names.iter().any(|name| {
+                crate::import_usage::name_appears_in_decorator_metadata_type(haystack, name)
+            })
+        {
+            return true;
+        }
+        self.ctx.target_es5
+            && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(
@@ -1356,9 +1372,14 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Recurse into namespace body to detect helpers needed by nested declarations
-        // (e.g., classes with extends need __extends, async functions need __awaiter)
+        // (e.g., classes with extends need __extends, async functions need __awaiter).
+        // Save/restore `declared_names`: each namespace IIFE creates a new function
+        // scope, so names declared inside (nested namespaces, enums, etc.) must not
+        // leak out and suppress outer-scope `var` declarations of same-named siblings.
         self.namespace_depth += 1;
+        let prev_declared = std::mem::take(&mut self.declared_names);
         self.visit_module_body(module_decl.body);
+        self.declared_names = prev_declared;
         self.namespace_depth -= 1;
     }
 
@@ -1635,9 +1656,13 @@ impl<'a> LoweringPass<'a> {
             if has_spread {
                 self.transforms
                     .insert(idx, TransformDirective::ES5CallSpread { call_expr: idx });
-                // __spreadArray is only needed when spread arguments must be merged
-                // with additional segments (not for plain foo(...args)).
-                if self.call_spread_needs_spread_array(args.nodes.as_slice()) {
+                // __spreadArray is needed when spread arguments must be merged
+                // with additional segments. With downlevelIteration, even a
+                // single spread must go through __read/__spreadArray so
+                // iterable-but-not-array-like values are expanded before apply().
+                if self.call_spread_needs_spread_array(args.nodes.as_slice())
+                    || self.ctx.options.downlevel_iteration
+                {
                     self.transforms.helpers_mut().spread_array = true;
                     // When downlevelIteration is enabled, spread on iterables
                     // needs __read to convert iterator results to arrays.

@@ -7,12 +7,8 @@
 //! Regression target: `contextuallyTypedStringLiteralsInJsxAttributes02.tsx`
 //! (b4 case — `<MainButton goTo="home" extra />`).
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 const JSX_PREAMBLE: &str = r#"
 declare namespace JSX {
@@ -24,34 +20,17 @@ declare namespace JSX {
 "#;
 
 fn jsx_diagnostics(source: &str) -> Vec<(u32, u32, String)> {
-    let file_name = "test.tsx";
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let options = CheckerOptions {
-        jsx_mode: JsxMode::Preserve,
-        ..CheckerOptions::default()
-    };
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.start, d.message_text.clone()))
-        .collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.tsx",
+        CheckerOptions {
+            jsx_mode: JsxMode::Preserve,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.start, d.message_text))
+    .collect()
 }
 
 #[test]
@@ -98,4 +77,41 @@ const b4 = <MainButton goTo="home" extra />;
             "TS2769 must anchor at the `MainButton` tag (offset {tag_start}), not the `goTo` attribute (offset {go_to_pos}). Got start={start}."
         );
     }
+}
+
+#[test]
+fn sfc_overload_body_children_reject_overload_without_children_prop() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace JSX {{ interface Element {{ __jsxElementBrand: never; }} }}
+interface TestingOptionalComponent {{
+    (a: {{ y1?: string; y2?: number }}): JSX.Element;
+    (a: {{ y1?: string; y2?: number; children: JSX.Element }}): JSX.Element;
+    (a: {{ y1: boolean; y2?: number; y3: boolean }}): JSX.Element;
+}}
+declare const TestingOptional: TestingOptionalComponent;
+const e4 = <TestingOptional y1="hello" y2={{1000}}>Hi</TestingOptional>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2769: Vec<&(u32, u32, String)> = diags
+        .iter()
+        .filter(|(c, _, _)| *c == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL)
+        .collect();
+    assert_eq!(
+        ts2769.len(),
+        1,
+        "Body text should reject every SFC overload and emit one TS2769. Got: {diags:?}"
+    );
+
+    let tag_start = source
+        .rfind("<TestingOptional")
+        .expect("repro must contain `<TestingOptional`")
+        + "<".len();
+    let (_, start, _) = ts2769[0];
+    assert_eq!(
+        *start as usize, tag_start,
+        "TS2769 should anchor at the JSX tag when synthesized children participate in SFC overload resolution"
+    );
 }

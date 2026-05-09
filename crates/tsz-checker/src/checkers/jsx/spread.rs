@@ -60,6 +60,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_spread_property_types(
         &mut self,
         spread_type: TypeId,
+        spread_source_type: TypeId,
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
@@ -67,8 +68,10 @@ impl<'a> CheckerState<'a> {
         earlier_explicit_attrs: &rustc_hash::FxHashMap<String, NodeIndex>,
         has_later_spreads: bool,
         suppress_missing_props: bool,
+        suppress_unanchored_type_mismatch: bool,
         display_target: &str,
         preferred_target_display: Option<&str>,
+        merged_attrs_display: Option<&str>,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -79,6 +82,11 @@ impl<'a> CheckerState<'a> {
 
         let spread_has_type_params =
             crate::query_boundaries::common::contains_type_parameters(self.ctx.types, spread_type);
+        let spread_source_has_type_params =
+            crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                spread_source_type,
+            );
 
         // For concrete spread types, whole-type assignability is the fast path and
         // also prevents false positives from imprecise per-property extraction.
@@ -115,8 +123,10 @@ impl<'a> CheckerState<'a> {
                     })
                 })
                 .unwrap_or(false);
+                let jsx_intrinsic_dom_spread_target =
+                    self.jsx_spread_target_allows_no_common_properties(props_type, display_target);
 
-                if !has_jsx_managed_prop {
+                if !has_jsx_managed_prop && !jsx_intrinsic_dom_spread_target {
                     let source_str = self.format_type(spread_type);
                     let target_str = if display_target.is_empty() {
                         self.format_type(props_type)
@@ -171,7 +181,7 @@ impl<'a> CheckerState<'a> {
             if self.is_assignable_to(spread_type, props_type) {
                 return false;
             }
-            let spread_name = self.format_type(spread_type);
+            let spread_name = self.format_type(spread_source_type);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&spread_name, &props_display],
@@ -393,8 +403,18 @@ impl<'a> CheckerState<'a> {
             has_type_mismatch = false;
         }
 
+        if has_type_mismatch && suppress_unanchored_type_mismatch {
+            return true;
+        }
+
         if has_type_mismatch {
-            let spread_name = self.format_type(spread_type);
+            let spread_name = if spread_source_has_type_params {
+                self.format_type(spread_source_type)
+            } else {
+                merged_attrs_display
+                    .map(str::to_string)
+                    .unwrap_or_else(|| self.format_type(spread_source_type))
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&spread_name, &props_display],
@@ -469,6 +489,31 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn jsx_spread_target_allows_no_common_properties(
+        &mut self,
+        props_type: TypeId,
+        display_target: &str,
+    ) -> bool {
+        let target = if display_target.is_empty() {
+            self.format_type(props_type)
+        } else {
+            display_target.to_string()
+        };
+
+        // React DOM/SVG intrinsic element prop bags are intentionally permissive
+        // for spread attributes: tsc accepts `<div {...{ answer: 42 }} />` even
+        // though the object has no overlap with the weak `HTMLAttributes<T>`
+        // target. Keep TS2559 for ordinary component prop bags.
+        [
+            "HTMLAttributes<",
+            "AllHTMLAttributes<",
+            "SVGAttributes<",
+            "DOMAttributes<",
+        ]
+        .iter()
+        .any(|needle| target.contains(needle))
+    }
+
     /// Remove the synthetic JSX `& { children?: ... }` injection from a
     /// component props type for the TS2322 diagnostic message. tsc's
     /// `getJsxAttributesTypeFromAttributesProperty` adds `children` to a
@@ -480,10 +525,13 @@ impl<'a> CheckerState<'a> {
     /// optional `children`, and returns the remaining intersection (or the
     /// single non-children member if exactly one remains). All other types
     /// are returned unchanged.
-    fn strip_jsx_children_injection_for_display(&self, props_type: TypeId) -> TypeId {
+    pub(in crate::checkers_domain::jsx) fn strip_jsx_children_injection_for_display(
+        &self,
+        props_type: TypeId,
+    ) -> TypeId {
         // Walk through any display alias chain first — the alias usually
         // points to the original Lazy/Application that displays as the
-        // bare prop type name.  Apply the same stripping to the resolved
+        // bare prop type name. Apply the same stripping to the resolved
         // alias if the alias itself is an intersection containing a
         // children-injection member.
         let candidate = self
@@ -492,10 +540,27 @@ impl<'a> CheckerState<'a> {
             .get_display_alias(props_type)
             .filter(|&alias| alias != props_type)
             .unwrap_or(props_type);
-        self.strip_jsx_children_injection_for_display_inner(candidate)
+        let stripped = self.strip_jsx_children_injection_for_display_inner(candidate);
+        // The alias chain is only useful when stripping actually finds and
+        // removes a children-injection member. When the alias resolves to a
+        // type that has nothing to strip (e.g. the alias is a richer
+        // `LibraryManagedAttributes<C, P>` Application form recorded for
+        // formatter-recovery purposes), returning the candidate verbatim
+        // would surface that richer form to callers that compare the result
+        // against `props_type` to decide whether to switch displays. Fall
+        // back to the original `props_type` in that case so callers see "no
+        // change", which is the truthful answer.
+        if stripped == candidate {
+            props_type
+        } else {
+            stripped
+        }
     }
 
-    fn strip_jsx_children_injection_for_display_inner(&self, props_type: TypeId) -> TypeId {
+    pub(in crate::checkers_domain::jsx) fn strip_jsx_children_injection_for_display_inner(
+        &self,
+        props_type: TypeId,
+    ) -> TypeId {
         use crate::query_boundaries::common;
         // Handle the intersection case (e.g. raw `PoisonedProp & {children?}`).
         if let Some(members) = common::intersection_members(self.ctx.types, props_type) {
@@ -538,7 +603,10 @@ impl<'a> CheckerState<'a> {
     /// JSX-injected member (single optional `children` property, no other own
     /// state). Defensive: rejects any shape with extra properties or index
     /// signatures so user-authored types named `children` are unaffected.
-    fn intersection_member_is_jsx_children_injection(&self, member: TypeId) -> bool {
+    pub(in crate::checkers_domain::jsx) fn intersection_member_is_jsx_children_injection(
+        &self,
+        member: TypeId,
+    ) -> bool {
         use crate::query_boundaries::common;
         let Some(shape) = common::object_shape_for_type(self.ctx.types, member) else {
             return false;

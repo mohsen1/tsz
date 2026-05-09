@@ -98,7 +98,7 @@ impl Scope {
 }
 
 /// Scope context - tracks scope chain and hoisting (used by `BinderState`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScopeContext {
     /// The symbol table for this scope
     pub locals: SymbolTable,

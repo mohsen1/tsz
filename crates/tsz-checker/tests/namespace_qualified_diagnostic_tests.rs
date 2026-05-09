@@ -17,6 +17,50 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn typeof_missing_namespace_value_member_reports_ts2339() {
+    let source = r#"
+namespace Ns {
+    export const value = 1;
+}
+
+type T = typeof Ns.Missing;
+let useIt: T;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'Missing' does not exist on type 'typeof Ns'."
+        }),
+        "`typeof Ns.Missing` should use value-space TS2339, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2694),
+        "`typeof Ns.Missing` should not report type-space TS2694, got: {diags:?}"
+    );
+}
+
+#[test]
+fn plain_missing_namespace_type_member_still_reports_ts2694() {
+    let source = r#"
+namespace Ns {
+    export const value = 1;
+}
+
+type T = Ns.Missing;
+let useIt: T;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2694 && message == "Namespace 'Ns' has no exported member 'Missing'."
+        }),
+        "`Ns.Missing` in type space should still report TS2694, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2741_qualifies_both_sides_when_classes_collide_across_namespaces() {
     // Two namespaces each declare a class named `A` with different required
     // properties. The assignment mentions both via qualified names, and the
@@ -72,6 +116,29 @@ var w: M.A = new Other();
     assert!(
         !msg.contains("'M.A'"),
         "target should not be qualified when there is no collision; got: {msg:?}"
+    );
+}
+
+#[test]
+fn ts2322_tuple_target_qualifies_same_named_namespace_aliases() {
+    let source = r#"
+namespace Foo {
+    export type Yep = { type: "foo.yep" };
+}
+namespace Bar {
+    export type Yep = { type: "bar.yep" };
+}
+
+const y = [{ type: "a" }, { type: "b" }];
+const val: [Foo.Yep, Bar.Yep] = y;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(ts2322.len(), 1, "expected one TS2322, got: {diags:?}");
+    let msg = &ts2322[0].1;
+    assert!(
+        msg.contains("[Foo.Yep, Bar.Yep]"),
+        "tuple target should qualify same-named namespace aliases, got: {msg}"
     );
 }
 

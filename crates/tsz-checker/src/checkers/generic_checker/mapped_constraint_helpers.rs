@@ -46,6 +46,35 @@ impl<'a> CheckerState<'a> {
             .any(|child_idx| self.type_node_contains_scoped_type_parameter(child_idx))
     }
 
+    /// Substitute every in-scope type parameter in `type_id` with its declared
+    /// constraint (or `unknown` when the parameter is unconstrained). The
+    /// result is used to give a concrete instantiation of a generic-reference
+    /// type argument so that `is_assignable_to(concrete, target_constraint)`
+    /// can be evaluated without ambiguity. (#3063)
+    pub(super) fn scoped_type_param_substituted_form(&self, type_id: TypeId) -> TypeId {
+        if self.ctx.type_parameter_scope.is_empty() {
+            return type_id;
+        }
+        let db = self.ctx.types.as_type_database();
+        let mut subst = tsz_solver::TypeSubstitution::new();
+        for (name, &scope_type_id) in &self.ctx.type_parameter_scope {
+            let bound =
+                crate::query_boundaries::common::type_parameter_constraint(db, scope_type_id)
+                    .unwrap_or(TypeId::UNKNOWN);
+            let bound = if bound == scope_type_id {
+                TypeId::UNKNOWN
+            } else {
+                bound
+            };
+            let atom = self.ctx.types.intern_string(name);
+            subst.insert(atom, bound);
+        }
+        if subst.is_empty() {
+            return type_id;
+        }
+        crate::query_boundaries::common::instantiate_type(self.ctx.types, type_id, &subst)
+    }
+
     pub(super) fn required_mapped_constraint_source_is_required_and_arg_satisfies(
         &mut self,
         type_arg: TypeId,
@@ -96,7 +125,17 @@ impl<'a> CheckerState<'a> {
         }
         let sym_id = self.ctx.def_to_symbol_id(base_def)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        (symbol.escaped_name == "Required").then_some(args[0])
+        // The shortcut treats `Required<Source>` as the lib's mapped utility
+        // and skips the constraint check by comparing the type argument
+        // against the source itself. A *user-defined* `type Required<T> = …`
+        // with a different shape must NOT trigger the shortcut, otherwise
+        // the constraint check is silently skipped (#3061). Gate on the
+        // symbol coming from a lib file so user redeclarations fall through
+        // to the regular constraint check.
+        if symbol.escaped_name != "Required" || !self.ctx.symbol_is_from_lib(sym_id) {
+            return None;
+        }
+        Some(args[0])
     }
 
     fn substitute_required_mapped_source(

@@ -9,7 +9,6 @@
 //! See docs/conformance-*.md for full context.
 
 pub(crate) use rustc_hash::{FxHashMap, FxHashSet};
-pub(crate) use std::path::Path;
 pub(crate) use std::sync::Arc;
 pub(crate) use tsz_binder::BinderState;
 pub(crate) use tsz_binder::lib_loader::LibFile;
@@ -94,6 +93,7 @@ pub(crate) fn compile_two_files_get_diagnostics_with_options(
         "b.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_all_arenas(all_arenas);
     checker.ctx.set_all_binders(all_binders);
@@ -172,6 +172,7 @@ pub(crate) fn compile_named_files_get_diagnostics_with_options_and_import_report
         file_names[entry_idx].clone(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
@@ -249,6 +250,7 @@ pub(crate) fn compile_named_files_get_diagnostics_with_lib_and_options(
         file_names[entry_idx].clone(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
@@ -313,6 +315,7 @@ pub(crate) fn compile_and_get_diagnostics_with_merged_lib_contexts_and_shared_ca
         "test.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
@@ -347,6 +350,7 @@ pub(crate) fn compile_imports_and_get_diagnostics(
         "test.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
     checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
@@ -396,6 +400,7 @@ pub(crate) fn compile_and_get_raw_diagnostics_named(
         file_name.to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
     checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
@@ -416,48 +421,7 @@ pub(crate) fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Op
 }
 
 pub(crate) fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
-        "es5.d.ts",
-        "es2015.d.ts",
-        "es2015.core.d.ts",
-        "es2015.collection.d.ts",
-        "es2015.iterable.d.ts",
-        "es2015.generator.d.ts",
-        "es2015.promise.d.ts",
-        "es2015.proxy.d.ts",
-        "es2015.reflect.d.ts",
-        "es2015.symbol.d.ts",
-        "es2015.symbol.wellknown.d.ts",
-        "dom.d.ts",
-        "dom.generated.d.ts",
-        "dom.iterable.d.ts",
-        "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                let lib_file = LibFile::from_source(file_name.to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-                break;
-            }
-        }
-    }
-    lib_files
+    tsz_checker::test_utils::load_default_lib_files()
 }
 
 pub(crate) fn lib_files_available() -> bool {
@@ -540,6 +504,7 @@ pub(crate) fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
         file_name.to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
@@ -589,6 +554,7 @@ pub(crate) fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         "test.ts".to_string(),
         options,
     );
+    checker.enable_source_file_test_pragmas();
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
@@ -860,9 +826,9 @@ interface IDirectivePrePost<TScope> {
     post?: IDirectiveLinkFn<TScope>;
 }
 
-export let blah: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = (x: string) => {}
+export let blah: ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number> = (x: string) => {}
 
-export let ctor: IDirectiveLinkFn<number> | ConstructableA | IDirectivePrePost<number> = class {
+export let ctor: ConstructableA | IDirectiveLinkFn<number> | IDirectivePrePost<number> = class {
     someUnaccountedProp: any;
 }
 "#;
@@ -1034,6 +1000,97 @@ class Test {
 }
 
 #[test]
+fn test_this_in_array_find_callback_emits_ts2683() {
+    let source = r#"
+class Test {
+    data: number[] = [1, 2, 3];
+
+    finderRaw() {
+        this.data.find(function (d) {
+            return d === this.data.length;
+        });
+    }
+
+    finder() {
+        this.data.find(
+        /** @this {Test} */
+        function (d) {
+            return d === this.data.length;
+        }, this);
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        source,
+        CheckerOptions {
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2683_spans: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2683)
+        .map(|diag| &source[diag.start as usize..(diag.start + diag.length) as usize])
+        .collect();
+    assert_eq!(
+        ts2683_spans,
+        vec!["this", "this"],
+        "Array.find callbacks should emit TS2683 at each callback `this`; got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_this_in_js_array_find_callback_emits_ts2683_without_this_jsdoc() {
+    let source = r#"
+class Test {
+    constructor() {
+        /** @type {number[]} */
+        this.data = [1, 2, 3];
+    }
+
+    finderRaw() {
+        this.data.find(function (d) {
+            return d === this.data.length;
+        });
+    }
+
+    finder() {
+        this.data.find(
+        /** @this {Test} */
+        function (d) {
+            return d === this.data.length;
+        }, this);
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "a.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_this: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2683_spans: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2683)
+        .map(|diag| &source[diag.start as usize..(diag.start + diag.length) as usize])
+        .collect();
+    assert_eq!(
+        ts2683_spans,
+        vec!["this"],
+        "JS Array.find should emit TS2683 only for the callback without @this; got diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_iife_annotated_inner_function_still_emits_ts2683() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "index.js",
@@ -1179,6 +1236,8 @@ fn test_variance_annotations_require_direct_supported_type_alias_bodies() {
         r#"
 type NumericConstraint<Value extends number> = Value;
 type VarianceConstrainedNumber<in out Value extends number> = NumericConstraint<Value>;
+type T12<out T, out K extends keyof T> = T[K];
+type T21<in out in T> = T;
 
 type VarianceFunction<in out Value> = (value: Value) => Value;
 "#,
@@ -1191,8 +1250,15 @@ type VarianceFunction<in out Value> = (value: Value) => Value;
 
     let ts2637_count = diagnostics.iter().filter(|(code, _)| *code == 2637).count();
     assert_eq!(
-        ts2637_count, 1,
-        "Expected exactly one TS2637 for unsupported variance alias bodies, got: {diagnostics:?}"
+        ts2637_count, 4,
+        "Expected one TS2637 per annotated parameter on unsupported variance alias bodies, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2636
+                && (message.contains("T12<") || message.contains("VarianceConstrainedNumber<"))
+        }),
+        "Unsupported alias bodies should not also run TS2636 variance validation, got: {diagnostics:?}"
     );
 }
 
@@ -1230,15 +1296,17 @@ vs1 = vs12;
         .collect();
 
     assert!(
-        ts2322
-            .iter()
-            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
-        "Expected direct alias assignment to display evaluated literal union, got: {diagnostics:?}"
+        ts2322.iter().any(|message| message.contains(
+            "Type 'NumericConstraint<1 | 2>' is not assignable to type 'NumericConstraint<1>'."
+        )),
+        "Expected direct alias assignment to preserve the alias surface, got: {diagnostics:?}"
     );
     assert!(
-        ts2322.iter().any(|message| message
-            .contains("Type 'VarianceShape<2 | 1>' is not assignable to type 'VarianceShape<1>'.")),
-        "Expected object alias assignment to preserve alias with tsc numeric union order, got: {diagnostics:?}"
+        ts2322
+            .iter()
+            .any(|message| message
+                .contains("Type 'Shape<1 | 2>' is not assignable to type 'Shape<1>'.")),
+        "Expected object alias assignment to preserve the object alias surface, got: {diagnostics:?}"
     );
 }
 

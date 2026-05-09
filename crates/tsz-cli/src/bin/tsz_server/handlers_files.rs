@@ -49,6 +49,38 @@ impl Server {
         }
     }
 
+    pub(crate) fn handle_save_to(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let success = (|| -> Option<()> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let tmpfile = request.arguments.get("tmpfile")?.as_str()?;
+            let content = self
+                .open_files
+                .get(file)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(file).ok())?;
+            if let Some(parent) = std::path::Path::new(tmpfile).parent() {
+                std::fs::create_dir_all(parent).ok()?;
+            }
+            std::fs::write(tmpfile, content).ok()?;
+            Some(())
+        })()
+        .is_some();
+
+        TsServerResponse {
+            seq,
+            msg_type: "response".to_string(),
+            command: request.command.clone(),
+            request_seq: request.seq,
+            success,
+            message: None,
+            body: None,
+        }
+    }
+
     pub(crate) fn handle_change(
         &mut self,
         seq: u64,
@@ -127,19 +159,33 @@ impl Server {
     /// TypeScript's internal string representation). Characters outside the BMP
     /// (U+10000 and above) occupy 2 UTF-16 code units but are a single Rust
     /// `char`, so we must account for surrogate pairs when advancing.
+    ///
+    /// Line breaks follow tsserver semantics: `\n`, `\r`, and `\r\n` each count
+    /// as a single line terminator.
     pub(crate) fn line_offset_to_byte(content: &str, line: u32, offset: u32) -> usize {
         let target_line = (line as usize).saturating_sub(1);
         let target_utf16 = (offset as usize).saturating_sub(1);
         let mut current_line = 0usize;
         let mut line_start = 0usize;
         if target_line > 0 {
-            for (i, ch) in content.char_indices() {
-                if ch == '\n' {
-                    current_line += 1;
-                    if current_line == target_line {
-                        line_start = i + 1;
-                        break;
+            let mut chars = content.char_indices().peekable();
+            while let Some((i, ch)) = chars.next() {
+                let line_break_end = if ch == '\r' {
+                    if matches!(chars.peek(), Some((_, '\n'))) {
+                        let (j, _) = chars.next().unwrap();
+                        j + 1
+                    } else {
+                        i + 1
                     }
+                } else if ch == '\n' {
+                    i + 1
+                } else {
+                    continue;
+                };
+                current_line += 1;
+                if current_line == target_line {
+                    line_start = line_break_end;
+                    break;
                 }
             }
             if current_line < target_line {
@@ -150,7 +196,7 @@ impl Server {
         let mut utf16_consumed = 0usize;
         while utf16_consumed < target_utf16 {
             match content[byte_pos..].chars().next() {
-                Some(c) if c != '\n' => {
+                Some(c) if c != '\n' && c != '\r' => {
                     byte_pos += c.len_utf8();
                     utf16_consumed += c.len_utf16();
                 }
@@ -160,12 +206,35 @@ impl Server {
         byte_pos.min(content.len())
     }
 
-    pub(crate) fn handle_update_open(
+    /// Apply byte-offset edits from `applyChangedToOpenFiles` to the open-file
+    /// snapshot. The newer command uses `{span: {start, length}, newText}` per
+    /// edit (UTF-16 byte offsets) instead of `updateOpen.changedFiles`'s
+    /// line/offset shape. Mirrors tsserver's `applyChangedToOpenFiles`.
+    /// Fixes #3766.
+    pub(crate) fn handle_apply_changed_to_open_files(
         &mut self,
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // Process opened, changed, and closed files
+        if let Some(changed) = request
+            .arguments
+            .get("changedFiles")
+            .and_then(|v| v.as_array())
+        {
+            for entry in changed {
+                let Some(file) = entry.get("fileName").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(changes) = entry.get("changes").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                let Some(content) = self.open_files.get(file).cloned() else {
+                    continue;
+                };
+                let updated = Self::apply_span_changes(&content, changes);
+                self.open_files.insert(file.to_string(), updated);
+            }
+        }
         if let Some(opened) = request
             .arguments
             .get("openFiles")
@@ -192,7 +261,164 @@ impl Server {
                 }
             }
         }
+        // Match tsserver's response shape — `body: true` indicates the edits
+        // were applied.
+        TsServerResponse {
+            seq,
+            msg_type: "response".to_string(),
+            command: "applyChangedToOpenFiles".to_string(),
+            request_seq: request.seq,
+            success: true,
+            message: None,
+            body: Some(serde_json::Value::Bool(true)),
+        }
+    }
+
+    /// Apply `{span: {start, length}, newText}` edits to `content` in
+    /// reverse order so earlier offsets stay valid as later edits land.
+    /// `span.start` and `span.length` are UTF-16 unit counts (tsserver/LSP
+    /// convention); we walk char-by-char to translate them to byte offsets.
+    fn apply_span_changes(content: &str, changes: &[serde_json::Value]) -> String {
+        let mut sorted: Vec<&serde_json::Value> = changes.iter().collect();
+        sorted.sort_by(|a, b| {
+            let aa = a
+                .get("span")
+                .and_then(|s| s.get("start"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let bb = b
+                .get("span")
+                .and_then(|s| s.get("start"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            bb.cmp(&aa)
+        });
+
+        let mut bytes = content.to_string();
+        for change in sorted {
+            let Some(span) = change.get("span") else {
+                continue;
+            };
+            let start_u16 = span
+                .get("start")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as u32;
+            let length_u16 = span
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as u32;
+            let new_text = change.get("newText").and_then(|v| v.as_str()).unwrap_or("");
+
+            let start_byte = utf16_offset_to_byte(&bytes, start_u16);
+            let end_byte = utf16_offset_to_byte(&bytes, start_u16.saturating_add(length_u16));
+            if start_byte > bytes.len() || end_byte > bytes.len() || start_byte > end_byte {
+                continue;
+            }
+            bytes.replace_range(start_byte..end_byte, new_text);
+        }
+        bytes
+    }
+
+    pub(crate) fn handle_update_open(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        // Process opened, changed, and closed files
+        if let Some(opened) = request
+            .arguments
+            .get("openFiles")
+            .and_then(|v| v.as_array())
+        {
+            for entry in opened {
+                if let (Some(file), Some(content)) = (
+                    entry.get("file").and_then(|v| v.as_str()),
+                    entry.get("fileContent").and_then(|v| v.as_str()),
+                ) {
+                    self.open_files
+                        .insert(file.to_string(), content.to_string());
+                }
+            }
+        }
+        if let Some(changed) = request
+            .arguments
+            .get("changedFiles")
+            .and_then(|v| v.as_array())
+        {
+            for entry in changed {
+                let Some(file) = entry.get("fileName").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(text_changes) = entry.get("textChanges").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                let Some(mut content) = self.open_files.get(file).cloned() else {
+                    continue;
+                };
+
+                for change in text_changes {
+                    let Some(start) = change.get("start") else {
+                        continue;
+                    };
+                    let Some(end) = change.get("end") else {
+                        continue;
+                    };
+                    let line = start
+                        .get("line")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(1) as u32;
+                    let offset = start
+                        .get("offset")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(1) as u32;
+                    let end_line = end
+                        .get("line")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(line as u64) as u32;
+                    let end_offset = end
+                        .get("offset")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(offset as u64) as u32;
+                    let new_text = change.get("newText").and_then(|v| v.as_str()).unwrap_or("");
+                    content =
+                        Self::apply_change(&content, line, offset, end_line, end_offset, new_text);
+                }
+
+                self.open_files.insert(file.to_string(), content);
+            }
+        }
+        if let Some(closed) = request
+            .arguments
+            .get("closedFiles")
+            .and_then(|v| v.as_array())
+        {
+            for entry in closed {
+                if let Some(file) = entry.as_str() {
+                    self.open_files.remove(file);
+                }
+            }
+        }
 
         self.stub_response(seq, request, None)
     }
+}
+
+/// Walk `content` to convert a UTF-16-unit offset to a byte offset.
+/// Clamps to `content.len()` if the offset reaches past the end. ASCII content
+/// is a 1:1 mapping; this only does extra work for multi-byte / surrogate-pair
+/// characters.
+fn utf16_offset_to_byte(content: &str, target_u16: u32) -> usize {
+    if target_u16 == 0 {
+        return 0;
+    }
+    let mut byte = 0usize;
+    let mut count = 0u32;
+    for ch in content.chars() {
+        if count >= target_u16 {
+            return byte;
+        }
+        count = count.saturating_add(ch.len_utf16() as u32);
+        byte = byte.saturating_add(ch.len_utf8());
+    }
+    byte
 }

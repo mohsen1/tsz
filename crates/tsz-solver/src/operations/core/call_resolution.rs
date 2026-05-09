@@ -9,15 +9,113 @@ use super::call_evaluator::{
     AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult, CombinedUnionSignature,
     UnionCallSignatureCompatibility,
 };
-use crate::instantiation::instantiate::TypeSubstitution;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IntrinsicKind, ParamInfo, TupleElement, TypeData,
-    TypeId, TypeListId,
+    TypeId, TypeListId, TypeParamInfo,
 };
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn generic_function_shape_for_inference(
+        &mut self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+    ) -> Option<FunctionShape> {
+        if func.type_params.is_empty() {
+            return None;
+        }
+
+        let collides = func.type_params.iter().any(|tp| {
+            arg_types
+                .iter()
+                .copied()
+                .flat_map(|ty| {
+                    crate::visitor::collect_referenced_types(self.interner.as_type_database(), ty)
+                })
+                .any(|referenced| {
+                    crate::type_param_info(self.interner.as_type_database(), referenced)
+                        .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
+                })
+        });
+        if !collides {
+            return None;
+        }
+
+        let mut substitution = TypeSubstitution::new();
+        let mut fresh_params = Vec::with_capacity(func.type_params.len());
+        let mut name_buf = String::with_capacity(32);
+        for tp in &func.type_params {
+            crate::operations::generic_call::unique_placeholder_name(&mut name_buf);
+            let fresh_name = self.interner.intern_string(&name_buf);
+            let fresh_type = self.interner.type_param(TypeParamInfo {
+                name: fresh_name,
+                constraint: None,
+                default: None,
+                is_const: tp.is_const,
+            });
+            substitution.insert(tp.name, fresh_type);
+            fresh_params.push((tp, fresh_name));
+        }
+
+        Some(FunctionShape {
+            params: func
+                .params
+                .iter()
+                .map(|param| ParamInfo {
+                    name: param.name,
+                    type_id: instantiate_type(self.interner, param.type_id, &substitution),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect(),
+            return_type: instantiate_type(self.interner, func.return_type, &substitution),
+            this_type: func
+                .this_type
+                .map(|this_type| instantiate_type(self.interner, this_type, &substitution)),
+            type_params: fresh_params
+                .into_iter()
+                .map(|(tp, fresh_name)| TypeParamInfo {
+                    name: fresh_name,
+                    constraint: tp.constraint.map(|constraint| {
+                        instantiate_type(self.interner, constraint, &substitution)
+                    }),
+                    default: tp
+                        .default
+                        .map(|default| instantiate_type(self.interner, default, &substitution)),
+                    is_const: tp.is_const,
+                })
+                .collect(),
+            type_predicate: func.type_predicate.as_ref().map(|predicate| {
+                crate::types::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target,
+                    type_id: predicate
+                        .type_id
+                        .map(|ty| instantiate_type(self.interner, ty, &substitution)),
+                    parameter_index: predicate.parameter_index,
+                }
+            }),
+            is_constructor: func.is_constructor,
+            is_method: func.is_method,
+        })
+    }
+
+    fn intersect_union_call_param_types(&self, param_types: &[TypeId]) -> TypeId {
+        let mut non_any = param_types
+            .iter()
+            .copied()
+            .filter(|&param_type| param_type != TypeId::ANY);
+        let Some(mut result) = non_any.next() else {
+            return TypeId::ANY;
+        };
+        for param_type in non_any {
+            result = self.interner.intersection2(result, param_type);
+        }
+        result
+    }
+
     /// Resolve a function call: func(args...) -> result
     ///
     /// This is pure type logic - no AST nodes, just types in and types out.
@@ -400,30 +498,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         for i in 0..max_param_count {
             let mut param_types_at_pos = Vec::new();
-            let mut any_required = false;
+            let mut required_param_types_at_pos = Vec::new();
+            let mut optional_param_types_at_pos = Vec::new();
+            let mut saw_absent = false;
+            let mut saw_rest_at_pos = false;
 
             for (params, _, has_rest) in &all_signatures {
                 if i < params.len() {
                     let param = &params[i];
                     if param.rest {
+                        saw_rest_at_pos = true;
                         // For rest params like `...b: number[]`, extract the element type
-                        // so we intersect `number` (not `number[]`) with other members' types
-                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                        // so we intersect `number` (not `number[]`) with other members' types.
+                        // If we can't extract the element type, bail out.
+                        let elem = crate::type_queries::get_array_element_type(
                             self.interner,
                             param.type_id,
-                        ) {
-                            param_types_at_pos.push(elem);
-                        } else {
-                            // Can't extract element type; bail out
-                            return None;
-                        }
+                        )?;
+                        param_types_at_pos.push(elem);
                     } else {
-                        param_types_at_pos.push(param.type_id);
-                    }
-                    if param.is_required() {
-                        any_required = true;
+                        let type_id =
+                            crate::narrowing::utils::remove_undefined(self.interner, param.type_id);
+                        param_types_at_pos.push(type_id);
+                        if param.is_required() {
+                            required_param_types_at_pos.push(param.type_id);
+                        } else {
+                            optional_param_types_at_pos.push(param.type_id);
+                        }
                     }
                 } else if *has_rest {
+                    saw_rest_at_pos = true;
                     // Position i is beyond this member's positional params, but the
                     // member has a rest param that covers all remaining positions.
                     // Include its element type in the intersection.
@@ -439,6 +543,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // If a member doesn't have a param at this position and has no rest,
                 // it doesn't constrain the type (absent). But if ANY member requires
                 // it, the combined signature requires it.
+                else {
+                    saw_absent = true;
+                }
             }
 
             // Intersect all param types at this position
@@ -448,16 +555,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Shouldn't happen since we iterate up to max_param_count
                 continue;
             } else {
-                let mut result = param_types_at_pos[0];
-                for &pt in &param_types_at_pos[1..] {
-                    result = self.interner.intersection2(result, pt);
-                }
-                result
+                self.intersect_union_call_param_types(&param_types_at_pos)
             };
 
             combined_params.push(combined_type);
 
-            if any_required {
+            let requires_argument = !required_param_types_at_pos.is_empty()
+                && (optional_param_types_at_pos.iter().any(|&optional_type| {
+                    required_param_types_at_pos.iter().any(|&required_type| {
+                        !self.checker.is_assignable_to(optional_type, required_type)
+                    })
+                }) || saw_rest_at_pos
+                    || (saw_absent
+                        && required_param_types_at_pos.iter().any(|&required_type| {
+                            !self
+                                .checker
+                                .is_assignable_to(TypeId::UNDEFINED, required_type)
+                        }))
+                    || (optional_param_types_at_pos.is_empty() && !saw_absent));
+
+            if requires_argument {
                 min_required = i + 1;
             }
         }
@@ -578,14 +695,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if i < params.len() {
                     let param = &params[i];
                     if param.rest {
-                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                        let elem = crate::type_queries::get_array_element_type(
                             self.interner,
                             param.type_id,
-                        ) {
-                            param_types_at_pos.push(elem);
-                        } else {
-                            return None;
-                        }
+                        )?;
+                        param_types_at_pos.push(elem);
                     } else {
                         // Strip `| undefined` that the binder may add for optional
                         // params (`b?: number` → type_id = `number | undefined`).
@@ -712,16 +826,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 // Compute the intersection of all parameter types
                 // For incompatible primitives like number & boolean, this becomes never
-                let intersected_param = if param_types.len() == 1 {
-                    param_types[0]
-                } else {
-                    // Build intersection by combining all types
-                    let mut result = param_types[0];
-                    for &param_type in &param_types[1..] {
-                        result = self.interner.intersection2(result, param_type);
-                    }
-                    result
-                };
+                let intersected_param = self.intersect_union_call_param_types(&param_types);
 
                 // Return a single ArgumentTypeMismatch with the intersected type
                 // Use the first argument type as the actual
@@ -1338,6 +1443,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         // Handle generic functions FIRST so uninstantiated this_types don't fail assignability
         if !func.type_params.is_empty() {
+            if let Some(func) = self.generic_function_shape_for_inference(func, arg_types) {
+                return self.resolve_generic_call(&func, arg_types);
+            }
             return self.resolve_generic_call(func, arg_types);
         }
 
@@ -1719,10 +1827,34 @@ pub fn resolve_call_with_checker<C: AssignabilityChecker>(
     contextual_type: Option<TypeId>,
     actual_this_type: Option<TypeId>,
 ) -> CallWithCheckerResult {
+    resolve_call_with_checker_and_arg_sources(
+        interner,
+        checker,
+        func_type,
+        arg_types,
+        force_bivariant_callbacks,
+        contextual_type,
+        actual_this_type,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_call_with_checker_and_arg_sources<C: AssignabilityChecker>(
+    interner: &dyn QueryDatabase,
+    checker: &mut C,
+    func_type: TypeId,
+    arg_types: &[TypeId],
+    force_bivariant_callbacks: bool,
+    contextual_type: Option<TypeId>,
+    actual_this_type: Option<TypeId>,
+    arg_source_is_type_annotation: &[bool],
+) -> CallWithCheckerResult {
     let mut evaluator = CallEvaluator::new(interner, checker);
     evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
     evaluator.set_contextual_type(contextual_type);
     evaluator.set_actual_this_type(actual_this_type);
+    evaluator.set_arg_source_is_type_annotation(arg_source_is_type_annotation);
     let result = evaluator.resolve_call(func_type, arg_types);
     let predicate = evaluator.last_instantiated_predicate.take();
     let instantiated_params = evaluator.last_instantiated_params.take();

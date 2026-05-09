@@ -226,6 +226,72 @@ fn test_class_with_instance_property() {
 }
 
 #[test]
+fn test_class_property_jsdoc_moves_with_initializer_into_constructor() {
+    // When a class property's initializer is lifted into the synthesized
+    // ES5 constructor body, the JSDoc that decorated the property in source
+    // must move with it so user-authored documentation isn't silently
+    // dropped during the lowering.
+    let source = r#"class C {
+    constructor() {
+    }
+
+    /** property comment */
+    public b = 10;
+}"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    let comment_pos = output
+        .find("/** property comment */")
+        .expect("property JSDoc must survive into the lowered output");
+    let init_pos = output
+        .find("this.b = 10")
+        .expect("property initializer must be lifted into the constructor");
+    assert!(
+        comment_pos < init_pos,
+        "JSDoc must precede the lifted initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_constructor_body_preserves_multiline_jsdoc_before_statement() {
+    // Inside the constructor body, a multi-line JSDoc preceding a real
+    // statement (e.g. a `this.field = value` initializer in a JS-style
+    // constructor) must be carried through into the lowered output. The
+    // line-based comment scanner used to reject it because the opening
+    // `/**` line did not also end with `*/`.
+    let source = r#"class Aleph {
+    constructor(a, b) {
+        /**
+         * Field is always null
+         */
+        this.field = b;
+    }
+}"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    let comment_pos = output
+        .find("Field is always null")
+        .expect("multi-line JSDoc body must survive into the lowered output");
+    let init_pos = output
+        .find("this.field = b")
+        .expect("constructor initializer must be emitted");
+    assert!(
+        comment_pos < init_pos,
+        "Multi-line JSDoc must precede the statement it documents.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("/**"),
+        "Opening `/**` must be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("*/"),
+        "Closing `*/` must be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_declare_class_ignored() {
     let source = r#"declare class Foo {
             bar(): void;
@@ -320,6 +386,46 @@ fn test_computed_method_name() {
 
     // Computed method name should use bracket notation
     assert!(output.contains("Container.prototype[Symbol.iterator]"));
+}
+
+#[test]
+fn type_only_computed_field_side_effect_emits_inside_iife() {
+    let source = r#"class C {
+            [Symbol.isRegExp]: string;
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed in test");
+
+    assert!(
+        output.contains("Symbol.isRegExp;\n    return C;"),
+        "type-only computed field side effect should emit inside the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return C;\n}());\nSymbol.isRegExp;"),
+        "type-only computed field side effect should not be deferred after the class IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_field_temp_assignment_emits_inside_iife() {
+    let source = r#"class C {
+            [Symbol.toStringTag]: string = "";
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed in test");
+
+    assert!(
+        output.contains("function C() {\n        this[_a] = \"\";\n    }\n    var _a;\n    _a = Symbol.toStringTag;\n    return C;"),
+        "computed field temp should be declared and assigned inside the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this[_a] = \"\";"),
+        "constructor should reference the computed field temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}());\n_a = Symbol.toStringTag;"),
+        "computed field temp assignment should not be deferred after the class IIFE.\nOutput:\n{output}"
+    );
 }
 
 #[test]
@@ -556,5 +662,162 @@ fn test_no_class_alias_when_no_this_in_static_members() {
     assert!(
         !output.contains("var _a"),
         "Should not declare class alias when this is not used in static members.\nOutput:\n{output}"
+    );
+}
+
+// Issue #3967: a class with only a static block (no static properties) that
+// references `this` must declare/assign the class alias outside the IIFE so
+// the deferred static block can reference it. Previously only the
+// has_static_props path emitted the alias preamble, leaving classes like
+// `class C { static { this.name; } }` with an undeclared `_a` reference at
+// runtime.
+#[test]
+fn test_static_block_only_class_alias_preamble() {
+    let source = r#"class C {
+            static { console.log("block", this.name); }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("var _a;"),
+        "static-block-only class with this should declare alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = C;"),
+        "static-block-only class with this should assign alias to class.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.name"),
+        "this in static block should be replaced with _a.\nOutput:\n{output}"
+    );
+
+    // The alias must be assigned BEFORE the static-block IIFE runs, so the
+    // block does not read undefined `_a`. The class IIFE wrapper also begins
+    // with `(function () {`, so we anchor the search past the closing
+    // `}());` of the class IIFE.
+    let class_iife_end = output
+        .find("}());")
+        .expect("class IIFE should close before the static-block IIFE")
+        + "}());".len();
+    let assign_idx = output.find("_a = C;").expect("assignment should exist");
+    let block_idx = output[class_iife_end..]
+        .find("(function () {")
+        .map(|i| i + class_iife_end)
+        .expect("static-block IIFE should exist after the class IIFE");
+    assert!(
+        assign_idx < block_idx,
+        "alias must be assigned before the static-block IIFE.\nOutput:\n{output}"
+    );
+}
+
+// Issue #3539: post-`super()` `for-of` and `for-in` bodies in derived ES5
+// constructors must preserve the `_this` substitution. Pre-fix the body
+// emitted `this.x` and crashed at runtime when the base constructor
+// returned a replacement object.
+#[test]
+fn test_derived_constructor_for_of_body_uses_this_alias() {
+    let source = r#"class Base {
+            constructor() { return { seen: [] }; }
+        }
+        class Derived extends Base {
+            seen: number[];
+            constructor() {
+                super();
+                for (const value of [1, 2]) {
+                    this.seen.push(value);
+                }
+            }
+        }"#;
+
+    // The class-es5 transformer lowers the second class declaration.
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    // Find the Derived class (second class declaration).
+    let derived_idx = source_file
+        .statements
+        .nodes
+        .iter()
+        .filter(|&&idx| {
+            parser
+                .arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        })
+        .nth(1)
+        .copied()
+        .expect("Derived class");
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(derived_idx)
+        .expect("transform");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("_this.seen.push(value)"),
+        "for-of body must use `_this`, not `this`.\nOutput:\n{output}"
+    );
+    // Sanity: no bare `this.seen.push(value)` (where the leading char is
+    // either start-of-line or whitespace/non-ident — `_this.seen.push` is
+    // fine, since the leading underscore is part of the identifier).
+    assert!(
+        !output.contains(" this.seen.push(value)"),
+        "for-of body must not retain bare `this.seen.push(value)`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_derived_constructor_for_in_body_uses_this_alias() {
+    let source = r#"class Base {
+            constructor() { return { seen: [] }; }
+        }
+        class Derived extends Base {
+            seen: string[];
+            constructor() {
+                super();
+                for (const key in { a: 1 }) {
+                    this.seen.push(key);
+                }
+            }
+        }"#;
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    let derived_idx = source_file
+        .statements
+        .nodes
+        .iter()
+        .filter(|&&idx| {
+            parser
+                .arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        })
+        .nth(1)
+        .copied()
+        .expect("Derived class");
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(derived_idx)
+        .expect("transform");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("_this.seen.push(key)"),
+        "for-in body must use `_this`, not `this`.\nOutput:\n{output}"
     );
 }

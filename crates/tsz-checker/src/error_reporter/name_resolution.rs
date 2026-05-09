@@ -114,6 +114,59 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn is_require_call_callee_without_node_global(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> bool {
+        if name != "require" {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
+            return false;
+        };
+        if call.expression != idx {
+            return false;
+        }
+        let Some(module_specifier) = self.get_require_module_specifier(parent) else {
+            return false;
+        };
+
+        let is_import_equals_module_reference = self
+            .ctx
+            .arena
+            .get_extended(parent)
+            .and_then(|parent_ext| self.ctx.arena.get(parent_ext.parent))
+            .is_some_and(|grandparent| {
+                grandparent.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            });
+        if is_import_equals_module_reference {
+            return true;
+        }
+
+        self.is_js_file()
+            && self
+                .ctx
+                .resolve_import_target_from_file_for_request(
+                    self.ctx.current_file_idx,
+                    &module_specifier,
+                    Some(crate::context::ResolutionModeOverride::Require),
+                    crate::context::ResolutionRequestKind::CjsRequire,
+                )
+                .is_some()
+    }
+
     /// Check if a node is in a type-annotation context (type reference, implements, extends, etc.).
     /// Used to determine which symbol meaning to use for spelling suggestions.
     fn is_in_type_context(&self, idx: NodeIndex) -> bool {
@@ -667,6 +720,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.is_require_call_callee_without_node_global(name, idx) {
+            return;
+        }
+
         // Suppress TS2304 for `intrinsic` when it is the bare, unparenthesized direct body
         // of a type alias. TS2795 is emitted separately; TSC never also emits TS2304 in this
         // position. However, when parenthesized like `type TE1 = (intrinsic)`, TSC treats it
@@ -1059,16 +1116,34 @@ impl<'a> CheckerState<'a> {
         // checking, but our demand-driven type resolution can resolve many names
         // before any diagnostics are emitted. Counting eagerly here (via Cell)
         // ensures the cap of 10 is reached regardless of processing order.
-        let is_new_node = !self.ctx.name_resolution_reported_nodes.contains(&idx);
+        let is_new_node = !self
+            .ctx
+            .name_resolution_diagnostics
+            .reported_nodes
+            .contains(&idx);
         if is_new_node {
             self.ctx
+                .name_resolution_diagnostics
                 .spelling_suggestions_emitted
-                .set(self.ctx.spelling_suggestions_emitted.get() + 1);
+                .set(
+                    self.ctx
+                        .name_resolution_diagnostics
+                        .spelling_suggestions_emitted
+                        .get()
+                        + 1,
+                );
         }
 
         // Suppress suggestions when the cap is reached for a new node.
         // Already-counted nodes can still get suggestions (repeated resolution).
-        if self.ctx.spelling_suggestions_emitted.get() > 10 && is_new_node {
+        if self
+            .ctx
+            .name_resolution_diagnostics
+            .spelling_suggestions_emitted
+            .get()
+            > 10
+            && is_new_node
+        {
             return Vec::new();
         }
 
@@ -1187,9 +1262,12 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2591: Cannot find name 'X' - suggest installing @types/node
-    /// and adding 'node' to the types field in tsconfig.
-    /// tsc 6.0 defaults to TS2591 (with tsconfig suggestion) in nearly all cases.
+    /// Report TS2580/TS2591: Cannot find name 'X' - suggest installing @types/node.
+    ///
+    /// In the missing-global name-resolution path, tsc emits TS2591 ("install
+    /// @types/node and add 'node' to the types field"). TS2580 is still used by
+    /// separate module-resolution paths where the unresolved name is a module
+    /// specifier rather than a global identifier.
     pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
         self.error_at_node_msg(
             idx,
@@ -1198,8 +1276,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2592: Cannot find name 'X' - suggest installing @types/jquery
-    /// and adding 'jquery' to the types field in tsconfig.
+    /// Report TS2581/TS2592: Cannot find name 'X' - suggest installing @types/jquery.
     pub fn error_cannot_find_name_install_jquery_types(&mut self, name: &str, idx: NodeIndex) {
         self.error_at_node_msg(
             idx,
@@ -1208,8 +1285,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2593: Cannot find name 'X' - suggest installing test runner types
-    /// and adding to the types field in tsconfig.
+    /// Report TS2582/TS2593: Cannot find name 'X' - suggest installing test runner types.
     pub fn error_cannot_find_name_install_test_types(&mut self, name: &str, idx: NodeIndex) {
         self.error_at_node_msg(
             idx,
@@ -1247,7 +1323,10 @@ impl<'a> CheckerState<'a> {
         // The suggestion counter was already incremented eagerly in
         // `collect_spelling_suggestions`. Just mark the node as reported
         // to prevent future double-counting.
-        self.ctx.name_resolution_reported_nodes.insert(idx);
+        self.ctx
+            .name_resolution_diagnostics
+            .reported_nodes
+            .insert(idx);
 
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors that were added to the AST for error recovery.

@@ -12,6 +12,24 @@ use crate::parser::{
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
+fn is_reserved_interface_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "any"
+            | "unknown"
+            | "never"
+            | "string"
+            | "number"
+            | "boolean"
+            | "symbol"
+            | "bigint"
+            | "void"
+            | "undefined"
+            | "null"
+            | "object"
+    )
+}
+
 enum TypeMemberPropertyOrMethodName {
     Property(NodeIndex),
     IndexSignature(NodeIndex),
@@ -32,6 +50,7 @@ impl ParserState {
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::InterfaceKeyword);
         let mut has_invalid_numeric_name = false;
+        let mut has_invalid_hard_keyword_name = false;
 
         // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
         // Type keywords like 'void' are parsed as names and rejected by the checker (TS2427)
@@ -54,6 +73,22 @@ impl ParserState {
                 self.next_token();
                 NodeIndex::NONE
             } else {
+                has_invalid_hard_keyword_name = matches!(
+                    self.current_token,
+                    SyntaxKind::VoidKeyword | SyntaxKind::NullKeyword
+                );
+                let name_text = self.scanner.get_token_value();
+                if is_reserved_interface_type_name(name_text.as_str()) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    let name_start = self.token_pos();
+                    let name_end = self.token_end();
+                    self.parse_error_at(
+                        name_start,
+                        name_end - name_start,
+                        &format!("Interface name cannot be '{name_text}'."),
+                        diagnostic_codes::INTERFACE_NAME_CANNOT_BE,
+                    );
+                }
                 self.parse_identifier_name()
             }
         } else if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -211,6 +246,17 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             let brace_pos = self.token_pos();
             self.parse_error_at(brace_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
+        }
+        if has_invalid_hard_keyword_name && self.is_token(SyntaxKind::OpenBraceToken) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let is_null_name = self
+                .arena
+                .get(name)
+                .and_then(|name_node| self.arena.get_identifier(name_node))
+                .is_some_and(|ident| ident.escaped_text == "null");
+            if is_null_name {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            }
         }
 
         // Parse interface body
@@ -999,6 +1045,24 @@ impl ParserState {
         } else {
             NodeIndex::NONE
         };
+
+        if self.is_token(SyntaxKind::IsKeyword) {
+            // `[index: number]: p1 is C;` is not a valid index-signature type.
+            // TSC reports the missing separator at `is`, skips the invalid tail,
+            // and leaves the closing brace to surface as a stray declaration.
+            self.error_token_expected(";");
+            self.next_token();
+            while !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.next_token();
+            }
+            self.parse_optional(SyntaxKind::SemicolonToken);
+            self.deferred_type_member_close_braces = self
+                .deferred_type_member_close_braces
+                .max(self.type_member_container_depth);
+        }
 
         let param_node = self.arena.add_parameter(
             syntax_kind_ext::PARAMETER,
@@ -2585,14 +2649,16 @@ impl ParserState {
         // Namespace import names must still reject reserved words like `while`,
         // but allow contextual keywords such as `type`.
         //
-        // When the name slot holds a reserved word whose statement form is
-        // `kw ( expr )` (e.g. `import * as while from "foo"`), tsc emits
-        // TS1359 at the keyword and then lets statement recovery re-parse the
-        // keyword as the head of a statement, cascading the `'(' expected.` /
-        // `')' expected.` diagnostics onto the following tokens.
+        // When the name slot holds a reserved word that can start a statement
+        // (e.g. `import * as while from "foo"`), tsc emits TS1359 at the
+        // keyword and then lets statement recovery re-parse the keyword as the
+        // head of a statement, cascading statement-specific diagnostics onto
+        // the following tokens.
         // Replicate that by emitting TS1359 here without consuming the token
         // and signaling the import declaration to bail out of its own recovery.
-        let name = if self.is_reserved_word() && self.is_paren_statement_starter_reserved_word() {
+        let name = if self.is_reserved_word()
+            && self.is_namespace_import_recovery_statement_starter()
+        {
             use tsz_common::diagnostics::diagnostic_codes;
             let name_pos = self.token_pos();
             let name_end = self.token_end();
@@ -2651,7 +2717,9 @@ impl ParserState {
             // If we encounter 'from' keyword in the specifier list, it likely means we have:
             // import { a from "module"  (missing closing brace)
             // In this case, break the loop to avoid parsing 'from' as an identifier
-            if self.is_token(SyntaxKind::FromKeyword) {
+            if self.is_token(SyntaxKind::FromKeyword)
+                && !self.next_token_continues_import_specifier_name()
+            {
                 self.last_named_imports_recovered_to_from = true;
                 break;
             }
@@ -2776,6 +2844,19 @@ impl ParserState {
                 elements: self.make_node_list(elements),
             },
         )
+    }
+
+    fn next_token_continues_import_specifier_name(&mut self) -> bool {
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let result = matches!(
+            self.current_token,
+            SyntaxKind::AsKeyword | SyntaxKind::CommaToken | SyntaxKind::CloseBraceToken
+        );
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
     }
 
     /// Parse a module export name: either an identifier/keyword or a string literal.

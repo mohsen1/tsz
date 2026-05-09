@@ -10,7 +10,10 @@ pub(crate) enum TypeOnlyKind {
 
 // Submodules
 pub(crate) mod assignability;
+mod assignability_callable_suppression;
+mod assignability_exact_optional;
 mod assignability_helpers;
+mod assignability_type_helpers;
 mod call_errors;
 mod call_errors_anchors;
 mod core;
@@ -18,12 +21,16 @@ mod core_formatting;
 mod emitters;
 mod fingerprint_policy;
 mod generics;
+mod literal_alias_rewrites;
 mod name_resolution;
 mod operator_errors;
+mod primitive_intersection_display;
 mod properties;
+mod property_receiver_formatting;
 mod render_failure;
 mod suggestions;
 mod type_display_policy;
+mod type_query_alias_display;
 mod type_value;
 
 pub(crate) use fingerprint_policy::{

@@ -27,12 +27,15 @@
 //! Note: pub(super) and pub(in `crate::emitter`) fields and methods allow
 //! submodules to access Printer internals.
 
+mod arrow_concise;
 mod binding_patterns;
 mod comments;
 mod core;
 mod declarations;
 mod es5;
 mod expressions;
+mod function_parameters;
+mod function_scopes;
 mod functions;
 mod helpers;
 mod jsx;

@@ -33,6 +33,15 @@ impl<'a> CheckerState<'a> {
         };
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+        let interface_type_param_names: Vec<String> = type_param_updates
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        self.check_heritage_clauses_for_unresolved_names(
+            &iface.heritage_clauses,
+            false,
+            &interface_type_param_names,
+        );
 
         for &member_idx in &iface.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -42,16 +51,29 @@ impl<'a> CheckerState<'a> {
             if let Some(sig) = self.ctx.arena.get_signature(member_node) {
                 let (_type_params, method_type_param_updates) =
                     self.push_type_parameters(&sig.type_parameters);
-                if sig.type_annotation.is_some() {
-                    self.get_type_from_type_node(sig.type_annotation);
-                }
+                // Resolve parameter types first so the params list (and their
+                // names) is available when checking the return-type annotation.
+                // The return type may reference parameters via `typeof p` —
+                // pushing typeof_param_scope around the annotation resolution
+                // mirrors the lowering crate's behavior so identifiers like
+                // `a` in `(a: number): typeof a` resolve to the parameter
+                // type instead of falling through to TS2304.
                 for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         && param.type_annotation.is_some()
                     {
+                        self.check_type_node(param.type_annotation);
                         self.get_type_from_type_node(param.type_annotation);
                     }
+                }
+                if sig.type_annotation.is_some() {
+                    let (params, _this_type) =
+                        self.extract_params_from_signature_in_type_literal(sig);
+                    self.push_typeof_param_scope(&params);
+                    self.check_type_node(sig.type_annotation);
+                    self.get_type_from_type_node(sig.type_annotation);
+                    self.pop_typeof_param_scope(&params);
                 }
                 self.pop_type_parameters(method_type_param_updates);
                 continue;
@@ -59,6 +81,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
                 if accessor.type_annotation.is_some() {
+                    self.check_type_node(accessor.type_annotation);
                     self.get_type_from_type_node(accessor.type_annotation);
                 }
                 for &param_idx in &accessor.parameters.nodes {
@@ -66,6 +89,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         && param.type_annotation.is_some()
                     {
+                        self.check_type_node(param.type_annotation);
                         self.get_type_from_type_node(param.type_annotation);
                     }
                 }
@@ -189,6 +213,7 @@ impl<'a> CheckerState<'a> {
         };
 
         for &member_idx in &iface.members.nodes {
+            self.check_styled_component_inner_component_constraint(member_idx);
             self.check_type_member_for_missing_names(member_idx);
             self.check_type_member_for_parameter_properties(member_idx);
             // TS1268: Check index signature parameter types
@@ -204,6 +229,31 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_AN_INTERFACE_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYPE,
                         );
                     }
+                    let (_type_params, type_param_updates) =
+                        self.push_type_parameters(&sig.type_parameters);
+                    // Resolve parameters first so the param scope is built
+                    // before the return type annotation is checked. The
+                    // return type may reference `typeof p`; pushing the
+                    // typeof_param_scope mirrors the lowering crate so the
+                    // checker's TS2304 path can resolve the parameter.
+                    for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation.is_some()
+                        {
+                            self.check_type_node(param.type_annotation);
+                            self.get_type_from_type_node(param.type_annotation);
+                        }
+                    }
+                    if sig.type_annotation.is_some() {
+                        let (params, _this_type) =
+                            self.extract_params_from_signature_in_type_literal(sig);
+                        self.push_typeof_param_scope(&params);
+                        self.check_type_node(sig.type_annotation);
+                        self.get_type_from_type_node(sig.type_annotation);
+                        self.pop_typeof_param_scope(&params);
+                    }
+                    self.pop_type_parameters(type_param_updates);
                 }
                 // TS2344: Eagerly resolve set accessor parameter type annotations.
                 // tsc checks all type annotations during declaration checking, even
@@ -232,29 +282,6 @@ impl<'a> CheckerState<'a> {
                 {
                     self.get_type_from_type_node(accessor.type_annotation);
                 }
-                // TS2344: Resolve method signature return type and parameter type
-                // annotations to trigger constraint validation on type references.
-                // Without this, `Inner<W>` in `bar<W extends X>(): Inner<W>` would
-                // never be checked against Inner's constraint.
-                if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
-                    && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                {
-                    let (_type_params, type_param_updates) =
-                        self.push_type_parameters(&sig.type_parameters);
-                    if sig.type_annotation.is_some() {
-                        self.get_type_from_type_node(sig.type_annotation);
-                    }
-                    for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            && param.type_annotation.is_some()
-                        {
-                            self.get_type_from_type_node(param.type_annotation);
-                        }
-                    }
-                    self.pop_type_parameters(type_param_updates);
-                }
-
                 // TS2526: Find `this` types appearing inside nested type
                 // literals on a property signature annotation and route them
                 // through `get_type_from_type_node` so the THIS_TYPE branch
@@ -890,6 +917,8 @@ impl<'a> CheckerState<'a> {
     /// Returns `true` if the expression is a bare `Symbol()` call (not
     /// `Symbol.for(...)` or `Symbol.xxx`).  Each `Symbol()` call creates a
     /// new unique symbol, so two `[Symbol()]` properties are never duplicates.
+    /// A locally-bound `Symbol` shadows the global and is *not* the unique-symbol
+    /// constructor.
     fn is_bare_symbol_constructor_call(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
@@ -900,14 +929,8 @@ impl<'a> CheckerState<'a> {
         let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
             return false;
         };
-        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
-            return false;
-        };
-        // Bare `Symbol()` — the callee is just the `Symbol` identifier
-        if let Some(ident) = self.ctx.arena.get_identifier(callee_node) {
-            return ident.escaped_text.as_str() == "Symbol";
-        }
-        false
+        // Bare `Symbol()` — the callee is the global `Symbol` identifier
+        self.identifier_resolves_to_unshadowed_global(call.expression, "Symbol")
     }
 
     fn is_symbol_for_call_expression(&self, expr_idx: NodeIndex) -> bool {
@@ -929,13 +952,9 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
             return false;
         };
-        let Some(obj_node) = self.ctx.arena.get(access.expression) else {
-            return false;
-        };
-        let Some(obj_ident) = self.ctx.arena.get_identifier(obj_node) else {
-            return false;
-        };
-        obj_ident.escaped_text == "Symbol"
+        // `Symbol.for(...)` only resolves to a unique-symbol-keyed expression
+        // when `Symbol` is the built-in global, not a same-named local.
+        self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             && self
                 .ctx
                 .arena
@@ -1016,12 +1035,14 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        // Well-known symbols (Symbol.xxx) are statically determinable
+        // Well-known symbols (`Symbol.xxx`) are statically determinable, but
+        // *only* when `Symbol` is the built-in global. A local
+        // `const Symbol = { tag: "name" } as const` makes `Symbol.tag` a
+        // regular literal-typed expression that the type-based fallback below
+        // must classify on its own.
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
-            && let Some(obj_node) = self.ctx.arena.get(access.expression)
-            && let Some(obj_ident) = self.ctx.arena.get_identifier(obj_node)
-            && obj_ident.escaped_text.as_str() == "Symbol"
+            && self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
         {
             return false;
         }

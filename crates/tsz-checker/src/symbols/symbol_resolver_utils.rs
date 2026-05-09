@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
     /// a global value (i.e. not a `Parameter` node). Used by
     /// `resolve_lib_global_var_symbol` to filter out parameter symbols that
     /// leak into `lib_symbol_ids`.
-    fn symbol_has_globalable_declaration(
+    pub(crate) fn symbol_has_globalable_declaration(
         &self,
         sym_id: SymbolId,
         sym: &tsz_binder::Symbol,
@@ -542,12 +542,7 @@ impl<'a> CheckerState<'a> {
             if declared.exact.contains(normalized) {
                 return true;
             }
-            for pattern in &declared.patterns {
-                if Self::module_name_matches_pattern(pattern, module_name) {
-                    return true;
-                }
-            }
-            return false;
+            return declared.matches_wildcard(module_name);
         }
 
         // Fallback: scan all binders
@@ -775,9 +770,12 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Report a type query missing member error.
+    /// Report a qualified namespace/member lookup error.
     ///
-    /// For `typeof A.B` where `B` is not found in `A`'s exports, emits TS2694.
+    /// For `typeof A.B` where `B` is not found in a local value namespace/object,
+    /// emits TS2339. Import-query paths keep the existing exported-member
+    /// diagnostic, since those are module export lookups. Other type-space
+    /// qualified names keep TS2694/TS2724.
     /// Returns true if an error was reported.
     pub(crate) fn report_type_query_missing_member(&mut self, idx: NodeIndex) -> bool {
         let node = match self.ctx.arena.get(idx) {
@@ -887,6 +885,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if left_symbol.import_module.is_none() && self.is_inside_type_query(idx) {
+            let left_text = self
+                .entity_name_text(qn.left)
+                .unwrap_or_else(|| left_symbol.escaped_name.clone());
+            let Some(right_node) = self.ctx.arena.get(qn.right) else {
+                return false;
+            };
+            self.ctx.error(
+                right_node.pos,
+                right_node.end - right_node.pos,
+                format!("Property '{right_name}' does not exist on type 'typeof {left_text}'."),
+                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            );
+            return true;
+        }
+
         let export_names: Vec<String> = left_symbol
             .exports
             .as_ref()
@@ -904,6 +918,26 @@ impl<'a> CheckerState<'a> {
         };
         self.report_name_resolution_failure(&req, &failure);
         true
+    }
+
+    fn is_inside_type_query(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..MAX_TREE_WALK_ITERATIONS {
+            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                return false;
+            };
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::TYPE_QUERY {
+                return true;
+            }
+            current = parent;
+        }
+        false
     }
 
     // =========================================================================
@@ -1131,11 +1165,8 @@ impl<'a> CheckerState<'a> {
                     return Some(current);
                 }
                 _ => {
-                    if let Some(ext) = arena.get_extended(current) {
-                        current = ext.parent;
-                    } else {
-                        return None;
-                    }
+                    let ext = arena.get_extended(current)?;
+                    current = ext.parent;
                 }
             }
         }
@@ -1190,11 +1221,15 @@ impl<'a> CheckerState<'a> {
             return Some((class_idx, true));
         }
 
-        if object_type != TypeId::ANY
-            && object_type != TypeId::ERROR
-            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
-        {
-            return Some((class_idx, false));
+        if object_type != TypeId::ANY && object_type != TypeId::ERROR {
+            if let Some(class_idx) = self.get_class_decl_from_type(object_type) {
+                return Some((class_idx, false));
+            }
+            if let Some(sym_id) = self.property_access_receiver_symbol(object_type)
+                && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+            {
+                return Some((class_idx, false));
+            }
         }
 
         // `this: T extends Foo` in a free function: object_type is the type
@@ -1217,7 +1252,7 @@ impl<'a> CheckerState<'a> {
             if let Some(class_idx) = self.get_class_decl_from_type(constraint) {
                 return Some((class_idx, false));
             }
-            if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(constraint)
+            if let Some(sym_id) = self.property_access_receiver_symbol(constraint)
                 && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
             {
                 return Some((class_idx, false));

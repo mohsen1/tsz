@@ -60,18 +60,50 @@ impl<'a> CheckerState<'a> {
             // In CommonJS module mode, `exports` is implicitly available as the module namespace.
             // Other node globals (module, require, __dirname, __filename) still need @types/node;
             // tsc emits TS2591 for them even in CommonJS mode when type definitions are absent.
-            if self.ctx.compiler_options.module.is_commonjs() && name == "exports" {
+            if self.ctx.compiler_options.module.is_commonjs()
+                && name == "exports"
+                && !self.current_source_file_has_esm_syntax()
+            {
                 return self.current_file_commonjs_namespace_type();
             }
-            // JS files implicitly have CommonJS globals (require, exports, module, etc.)
-            // tsc never emits TS2580 for JS files — they're treated as CommonJS by default
-            if self.is_js_file() {
-                if name == "exports" {
-                    return self.current_file_commonjs_namespace_type();
-                }
+            if self.is_require_call_callee_without_node_global(name, idx) {
                 return TypeId::ANY;
             }
-            // Otherwise, emit TS2591 suggesting @types/node installation
+            if self.is_js_file() {
+                match name {
+                    "exports" => {
+                        if self.current_source_file_has_esm_syntax() {
+                            self.error_at_node_msg(
+                                idx,
+                                crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                                &[name],
+                            );
+                            return TypeId::ERROR;
+                        }
+                        return self.current_file_commonjs_namespace_type();
+                    }
+                    "module" | "require" if !self.current_source_file_has_esm_syntax() => {
+                        return TypeId::ANY;
+                    }
+                    "module" | "require" => {
+                        self.error_at_node_msg(
+                            idx,
+                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                            &[name],
+                        );
+                        return TypeId::ERROR;
+                    }
+                    "__dirname" | "__filename" => {
+                        self.error_at_node_msg(
+                            idx,
+                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                            &[name],
+                        );
+                        return TypeId::ERROR;
+                    }
+                    _ => {}
+                }
+            }
             self.error_cannot_find_name_install_node_types(name, idx);
             return TypeId::ERROR;
         }
@@ -987,6 +1019,16 @@ impl<'a> CheckerState<'a> {
                         && self.is_module_export_equals_type_only(&module_specifier)
                     {
                         // type-only through export= chain — skip
+                    } else if let Some(&alias_sym_id) = self
+                        .ctx
+                        .binder
+                        .node_symbols
+                        .get(&import_decl.import_clause.0)
+                        .or_else(|| self.ctx.binder.node_symbols.get(&stmt_idx.0))
+                        && self.alias_resolves_to_type_only(alias_sym_id)
+                    {
+                        // `import Alias = NS.Type` is not a value import when the
+                        // qualified target resolves to an interface/type alias.
                     } else {
                         return true;
                     }
@@ -1176,6 +1218,73 @@ impl<'a> CheckerState<'a> {
         self.arena_has_checked_js_constructor_value_declaration(self.ctx.arena, decl_idx)
     }
 
+    pub(crate) fn checked_js_constructor_initializer_expression(
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        fn constructor_expr(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<NodeIndex> {
+            let idx = arena.skip_parenthesized_and_assertions(idx);
+            let node = arena.get(idx)?;
+            if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return Some(idx);
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let binary = arena.get_binary_expr(node)?;
+                let op = binary.operator_token;
+                if op == tsz_scanner::SyntaxKind::BarBarToken as u16
+                    || op == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
+                {
+                    return constructor_expr(arena, binary.right)
+                        .or_else(|| constructor_expr(arena, binary.left));
+                }
+            }
+            None
+        }
+
+        if decl_idx.is_none() {
+            return None;
+        }
+
+        let node = arena.get(decl_idx)?;
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = arena.get_variable_declaration(node)?;
+            return constructor_expr(arena, var_decl.initializer);
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let binary = arena.get_binary_expr(node)?;
+            if !crate::query_boundaries::common::is_assignment_operator(binary.operator_token) {
+                return None;
+            }
+            return constructor_expr(arena, binary.right);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let ext = arena.get_extended(decl_idx)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent_node = arena.get(ext.parent)?;
+            if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return None;
+            }
+            let binary = arena.get_binary_expr(parent_node)?;
+            if binary.left != decl_idx
+                || !crate::query_boundaries::common::is_assignment_operator(binary.operator_token)
+            {
+                return None;
+            }
+            return constructor_expr(arena, binary.right);
+        }
+
+        None
+    }
+
     fn arena_has_checked_js_constructor_value_declaration(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
@@ -1199,50 +1308,18 @@ impl<'a> CheckerState<'a> {
         };
         let is_function_assignment = || -> bool {
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let Some(ext) = arena.get_extended(decl_idx) else {
-                    return false;
-                };
-                if ext.parent.is_none() {
-                    return false;
-                };
-                let parent_idx = ext.parent;
-                let Some(parent_node) = arena.get(parent_idx) else {
-                    return false;
-                };
-                let Some(binary) = arena.get_binary_expr(parent_node) else {
-                    return false;
-                };
-                if binary.left != decl_idx || !self.is_assignment_operator(binary.operator_token) {
-                    return false;
-                }
-                return arena
-                    .get(binary.right)
-                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+                return Self::checked_js_constructor_initializer_expression(arena, decl_idx)
+                    .is_some();
             }
 
             if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                let Some(binary_node) = arena.get(decl_idx) else {
-                    return false;
-                };
-                let Some(binary) = arena.get_binary_expr(binary_node) else {
-                    return false;
-                };
-                if !self.is_assignment_operator(binary.operator_token) {
-                    return false;
-                }
-                return arena
-                    .get(binary.right)
-                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+                return Self::checked_js_constructor_initializer_expression(arena, decl_idx)
+                    .is_some();
             }
 
             if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                let Some(var_decl) = arena.get_variable_declaration(node) else {
-                    return false;
-                };
-                let Some(init_node) = arena.get(var_decl.initializer) else {
-                    return false;
-                };
-                return init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                return Self::checked_js_constructor_initializer_expression(arena, decl_idx)
+                    .is_some();
             }
 
             false

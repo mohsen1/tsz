@@ -35,7 +35,6 @@ impl<'a> CheckerState<'a> {
         let (params, this_type) = self.extract_params_from_parameter_list(&func.parameters);
         let (return_type, type_predicate) =
             self.return_type_and_predicate(func.type_annotation, &params);
-
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
 
@@ -70,7 +69,44 @@ impl<'a> CheckerState<'a> {
         self.exclude_params_for_type_param_constraints(&method.parameters);
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         self.clear_excluded_params_for_type_param_constraints();
-        let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
+        let (mut params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
+        let method_jsdoc = if self.is_js_file() {
+            self.find_jsdoc_for_function(method_idx)
+        } else {
+            None
+        };
+        if let Some(jsdoc) = method_jsdoc.as_ref() {
+            let comment_start = self.get_jsdoc_comment_pos_for_function(method_idx);
+            let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(jsdoc)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+            for (i, param_idx) in method.parameters.nodes.iter().enumerate() {
+                if i >= params.len() {
+                    break;
+                }
+                let Some(param_node) = self.ctx.arena.get(*param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if param.type_annotation.is_some() {
+                    continue;
+                }
+                let pname = self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, i);
+                let jsdoc_optional = Self::extract_jsdoc_param_type_string(jsdoc, &pname)
+                    .is_some_and(|type_expr| type_expr.trim().ends_with('='))
+                    || Self::is_jsdoc_param_optional_by_brackets(jsdoc, &pname);
+                if let Some(jsdoc_type) =
+                    self.resolve_jsdoc_param_type_with_pos(jsdoc, &pname, comment_start)
+                {
+                    params[i].type_id = jsdoc_type;
+                    params[i].optional =
+                        param.question_token || param.initializer.is_some() || jsdoc_optional;
+                }
+            }
+        }
         let (mut return_type, mut type_predicate) =
             if method.type_annotation.is_none() && method.body.is_some() {
                 // Infer return type from body when there's no annotation
@@ -95,7 +131,6 @@ impl<'a> CheckerState<'a> {
         // functions. In JS files, method return type predicates like
         // `@return {this is Entry}` are specified via JSDoc instead of syntax.
         if type_predicate.is_none() {
-            let method_jsdoc = self.find_jsdoc_for_function(method_idx);
             if let Some(pred) = self.extract_jsdoc_return_type_predicate(&method_jsdoc, &params) {
                 return_type = if pred.asserts {
                     TypeId::VOID
@@ -111,6 +146,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(jsdoc_ret_type) = self.resolve_jsdoc_return_type(jsdoc) {
                     return_type = jsdoc_ret_type;
                 }
+            }
+        }
+
+        if type_predicate.is_none()
+            && method.type_annotation.is_none()
+            && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
+            && method.body.is_some()
+        {
+            self.prewarm_inferred_predicate_operand_types(method.body);
+            let analyzer = self.flow_analyzer();
+            if let Some(pred) = analyzer.try_infer_type_predicate_from_body(
+                method.body,
+                &method.parameters.nodes,
+                &params,
+            ) {
+                type_predicate = Some(pred);
             }
         }
 
@@ -415,7 +466,7 @@ impl<'a> CheckerState<'a> {
     ) -> (Vec<tsz_solver::ParamInfo>, Option<TypeId>) {
         use tsz_solver::ParamInfo;
 
-        let mut params = Vec::new();
+        let mut params = Vec::with_capacity(params_list.nodes.len());
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
 
@@ -427,16 +478,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Resolve parameter type based on mode
             let type_id = if param.type_annotation.is_some() {
-                match mode {
+                // Later parameter annotations can reference earlier value
+                // parameters via `typeof`.
+                self.push_typeof_param_scope(&params);
+                let type_id = match mode {
                     ParamTypeResolutionMode::InTypeLiteral => {
                         self.get_type_from_type_node_in_type_literal(param.type_annotation)
                     }
                     ParamTypeResolutionMode::FromTypeNode => {
                         self.get_type_from_type_node(param.type_annotation)
                     }
-                }
+                };
+                self.pop_typeof_param_scope(&params);
+                type_id
             } else {
                 TypeId::ANY
             };

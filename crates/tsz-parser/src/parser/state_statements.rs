@@ -44,53 +44,7 @@ impl ParserState {
             "'#!' can only be used at the start of a file.",
             diagnostic_codes::CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE,
         );
-
-        let source = self.scanner.source_text().as_bytes();
-        let mut pos = self.token_pos() as usize + 2;
-        let line_end = source[pos..]
-            .iter()
-            .position(|b| *b == b'\n' || *b == b'\r')
-            .map_or(source.len(), |offset| pos + offset);
-
-        while pos < line_end && source[pos].is_ascii_whitespace() {
-            pos += 1;
-        }
-        while pos < line_end && !source[pos].is_ascii_whitespace() {
-            pos += 1;
-        }
-
-        let mut arg_ranges = Vec::new();
-        while pos < line_end {
-            while pos < line_end && source[pos].is_ascii_whitespace() {
-                pos += 1;
-            }
-            if pos >= line_end {
-                break;
-            }
-            let arg_start = pos;
-            while pos < line_end && !source[pos].is_ascii_whitespace() {
-                pos += 1;
-            }
-            arg_ranges.push((arg_start, pos - arg_start));
-        }
-
-        for (arg_start, arg_len) in arg_ranges {
-            self.parse_error_at(
-                self.u32_from_usize(arg_start),
-                self.u32_from_usize(arg_len),
-                "';' expected.",
-                diagnostic_codes::EXPECTED,
-            );
-        }
-
-        self.next_token(); // consume '#'
-        if self.is_token(SyntaxKind::ExclamationToken) {
-            self.next_token();
-        }
-        while !self.is_token(SyntaxKind::EndOfFileToken) && !self.scanner.has_preceding_line_break()
-        {
-            self.next_token();
-        }
+        self.next_token(); // consume '#', then let `!` start normal expression recovery
     }
 
     fn recover_invalid_shebang_token(&mut self) {
@@ -163,7 +117,7 @@ impl ParserState {
                 end_of_file_token: eof_token,
                 file_name: self.file_name.clone(),
                 text: self.scanner.source_text_arc(),
-                language_version: 99,
+                language_version: u32::from(self.language_version.ts_numeric_value()),
                 language_variant: 0,
                 script_kind: 3,
                 is_declaration_file: self.is_declaration_file(),
@@ -188,6 +142,7 @@ impl ParserState {
 
         self.file_name = file_name;
         self.scanner.set_text(source_text, Some(start), None);
+        self.scanner.set_language_version(self.language_version);
         self.context_flags = 0;
         self.current_token = SyntaxKind::Unknown;
         self.parse_diagnostics.clear();
@@ -310,13 +265,21 @@ impl ParserState {
                         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
                     );
                 }
+                if self.deferred_module_close_braces > 0 {
+                    self.deferred_module_close_braces -= 1;
+                }
                 self.next_token();
                 previous_statement_was_block = false;
-                // If the token after a stray top-level `}` already starts an expression,
-                // keep parsing there instead of resyncing past it. This preserves
-                // follow-up recovery like `from "./foo"` -> TS1434 in malformed
-                // import/export specifiers.
-                if !self.is_expression_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
+                // If the token after a stray top-level `}` already starts a
+                // statement or expression, keep parsing there instead of
+                // resyncing past it. This preserves follow-up recovery like
+                // `from "./foo"` -> TS1434 in malformed import/export
+                // specifiers, and avoids skipping valid declarations after a
+                // brace recovered from a malformed arrow body.
+                if !self.is_statement_start()
+                    && !self.is_expression_start()
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                {
                     self.resync_after_error();
                 }
                 continue;
@@ -917,12 +880,32 @@ impl ParserState {
                 self.parse_statement()
             }
         } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
+            let modifier_start = self.token_pos();
             self.parse_error_at_current_token(
                 "Declaration or statement expected.",
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
             );
             self.next_token();
             let downstream_start = self.token_pos();
+            if matches!(
+                self.token(),
+                SyntaxKind::BreakKeyword | SyntaxKind::ContinueKeyword | SyntaxKind::ReturnKeyword
+            ) {
+                while !self.is_token(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.scanner.has_preceding_line_break()
+                {
+                    self.next_token();
+                }
+                if self.is_token(SyntaxKind::SemicolonToken) {
+                    self.next_token();
+                }
+                return self.arena.add_token(
+                    syntax_kind_ext::EMPTY_STATEMENT,
+                    modifier_start,
+                    self.token_pos(),
+                );
+            }
             let preserve_downstream_expected = matches!(
                 self.token(),
                 SyntaxKind::BreakKeyword
@@ -1760,16 +1743,18 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
 
-        let invalid_first_array_binding_element = next == SyntaxKind::OpenBracketToken
-            && !matches!(
-                first_elem,
-                SyntaxKind::CloseBracketToken
-                    | SyntaxKind::CommaToken
-                    | SyntaxKind::DotDotDotToken
-                    | SyntaxKind::OpenBraceToken
-                    | SyntaxKind::OpenBracketToken
-            )
-            && !is_identifier_or_keyword(first_elem);
+        let first_elem_is_recoverable_binding_start = matches!(
+            first_elem,
+            SyntaxKind::CloseBracketToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::DotDotDotToken
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::OpenBracketToken
+        ) || (is_identifier_or_keyword(first_elem)
+            && !tsz_scanner::token_is_reserved_word(first_elem));
+
+        let invalid_first_array_binding_element =
+            next == SyntaxKind::OpenBracketToken && !first_elem_is_recoverable_binding_start;
 
         if !invalid_first_array_binding_element {
             return None;
@@ -2177,10 +2162,19 @@ impl ParserState {
                                     | SyntaxKind::CloseBraceToken
                                     | SyntaxKind::EndOfFileToken
                             ) {
-                                self.parse_error_at_current_token(
-                                    "Variable declaration expected.",
-                                    diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
-                                );
+                                if self.is_token(SyntaxKind::NewKeyword) {
+                                    let msg = tsz_common::diagnostics::diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
+                                        .replace("{0}", self.current_keyword_text());
+                                    self.parse_error_at_current_token(
+                                        &msg,
+                                        diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME,
+                                    );
+                                } else {
+                                    self.parse_error_at_current_token(
+                                        "Variable declaration expected.",
+                                        diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                                    );
+                                }
                             }
                         }
                         break;

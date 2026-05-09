@@ -2,11 +2,13 @@
 
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
-use crate::query_boundaries::checkers::call::stable_call_recovery_return_type;
+use crate::query_boundaries::checkers::call::{
+    array_element_type_for_type, stable_call_recovery_return_type, tuple_elements_for_type,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{ParamInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(crate) const fn should_preserve_speculative_call_diagnostic(
@@ -32,6 +34,10 @@ impl<'a> CheckerState<'a> {
             // They must survive call-expression diagnostic rollbacks.
             || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_TRUTHY
             || diag.code == diagnostic_codes::THIS_KIND_OF_EXPRESSION_IS_ALWAYS_FALSY
+            // TS2352 from an explicit type assertion is not an overload-candidate
+            // failure. If the assertion itself has no overlap, tsc reports it even
+            // when the surrounding overloaded call resolves through a catch-all.
+            || diag.code == diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV
             // TS2304/TS2552 (Cannot find name / did you mean?) are name-resolution
             // facts that do not depend on the overload candidate being tried.
             // They must survive speculative rollbacks so undeclared identifiers
@@ -77,15 +83,12 @@ impl<'a> CheckerState<'a> {
         2769, // No overload matches this call
     ];
 
-    pub(super) fn overload_candidate_has_callback_body_errors(
+    pub(crate) fn overload_candidate_has_callback_body_errors(
         &self,
         args: &[NodeIndex],
         snap: &crate::context::speculation::DiagnosticSnapshot,
     ) -> bool {
         let speculative = self.ctx.speculative_diagnostics_since(snap);
-        if speculative.is_empty() {
-            return false;
-        }
         for &arg_idx in args {
             let Some(_) = self.ctx.arena.get(arg_idx) else {
                 continue;
@@ -102,9 +105,118 @@ impl<'a> CheckerState<'a> {
                 }) {
                     return true;
                 }
+                if self.ctx.no_overload_call_nodes.iter().any(|node_id| {
+                    let idx = NodeIndex(*node_id);
+                    self.ctx.arena.get(idx).is_some_and(|node| {
+                        node.pos >= body_start
+                            && node.pos < body_end
+                            && !snap.no_overload_call_nodes.contains(node_id)
+                    })
+                }) {
+                    return true;
+                }
             }
         }
         false
+    }
+
+    pub(super) fn type_is_or_constrained_to_top_rest_any_callable(&self, type_id: TypeId) -> bool {
+        if let Some(constraint) =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+        {
+            return self.type_is_or_constrained_to_top_rest_any_callable(constraint);
+        }
+        let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            type_id,
+        ) else {
+            return false;
+        };
+        if shape.is_constructor || shape.params.len() != 1 || !shape.params[0].rest {
+            return false;
+        }
+        let rest_type = shape.params[0].type_id;
+        let rest_elem = array_element_type_for_type(self.ctx.types, rest_type).or_else(|| {
+            tuple_elements_for_type(self.ctx.types, rest_type).and_then(|elems| {
+                elems
+                    .into_iter()
+                    .find(|elem| elem.rest)
+                    .map(|elem| elem.type_id)
+            })
+        });
+        (rest_elem.is_some_and(|elem| elem == TypeId::ANY || elem == TypeId::UNKNOWN)
+            && (shape.return_type == TypeId::ANY || shape.return_type == TypeId::UNKNOWN))
+            || self
+                .format_type(type_id)
+                .starts_with("(...args: Array<any>) =>")
+    }
+
+    pub(super) fn overload_candidate_has_only_retained_generic_rest_any_callback_body_errors(
+        &self,
+        args: &[NodeIndex],
+        params: &[ParamInfo],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> bool {
+        let speculative = self.ctx.speculative_diagnostics_since(snap);
+        let param_for_arg = |index: usize| {
+            params
+                .get(index)
+                .or_else(|| params.last().filter(|param| param.rest))
+                .map(|param| param.type_id)
+        };
+        let arg_accepts_provisional_body_errors = |this: &Self, arg_index: usize, arg_idx| {
+            this.explicit_generic_function_has_fully_annotated_signature(arg_idx)
+                && param_for_arg(arg_index).is_some_and(|param_type| {
+                    this.type_is_or_constrained_to_top_rest_any_callable(param_type)
+                })
+        };
+
+        let mut found = false;
+        for diag in speculative
+            .iter()
+            .filter(|diag| Self::CALLBACK_BODY_REJECTION_CODES.contains(&diag.code))
+        {
+            let Some((arg_index, &arg_idx)) = args.iter().enumerate().find(|&(_, &arg_idx)| {
+                self.is_callback_like_argument(arg_idx)
+                    && self
+                        .callback_body_spans(arg_idx)
+                        .into_iter()
+                        .any(|(start, end)| diag.start >= start && diag.start < end)
+            }) else {
+                return false;
+            };
+            if !arg_accepts_provisional_body_errors(self, arg_index, arg_idx) {
+                return false;
+            }
+            found = true;
+        }
+
+        for node_id in self
+            .ctx
+            .no_overload_call_nodes
+            .iter()
+            .filter(|node_id| !snap.no_overload_call_nodes.contains(node_id))
+        {
+            let idx = NodeIndex(*node_id);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            let Some((arg_index, &arg_idx)) = args.iter().enumerate().find(|&(_, &arg_idx)| {
+                self.is_callback_like_argument(arg_idx)
+                    && self
+                        .callback_body_spans(arg_idx)
+                        .into_iter()
+                        .any(|(start, end)| node.pos >= start && node.pos < end)
+            }) else {
+                return false;
+            };
+            if !arg_accepts_provisional_body_errors(self, arg_index, arg_idx) {
+                return false;
+            }
+            found = true;
+        }
+
+        found
     }
 
     pub(super) fn prune_callback_body_diagnostics(
@@ -128,10 +240,122 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+            if Self::should_preserve_speculative_call_diagnostic(diag) {
+                return true;
+            }
             !callback_spans
                 .iter()
                 .any(|(start, end)| diag.start >= *start && diag.start < *end)
         });
+    }
+
+    pub(super) fn prune_speculative_callback_body_diagnostics_for_accepted_overload(
+        &mut self,
+        args: &[NodeIndex],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) {
+        let callback_spans: Vec<(u32, u32)> = args
+            .iter()
+            .flat_map(|&arg_idx| {
+                let Some(_) = self.ctx.arena.get(arg_idx) else {
+                    return Vec::new();
+                };
+                if !self.is_callback_like_argument(arg_idx) {
+                    return Vec::new();
+                }
+                self.callback_body_spans(arg_idx)
+            })
+            .collect();
+        self.ctx.rollback_diagnostics_filtered(snap, |diag| {
+            if Self::should_preserve_speculative_call_diagnostic(diag) {
+                return true;
+            }
+            let in_callback_body = callback_spans
+                .iter()
+                .any(|(start, end)| diag.start >= *start && diag.start < *end);
+            if !in_callback_body {
+                return true;
+            }
+            matches!(
+                diag.code,
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                    | diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            )
+        });
+    }
+
+    pub(super) fn callback_body_failure_span(
+        &self,
+        args: &[NodeIndex],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Option<(usize, tsz_solver::SourceSpan)> {
+        args.iter().enumerate().find_map(|(index, &arg_idx)| {
+            if !self.is_callback_like_argument(arg_idx) {
+                return None;
+            }
+            let callback_idx = self.callback_function_index(arg_idx)?;
+            let func = self
+                .ctx
+                .arena
+                .get(callback_idx)
+                .and_then(|node| self.ctx.arena.get_function(node))?;
+            let body = self.ctx.arena.get(func.body)?;
+            let body_start = body.pos;
+            let body_end = body.end;
+            let has_failed_diagnostic = self
+                .ctx
+                .speculative_diagnostics_since(snap)
+                .iter()
+                .any(|diag| diag.start >= body_start && diag.start < body_end);
+            let has_failed_no_overload_marker =
+                self.ctx.no_overload_call_nodes.iter().any(|node_id| {
+                    let idx = NodeIndex(*node_id);
+                    self.ctx.arena.get(idx).is_some_and(|node| {
+                        node.pos >= body_start
+                            && node.pos < body_end
+                            && !snap.no_overload_call_nodes.contains(node_id)
+                    })
+                });
+            if !has_failed_diagnostic && !has_failed_no_overload_marker {
+                return None;
+            }
+            Some((
+                index,
+                tsz_solver::SourceSpan::new(
+                    self.ctx.file_name.clone(),
+                    body.pos,
+                    body.end.saturating_sub(body.pos),
+                ),
+            ))
+        })
+    }
+
+    pub(super) fn callback_body_no_overload_diagnostics_since(
+        &self,
+        args: &[NodeIndex],
+        snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        let callback_spans: Vec<(u32, u32)> = args
+            .iter()
+            .copied()
+            .filter(|&arg_idx| self.is_callback_like_argument(arg_idx))
+            .flat_map(|arg_idx| self.callback_body_spans(arg_idx))
+            .collect();
+        if callback_spans.is_empty() {
+            return Vec::new();
+        }
+
+        self.ctx
+            .speculative_diagnostics_since(snap)
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                    && callback_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
+            })
+            .cloned()
+            .collect()
     }
 
     fn raw_block_body_callback_mismatch(
@@ -443,6 +667,9 @@ impl<'a> CheckerState<'a> {
             .diagnostics_between(from_snap, to_snap)
             .iter()
             .filter(|diag| {
+                if Self::should_preserve_speculative_call_diagnostic(diag) {
+                    return true;
+                }
                 !args.iter().any(|&arg_idx| {
                     let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
                         return false;

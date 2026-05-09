@@ -12,6 +12,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 // Re-export for backwards compatibility with existing imports
@@ -60,6 +61,60 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         false
     }
+
+    fn typed_array_length_constructor_return_type(
+        &mut self,
+        callee_expr: NodeIndex,
+        arg_types: &[TypeId],
+        return_type: TypeId,
+    ) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        if !matches!(
+            callee_name,
+            "Int8Array"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Int16Array"
+                | "Uint16Array"
+                | "Int32Array"
+                | "Uint32Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "BigInt64Array"
+                | "BigUint64Array"
+        ) {
+            return None;
+        }
+
+        let length_like_constructor = arg_types.is_empty()
+            || arg_types.first().is_some_and(|&arg_type| {
+                tsz_solver::operations::widening::widen_literal_type(self.ctx.types, arg_type)
+                    == TypeId::NUMBER
+            });
+        if !length_like_constructor {
+            return None;
+        }
+
+        let (base, args) =
+            query::get_application_info(self.ctx.types, return_type).or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(return_type)
+                    .and_then(|alias| query::get_application_info(self.ctx.types, alias))
+            })?;
+        if args.len() != 1 {
+            return None;
+        }
+
+        let array_buffer = self.resolve_lib_type_by_name("ArrayBuffer")?;
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .application(base, vec![array_buffer]),
+        )
+    }
+
     ///
     /// This keeps general alias typing unchanged (important for type-position behavior)
     /// while ensuring constructor resolution sees the direct constructable type.
@@ -218,7 +273,20 @@ impl<'a> CheckerState<'a> {
         // type-only/abstract constructor errors for this `new` target.
         let mut constructor_type = if let Some(expr_node) = self.ctx.arena.get(new_expr.expression)
         {
-            if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                && let Some(name) = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+                && let Some(expando_type) =
+                    self.expando_property_read_type(new_expr.expression, access.expression, &name)
+            {
+                expando_type
+            } else if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                 let identifier_text = self
                     .ctx
                     .arena
@@ -397,8 +465,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let explicit_new_type_arguments = new_expr.type_arguments.clone().or_else(|| {
+            self.ctx
+                .arena
+                .get(new_expr.expression)
+                .and_then(|node| self.ctx.arena.get_expr_type_args(node))
+                .and_then(|expr_type_args| expr_type_args.type_arguments.clone())
+        });
+
         // Validate explicit type arguments against constraints (TS2344)
-        if let Some(ref type_args_list) = new_expr.type_arguments
+        if let Some(ref type_args_list) = explicit_new_type_arguments
             && !type_args_list.nodes.is_empty()
         {
             self.validate_new_expression_type_arguments(constructor_type, type_args_list, idx);
@@ -409,14 +485,13 @@ impl<'a> CheckerState<'a> {
         // inference (and so we match tsc behavior). For implicit calls in JS/checkJs,
         // keep generic constructors intact so `new Foo(1)` can still infer `T = number`
         // instead of defaulting missing type arguments to `any`.
-        if new_expr
-            .type_arguments
+        if explicit_new_type_arguments
             .as_ref()
             .is_some_and(|type_args| !type_args.nodes.is_empty())
         {
             constructor_type = self.apply_type_arguments_to_constructor_type(
                 constructor_type,
-                new_expr.type_arguments.as_ref(),
+                explicit_new_type_arguments.as_ref(),
             );
         }
 
@@ -522,10 +597,27 @@ impl<'a> CheckerState<'a> {
 
         // TS18046: Constructing an expression of type `unknown` is not allowed.
         // tsc emits TS18046 instead of TS2351 when the constructor type is `unknown`.
-        // Without strictNullChecks, unknown is treated like any (constructable, returns any).
+        // Without strictNullChecks, let normal construct checks run so that the
+        // expression emits TS2351 (`new` on non-constructable) instead of TS18046.
         if constructor_type == TypeId::UNKNOWN {
-            if self.error_is_of_type_unknown(new_expr.expression) {
-                // Still need to check arguments for definite assignment (TS2454)
+            if self.ctx.compiler_options.strict_null_checks {
+                if self.error_is_of_type_unknown(new_expr.expression) {
+                    // Still need to check arguments for definite assignment (TS2454)
+                    let args = match new_expr.arguments.as_ref() {
+                        Some(a) => a.nodes.as_slice(),
+                        None => &[],
+                    };
+                    let check_excess_properties = false;
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |_i, _arg_count| None,
+                        check_excess_properties,
+                        None,
+                        CallableContext::none(),
+                    );
+                    return TypeId::ERROR;
+                }
+                // Without strictNullChecks, treat unknown like any
                 let args = match new_expr.arguments.as_ref() {
                     Some(a) => a.nodes.as_slice(),
                     None => &[],
@@ -538,9 +630,11 @@ impl<'a> CheckerState<'a> {
                     None,
                     CallableContext::none(),
                 );
-                return TypeId::ERROR;
+                return TypeId::ANY;
             }
-            // Without strictNullChecks, treat unknown like any
+
+            // In non-strict mode, unknown should report TS2351
+            // (`new` on non-constructable) instead of TS18046.
             let args = match new_expr.arguments.as_ref() {
                 Some(a) => a.nodes.as_slice(),
                 None => &[],
@@ -553,6 +647,7 @@ impl<'a> CheckerState<'a> {
                 None,
                 CallableContext::none(),
             );
+            self.error_not_constructable_at(constructor_type, new_expr.expression);
             return TypeId::ANY;
         }
 
@@ -1211,6 +1306,14 @@ impl<'a> CheckerState<'a> {
 
         match result {
             CallResult::Success(mut return_type) => {
+                if let Some(fixed_return) = self.typed_array_length_constructor_return_type(
+                    new_expr.expression,
+                    &arg_types,
+                    return_type,
+                ) {
+                    return_type = fixed_return;
+                }
+
                 if let Some(contextual_type) = contextual_type {
                     let result_app = query::get_application_info(self.ctx.types, return_type)
                         .or_else(|| {
@@ -1261,7 +1364,7 @@ impl<'a> CheckerState<'a> {
                 // `type_params` empty. The solver's non-generic path then skips
                 // display_alias creation. Store it here so the formatter shows
                 // `D<string>` instead of just `D`.
-                if let Some(ref type_args_list) = new_expr.type_arguments
+                if let Some(ref type_args_list) = explicit_new_type_arguments
                     && !type_args_list.nodes.is_empty()
                 {
                     let resolved_args: Vec<TypeId> = type_args_list
@@ -1302,6 +1405,11 @@ impl<'a> CheckerState<'a> {
                 // implicitly has an 'any' type (only under noImplicitAny).
                 // In JS/checkJs, suppress only when we successfully recognized the
                 // target as a JS constructor via `this`-property synthesis above.
+                if self.ctx.is_js_file()
+                    && self.js_new_target_has_prototype_evidence(new_expr.expression)
+                {
+                    return TypeId::ANY;
+                }
                 if self.ctx.no_implicit_any() {
                     self.error_at_node(
                         idx,
@@ -1312,10 +1420,37 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             }
             CallResult::NotCallable { .. } => {
+                // Checked-JS constructor functions can be discovered from prototype
+                // evidence even when an expando/self-defaulting property access has
+                // lost its callable surface before reaching the solver.
+                if self.ctx.is_js_file()
+                    && let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+                        new_expr.expression,
+                        constructor_type,
+                        &arg_types,
+                    )
+                {
+                    return instance_type;
+                }
+
                 // In circular class-resolution scenarios, class constructor targets can
                 // transiently lose construct signatures. TypeScript suppresses TS2351
                 // here and reports the underlying class/argument diagnostics instead.
                 if self.new_target_is_class_symbol(new_expr.expression) {
+                    if let Some(ref type_args_list) = explicit_new_type_arguments
+                        && !type_args_list.nodes.is_empty()
+                    {
+                        let resolved_args: Vec<TypeId> = type_args_list
+                            .nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect();
+                        if let Some(app) =
+                            self.explicit_class_new_application(new_expr.expression, resolved_args)
+                        {
+                            return app;
+                        }
+                    }
                     // Instead of returning ERROR (which suppresses TS2339 on property
                     // access), try to return the class's instance type with type
                     // parameters defaulted to `unknown`. This matches tsc behavior:
@@ -1469,6 +1604,20 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+                if let Some(ref type_args_list) = explicit_new_type_arguments
+                    && !type_args_list.nodes.is_empty()
+                {
+                    let resolved_args: Vec<TypeId> = type_args_list
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect();
+                    if let Some(app) =
+                        self.explicit_class_new_application(new_expr.expression, resolved_args)
+                    {
+                        return app;
+                    }
+                }
                 if fallback_return != TypeId::ERROR {
                     fallback_return
                 } else if let Some(instance_type) =
@@ -1504,13 +1653,17 @@ impl<'a> CheckerState<'a> {
             }
             CallResult::NoOverloadMatch {
                 failures,
-                fallback_return: _,
+                fallback_return,
                 ..
             } => {
                 if !self.should_suppress_weak_key_no_overload(new_expr.expression, args) {
                     self.error_no_overload_matches_at(idx, &failures);
                 }
-                TypeId::ERROR
+                if fallback_return != TypeId::ERROR {
+                    query::instantiate_type_params_to_constraints(self.ctx.types, fallback_return)
+                } else {
+                    TypeId::ERROR
+                }
             }
             CallResult::ThisTypeMismatch {
                 expected_this,

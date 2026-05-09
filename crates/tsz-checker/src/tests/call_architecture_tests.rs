@@ -406,7 +406,7 @@ type ProxyMap<Service> = {
   [K in keyof Service]: (Service & { _type: Service })[K];
 };
 
-declare const implement: <T>() => <I extends any[], X>(
+declare const implement: <T>() => <I extends readonly any[], X>(
   x: (...i: I) => X,
 ) => (...i: I) => F<X, T>;
 

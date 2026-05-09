@@ -173,6 +173,11 @@ impl<'a> UsageAnalyzer<'a> {
             if let Some(sym_id) = shape.symbol {
                 Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
             }
+            for property in &shape.properties {
+                if let Some(sym_id) = self.unique_symbol_property_name_symbol(property.name) {
+                    Self::add_symbol_usage(usages, sym_id, UsageKind::VALUE);
+                }
+            }
         }
 
         if let Some(shape_id) = visitor::callable_shape_id(self.type_interner, type_id) {
@@ -181,6 +186,15 @@ impl<'a> UsageAnalyzer<'a> {
                 Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
             }
         }
+    }
+
+    fn unique_symbol_property_name_symbol(
+        &self,
+        name: tsz_common::interner::Atom,
+    ) -> Option<SymbolId> {
+        let name = self.type_interner.resolve_atom(name);
+        let symbol_id = name.strip_prefix("__unique_")?.parse::<u32>().ok()?;
+        Some(SymbolId(symbol_id))
     }
 
     fn collect_symbol_usages_for_type(

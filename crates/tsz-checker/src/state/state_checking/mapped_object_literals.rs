@@ -100,13 +100,33 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    pub(super) fn target_is_or_displays_type_application(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::type_application(self.ctx.types, type_id).is_some()
+            || self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                        .is_some()
+                })
+    }
+
     pub(super) fn check_object_literal_named_property_value(
         &mut self,
         obj_literal_idx: NodeIndex,
         prop_name: Atom,
         source_prop_type: TypeId,
+        target: TypeId,
         target_prop_type: TypeId,
     ) -> bool {
+        let prop_name_str = self.ctx.types.resolve_atom(prop_name);
+        let target_prop_type = self.mapped_object_literal_property_check_type(
+            target,
+            prop_name_str.as_ref(),
+            target_prop_type,
+        );
+
         if matches!(
             target_prop_type,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
@@ -236,6 +256,8 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_type_for_property_access(target);
         let resolved_evaluated = self.resolve_type_for_property_access(evaluated);
 
+        let prefer_implicit_optional_undefined = !self.ctx.exact_optional_property_types();
+        let mut fallback = None;
         [target, evaluated, contextual, resolved, resolved_evaluated]
             .into_iter()
             .find_map(|candidate| {
@@ -286,10 +308,112 @@ impl<'a> CheckerState<'a> {
                                 .map(|prop| prop.type_id)
                         })
                     });
-                candidate_type.filter(|&type_id| {
+                let candidate_type = candidate_type.filter(|&type_id| {
                     !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
-                })
+                })?;
+                if prefer_implicit_optional_undefined
+                    && crate::query_boundaries::class_type::type_includes_undefined(
+                        self.ctx.types,
+                        candidate_type,
+                    )
+                {
+                    return Some(candidate_type);
+                }
+                fallback.get_or_insert(candidate_type);
+                None
             })
+            .or(fallback)
+    }
+
+    fn contextual_target_property_is_optional(&mut self, target: TypeId, prop_name: &str) -> bool {
+        let evaluated = self.evaluate_type_with_env(target);
+        let contextual = self.evaluate_contextual_type(target);
+        let resolved = self.resolve_type_for_property_access(target);
+        let resolved_evaluated = self.resolve_type_for_property_access(evaluated);
+
+        [target, evaluated, contextual, resolved, resolved_evaluated]
+            .into_iter()
+            .any(|candidate| self.property_is_optional_in_type(candidate, prop_name, 4))
+    }
+
+    fn property_is_optional_in_type(
+        &mut self,
+        type_id: TypeId,
+        prop_name: &str,
+        depth: usize,
+    ) -> bool {
+        if depth == 0 {
+            return false;
+        }
+
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+            && shape.properties.iter().any(|prop| {
+                self.ctx.types.resolve_atom(prop.name).as_str() == prop_name && prop.optional
+            })
+        {
+            return true;
+        }
+
+        if let Some(mapped) =
+            crate::query_boundaries::common::mapped_type_info(self.ctx.types, type_id)
+        {
+            match mapped.optional_modifier {
+                Some(tsz_solver::MappedModifier::Add) => return true,
+                Some(tsz_solver::MappedModifier::Remove) => return false,
+                None => {
+                    if let Some((object_type, _)) =
+                        crate::query_boundaries::common::index_access_types(
+                            self.ctx.types,
+                            mapped.template,
+                        )
+                        && self.property_is_optional_in_type(object_type, prop_name, depth - 1)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if let Some((_, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            && args
+                .into_iter()
+                .any(|arg| self.property_is_optional_in_type(arg, prop_name, depth - 1))
+        {
+            return true;
+        }
+
+        if let Some(constraint) =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+            && self.property_is_optional_in_type(constraint, prop_name, depth - 1)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn mapped_object_literal_property_check_type(
+        &mut self,
+        target: TypeId,
+        prop_name: &str,
+        target_prop_type: TypeId,
+    ) -> TypeId {
+        if self.ctx.exact_optional_property_types()
+            || crate::query_boundaries::class_type::type_includes_undefined(
+                self.ctx.types,
+                target_prop_type,
+            )
+            || !self.contextual_target_property_is_optional(target, prop_name)
+        {
+            return target_prop_type;
+        }
+
+        self.ctx
+            .types
+            .factory()
+            .union2(target_prop_type, TypeId::UNDEFINED)
     }
 
     fn partial_annotation_property_type(
@@ -369,6 +493,11 @@ impl<'a> CheckerState<'a> {
             let Some(target_prop_type) = target_prop_type else {
                 continue;
             };
+            let target_prop_type = self.mapped_object_literal_property_check_type(
+                target,
+                prop_name.as_ref(),
+                target_prop_type,
+            );
             if matches!(
                 target_prop_type,
                 TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN

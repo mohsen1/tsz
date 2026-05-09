@@ -194,8 +194,16 @@ pub enum NodeCategory {
 /// Data for identifier nodes (`Identifier`, `PrivateIdentifier`)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IdentifierData {
-    /// Interned atom for O(1) comparison (`OPTIMIZATION`: use this instead of `escaped_text`)
-    #[serde(skip, default = "Atom::none")]
+    /// Interned atom for O(1) comparison (`OPTIMIZATION`: use this instead of `escaped_text`).
+    /// Atom indices are stable within a single arena because they are
+    /// allocated by the arena's per-arena `Interner`. Round-tripping the
+    /// arena (parser snapshot pipeline, see
+    /// `docs/plan/PERFORMANCE_PLAN.md`) requires the atom to
+    /// survive — otherwise identifier resolution silently breaks. The
+    /// `Atom::none` `default` is retained for backward-compatible
+    /// JSON inputs that omit the field (e.g. snapshots produced before
+    /// the field became serialised).
+    #[serde(default = "Atom::none")]
     pub atom: Atom,
     /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
     pub escaped_text: String,
@@ -210,7 +218,14 @@ pub struct LiteralData {
     pub raw_text: Option<String>,
     /// For numeric literals only
     pub value: Option<f64>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// `serde(default)` keeps deserialise back-compat with older outputs
+    /// that elided this field. We dropped `skip_serializing_if` because
+    /// the lib-snapshot pipeline serializes `NodeArena` via bincode, and
+    /// bincode's positional format desyncs on conditionally-elided
+    /// fields. Always emitting a 1-byte bool adds <0.1% to JSON IPC
+    /// payloads and is invisible in binary. See
+    /// `crates/tsz-core/src/parallel/lib_snapshot.rs`.
+    #[serde(default)]
     pub has_invalid_escape: bool,
 }
 
@@ -747,8 +762,10 @@ pub struct FunctionTypeData {
     pub type_parameters: Option<NodeList>,
     pub parameters: NodeList,
     pub type_annotation: NodeIndex,
-    /// True if this is an abstract constructor type: `abstract new () => T`
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    /// True if this is an abstract constructor type: `abstract new () => T`.
+    /// `skip_serializing_if` removed for bincode round-trip compatibility
+    /// (see `LiteralData::has_invalid_escape` for the same rationale).
+    #[serde(default)]
     pub is_abstract: bool,
 }
 
@@ -980,8 +997,12 @@ pub struct NodeArena {
     pub nodes: Vec<Node>,
 
     /// String interner for resolving identifier atoms
-    /// This is populated from the scanner after parsing completes
-    #[serde(skip)]
+    /// This is populated from the scanner after parsing completes.
+    /// Round-tripped via `Interner`'s custom `Serialize`/`Deserialize`
+    /// (which writes only the `strings` Vec; the lookup map is rebuilt
+    /// on load). This is required for snapshot round-trip to preserve
+    /// identifier text — node `IdentifierData` references atoms by
+    /// index, and stripping the interner would leave them unresolvable.
     pub interner: Interner,
 
     // ==========================================================================

@@ -5,6 +5,8 @@ use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::PropertyInfo;
 use tsz_solver::TypeId;
 
@@ -147,6 +149,17 @@ impl<'a> CheckerState<'a> {
             && let Some(&param_type) = self.ctx.typeof_param_scope.get(name.as_str())
         {
             return param_type;
+        }
+
+        if let Some(object_type) = self.const_array_to_enum_object_type_query(type_query.expr_name)
+        {
+            return object_type;
+        }
+
+        if let Some(literal_type) =
+            self.const_object_member_literal_type_query(type_query.expr_name)
+        {
+            return literal_type;
         }
 
         if let Some(sym_id) = self
@@ -392,6 +405,12 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .symbol_resolution_set
                     .contains(&tsz_binder::SymbolId(sym_id));
+                if !use_flow_sensitive_query
+                    && let Some(declared_type) =
+                        self.declared_value_type_for_type_query_symbol(tsz_binder::SymbolId(sym_id))
+                {
+                    return self.get_enum_namespace_type_for_value(declared_type);
+                }
                 if use_flow_sensitive_query {
                     let flow_resolved = query_expr_type(self, true);
                     let flow_is_lazy = lazy_def_id(self.ctx.types, flow_resolved).is_some();
@@ -452,10 +471,7 @@ impl<'a> CheckerState<'a> {
                 match name.as_str() {
                     "undefined" => return TypeId::UNDEFINED,
                     "NaN" | "Infinity" => return TypeId::NUMBER,
-                    // `typeof globalThis` behaves as a top type in intersections:
-                    // `Window & typeof globalThis` should preserve the concrete
-                    // `Window` members instead of collapsing to `any`.
-                    "globalThis" => return TypeId::UNKNOWN,
+                    "globalThis" => return self.get_global_this_type(type_query.expr_name),
                     _ => {}
                 }
                 if self.is_known_global_value_name(&name) {
@@ -537,6 +553,500 @@ impl<'a> CheckerState<'a> {
         }
 
         base
+    }
+
+    pub(crate) fn const_object_member_literal_type_query(
+        &self,
+        expr_name: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
+        let node = self.ctx.arena.get(expr_name)?;
+
+        let (base, property_name_node) = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            (access.expression, access.name_or_argument)
+        } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = self.ctx.arena.get_qualified_name(node)?;
+            (qualified.left, qualified.right)
+        } else {
+            return None;
+        };
+
+        let property_name = self.type_query_property_name_text(property_name_node)?;
+        let base = self.ctx.arena.skip_parenthesized_and_assertions(base);
+        let base_node = self.ctx.arena.get(base)?;
+        if base_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.ctx.binder.resolve_identifier(self.ctx.arena, base)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) {
+            return None;
+        }
+
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return self.array_to_enum_member_literal_type(initializer, &property_name);
+        }
+
+        let literal = self.ctx.arena.get_literal_expr(init_node)?;
+        for &element in &literal.elements.nodes {
+            let element_node = self.ctx.arena.get(element)?;
+            if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let prop = self.ctx.arena.get_property_assignment(element_node)?;
+                if self.type_query_property_name_text(prop.name).as_deref()
+                    == Some(property_name.as_str())
+                {
+                    return self.literal_type_from_const_member_initializer(prop.initializer);
+                }
+            } else if element_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                let prop = self.ctx.arena.get_shorthand_property(element_node)?;
+                if self.type_query_property_name_text(prop.name).as_deref()
+                    == Some(property_name.as_str())
+                {
+                    return self.literal_type_from_const_member_initializer(prop.name);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn declared_value_type_for_type_query_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<TypeId> {
+        if let Some(type_id) = self
+            .ctx
+            .symbol_types
+            .get(&sym_id)
+            .copied()
+            .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+        {
+            return Some(type_id);
+        }
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl = symbol.value_declaration;
+        if decl.is_none() {
+            decl = symbol.primary_declaration()?;
+        }
+        let decl_node = self.ctx.arena.get(decl)?;
+        let type_annotation = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+            decl.type_annotation
+                .is_some()
+                .then_some(decl.type_annotation)
+        } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+            let param = self.ctx.arena.get_parameter(decl_node)?;
+            param
+                .type_annotation
+                .is_some()
+                .then_some(param.type_annotation)
+        } else if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.get_extended(decl)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                let param = self.ctx.arena.get_parameter(parent_node)?;
+                (param.name == decl && param.type_annotation.is_some())
+                    .then_some(param.type_annotation)
+            } else if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+                (var_decl.name == decl && var_decl.type_annotation.is_some())
+                    .then_some(var_decl.type_annotation)
+            } else {
+                None
+            }
+        } else {
+            None
+        }?;
+
+        if self.is_direct_typeof_query_for_symbol(type_annotation, sym_id) {
+            return None;
+        }
+
+        Some(self.get_type_from_type_node(type_annotation))
+            .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+    }
+
+    fn is_direct_typeof_query_for_symbol(
+        &self,
+        type_annotation: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_QUERY {
+            return false;
+        }
+        let Some(type_query) = self.ctx.arena.get_type_query(node) else {
+            return false;
+        };
+        self.ctx
+            .binder
+            .get_node_symbol(type_query.expr_name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, type_query.expr_name)
+            })
+            == Some(sym_id)
+    }
+
+    pub(crate) fn const_array_to_enum_member_literal_type_query(
+        &self,
+        expr_name: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
+        let node = self.ctx.arena.get(expr_name)?;
+
+        let (base, property_name_node) = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            (access.expression, access.name_or_argument)
+        } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = self.ctx.arena.get_qualified_name(node)?;
+            (qualified.left, qualified.right)
+        } else {
+            return None;
+        };
+
+        let property_name = self.type_query_property_name_text(property_name_node)?;
+        let base = self.ctx.arena.skip_parenthesized_and_assertions(base);
+        let base_node = self.ctx.arena.get(base)?;
+        if base_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.ctx.binder.resolve_identifier(self.ctx.arena, base)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) {
+            return None;
+        }
+
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        self.array_to_enum_member_literal_type(decl.initializer, &property_name)
+    }
+
+    pub(crate) fn const_array_to_enum_object_type_query(
+        &self,
+        expr_name: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
+        let node = self.ctx.arena.get(expr_name)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_name)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) {
+            return None;
+        }
+
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let literal_names = self.array_to_enum_literal_names(decl.initializer)?;
+        if literal_names.is_empty() {
+            return None;
+        }
+
+        let props = literal_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let literal_type = self.ctx.types.literal_string(name);
+                PropertyInfo {
+                    name: self.ctx.types.intern_string(name),
+                    type_id: literal_type,
+                    write_type: literal_type,
+                    optional: false,
+                    readonly: true,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: tsz_common::Visibility::Public,
+                    parent_id: None,
+                    declaration_order: index as u32,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                }
+            })
+            .collect();
+
+        Some(self.ctx.types.factory().object(props))
+    }
+
+    fn array_to_enum_member_literal_type(
+        &self,
+        initializer: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        self.array_to_enum_literal_names(initializer)?
+            .into_iter()
+            .find(|name| name == property_name)
+            .map(|name| self.ctx.types.literal_string(&name))
+    }
+
+    fn array_to_enum_literal_names(&self, initializer: NodeIndex) -> Option<Vec<String>> {
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer);
+        let node = self.ctx.arena.get(initializer)?;
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.ctx.arena.get_call_expr(node)?;
+        if !self.call_expression_is_array_to_enum(call.expression) {
+            return None;
+        }
+
+        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
+        let arg = self.ctx.arena.skip_parenthesized_and_assertions(first_arg);
+        let arg_node = self.ctx.arena.get(arg)?;
+        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let array = self.ctx.arena.get_literal_expr(arg_node)?;
+        let mut names = Vec::new();
+        for &element in &array.elements.nodes {
+            let element = self.ctx.arena.skip_parenthesized_and_assertions(element);
+            let element_node = self.ctx.arena.get(element)?;
+            if (element_node.kind == SyntaxKind::StringLiteral as u16
+                || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                && let Some(lit) = self.ctx.arena.get_literal(element_node)
+            {
+                names.push(lit.text.clone());
+            }
+        }
+
+        Some(names)
+    }
+
+    fn call_expression_is_array_to_enum(&self, callee: NodeIndex) -> bool {
+        let callee = self.ctx.arena.skip_parenthesized_and_assertions(callee);
+        let Some(node) = self.ctx.arena.get(callee) else {
+            return false;
+        };
+
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return ident.escaped_text == "arrayToEnum"
+                && self.array_to_enum_callee_returns_identity_mapped_type(callee);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+            && !access.question_dot_token
+            && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            return ident.escaped_text == "arrayToEnum";
+        }
+
+        false
+    }
+
+    fn array_to_enum_callee_returns_identity_mapped_type(&self, callee: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_qualified_symbol(callee) else {
+            return false;
+        };
+        let arena = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .unwrap_or(self.ctx.arena);
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return false;
+        };
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            match symbol.primary_declaration() {
+                Some(decl) => decl,
+                None => return false,
+            }
+        };
+        let mut decl_node = match arena.get(decl_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let Some(parent) = arena.get_extended(decl_idx).map(|ext| ext.parent) else {
+                return false;
+            };
+            decl_idx = parent;
+            let Some(parent_node) = arena.get(decl_idx) else {
+                return false;
+            };
+            decl_node = parent_node;
+        }
+
+        let return_type = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(decl) = arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+            let Some(init_node) = arena.get(decl.initializer) else {
+                return false;
+            };
+            let Some(func) = arena.get_function(init_node) else {
+                return false;
+            };
+            func.type_annotation
+        } else {
+            let Some(func) = arena.get_function(decl_node) else {
+                return false;
+            };
+            func.type_annotation
+        };
+
+        self.type_node_is_identity_mapped_type_in_arena(arena, return_type)
+    }
+
+    fn type_node_is_identity_mapped_type(&self, type_node: NodeIndex) -> bool {
+        self.type_node_is_identity_mapped_type_in_arena(self.ctx.arena, type_node)
+    }
+
+    fn type_node_is_identity_mapped_type_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        type_node: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(type_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::MAPPED_TYPE {
+            return false;
+        }
+        let Some(mapped) = arena.get_mapped_type(node) else {
+            return false;
+        };
+        let Some(param) = arena
+            .get(mapped.type_parameter)
+            .and_then(|node| arena.get_type_parameter(node))
+        else {
+            return false;
+        };
+        let Some(param_name) = arena.get_identifier_at(param.name) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(mapped.type_node)
+            .is_some_and(|name| name.escaped_text == param_name.escaped_text)
+    }
+
+    fn type_query_property_name_text(&self, name: NodeIndex) -> Option<String> {
+        let name = self.ctx.arena.skip_parenthesized_and_assertions(name);
+        let node = self.ctx.arena.get(name)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return Some(ident.escaped_text.clone());
+        }
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            return self.ctx.arena.get_literal(node).map(|lit| lit.text.clone());
+        }
+        None
+    }
+
+    fn literal_type_from_const_member_initializer(&self, initializer: NodeIndex) -> Option<TypeId> {
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer);
+        let node = self.ctx.arena.get(initializer)?;
+        let factory = self.ctx.types.factory();
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx
+                    .arena
+                    .get_literal(node)
+                    .map(|lit| factory.literal_string(&lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .ctx
+                .arena
+                .get_literal(node)
+                .and_then(|lit| {
+                    lit.value
+                        .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
+                })
+                .map(|value| factory.literal_number(value)),
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(factory.literal_boolean(true)),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some(factory.literal_boolean(false)),
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
+            _ => None,
+        }
     }
 
     /// Check if a symbol is an import alias (`import a = A`) that targets
@@ -919,6 +1429,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -926,6 +1437,18 @@ impl<'a> CheckerState<'a> {
                 module_name,
                 exports_table_target,
                 &exports_table,
+                &mut props,
+            );
+            // CommonJS object-literal exports — `module.exports = { foo, bar }` —
+            // bind only an `export=` symbol (or no entries at all in `module_exports`),
+            // so the binder-driven loop above and `append_export_equals_…` together
+            // produce an empty namespace shape. Merge in the JS export surface so
+            // `typeof import("./mod").foo` resolves to the value-side member instead
+            // of a false TS2694, while existing binder-driven props still take
+            // precedence.
+            self.merge_js_export_surface_into_typeof_import_namespace_props(
+                module_name,
+                exports_table_target.or(Some(self.ctx.current_file_idx)),
                 &mut props,
             );
             Self::normalize_namespace_export_declaration_order(&mut props);
@@ -958,6 +1481,11 @@ impl<'a> CheckerState<'a> {
         let (call_idx, segments) = self.decompose_typeof_import_query(expr_name)?;
         let (module_name, specifier_node) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
+        self.maybe_emit_import_type_cjs_esm_resolution_mode_missing(
+            &module_name,
+            specifier_node,
+            resolution_mode_override,
+        );
 
         let Some(mut current) =
             self.build_typeof_import_namespace_type(&module_name, resolution_mode_override)

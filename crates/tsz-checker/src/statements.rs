@@ -231,6 +231,24 @@ pub trait StatementCheckCallbacks {
         self.check_statement(stmt_idx);
     }
 
+    /// Check a branch that static condition analysis proves cannot execute.
+    ///
+    /// The branch still needs semantic checking, but tsc does not report TS7027
+    /// solely because a condition is statically true or false.
+    fn check_unreachable_condition_branch_with_request(
+        &mut self,
+        stmt_idx: NodeIndex,
+        request: &TypingRequest,
+    ) {
+        self.set_unreachable(true);
+        self.set_reported_unreachable(true);
+        self.check_statement_with_request(stmt_idx, request);
+    }
+
+    /// Clear expression and flow caches before rechecking a loop body under
+    /// stabilized loop-entry flow types.
+    fn clear_loop_body_recheck_caches(&mut self, _stmt_idx: NodeIndex) {}
+
     /// Check switch statement exhaustiveness (Task 12: CFA Diagnostics).
     ///
     /// Called after all switch clauses have been checked to determine if
@@ -492,22 +510,26 @@ impl StatementChecker {
                     let prev_reported = state.has_reported_unreachable();
 
                     // Check then branch
-                    if condition_is_false {
-                        state.set_unreachable(true);
-                    }
                     state.check_declaration_in_statement_position(then_stmt);
-                    state.check_statement_with_request(then_stmt, request);
+                    if condition_is_false {
+                        state.check_unreachable_condition_branch_with_request(then_stmt, request);
+                    } else {
+                        state.check_statement_with_request(then_stmt, request);
+                    }
 
                     state.set_unreachable(prev_unreachable);
                     state.set_reported_unreachable(prev_reported);
 
                     // Check else branch if present
                     if else_stmt.is_some() {
-                        if condition_is_true {
-                            state.set_unreachable(true);
-                        }
                         state.check_declaration_in_statement_position(else_stmt);
-                        state.check_statement_with_request(else_stmt, request);
+                        if condition_is_true {
+                            state.check_unreachable_condition_branch_with_request(
+                                else_stmt, request,
+                            );
+                        } else {
+                            state.check_statement_with_request(else_stmt, request);
+                        }
 
                         state.set_unreachable(prev_unreachable);
                         state.set_reported_unreachable(prev_reported);
@@ -571,6 +593,11 @@ impl StatementChecker {
 
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
+                    state.check_statement_with_request(statement, request);
+                    state.leave_iteration_statement();
+
+                    state.clear_loop_body_recheck_caches(statement);
+                    state.enter_iteration_statement();
                     state.check_statement_with_request(statement, request);
                     state.leave_iteration_statement();
 
@@ -1032,14 +1059,12 @@ impl StatementChecker {
                 state.check_continue_statement(stmt_idx);
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
-                if !state.check_grammar_module_element_context(stmt_idx) {
-                    state.check_import_declaration(stmt_idx);
-                }
+                state.check_grammar_module_element_context(stmt_idx);
+                state.check_import_declaration(stmt_idx);
             }
             syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                if !state.check_grammar_module_element_context(stmt_idx) {
-                    state.check_import_equals_declaration(stmt_idx);
-                }
+                state.check_grammar_module_element_context(stmt_idx);
+                state.check_import_equals_declaration(stmt_idx);
             }
             syntax_kind_ext::MODULE_DECLARATION => {
                 // Note: TS1234/TS1235 are checked inside check_module_declaration

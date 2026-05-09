@@ -14,118 +14,8 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-/// Returns `true` if the module specifier looks like it should be rewritten
-/// by `rewriteRelativeImportExtensions`.
-///
-/// Mirrors tsc's `shouldRewriteModuleSpecifier`: the specifier must be a
-/// relative path with a TypeScript file extension (.ts/.tsx/.mts/.cts) that
-/// is NOT a declaration file (.d.ts/.d.mts/.d.cts).
-pub(crate) fn should_rewrite_module_specifier(specifier: &str) -> bool {
-    (specifier.starts_with("./") || specifier.starts_with("../"))
-        && ts_extension_suffix(specifier).is_some()
-}
-
-/// Returns the TypeScript extension suffix (e.g. `".ts"`, `".tsx"`) if the module path
-/// ends with a TS-specific extension that requires `allowImportingTsExtensions`.
-/// Returns `None` for `.d.ts`/`.d.mts`/`.d.cts` (handled separately by TS2846) and
-/// non-TS extensions.
-pub(crate) fn ts_extension_suffix(module_name: &str) -> Option<&'static str> {
-    // .d.ts/.d.mts/.d.cts are declaration files — handled by TS2846, not TS5097
-    if module_name.ends_with(".d.ts")
-        || module_name.ends_with(".d.mts")
-        || module_name.ends_with(".d.cts")
-    {
-        return None;
-    }
-    if module_name.ends_with(".ts") {
-        Some(".ts")
-    } else if module_name.ends_with(".tsx") {
-        Some(".tsx")
-    } else if module_name.ends_with(".mts") {
-        Some(".mts")
-    } else if module_name.ends_with(".cts") {
-        Some(".cts")
-    } else {
-        None
-    }
-}
-
-/// Check if a module specifier refers to a Node.js built-in module.
-/// Handles both bare names ("fs") and the `node:` prefix ("node:fs").
-pub(crate) fn is_node_builtin_module(name: &str) -> bool {
-    let bare = name.strip_prefix("node:").unwrap_or(name);
-    matches!(
-        bare,
-        "assert"
-            | "assert/strict"
-            | "async_hooks"
-            | "buffer"
-            | "child_process"
-            | "cluster"
-            | "console"
-            | "constants"
-            | "crypto"
-            | "dgram"
-            | "diagnostics_channel"
-            | "dns"
-            | "dns/promises"
-            | "domain"
-            | "events"
-            | "fs"
-            | "fs/promises"
-            | "http"
-            | "http2"
-            | "https"
-            | "inspector"
-            | "inspector/promises"
-            | "module"
-            | "net"
-            | "os"
-            | "path"
-            | "path/posix"
-            | "path/win32"
-            | "perf_hooks"
-            | "process"
-            | "punycode"
-            | "querystring"
-            | "readline"
-            | "readline/promises"
-            | "repl"
-            | "stream"
-            | "stream/consumers"
-            | "stream/promises"
-            | "stream/web"
-            | "string_decoder"
-            | "sys"
-            | "timers"
-            | "timers/promises"
-            | "tls"
-            | "trace_events"
-            | "tty"
-            | "url"
-            | "util"
-            | "util/types"
-            | "v8"
-            | "vm"
-            | "wasi"
-            | "worker_threads"
-            | "zlib"
-    )
-}
-
-fn imported_types_package_target(module_name: &str) -> Option<String> {
-    let package = module_name.strip_prefix("@types/")?;
-    if package.is_empty() {
-        return None;
-    }
-    if let Some((scope, name)) = package.split_once("__")
-        && !scope.is_empty()
-        && !name.is_empty()
-    {
-        return Some(format!("@{scope}/{name}"));
-    }
-    Some(package.to_string())
-}
+use super::declaration_helpers::{imported_types_package_target, is_node_builtin_module};
+pub(crate) use super::declaration_helpers::{should_rewrite_module_specifier, ts_extension_suffix};
 
 impl<'a> CheckerState<'a> {
     fn source_file_has_syntactic_module_indicator(
@@ -462,6 +352,223 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn check_import_attributes_commonjs_or_type_only(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only) {
+            return;
+        }
+
+        use crate::query_boundaries::capabilities::FeatureGate;
+        if self
+            .ctx
+            .capabilities
+            .check_feature_gate(FeatureGate::ImportAttributes)
+            .is_some()
+        {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+
+        if declaration_is_type_only {
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+            );
+            return;
+        }
+
+        if self.import_declaration_emits_commonjs() {
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+            );
+        }
+    }
+
+    fn import_declaration_emits_commonjs(&self) -> bool {
+        use tsz_common::common::ModuleKind;
+
+        match self.ctx.compiler_options.module {
+            ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 | ModuleKind::NodeNext => {
+                let current_file = self.ctx.file_name.as_str();
+                if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+                    return true;
+                }
+                if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+                    return false;
+                }
+                self.ctx.file_is_esm.is_some_and(|is_esm| !is_esm)
+            }
+            ModuleKind::CommonJS => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn current_file_uses_esm_import_syntax(&self) -> bool {
+        match self.ctx.compiler_options.module {
+            tsz_common::common::ModuleKind::Node16
+            | tsz_common::common::ModuleKind::Node18
+            | tsz_common::common::ModuleKind::Node20
+            | tsz_common::common::ModuleKind::NodeNext => {
+                let current_file = self.ctx.file_name.as_str();
+                if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+                    return false;
+                }
+                if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+                    return true;
+                }
+                self.ctx.file_is_esm.unwrap_or(false)
+            }
+            module => module.is_es_module(),
+        }
+    }
+
+    pub(crate) const fn module_kind_display_name(&self) -> &'static str {
+        match self.ctx.compiler_options.module {
+            tsz_common::common::ModuleKind::Node16 => "Node16",
+            tsz_common::common::ModuleKind::Node18 => "Node18",
+            tsz_common::common::ModuleKind::Node20 => "Node20",
+            tsz_common::common::ModuleKind::NodeNext => "NodeNext",
+            tsz_common::common::ModuleKind::ESNext => "ESNext",
+            tsz_common::common::ModuleKind::Preserve => "Preserve",
+            tsz_common::common::ModuleKind::CommonJS => "CommonJS",
+            tsz_common::common::ModuleKind::AMD => "AMD",
+            tsz_common::common::ModuleKind::UMD => "UMD",
+            tsz_common::common::ModuleKind::System => "System",
+            tsz_common::common::ModuleKind::ES2015 => "ES2015",
+            tsz_common::common::ModuleKind::ES2020 => "ES2020",
+            tsz_common::common::ModuleKind::ES2022 => "ES2022",
+            tsz_common::common::ModuleKind::None => "None",
+        }
+    }
+
+    pub(crate) fn import_has_type_json_attribute(&self, attributes_idx: NodeIndex) -> bool {
+        if attributes_idx.is_none() {
+            return false;
+        }
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return false;
+        };
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return false;
+        };
+
+        attrs_data.elements.nodes.iter().any(|&elem_idx| {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(attr_data) = self.ctx.arena.get_import_attribute_data(elem_node) else {
+                return false;
+            };
+            let name_is_type = self
+                .ctx
+                .arena
+                .get_literal_text(attr_data.name)
+                .map(|name| name.trim_matches('"').trim_matches('\'') == "type")
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get(attr_data.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .map(|ident| ident.escaped_text.as_str() == "type")
+                })
+                .unwrap_or(false);
+            let value_is_json = self
+                .ctx
+                .arena
+                .get_literal_text(attr_data.value)
+                .is_some_and(|value| value.trim_matches('"').trim_matches('\'') == "json");
+            name_is_type && value_is_json
+        })
+    }
+
+    pub(crate) fn import_attributes_enable_json_module(&self, attributes_idx: NodeIndex) -> bool {
+        self.import_has_type_json_attribute(attributes_idx)
+            && matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::Node18
+                    | tsz_common::common::ModuleKind::Node20
+                    | tsz_common::common::ModuleKind::NodeNext
+            )
+            && self.current_file_uses_esm_import_syntax()
+    }
+
+    fn maybe_emit_json_esm_import_attribute_required(
+        &mut self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+        target_idx: usize,
+        spec_start: u32,
+        spec_length: u32,
+        is_type_only_import: bool,
+    ) {
+        if is_type_only_import
+            || !matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::Node18
+                    | tsz_common::common::ModuleKind::Node20
+                    | tsz_common::common::ModuleKind::NodeNext
+            )
+            || !self.current_file_uses_esm_import_syntax()
+            || self.import_has_type_json_attribute(import.attributes)
+        {
+            return;
+        }
+
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return;
+        };
+        let file_name = source_file.file_name.as_str();
+        if !file_name.ends_with(".json") && !file_name.ends_with(".d.json.ts") {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+        // Emit TS1543 for default imports (`import x from "./f.json"`) and namespace imports
+        // (`import * as x from "./f.json"`). Named imports are handled separately by TS1544
+        // in import_members.rs, and side-effect imports have no import clause.
+        let has_default_binding = clause.name.is_some();
+        let has_namespace_binding = self
+            .ctx
+            .arena
+            .get(clause.named_bindings)
+            .is_some_and(|bindings_node| bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT);
+        if !has_default_binding && !has_namespace_binding {
+            return;
+        }
+
+        let module_kind = self.module_kind_display_name();
+        let message = crate::diagnostics::format_message(
+            diagnostic_messages::IMPORTING_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_REQUIRES_A_TYPE_JSON_IMPORT_ATTR,
+            &[module_kind],
+        );
+        self.error_at_position(
+            spec_start,
+            spec_length,
+            &message,
+            diagnostic_codes::IMPORTING_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_REQUIRES_A_TYPE_JSON_IMPORT_ATTR,
+        );
+    }
+
     /// TS2322: Check that import attribute values are assignable to the global `ImportAttributes`
     /// interface.
     ///
@@ -682,6 +789,15 @@ impl<'a> CheckerState<'a> {
         };
 
         if name != Some("resolution-mode") {
+            let is_json_type_attribute = name == Some("type")
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_text(attr_data.value)
+                    .is_some_and(|value| value.trim_matches('"').trim_matches('\'') == "json");
+            if is_json_type_attribute {
+                return;
+            }
             self.error_at_node(attr_data.name, invalid_key_message, invalid_key_code);
             return;
         }
@@ -710,6 +826,11 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+        let request_kind = crate::context::ResolutionRequestKind::EsmImport;
+        let request_resolution_mode = self.ctx.resolution_mode_for_request(
+            request_kind,
+            self.get_resolution_mode_override(import.attributes),
+        );
 
         let is_type_only_import = self
             .ctx
@@ -719,8 +840,19 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|clause| clause.is_type_only);
 
         // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
-        // statement has parse errors. Matches TSC: syntax errors take priority.
-        let has_parse_errors = node.this_or_subtree_has_error() || self.ctx.has_real_syntax_errors;
+        // statement has parse errors. A wrong module-element context is a grammar
+        // diagnostic, not a reason to skip module/member validation: tsc still
+        // reports missing modules and missing named exports for imports in a bare
+        // block after TS1232.
+        let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
+        let wrong_context_allows_module_semantics = in_wrong_context
+            && !self.is_inside_function_body(stmt_idx)
+            && !self.is_inside_namespace_declaration(stmt_idx);
+        let has_parse_errors = node.this_or_subtree_has_error()
+            || (self.ctx.has_real_syntax_errors && !wrong_context_allows_module_semantics);
+        if in_wrong_context && self.is_inside_function_body(stmt_idx) {
+            return;
+        }
 
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
@@ -755,6 +887,11 @@ impl<'a> CheckerState<'a> {
 
             // TS2322: Check import attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(import.attributes);
+
+            self.check_import_attributes_commonjs_or_type_only(
+                import.attributes,
+                is_type_only_import,
+            );
         }
 
         // TS1214/TS1212: Check import binding names for strict mode reserved words.
@@ -818,8 +955,7 @@ impl<'a> CheckerState<'a> {
         // unresolved-import reporting is disabled (the lightweight multi-file harness
         // uses this mode). Only skip entirely when the module also can't be resolved.
         if !self.ctx.report_unresolved_imports {
-            let resolution_mode =
-                self.requested_resolution_mode(import.attributes, is_type_only_import);
+            let resolution_mode = request_resolution_mode;
             self.check_js_type_only_imports_after_import_validation(import, module_name);
             let module_resolves = self
                 .ctx
@@ -868,7 +1004,11 @@ impl<'a> CheckerState<'a> {
         // producing extra diagnostics on missing imports.
         let module_resolves_dts = self
             .ctx
-            .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                request_resolution_mode,
+            )
             .is_some()
             || self
                 .ctx
@@ -911,10 +1051,13 @@ impl<'a> CheckerState<'a> {
         // rewriteRelativeImportExtensions also suppresses this error (tsc utilities.ts:9045).
         // tsc does not emit TS5097 inside declaration files (.d.ts).
         // When the resolver reports TS6142 (jsx not set), tsc does not also emit TS5097.
-        let has_jsx_not_set_error = self.ctx.get_resolution_error(module_name).is_some_and(|e| {
-            e.code
-                == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
-        });
+        let has_jsx_not_set_error = self
+            .ctx
+            .get_resolution_error_for_request(module_name, request_resolution_mode, request_kind)
+            .is_some_and(|e| {
+                e.code
+                    == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+            });
         // tsc only emits TS5097 when the module actually resolves (so the .ts
         // extension is the user's mistake on a real file). When the module
         // doesn't resolve at all, tsc emits TS2307 ('cannot find module')
@@ -1040,7 +1183,11 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
         let module_key = module_name.to_string();
-        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+        if let Some(error) = self.ctx.get_resolution_error_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
             // Extract error values before mutable borrow
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
@@ -1054,6 +1201,15 @@ impl<'a> CheckerState<'a> {
                 // Also suppress TS2307 for .d.ts type-only imports — tsc does
                 // not validate module existence for `import type` from .d.ts.
                 if emitted_extension_diagnostic || (is_type_only_import && dts_ext.is_some()) {
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
+                // A resolved triple-slash type reference can introduce ambient
+                // wildcard modules for non-TS assets (for example Vite's
+                // `vite/client` declarations). Those declarations should
+                // suppress the resolver's missing-file diagnostic.
+                if self.wildcard_ambient_module_declared(module_name) {
+                    self.check_imported_members(import, module_name);
                     self.ctx.import_resolution_stack.pop();
                     return;
                 }
@@ -1077,15 +1233,10 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                // Suppress TS2792/TS2307/TS2882 for System/AMD modules and classic resolution.
-                // tsc conformance tests expect no module-not-found errors for these cases -
-                // the module resolution behavior differs from Node16/NodeNext resolution.
-                let module_kind = self.ctx.compiler_options.module;
-                let is_system_or_amd = matches!(
-                    module_kind,
-                    tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-                );
-                if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+                // AMD/System/classic-resolution: tsc only emits the secondary
+                // missing-module diagnostic when TS5107 deprecation is silenced
+                // via `ignoreDeprecations` — issue #3077.
+                if self.deprecated_mode_suppresses_module_not_found() {
                     self.ctx.import_resolution_stack.pop();
                     return;
                 }
@@ -1195,14 +1346,13 @@ impl<'a> CheckerState<'a> {
 
         // Check if module was successfully resolved
         if self.resolved_module_set_contains_specifier(module_name) {
-            let resolution_mode =
-                self.requested_resolution_mode(import.attributes, is_type_only_import);
             if let Some(target_idx) = self
                 .ctx
-                .resolve_import_target_from_file_with_mode(
+                .resolve_import_target_from_file_for_request(
                     self.ctx.current_file_idx,
                     module_name,
-                    resolution_mode,
+                    request_resolution_mode,
+                    request_kind,
                 )
                 .or_else(|| self.ctx.resolve_import_target(module_name))
             {
@@ -1295,26 +1445,13 @@ impl<'a> CheckerState<'a> {
                         }
                     };
 
-                    // TSC suppresses TS1479 for .cjs/.cts files with relative imports.
-                    // These explicitly-CJS files only get TS1479 for non-relative
-                    // (package) imports where Node's runtime resolution would fail loading
-                    // an ESM module via require(). Relative imports within the project are
-                    // handled by tsc's output processing, not Node's runtime loader.
-                    // For .cjs (JavaScript) source files, this suppression applies to
-                    // ALL relative imports (including explicit .mjs targets) because tsc
-                    // does not run the CJS→ESM boundary check on JS source files beyond
-                    // package (non-relative) specifiers. For .cts (TypeScript) sources,
-                    // relative imports of explicit .mjs/.mts targets still emit TS1479.
+                    // TSC suppresses TS1479 for .cjs relative imports, but .cts
+                    // files still report the CJS -> ESM boundary for relative
+                    // imports that resolve to ESM targets.
                     let is_explicit_cjs_js_file = self.ctx.file_name.ends_with(".cjs");
-                    let is_explicit_cjs_ts_file = self.ctx.file_name.ends_with(".cts");
                     let is_relative_import =
                         module_name.starts_with("./") || module_name.starts_with("../");
-                    let relative_import_is_explicit_esm = module_name.ends_with(".mjs")
-                        || module_name.ends_with(".mts")
-                        || module_name.ends_with(".d.mts");
-                    let suppress_for_cjs_relative = is_relative_import
-                        && (is_explicit_cjs_js_file
-                            || (is_explicit_cjs_ts_file && !relative_import_is_explicit_esm));
+                    let suppress_for_cjs_relative = is_relative_import && is_explicit_cjs_js_file;
 
                     // TS1479 only applies under Node16/Node18 module kinds where
                     // CJS/ESM interop boundaries exist at runtime. Node20/NodeNext,
@@ -1343,7 +1480,33 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_WHOSE_IMPORTS_WILL_PRODUCE_REQUIRE_CALLS_H,
                         );
                     }
+
+                    // TS1541: type-only imports that cross a Node16/Node18
+                    // CJS -> ESM boundary need an explicit resolution-mode.
+                    if is_type_only_import
+                        && self.type_only_cjs_esm_resolution_mode_is_missing(
+                            target_idx,
+                            self.get_resolution_mode_override(import.attributes)
+                                .is_some(),
+                        )
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_position(
+                            spec_start,
+                            spec_length,
+                            diagnostic_messages::TYPE_ONLY_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESO,
+                            diagnostic_codes::TYPE_ONLY_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESO,
+                        );
+                    }
                 }
+
+                self.maybe_emit_json_esm_import_attribute_required(
+                    import,
+                    target_idx,
+                    spec_start,
+                    spec_length,
+                    is_type_only_import,
+                );
 
                 // TS2846 for resolved .d.ts files is only emitted when the import
                 // specifier explicitly uses a .d.ts extension (handled above at the
@@ -1381,7 +1544,8 @@ impl<'a> CheckerState<'a> {
                             || file_name.ends_with(".mjs")
                             || file_name.ends_with(".cjs");
                         let is_json_module = file_name.ends_with(".json")
-                            && self.ctx.compiler_options.resolve_json_module;
+                            && (self.ctx.compiler_options.resolve_json_module
+                                || self.import_attributes_enable_json_module(import.attributes));
                         if !is_js_like && !is_json_module {
                             use crate::diagnostics::{
                                 diagnostic_codes, diagnostic_messages, format_message,
@@ -1464,15 +1628,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS2792/TS2307/TS2882 for System/AMD modules and classic resolution.
-        // tsc conformance tests expect no module-not-found errors for these cases -
-        // the module resolution behavior differs from Node16/NodeNext resolution.
-        let module_kind = self.ctx.compiler_options.module;
-        let is_system_or_amd = matches!(
-            module_kind,
-            tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-        );
-        if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
+        // AMD/System/classic-resolution: same suppression rule as the
+        // resolution-error branch above (issue #3077).
+        if self.deprecated_mode_suppresses_module_not_found() {
             self.ctx.import_resolution_stack.pop();
             return;
         }

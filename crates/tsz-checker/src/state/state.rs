@@ -143,7 +143,7 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 impl<'a> CheckerState<'a> {
     #[inline]
     fn record_root_checker_construction() {
-        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Count every
+        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Count every
         // standalone/per-file checker constructor. Child checkers created via
         // `with_parent_cache` are counted separately with call-site attribution.
         tsz_common::perf_counters::inc(
@@ -170,6 +170,15 @@ impl<'a> CheckerState<'a> {
         CheckerState {
             ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
+    }
+
+    /// Allow conformance-harness source comments such as `// @strict: false`
+    /// to override checker options for this state.
+    ///
+    /// Normal project checking leaves this disabled so source comments cannot
+    /// mutate real compiler options.
+    pub const fn enable_source_file_test_pragmas(&mut self) {
+        self.ctx.allow_source_file_test_pragmas = true;
     }
 
     /// Create a new `CheckerState` with a shared `DefinitionStore`.
@@ -248,7 +257,7 @@ impl<'a> CheckerState<'a> {
         // we want to track in the per-reason counter dump (PR #1631).
         // Sites that still call this raw form attribute to
         // `CheckerCreationReason::Other`. See
-        // `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+        // `docs/plan/PERFORMANCE_PLAN.md`.
         Self::with_parent_cache_attributed(
             arena,
             binder,
@@ -593,6 +602,17 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(access) = self.ctx.arena.get_access_expr(node) {
+            if self.is_this_expression(access.expression)
+                && self.ctx.enclosing_class.is_some()
+                && !self.is_this_in_nested_function_inside_class(call_expression)
+                && !self.is_this_in_static_class_member(call_expression)
+            {
+                return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                    self.ctx.types,
+                    return_type,
+                    self.ctx.types.this_type(),
+                );
+            }
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
                 return crate::query_boundaries::common::substitute_this_type_at_return_position(
@@ -1422,23 +1442,25 @@ impl<'a> CheckerState<'a> {
                 // unchanged, and the current flow node can reach that confirmed node
                 // via a straight-line chain (no CONDITION/ASSIGNMENT/BRANCH_LABEL nodes),
                 // we know flow analysis will return the declared type again.
-                let stable_key = (sym_id, cached);
-                let confirmed_flow = self
-                    .ctx
-                    .symbol_flow_confirmed
-                    .borrow()
-                    .get(&stable_key)
-                    .copied();
-                if let Some(confirmed_flow) = confirmed_flow
-                    && self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id)
-                {
-                    // Update the confirmed flow node to the current one so
-                    // the next access only needs to walk back a few steps.
-                    self.ctx
+                if cached != TypeId::UNKNOWN {
+                    let stable_key = (sym_id, cached);
+                    let confirmed_flow = self
+                        .ctx
                         .symbol_flow_confirmed
-                        .borrow_mut()
-                        .insert(stable_key, flow_node);
-                    return cached;
+                        .borrow()
+                        .get(&stable_key)
+                        .copied();
+                    if let Some(confirmed_flow) = confirmed_flow
+                        && self.is_straight_line_flow_to(flow_node, confirmed_flow, sym_id)
+                    {
+                        // Update the confirmed flow node to the current one so
+                        // the next access only needs to walk back a few steps.
+                        self.ctx
+                            .symbol_flow_confirmed
+                            .borrow_mut()
+                            .insert(stable_key, flow_node);
+                        return cached;
+                    }
                 }
             }
 
@@ -1482,7 +1504,7 @@ impl<'a> CheckerState<'a> {
                     );
                     if widened_cached == narrowed {
                         // Update stable flow cache: flow returned declared type
-                        if should_narrow {
+                        if should_narrow && cached != TypeId::UNKNOWN {
                             self.update_symbol_flow_confirmed(idx, cached, true);
                         }
                         return cached;
@@ -1493,7 +1515,7 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     // Flow returned declared type unchanged — update stable cache
-                    if should_narrow {
+                    if should_narrow && cached != TypeId::UNKNOWN {
                         self.update_symbol_flow_confirmed(idx, cached, true);
                     }
                 }
@@ -1625,6 +1647,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_node_symbol(idx)
                     .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+                && result != TypeId::UNKNOWN
             {
                 let stable_key = (sym_id, result);
                 let confirmed_flow = self
@@ -1678,7 +1701,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Update stable flow cache based on whether narrowing occurred
-            if narrowed == result {
+            if narrowed == result && result != TypeId::UNKNOWN {
                 self.update_symbol_flow_confirmed(idx, result, true);
             } else {
                 self.update_symbol_flow_confirmed(idx, result, false);

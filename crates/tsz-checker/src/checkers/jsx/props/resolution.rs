@@ -1,173 +1,13 @@
-//! JSX props union resolution, attribute-vs-props checking (TS2322), spread property
-//! validation, and children excess property diagnostics.
+//! JSX props union resolution, attr checking, spread validation, and children diagnostics.
 
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Format a single property fragment "name: type" used inside the synthesized
-    /// JSX-attributes source-type display. Mirrors tsc's per-property display:
-    /// shorthand attrs render as `name: true`, others use the formatted value type.
-    fn format_jsx_synthesized_prop_fragment(&mut self, name: &str, type_id: TypeId) -> String {
-        let display_name = {
-            let mut chars = name.chars();
-            let is_ident = chars.next().is_some_and(|first| {
-                (first == '_' || first == '$' || first.is_ascii_alphabetic())
-                    && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-            });
-            if is_ident {
-                name.to_string()
-            } else {
-                format!("\"{name}\"")
-            }
-        };
-        let type_str = if type_id == TypeId::BOOLEAN_TRUE {
-            "true".to_string()
-        } else {
-            self.format_type(type_id)
-        };
-        format!("{display_name}: {type_str}")
-    }
-
-    /// Build the synthesized JSX-attributes source-type display string for the
-    /// per-attribute excess-property TS2322 diagnostic.
-    ///
-    /// Walks the attributes once and produces a formatted object-type string with
-    /// explicit (non-spread) attrs first (in source order), then spread-derived
-    /// props that aren't shadowed by an explicit attr (in spread source order).
-    /// This matches tsc's display for elements like `<X {...{p: v}} q />` where
-    /// the printed source type is `{ q: true; p: v; }`.
-    ///
-    /// All `compute_*` calls below are cache hits during a normal check pass:
-    /// the main attribute loop has already computed each attribute and spread
-    /// type, so re-walking does not double-report diagnostics.
-    fn format_jsx_attrs_synthesized_source_for_excess(
-        &mut self,
-        attributes_idx: NodeIndex,
-        props_type: TypeId,
-        request: &TypingRequest,
-    ) -> Option<String> {
-        let attrs_node = self.ctx.arena.get(attributes_idx)?;
-        let attrs = self.ctx.arena.get_jsx_attributes(attrs_node)?;
-
-        let mut explicit: Vec<(String, TypeId)> = Vec::new();
-        let mut spread_props: Vec<(String, TypeId)> = Vec::new();
-
-        for &attr_idx in &attrs.properties.nodes {
-            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
-                continue;
-            };
-
-            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
-                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
-                    continue;
-                };
-                let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
-                    continue;
-                };
-                let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
-                    continue;
-                };
-                if attr_name == "key" || attr_name == "ref" {
-                    continue;
-                }
-
-                let attr_value_type = if attr_data.initializer.is_none() {
-                    TypeId::BOOLEAN_TRUE
-                } else {
-                    self.compute_jsx_attr_value_type_without_context(attr_data.initializer)
-                };
-
-                if let Some(existing) = explicit.iter_mut().find(|(n, _)| n == &attr_name) {
-                    existing.1 = attr_value_type;
-                } else {
-                    explicit.push((attr_name, attr_value_type));
-                }
-            } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
-                    continue;
-                };
-                let spread_request = request.read().normal_origin().contextual(props_type);
-                let spread_type = self.compute_normalized_jsx_spread_type_with_request(
-                    spread_data.expression,
-                    &spread_request,
-                );
-                if matches!(spread_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
-                    continue;
-                }
-                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-                    self.ctx.types,
-                    spread_type,
-                ) {
-                    // shape.properties is sorted by atom for canonical interning;
-                    // walk in declaration order so the synthesized source-type
-                    // mirrors tsc's display, which preserves source order.
-                    let mut props_by_decl: Vec<&tsz_solver::PropertyInfo> =
-                        shape.properties.iter().collect();
-                    props_by_decl.sort_by_key(|p| p.declaration_order);
-                    for prop in props_by_decl {
-                        let name = self.ctx.types.resolve_atom(prop.name).to_string();
-                        if name == "key" || name == "ref" {
-                            continue;
-                        }
-                        if let Some(existing) = spread_props.iter_mut().find(|(n, _)| *n == name) {
-                            existing.1 = prop.type_id;
-                        } else {
-                            spread_props.push((name, prop.type_id));
-                        }
-                    }
-                }
-            }
-        }
-
-        if explicit.is_empty() && spread_props.is_empty() {
-            return None;
-        }
-
-        let explicit_names: rustc_hash::FxHashSet<String> =
-            explicit.iter().map(|(n, _)| n.clone()).collect();
-        let mut fragments: Vec<String> = Vec::with_capacity(explicit.len() + spread_props.len());
-        for (name, type_id) in &explicit {
-            fragments.push(self.format_jsx_synthesized_prop_fragment(name, *type_id));
-        }
-        for (name, type_id) in &spread_props {
-            if explicit_names.contains(name) {
-                continue;
-            }
-            fragments.push(self.format_jsx_synthesized_prop_fragment(name, *type_id));
-        }
-
-        if fragments.is_empty() {
-            return None;
-        }
-        Some(format!("{{ {}; }}", fragments.join("; ")))
-    }
-
-    fn compute_jsx_attr_value_type_without_context(&mut self, initializer: NodeIndex) -> TypeId {
-        if initializer.is_none() {
-            return TypeId::BOOLEAN_TRUE;
-        }
-        let init_node_idx = initializer;
-        if let Some(init_node) = self.ctx.arena.get(init_node_idx) {
-            let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
-                self.ctx
-                    .arena
-                    .get_jsx_expression(init_node)
-                    .map(|expr| expr.expression)
-                    .unwrap_or(init_node_idx)
-            } else {
-                init_node_idx
-            };
-            return self.compute_type_of_node(value_idx);
-        }
-        TypeId::ANY
-    }
-
     fn collect_jsx_union_resolution_attr_value_type(
         &mut self,
         value_idx: NodeIndex,
@@ -508,19 +348,32 @@ impl<'a> CheckerState<'a> {
         // Matches tsc: only the first empty expression per element is reported.
         self.check_grammar_jsx_element(attributes_idx);
 
-        let original_props_type = props_type;
         // Normalize managed/evaluated JSX props before any checks so conditional,
         // mapped, and application-based surfaces (for example
         // JSX.LibraryManagedAttributes<...>) are read through the same structural
         // path we already use for missing-required-prop analysis.
+        let raw_props_type = props_type;
         let props_type = self.normalize_jsx_required_props_target(props_type);
 
         // Union props: delegate to whole-object assignability checking.
-        if crate::query_boundaries::common::is_union_type(self.ctx.types, props_type) {
-            self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx, children_ctx);
+        if crate::query_boundaries::common::is_union_type(self.ctx.types, props_type)
+            && !(raw_props_has_type_params && component_type.is_none())
+        {
+            let union_display_target = self.build_jsx_union_props_display_target(
+                raw_props_type,
+                component_type.or(special_attr_component_type),
+                tag_name_idx,
+                &display_target,
+            );
+            self.check_jsx_union_props(
+                attributes_idx,
+                props_type,
+                &union_display_target,
+                tag_name_idx,
+                children_ctx,
+            );
             return;
         }
-        // Skip attribute-vs-props checking for any/error props.
         let skip_prop_checks = props_type == TypeId::ANY
             || props_type == TypeId::ERROR
             || crate::query_boundaries::common::contains_error_type_in_args(
@@ -535,13 +388,10 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // String index signature → any attribute name is valid.
         let has_string_index =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
                 .is_some_and(|shape| shape.string_index.is_some());
 
-        // Suppress excess-property errors when props has unresolved type params.
-        // Check both raw and evaluated props (evaluation may collapse type params).
         let props_has_type_params = raw_props_has_type_params
             || crate::query_boundaries::common::contains_type_parameters(
                 self.ctx.types,
@@ -575,22 +425,14 @@ impl<'a> CheckerState<'a> {
         let mut has_excess_property_error = false;
         let mut needs_special_attr_object_assignability = false;
         let mut has_prop_type_error = false;
+        let mut invalid_generic_spread_types: Vec<TypeId> = Vec::new();
+        let mut has_explicit_jsx_attrs = false;
 
-        // TS2783: track explicit attr names for spread overwrite detection.
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
 
-        // Deferred spread entries: (spread_type, expr_idx, attr_index) for TS2322.
-        let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
+        let mut spread_entries: Vec<(TypeId, TypeId, NodeIndex, usize)> = Vec::new();
 
-        // Pre-scan: if any attribute is an `any`/`error`-typed spread, tsc
-        // widens the merged JSX-attributes object to be `any`-compatible and
-        // skips per-attribute assignability checks against the props type for
-        // *every* explicit attribute on the element (regardless of order).
-        // Mirrors `tsxSpreadAttributesResolution12.tsx` where
-        // `<OverWriteAttr {...anyobj} x={3} />` produces no TS2322. `unknown`
-        // is *not* in this set: tsc rejects unknown spreads with TS2698, so we
-        // must keep per-attribute checks active for them too.
         let attr_nodes = &attrs.properties.nodes;
         let any_spread_present = attr_nodes.iter().any(|&attr_idx| {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
@@ -609,7 +451,6 @@ impl<'a> CheckerState<'a> {
             matches!(spread_type, TypeId::ANY | TypeId::ERROR)
         });
 
-        // Check each attribute
         for (attr_i, &attr_idx) in attr_nodes.iter().enumerate() {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
                 continue;
@@ -628,6 +469,7 @@ impl<'a> CheckerState<'a> {
                 let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
                     continue;
                 };
+                has_explicit_jsx_attrs = true;
 
                 // Track all attributes for missing-prop checking (including key/ref).
                 // Even though key/ref are not checked against component props for TYPE
@@ -669,22 +511,41 @@ impl<'a> CheckerState<'a> {
                     } else if let Some(expected_type) = expected_special_type {
                         let expected_context_type =
                             self.normalize_jsx_required_props_target(expected_type);
-                        let contextual_expected_type =
-                            if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
-                                node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                            }) {
-                                self.refine_jsx_callable_contextual_type(expected_context_type)
-                            } else {
-                                expected_context_type
-                            };
-                        self.compute_type_of_node_with_request(
+                        let is_function_value =
+                            self.ctx.arena.get(value_node_idx).is_some_and(|node| {
+                                matches!(
+                                    node.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                )
+                            });
+                        let contextual_expected_type = if is_function_value {
+                            self.ctx
+                                .implicit_any_contextual_closures
+                                .insert(value_node_idx);
+                            self.ctx
+                                .implicit_any_checked_closures
+                                .insert(value_node_idx);
+                            self.invalidate_function_like_for_contextual_retry(value_node_idx);
+                            self.refine_jsx_callable_contextual_type(expected_context_type)
+                        } else {
+                            expected_context_type
+                        };
+                        let attr_value_type = self.compute_type_of_node_with_request(
                             value_node_idx,
                             &request
                                 .read()
                                 .normal_origin()
                                 .contextual(contextual_expected_type),
-                        )
+                        );
+                        if is_function_value {
+                            self.check_jsx_special_attribute_function_body(
+                                value_node_idx,
+                                contextual_expected_type,
+                                request,
+                            );
+                        }
+                        attr_value_type
                     } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                         let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
                             self.ctx
@@ -1056,8 +917,9 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .is_some_and(|sigs| !sigs.is_empty());
                         if !has_function_context {
+                            let actual_type = self.compute_type_of_node(value_node_idx);
                             if let Some(entry) = provided_attrs.last_mut() {
-                                entry.1 = TypeId::ANY;
+                                entry.1 = actual_type;
                             }
                             continue;
                         }
@@ -1119,37 +981,56 @@ impl<'a> CheckerState<'a> {
                     }
                     // Assignability check — tsc anchors at the attribute NAME.
                     //
-                    // When either the actual or expected type contains unresolved type
-                    // parameters (e.g., from a deferred conditional like
-                    // `ExtractValueType<WrappedProps>`), skip per-attribute type checking.
-                    // tsc's "applicability" mechanism is more lenient for generic
-                    // components with complex signatures — it defers the real check to
-                    // instantiation time. Without this, we emit false TS2322 for valid
-                    // JSX like:
+                    // When the *expected* prop type contains unresolved type parameters
+                    // (e.g., from a deferred conditional like
+                    // `ExtractValueType<WrappedProps>`), skip per-attribute type
+                    // checking. tsc's "applicability" mechanism is more lenient for
+                    // generic components with complex signatures — it defers the real
+                    // check to instantiation time. Without this, we emit false TS2322
+                    // for valid JSX like:
                     //   <ReactSelectClass<ExtractValueType<WrappedProps>> value={props.value} />
-                    // where the conditional type in `props.value` can't yet be resolved.
-                    let attr_has_unresolved_type_params =
+                    // where the conditional type in the expected prop can't yet be
+                    // resolved.
+                    //
+                    // We do NOT skip when only the *actual* attribute value contains
+                    // type parameters and the expected type is concrete. tsc still
+                    // checks `<Comp s={x} />` where `Comp` expects `s: string` and
+                    // `x: T` is unconstrained — it emits TS2322 because `T`'s
+                    // constraint (`unknown`) is not assignable to `string`. Letting the
+                    // standard assignability path run handles both the constrained
+                    // case (where the constraint satisfies the target) and the
+                    // unconstrained case (where it does not).
+                    let expected_has_unresolved_type_params =
                         crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             expected_type,
-                        ) || crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            actual_type,
                         );
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR
-                        && !attr_has_unresolved_type_params
+                        && !expected_has_unresolved_type_params
                     {
                         let assignable = if is_function_attr {
-                            // For function-valued JSX props, tsc anchors at the attribute
-                            // name and displays an intersection of the inferred and expected
-                            // function types in the error message.
-                            self.check_assignable_or_report_jsx_callback_prop_at(
-                                actual_type,
-                                expected_type,
-                                value_node_idx,
-                                attr_data.name,
-                            )
+                            if attr_name == self.get_jsx_children_prop_name() {
+                                // JSX `children={p => "y"}` uses the same return
+                                // elaboration as JSX body children: tsc points at the
+                                // returned expression, not the `children` attribute name.
+                                self.check_assignable_or_report_at_exact_anchor(
+                                    actual_type,
+                                    expected_type,
+                                    value_node_idx,
+                                    value_node_idx,
+                                )
+                            } else {
+                                // For other function-valued JSX props, tsc anchors at
+                                // the attribute name and displays an intersection of the
+                                // inferred and expected function types in the error message.
+                                self.check_assignable_or_report_jsx_callback_prop_at(
+                                    actual_type,
+                                    expected_type,
+                                    value_node_idx,
+                                    attr_data.name,
+                                )
+                            }
                         } else if let Some(result) = self
                             .try_emit_jsx_bare_string_attr_undefined_target(
                                 actual_type,
@@ -1161,9 +1042,11 @@ impl<'a> CheckerState<'a> {
                         {
                             result
                         } else {
-                            self.check_assignable_or_report_at(
+                            self.check_assignable_or_report_at_with_display_types(
                                 actual_type,
                                 expected_type,
+                                actual_type,
+                                original_property_type,
                                 value_node_idx,
                                 attr_data.name,
                             )
@@ -1178,6 +1061,15 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let spread_expr_idx = spread_data.expression;
+                let raw_spread_type = self.compute_type_of_node(spread_expr_idx);
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    raw_spread_type,
+                ) && !invalid_generic_spread_types.contains(&raw_spread_type)
+                {
+                    invalid_generic_spread_types.push(raw_spread_type);
+                }
+
                 // Set contextual type so spread literals preserve narrow types.
                 let spread_request = if !skip_prop_checks {
                     request.read().normal_origin().contextual(props_type)
@@ -1281,16 +1173,31 @@ impl<'a> CheckerState<'a> {
 
                 // Defer TS2322 spread checking until after attribute override tracking.
                 if !skip_prop_checks {
-                    spread_entries.push((spread_type, spread_expr_idx, attr_i));
+                    let display_spread_type =
+                        if crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            raw_spread_type,
+                        ) {
+                            raw_spread_type
+                        } else if self.ctx.arena.get(spread_expr_idx).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        }) {
+                            spread_type
+                        } else {
+                            raw_spread_type
+                        };
+                    spread_entries.push((
+                        spread_type,
+                        display_spread_type,
+                        spread_expr_idx,
+                        attr_i,
+                    ));
                 }
             }
         }
 
         // TS2322: Check spread props against expected types (deferred to account for overrides).
         if !spread_entries.is_empty() {
-            // Track explicit attrs WITH their attr index AND name node index, so
-            // the spread checker can anchor per-property TS2322 at the earlier
-            // explicit attribute when a spread overrides it (TS2783 case).
             let mut explicit_attr_entries: Vec<(usize, String, NodeIndex)> = Vec::new();
             let mut suppress_missing_props_from_spread = false;
             for (i, &node_idx) in attr_nodes.iter().enumerate() {
@@ -1307,11 +1214,15 @@ impl<'a> CheckerState<'a> {
             }
 
             let spread_count = spread_entries.len();
-            // Collect property names from each spread so later iterations know
-            // what properties earlier spreads already provide.
+            let merged_attrs_display = self
+                .format_jsx_attrs_effective_source_for_spread_assignability(
+                    attributes_idx,
+                    props_type,
+                    request,
+                );
             let mut earlier_spread_props: rustc_hash::FxHashSet<String> =
                 rustc_hash::FxHashSet::default();
-            for (i, &(spread_type, _spread_expr_idx, spread_pos)) in
+            for (i, &(spread_type, raw_spread_type, _spread_expr_idx, spread_pos)) in
                 spread_entries.iter().enumerate()
             {
                 // Only later explicit attributes override the current spread.
@@ -1320,9 +1231,6 @@ impl<'a> CheckerState<'a> {
                     .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
                     .map(|(_, name, _)| name.as_str())
                     .collect();
-                // Also include properties already provided by earlier spreads.
-                // This prevents false TS2739 on the last spread when earlier spreads
-                // cover some of the required properties.
                 for prop_name in &earlier_spread_props {
                     overridden.insert(prop_name.as_str());
                 }
@@ -1355,6 +1263,28 @@ impl<'a> CheckerState<'a> {
 
                 // Check if there are later spreads that could provide missing properties.
                 let has_later_spreads = i < spread_count - 1;
+                let has_later_explicit_excess_attr = has_excess_property_error
+                    && explicit_attr_entries
+                        .iter()
+                        .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
+                        .any(|(_, attr_name, _)| {
+                            if attr_name == "key"
+                                || attr_name == "ref"
+                                || attr_name.starts_with("data-")
+                                || attr_name.starts_with("aria-")
+                            {
+                                return false;
+                            }
+                            !matches!(
+                                self.resolve_property_access_with_env(props_type, attr_name),
+                                crate::query_boundaries::common::PropertyAccessResult::Success {
+                                    ..
+                                } | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                                    property_type: Some(_),
+                                    ..
+                                }
+                            )
+                        });
 
                 // Check if TS2710 will be emitted: spread has children property AND there are body children
                 let spread_has_children = if let Some(spread_shape) =
@@ -1375,6 +1305,7 @@ impl<'a> CheckerState<'a> {
 
                 let had_error = self.check_spread_property_types(
                     spread_type,
+                    raw_spread_type,
                     props_type,
                     tag_name_idx,
                     &overridden,
@@ -1382,8 +1313,10 @@ impl<'a> CheckerState<'a> {
                     &earlier_explicit_attrs,
                     has_later_spreads,
                     suppress_missing_props,
+                    has_prop_type_error || has_later_explicit_excess_attr,
                     &display_target,
                     preferred_target_display,
+                    merged_attrs_display.as_deref(),
                 );
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 
@@ -1512,6 +1445,12 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        // tsc suppresses whole-attrs TS2322 when props is primitive and an IntrinsicAttributes required-prop is missing — TS2741 covers it.
+        let suppress_for_primitive_props_with_missing_ia_required =
+            crate::query_boundaries::common::is_primitive_type(self.ctx.types, props_type)
+                && self
+                    .get_intrinsic_attributes_type()
+                    .is_some_and(|ia| self.jsx_has_missing_required_props(ia, &provided_attrs));
         let reported_special_attr_assignability = if !reported_custom_children_assignability
             && !has_excess_property_error
             && !spread_covers_all
@@ -1524,6 +1463,7 @@ impl<'a> CheckerState<'a> {
             // the full props type produces false TS2322. TSC skips this path for
             // generic components.
             && !props_has_type_params
+            && !suppress_for_primitive_props_with_missing_ia_required
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
             if !self.is_assignable_to(attrs_type, props_type) {
@@ -1541,6 +1481,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let class_missing_props_component_type = special_attr_component_type.or(component_type);
+        let empty_attrs_with_children_injected_props = provided_attrs.is_empty()
+            && self.strip_jsx_children_injection_for_display(props_type) != props_type;
 
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
@@ -1548,6 +1490,7 @@ impl<'a> CheckerState<'a> {
             && !spread_covers_all
             && !skip_prop_checks
             && !display_target.is_empty()
+            && !empty_attrs_with_children_injected_props
             && !has_prop_type_error
             && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
             && class_missing_props_component_type.is_some_and(|comp| {
@@ -1582,7 +1525,7 @@ impl<'a> CheckerState<'a> {
         let spread_satisfies_type_param = props_is_type_param
             && spread_entries
                 .iter()
-                .any(|&(spread_type, _, _)| self.is_assignable_to(spread_type, props_type));
+                .any(|&(spread_type, _, _, _)| self.is_assignable_to(spread_type, props_type));
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1613,38 +1556,86 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let reported_invalid_generic_spread_assignability = self
+            .report_invalid_generic_jsx_spread_assignability(
+                super::generic_spread::GenericSpreadAssignabilityReport {
+                    generic_spread_types: invalid_generic_spread_types,
+                    provided_attrs: &provided_attrs,
+                    props_type,
+                    display_target: &display_target,
+                    tag_name_idx,
+                    has_excess_property_error,
+                    skip_prop_checks,
+                    has_explicit_jsx_attrs,
+                },
+            );
+
         let reported_dynamic_intrinsic_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
-            && !reported_type_param_assignability
             && !has_excess_property_error
             && !spread_covers_all
             && !skip_prop_checks
-            && !has_prop_type_error
             && component_type.is_none()
             && provided_attrs.is_empty()
             && raw_props_has_type_params
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.is_assignable_to(attrs_type, original_props_type) {
-                self.report_jsx_synthesized_props_assignability_error(
-                    attrs_type,
-                    &display_target,
-                    tag_name_idx,
-                );
-                true
-            } else {
-                false
-            }
+            self.report_jsx_synthesized_props_assignability_error(
+                attrs_type,
+                &display_target,
+                tag_name_idx,
+            );
+            true
         } else {
             false
         };
+
+        let reported_generic_managed_attrs_assignability =
+            if !reported_custom_children_assignability
+                && !reported_special_attr_assignability
+                && !reported_class_missing_props_assignability
+                && !reported_type_param_assignability
+                && !reported_invalid_generic_spread_assignability
+                && !reported_dynamic_intrinsic_assignability
+                && !has_excess_property_error
+                && !spread_covers_all
+                && !skip_prop_checks
+                && !has_prop_type_error
+                && component_type.is_some()
+                && provided_attrs.is_empty()
+                && raw_props_has_type_params
+                && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
+            {
+                let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                    let mut target = self.format_type(raw_props_type);
+                    if target.starts_with("LibraryManagedAttributes<")
+                        && target.ends_with(", Element>")
+                    {
+                        target.truncate(target.len() - ", Element>".len());
+                        target.push_str(", {}>");
+                    }
+                    self.report_jsx_synthesized_props_assignability_error(
+                        attrs_type,
+                        &target,
+                        tag_name_idx,
+                    );
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
 
         // TS2741: missing required properties.
         if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_type_param_assignability
+            && !reported_invalid_generic_spread_assignability
             && !reported_dynamic_intrinsic_assignability
+            && !reported_generic_managed_attrs_assignability
             && (!reported_class_missing_props_assignability
                 || (provided_attrs.is_empty() && raw_props_has_type_params))
             && !has_excess_property_error
@@ -1730,6 +1721,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 }
             })
@@ -1753,6 +1745,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         attributes_idx: NodeIndex,
         props_type: TypeId,
+        display_target: &str,
         tag_name_idx: NodeIndex,
         children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
     ) {
@@ -1767,7 +1760,7 @@ impl<'a> CheckerState<'a> {
         // Skip when any attribute value is a function/arrow expression — these need
         // contextual typing from discriminated union narrowing which we don't implement.
         let attr_nodes = &attrs.properties.nodes;
-        let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
+        let mut provided_attrs: Vec<(String, TypeId, bool)> = Vec::new();
         let mut has_spread = false;
 
         for &attr_idx in attr_nodes {
@@ -1820,7 +1813,8 @@ impl<'a> CheckerState<'a> {
                 // (not widen to string/boolean) so they can match discriminant properties
                 // in the union members. Shorthand booleans stay as BOOLEAN_TRUE for
                 // assignability but get widened to BOOLEAN in error message display.
-                let attr_type = if attr_data.initializer.is_none() {
+                let is_shorthand = attr_data.initializer.is_none();
+                let attr_type = if is_shorthand {
                     TypeId::BOOLEAN_TRUE
                 } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
                     let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
@@ -1841,7 +1835,7 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 };
 
-                provided_attrs.push((attr_name, attr_type));
+                provided_attrs.push((attr_name, attr_type, is_shorthand));
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 has_spread = true;
             }
@@ -1849,7 +1843,11 @@ impl<'a> CheckerState<'a> {
 
         // Include synthesized children prop if body children exist
         if let Some(children) = children_ctx {
-            provided_attrs.push((self.get_jsx_children_prop_name(), children.synthesized_type));
+            provided_attrs.push((
+                self.get_jsx_children_prop_name(),
+                children.synthesized_type,
+                false,
+            ));
         }
 
         // Skip union check when spread attributes are involved (handled separately).
@@ -1872,7 +1870,7 @@ impl<'a> CheckerState<'a> {
         // Only emit TS2322 when NO member is compatible.
         let provided_names: rustc_hash::FxHashSet<&str> = provided_attrs
             .iter()
-            .map(|(name, _)| name.as_str())
+            .map(|(name, _, _)| name.as_str())
             .collect();
 
         let mut any_member_compatible = false;
@@ -1880,7 +1878,7 @@ impl<'a> CheckerState<'a> {
             let member_resolved = self.resolve_type_for_property_access(member);
 
             // Check 1: All provided attribute values are assignable to member properties
-            let all_attrs_compatible = provided_attrs.iter().all(|(name, attr_type)| {
+            let all_attrs_compatible = provided_attrs.iter().all(|(name, attr_type, _)| {
                 use crate::query_boundaries::common::PropertyAccessResult;
                 match self.resolve_property_access_with_env(member_resolved, name) {
                     PropertyAccessResult::Success { type_id, .. } => {
@@ -1939,7 +1937,7 @@ impl<'a> CheckerState<'a> {
             // where `v: MenuItemVariant` and `MenuItemVariant extends ListItemVariant`.
             // The per-member check fails because the type parameter doesn't match any
             // single member, but the constraint ensures correctness at instantiation.
-            let any_attr_has_type_params = provided_attrs.iter().any(|(_, attr_type)| {
+            let any_attr_has_type_params = provided_attrs.iter().any(|(_, attr_type, _)| {
                 crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     *attr_type,
@@ -1952,10 +1950,11 @@ impl<'a> CheckerState<'a> {
                 // object type displayed in error messages (fresh object literal widening).
                 let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
                     .iter()
-                    .map(|(name, type_id)| {
+                    .map(|(name, type_id, is_shorthand)| {
                         let name_atom = self.ctx.types.intern_string(name);
-                        // Widen BOOLEAN_TRUE → BOOLEAN for error display
-                        let display_type = if *type_id == TypeId::BOOLEAN_TRUE {
+                        // Widen shorthand booleans (`<Comp editable />`) to `boolean`
+                        // for error display, but preserve explicit `{true}` literals.
+                        let display_type = if *is_shorthand && *type_id == TypeId::BOOLEAN_TRUE {
                             TypeId::BOOLEAN
                         } else if name == "children" {
                             self.jsx_children_display_type(*type_id)
@@ -1974,20 +1973,42 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: 0,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         }
                     })
                     .collect();
                 let attrs_type = self.ctx.types.factory().object(properties);
+                if self.is_assignable_to(attrs_type, props_type) {
+                    return;
+                }
                 // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),
                 // not the attributes container.
-                self.check_assignable_or_report_at(
+                self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
-                    props_type,
-                    tag_name_idx,
+                    display_target,
                     tag_name_idx,
                 );
             }
         }
+    }
+
+    fn jsx_props_type_is_library_managed_attributes_application(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let Some((base, _args)) =
+            crate::query_boundaries::state::type_environment::application_info(
+                self.ctx.types,
+                type_id,
+            )
+        else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        self.get_symbol_globally(sym_id)
+            .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
     }
 }

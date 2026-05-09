@@ -15,7 +15,8 @@ use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
 use crate::visitor::{
-    application_id, contains_this_type, enum_components, lazy_def_id, literal_value, union_list_id,
+    application_id, array_element_type, conditional_type_id, contains_this_type, enum_components,
+    lazy_def_id, literal_value, union_list_id,
 };
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -593,6 +594,74 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // Deferred conditional targets containing `infer` must be checked in their
+        // raw form when the check context is still generic. Eager evaluation can
+        // bind the infer variables from a broad constraint and incorrectly accept
+        // assignments that tsc rejects until instantiation.
+        if !self.bypass_evaluation
+            && let Some(target_cond_id) = conditional_type_id(self.interner, target)
+        {
+            let target_cond = self.interner.get_conditional(target_cond_id);
+            let target_has_infer = crate::type_queries::contains_infer_types_db(
+                self.interner,
+                target_cond.extends_type,
+            ) || crate::type_queries::contains_infer_types_db(
+                self.interner,
+                target_cond.true_type,
+            ) || crate::type_queries::contains_infer_types_db(
+                self.interner,
+                target_cond.false_type,
+            );
+            let target_is_deferred_context =
+                crate::visitor::contains_type_parameters(self.interner, target_cond.check_type)
+                    || crate::visitor::contains_type_parameters(
+                        self.interner,
+                        target_cond.extends_type,
+                    )
+                    || crate::visitor::contains_type_parameters(
+                        self.interner,
+                        target_cond.true_type,
+                    )
+                    || crate::visitor::contains_type_parameters(
+                        self.interner,
+                        target_cond.false_type,
+                    )
+                    || contains_this_type(self.interner, target_cond.check_type)
+                    || contains_this_type(self.interner, target_cond.extends_type)
+                    || contains_this_type(self.interner, target_cond.true_type)
+                    || contains_this_type(self.interner, target_cond.false_type);
+
+            if target_has_infer && target_is_deferred_context {
+                let evaluated_source = self.evaluate_type(source);
+                if evaluated_source == target
+                    || conditional_type_id(self.interner, evaluated_source).is_some_and(
+                        |source_cond_id| {
+                            let source_cond = self.interner.get_conditional(source_cond_id);
+                            source_cond.check_type == target_cond.check_type
+                                && source_cond.extends_type == target_cond.extends_type
+                                && source_cond.true_type == target_cond.true_type
+                                && source_cond.false_type == target_cond.false_type
+                                && source_cond.is_distributive == target_cond.is_distributive
+                        },
+                    )
+                {
+                    if let Some(dp) = def_entered {
+                        self.def_guard.leave(dp);
+                    }
+                    self.guard.leave(pair);
+                    leave_global!();
+                    return SubtypeResult::True;
+                }
+                let result = self.subtype_of_conditional_target(source, &target_cond);
+                if let Some(dp) = def_entered {
+                    self.def_guard.leave(dp);
+                }
+                self.guard.leave(pair);
+                leave_global!();
+                return result;
+            }
+        }
+
         // =========================================================================
         // Pre-evaluation variance fast path for Application types.
         //
@@ -675,6 +744,93 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 leave_global!();
                 return result;
             }
+        }
+
+        let readonly_array_bridge_result = if let Some(source_members) =
+            union_list_id(self.interner, source)
+            && self.type_contains_readonly_array_syntax(target)
+            && self
+                .interner
+                .type_list(source_members)
+                .iter()
+                .any(|&member| self.readonly_array_application_element(member).is_some())
+        {
+            let member_list = self.interner.type_list(source_members);
+            let all_related = member_list
+                .iter()
+                .all(|&member| self.check_subtype(member, target).is_true());
+            all_related.then_some(SubtypeResult::True)
+        } else if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_application_element(source),
+            self.readonly_array_syntax_element(target),
+        ) {
+            Some(self.check_subtype(s_elem, t_elem))
+        } else if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_syntax_element(source),
+            self.readonly_array_application_element(target),
+        ) {
+            Some(self.check_subtype(s_elem, t_elem))
+        } else if let Some(s_elem) = self.readonly_array_application_element(source)
+            && let Some(target_members) = union_list_id(self.interner, target)
+        {
+            let member_list = self.interner.type_list(target_members);
+            if member_list
+                .iter()
+                .any(|&member| self.readonly_array_syntax_element(member).is_some())
+            {
+                let any_related = member_list.iter().any(|&member| {
+                    self.readonly_array_syntax_element(member)
+                        .is_some_and(|t_elem| self.check_subtype(s_elem, t_elem).is_true())
+                        || self.check_subtype(source, member).is_true()
+                });
+                any_related.then_some(SubtypeResult::True)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(result) = readonly_array_bridge_result {
+            if let Some(dp) = def_entered {
+                self.def_guard.leave(dp);
+            }
+            self.guard.leave(pair);
+            if !has_this_type && let Some(db) = self.query_db {
+                let key = self.make_cache_key(source, target);
+                match result {
+                    SubtypeResult::True => db.insert_subtype_cache(key, true),
+                    SubtypeResult::False => db.insert_subtype_cache(key, false),
+                    SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
+                }
+            }
+            leave_global!();
+            return result;
+        }
+
+        // Arrays must compare their element types before evaluation turns them into
+        // structural Array interface objects. Otherwise a generic mapped element type
+        // can be accepted through the recursive Array shape even when the direct
+        // element relation fails.
+        if let (Some(s_elem), Some(t_elem)) = (
+            array_element_type(self.interner, source),
+            array_element_type(self.interner, target),
+        ) {
+            let result = self.check_subtype(s_elem, t_elem);
+            if let Some(dp) = def_entered {
+                self.def_guard.leave(dp);
+            }
+            self.guard.leave(pair);
+            if !has_this_type && let Some(db) = self.query_db {
+                let key = self.make_cache_key(source, target);
+                match result {
+                    SubtypeResult::True => db.insert_subtype_cache(key, true),
+                    SubtypeResult::False => db.insert_subtype_cache(key, false),
+                    SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
+                }
+            }
+            leave_global!();
+            return result;
         }
 
         // =========================================================================

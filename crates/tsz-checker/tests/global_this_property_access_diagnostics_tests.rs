@@ -58,6 +58,33 @@ type T = typeof globalThis.someUnknownProperty;
     );
 }
 
+#[test]
+fn bare_typeof_globalthis_exposes_global_value_surface() {
+    let source = r#"
+interface ArrayConstructor { isArray(arg: any): boolean; }
+declare var Array: ArrayConstructor;
+type G = typeof globalThis;
+declare const g: G;
+const n: number = g.Array;
+const bad = g.definitelyMissingOnGlobalThis;
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 2322) >= 1,
+        "g.Array should resolve to ArrayConstructor and fail number assignment; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7017) >= 1,
+        "missing property on typeof globalThis should stay on TS7017; got: {diags:#?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|diag| diag.code == 2339 && diag.message_text.contains("Array")),
+        "g.Array must not be reported missing on typeof globalThis; got: {diags:#?}"
+    );
+}
+
 /// Element access `globalThis['unknown']` under `--noImplicitAny` must emit
 /// TS7053. Same rationale as TS7017 above.
 #[test]
@@ -169,6 +196,58 @@ function f(x: A | B) {
     assert!(
         msg.contains("type 'A'") && !msg.contains("A | B"),
         "TS2339 should display the narrowed 'A', not the original union; got: {msg}"
+    );
+}
+
+#[test]
+fn window_typeof_globalthis_annotation_preserves_later_diagnostics() {
+    let source = r#"
+interface Window {}
+declare let win: Window & typeof globalThis;
+
+win.hi
+this.hi
+globalThis.hi
+
+win['hi']
+this['hi']
+globalThis['hi']
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 2339) >= 1,
+        "TS2339 must fire for win.hi; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7015) >= 1,
+        "TS7015 must fire for win['hi']; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7017) >= 2,
+        "TS7017 must fire for this.hi/globalThis.hi; got: {diags:#?}"
+    );
+    assert!(
+        count(&diags, 7053) >= 2,
+        "TS7053 must fire for this['hi']/globalThis['hi']; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn global_window_property_access_does_not_report_missing_index_signature() {
+    let source = r#"
+interface Window {}
+declare var window: Window & typeof globalThis;
+(() => this.window);
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert!(
+        count(&diags, 7041) >= 1,
+        "TS7041 should still fire for captured global this; got: {diags:#?}"
+    );
+    assert_eq!(
+        count(&diags, 7017),
+        0,
+        "this.window is a declared global property, not an implicit-any miss; got: {diags:#?}"
     );
 }
 

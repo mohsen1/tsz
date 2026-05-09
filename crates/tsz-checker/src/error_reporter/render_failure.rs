@@ -8,15 +8,218 @@ use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::assignability::{
-    is_builtin_wrapper_name, is_function_type_display, is_object_prototype_method,
+    is_builtin_wrapper_name, is_object_prototype_method,
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
+    fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
+        query_utils::is_object_intrinsic_type(self.ctx.types, type_id)
+    }
+
+    fn no_union_member_matches_switch_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        let expected_len = crate::query_boundaries::common::union_members(self.ctx.types, source)
+            .map(|members| members.len())?;
+        let target_members = crate::query_boundaries::common::union_members(self.ctx.types, target);
+        if expected_len < 2 {
+            return None;
+        }
+
+        let mut current = anchor_idx;
+        let clause_idx = loop {
+            let parent = self.ctx.arena.parent_of(current)?;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CASE_CLAUSE {
+                break parent;
+            }
+            current = parent;
+        };
+
+        let case_block_idx = self.ctx.arena.parent_of(clause_idx)?;
+        let case_block_node = self.ctx.arena.get(case_block_idx)?;
+        let case_block = self.ctx.arena.get_block(case_block_node)?;
+        let clause_pos = case_block
+            .statements
+            .nodes
+            .iter()
+            .position(|&idx| idx == clause_idx)?;
+
+        let mut start = clause_pos;
+        while start > 0 {
+            let prev_idx = case_block.statements.nodes[start - 1];
+            let Some(prev_node) = self.ctx.arena.get(prev_idx) else {
+                break;
+            };
+            let Some(prev_clause) = self.ctx.arena.get_case_clause(prev_node) else {
+                break;
+            };
+            if !prev_clause.statements.nodes.is_empty() {
+                break;
+            }
+            start -= 1;
+        }
+
+        let mut invalid = Vec::new();
+        let mut valid = Vec::new();
+        for &idx in &case_block.statements.nodes[start..=clause_pos] {
+            let clause_node = self.ctx.arena.get(idx)?;
+            let clause = self.ctx.arena.get_case_clause(clause_node)?;
+            if clause.expression.is_none() {
+                return None;
+            }
+            let case_type = self.literal_type_from_initializer(clause.expression)?;
+            let display = self
+                .literal_expression_display(clause.expression)
+                .unwrap_or_else(|| self.format_assignability_type_for_message(case_type, target));
+            let matches_target = case_type == target
+                || target_members
+                    .as_ref()
+                    .is_some_and(|members| members.contains(&case_type));
+            if matches_target {
+                valid.push(display);
+            } else {
+                invalid.push(display);
+            }
+        }
+
+        if invalid.len() + valid.len() != expected_len {
+            return None;
+        }
+
+        invalid.extend(valid);
+        Some(invalid.join(" | "))
+    }
+
+    fn format_tuple_shape_for_readonly_to_mutable(&mut self, type_id: TypeId) -> Option<String> {
+        let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)?;
+        let mut formatted = Vec::with_capacity(elements.len());
+        for element in elements {
+            let rest = if element.rest { "..." } else { "" };
+            let optional = if element.optional && !element.rest {
+                "?"
+            } else {
+                ""
+            };
+            let type_str = self.format_type_diagnostic(element.type_id);
+            if let Some(name_atom) = element.name {
+                let name = self.ctx.types.resolve_atom_ref(name_atom);
+                formatted.push(format!("{rest}{name}{optional}: {type_str}"));
+            } else {
+                formatted.push(format!("{rest}{type_str}{optional}"));
+            }
+        }
+        Some(format!("[{}]", formatted.join(", ")))
+    }
+
+    fn class_own_missing_properties_for_display(
+        &self,
+        source_candidates: &[TypeId],
+        target_candidates: &[TypeId],
+        missing_property_name: tsz_common::interner::Atom,
+        fallback_target_type: TypeId,
+    ) -> Option<(
+        tsz_binder::SymbolId,
+        TypeId,
+        Vec<tsz_common::interner::Atom>,
+    )> {
+        let target_symbol = target_candidates
+            .iter()
+            .find_map(|&candidate| {
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+                    .and_then(|shape| {
+                        shape.properties.iter().find_map(|prop| {
+                            (prop.name == missing_property_name)
+                                .then_some(prop.parent_id)
+                                .flatten()
+                                .filter(|sym| {
+                                    self.ctx.binder.get_symbol(*sym).is_some_and(|symbol| {
+                                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                                    })
+                                })
+                        })
+                    })
+            })
+            .or_else(|| {
+                target_candidates.iter().find_map(|&candidate| {
+                    crate::query_boundaries::common::get_object_symbol(self.ctx.types, candidate)
+                        .or_else(|| {
+                            crate::query_boundaries::common::object_shape_for_type(
+                                self.ctx.types,
+                                candidate,
+                            )
+                            .and_then(|shape| {
+                                shape.properties.iter().find_map(|prop| {
+                                    prop.parent_id.filter(|sym| {
+                                        self.ctx.binder.get_symbol(*sym).is_some_and(|symbol| {
+                                            symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                                        })
+                                    })
+                                })
+                            })
+                        })
+                })
+            })?;
+
+        let mut source_props = Vec::new();
+        for &candidate in source_candidates {
+            if let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+            {
+                for prop in &shape.properties {
+                    if !source_props.contains(&prop.name) {
+                        source_props.push(prop.name);
+                    }
+                }
+            }
+        }
+
+        let mut class_own_missing = Vec::new();
+        let mut target_display_type = None;
+        for &candidate in target_candidates {
+            if let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+            {
+                let mut saw_own = false;
+                for prop in &shape.properties {
+                    if prop.parent_id == Some(target_symbol) {
+                        saw_own = true;
+                        let name = self.ctx.types.resolve_atom_ref(prop.name);
+                        if !tsz_solver::utils::is_synthetic_private_brand_name(&name)
+                            && !is_object_prototype_method(&name)
+                            && !source_props.contains(&prop.name)
+                            && !class_own_missing.contains(&prop.name)
+                        {
+                            class_own_missing.push(prop.name);
+                        }
+                    }
+                }
+                if saw_own && target_display_type.is_none() {
+                    target_display_type = Some(candidate);
+                }
+            }
+        }
+
+        (class_own_missing.len() > 1).then(|| {
+            (
+                target_symbol,
+                target_display_type.unwrap_or(fallback_target_type),
+                class_own_missing,
+            )
+        })
+    }
+
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
     pub(crate) fn render_failure_reason(
         &mut self,
@@ -39,7 +242,6 @@ impl<'a> CheckerState<'a> {
                 self.normalized_anchor_span(idx, pos, end.saturating_sub(pos))
             });
         let file_name = self.ctx.file_name.clone();
-
         // TS2696: property-only failures from the `Object` wrapper use the
         // specialized message unless the target is callable/constructable.
         if depth == 0 {
@@ -384,27 +586,31 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
-                let (mut source_str, target_str) = if depth == 0 {
+                let display_source = if depth == 0 { source } else { *source_type };
+                let (mut source_str, mut target_str) = if depth == 0 {
                     let use_structural_source_display =
-                        crate::query_boundaries::common::enum_def_id(self.ctx.types, source)
-                            .is_none();
+                        crate::query_boundaries::common::enum_def_id(
+                            self.ctx.types,
+                            display_source,
+                        )
+                        .is_none();
                     (
                         if use_structural_source_display {
                             self.format_type_for_diagnostic_role(
-                                source,
+                                display_source,
                                 DiagnosticTypeDisplayRole::AssignmentSource {
                                     target,
                                     anchor_idx: idx,
                                 },
                             )
                         } else {
-                            self.format_type_diagnostic(*source_type)
+                            self.format_type_diagnostic(display_source)
                         },
                         if use_structural_source_display {
                             self.format_type_for_diagnostic_role(
                                 target,
                                 DiagnosticTypeDisplayRole::AssignmentTarget {
-                                    source,
+                                    source: display_source,
                                     anchor_idx: idx,
                                 },
                             )
@@ -414,7 +620,7 @@ impl<'a> CheckerState<'a> {
                     )
                 } else {
                     (
-                        self.format_type_diagnostic(*source_type),
+                        self.format_type_diagnostic(display_source),
                         self.format_type_diagnostic(target),
                     )
                 };
@@ -425,23 +631,41 @@ impl<'a> CheckerState<'a> {
                 ) {
                     source_str = widened;
                 }
-                // TS2820 prefers "did you mean X?" and uses the expanded union
-                // form rather than the alias name.
+                if source_str == "unknown" && source != TypeId::UNKNOWN {
+                    let fallback =
+                        self.format_assignability_type_for_message(display_source, target);
+                    if fallback != "unknown" {
+                        source_str = fallback;
+                    }
+                }
+                if depth == 0
+                    && let Some(switch_display) =
+                        self.no_union_member_matches_switch_source_display(source, target, idx)
+                {
+                    source_str = switch_display;
+                }
+                if let Some(display) = self
+                    .object_literal_property_literal_union_alias_target_display(
+                        target,
+                        &target_str,
+                        idx,
+                    )
+                {
+                    target_str = display;
+                }
                 let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);
                 if let Some(suggestion) = self.find_string_literal_spelling_suggestion(
                     source,
                     evaluated_target_for_suggestion,
                 ) {
-                    let expanded_target_str =
-                        self.format_type_diagnostic(evaluated_target_for_suggestion);
-                    let display_target_str = if expanded_target_str != target_str {
-                        &expanded_target_str
-                    } else {
-                        &target_str
-                    };
+                    let display_target_str = self.format_ts2820_target_display(
+                        target,
+                        evaluated_target_for_suggestion,
+                        &target_str,
+                    );
                     let msg = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                        &[&source_str, display_target_str, &suggestion],
+                        &[&source_str, &display_target_str, &suggestion],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -522,8 +746,20 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                let source_str = self.format_type_diagnostic(*source_type);
-                let target_str = self.format_type_diagnostic(*target_type);
+                let source_str =
+                    if let Some(inner) = crate::query_boundaries::common::readonly_inner_type(
+                        self.ctx.types,
+                        *source_type,
+                    ) && let Some(tuple_display) =
+                        self.format_tuple_shape_for_readonly_to_mutable(inner)
+                    {
+                        format!("readonly {tuple_display}")
+                    } else {
+                        self.format_type_diagnostic(*source_type)
+                    };
+                let target_str = self
+                    .format_tuple_shape_for_readonly_to_mutable(*target_type)
+                    .unwrap_or_else(|| self.format_type_diagnostic(*target_type));
                 let message = format_message(
                     diagnostic_messages::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE,
                     &[&source_str, &target_str],
@@ -635,7 +871,16 @@ impl<'a> CheckerState<'a> {
                         anchor_idx: idx,
                     },
                 );
-                let target_str = self.format_assignability_type_for_message(target, source);
+                let mut target_str = self.format_assignability_type_for_message(target, source);
+                if let Some(display) = self
+                    .object_literal_property_literal_union_alias_target_display(
+                        target,
+                        &target_str,
+                        idx,
+                    )
+                {
+                    target_str = display;
+                }
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
@@ -649,6 +894,86 @@ impl<'a> CheckerState<'a> {
                 )
             }
         }
+    }
+
+    fn object_literal_property_literal_union_alias_target_display(
+        &mut self,
+        target: TypeId,
+        current_display: &str,
+        anchor_idx: NodeIndex,
+    ) -> Option<String> {
+        if current_display.contains(" | ")
+            || !self.anchor_is_within_object_literal_property(anchor_idx)
+        {
+            return None;
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(target);
+        let display_target =
+            if crate::query_boundaries::common::union_members(self.ctx.types, target).is_some() {
+                target
+            } else {
+                evaluated
+            };
+        let members =
+            crate::query_boundaries::common::union_members(self.ctx.types, display_target)?;
+        if members.len() < 2
+            || !members.iter().all(|&member| {
+                crate::query_boundaries::common::literal_value(self.ctx.types, member).is_some()
+                    || member == TypeId::BOOLEAN_TRUE
+                    || member == TypeId::BOOLEAN_FALSE
+            })
+        {
+            return None;
+        }
+
+        let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        Some(
+            members
+                .iter()
+                .map(|&member| formatter.format(member).into_owned())
+                .collect::<Vec<_>>()
+                .join(" | "),
+        )
+    }
+
+    fn anchor_is_within_object_literal_property(&self, anchor_idx: NodeIndex) -> bool {
+        let mut current = anchor_idx;
+        for _ in 0..12 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if matches!(
+                node.kind,
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            ) {
+                return self
+                    .ctx
+                    .arena
+                    .get_extended(current)
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .is_some_and(|parent| {
+                        parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    });
+            }
+            if matches!(
+                node.kind,
+                k if k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+            ) {
+                return false;
+            }
+            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                return false;
+            };
+            if parent.is_none() {
+                return false;
+            }
+            current = parent;
+        }
+        false
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -666,8 +991,9 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // Primitive sources use TS2322 rather than missing-property wording.
-        let display_src_str = if depth == 0 && source_type != tsz_solver::TypeId::OBJECT {
+        let display_src_str = if depth == 0 && !source_type_is_object {
             self.format_type_for_diagnostic_role(
                 source,
                 DiagnosticTypeDisplayRole::AssignmentSource {
@@ -687,7 +1013,7 @@ impl<'a> CheckerState<'a> {
         let outer_source_is_primitive =
             crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
                 || is_primitive_type_name(&display_src_str);
-        let inner_source_type_is_primitive = source_type != tsz_solver::TypeId::OBJECT
+        let inner_source_type_is_primitive = !source_type_is_object
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type);
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
@@ -708,30 +1034,7 @@ impl<'a> CheckerState<'a> {
 
         // Pure function sources against non-callable targets use TS2322; class
         // constructors still keep the missing-property path.
-        let source_eval_for_fn = self.evaluate_type_with_env(source);
-        let target_eval_for_fn = self.evaluate_type_with_env(target);
-        let is_source_fn =
-            crate::query_boundaries::common::has_call_signatures(self.ctx.types, source)
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    source_eval_for_fn,
-                )
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    source_type,
-                )
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    self.evaluate_type_with_env(source_type),
-                )
-                || is_function_type_display(&display_src_str);
-        let target_has_call_sigs =
-            crate::query_boundaries::common::has_call_signatures(self.ctx.types, target)
-                || crate::query_boundaries::common::has_call_signatures(
-                    self.ctx.types,
-                    target_eval_for_fn,
-                );
-        if is_source_fn && !target_has_call_sigs {
+        if self.should_suppress_missing_property_for_callable_source(source, source_type, target) {
             let src_str = if depth == 0 {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -1004,7 +1307,7 @@ impl<'a> CheckerState<'a> {
 
         // Private brand properties handling
         let prop_name = self.ctx.types.resolve_atom_ref(property_name).to_string();
-        if prop_name.starts_with("__private_brand") {
+        if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
             let src_str = if depth == 0 {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -1185,11 +1488,67 @@ impl<'a> CheckerState<'a> {
             return Diagnostic::error(file_name, start, length, message, code);
         }
 
+        if depth == 0 {
+            let source_resolved = self.resolve_type_for_property_access(source_type);
+            let source_evaluated = self.evaluate_type_for_assignability(source_type);
+            let target_resolved = self.resolve_type_for_property_access(target_type);
+            let target_evaluated = self.evaluate_type_for_assignability(target_type);
+            let source_candidates = [source_type, source, source_resolved, source_evaluated];
+            let target_candidates = [target_type, target, target_resolved, target_evaluated];
+            if let Some((target_symbol, target_display_type, class_own_missing)) = self
+                .class_own_missing_properties_for_display(
+                    &source_candidates,
+                    &target_candidates,
+                    property_name,
+                    target_type,
+                )
+            {
+                let src_str = self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                );
+                let tgt_str = self
+                    .ctx
+                    .binder
+                    .get_symbol(target_symbol)
+                    .map(|symbol| symbol.escaped_name.to_string())
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_display_type));
+                let ordered_names = self.sort_missing_property_names_for_display(
+                    target_display_type,
+                    &class_own_missing,
+                );
+                let prop_list: Vec<String> = ordered_names
+                    .iter()
+                    .take(5)
+                    .map(|name| self.missing_property_name_for_display(*name, target))
+                    .collect();
+                let props_joined = prop_list.join(", ");
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                    &[&src_str, &tgt_str, &props_joined],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                );
+            }
+        }
+
         // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
         let widened_source = self.widen_type_for_display(source_type);
         let (mut src_str, mut tgt_str_qualified) = if depth == 0 {
             let src = if source_type == TypeId::OBJECT {
                 "{}".to_string()
+            } else if let Some(base_display) =
+                self.private_identifier_missing_source_base_display(source, property_name)
+            {
+                base_display
             } else {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -1367,8 +1726,11 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
-        if crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type) {
+        if !source_type_is_object
+            && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
+        {
             let src_str = self.format_type_diagnostic(source_type);
             let tgt_str = self.format_type_diagnostic(target_type);
             let message = format_message(
@@ -1389,44 +1751,11 @@ impl<'a> CheckerState<'a> {
         // have call signatures. Class constructors (with construct-only signatures) should
         // still produce TS2741 for missing properties.
         {
-            let source_eval = self.evaluate_type_with_env(source);
-            let target_eval = self.evaluate_type_with_env(target);
-            let display_src = self.format_type_diagnostic(source_type);
-            let is_src_fn =
-                crate::query_boundaries::common::has_call_signatures(self.ctx.types, source)
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        source_eval,
-                    )
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        source_type,
-                    )
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        self.evaluate_type_with_env(source_type),
-                    )
-                    || is_function_type_display(&display_src);
-            // Types with construct signatures (class constructors like DateConstructor)
-            // are NOT pure function types — they should still produce TS2740/TS2741
-            // for missing properties instead of being downgraded to TS2322.
-            let src_has_construct =
-                crate::query_boundaries::common::has_construct_signatures(self.ctx.types, source)
-                    || crate::query_boundaries::common::has_construct_signatures(
-                        self.ctx.types,
-                        source_eval,
-                    )
-                    || crate::query_boundaries::common::has_construct_signatures(
-                        self.ctx.types,
-                        source_type,
-                    );
-            let tgt_has_call =
-                crate::query_boundaries::common::has_call_signatures(self.ctx.types, target)
-                    || crate::query_boundaries::common::has_call_signatures(
-                        self.ctx.types,
-                        target_eval,
-                    );
-            if is_src_fn && !tgt_has_call && !src_has_construct {
+            if self.should_suppress_missing_property_for_callable_source(
+                source,
+                source_type,
+                target,
+            ) {
                 let src_str = if depth == 0 {
                     self.format_type_for_diagnostic_role(
                         source,
@@ -1572,7 +1901,7 @@ impl<'a> CheckerState<'a> {
         }
         let _has_non_proto_missing = property_names.iter().any(|name| {
             let s = self.ctx.types.resolve_atom_ref(*name);
-            !s.starts_with("__private_brand")
+            !tsz_solver::utils::is_synthetic_private_brand_name(&s)
                 && if is_array_target {
                     !is_object_prototype_method_for_array_target(&s)
                 } else {
@@ -1583,7 +1912,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .filter(|name| {
                 let s = self.ctx.types.resolve_atom_ref(**name);
-                if s.starts_with("__private_brand") {
+                if tsz_solver::utils::is_synthetic_private_brand_name(&s) {
                     return false;
                 }
                 if is_array_target {
@@ -1624,7 +1953,7 @@ impl<'a> CheckerState<'a> {
                 self.private_or_protected_member_missing_display(source_type, target_type, None)
             {
                 let widened_source = self.widen_type_for_display(source_type);
-                let src_str = if source_type == TypeId::OBJECT {
+                let src_str = if source_type_is_object {
                     "{}".to_string()
                 } else {
                     self.format_type_diagnostic(widened_source)
@@ -1647,7 +1976,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             let src_str = if depth == 0 {
-                if source_type == TypeId::OBJECT {
+                if source_type_is_object {
                     "{}".to_string()
                 } else {
                     let source_display = self.format_type_for_diagnostic_role(
@@ -1663,7 +1992,7 @@ impl<'a> CheckerState<'a> {
                         source_display,
                     )
                 }
-            } else if source_type == TypeId::OBJECT {
+            } else if source_type_is_object {
                 "{}".to_string()
             } else {
                 let widened_source = self.widen_type_for_display(source_type);
@@ -1685,6 +2014,66 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
+        }
+
+        if filtered_names.len() == 1 {
+            let source_resolved = self.resolve_type_for_property_access(source_type);
+            let source_evaluated = self.evaluate_type_for_assignability(source_type);
+            let target_resolved = self.resolve_type_for_property_access(target_type);
+            let target_evaluated = self.evaluate_type_for_assignability(target_type);
+            let source_candidates = [source_type, source, source_resolved, source_evaluated];
+            let target_candidates = [target_type, target, target_resolved, target_evaluated];
+            if let Some((target_symbol, target_display_type, class_own_missing)) = self
+                .class_own_missing_properties_for_display(
+                    &source_candidates,
+                    &target_candidates,
+                    filtered_names[0],
+                    target_type,
+                )
+            {
+                let src_str = if depth == 0 {
+                    if source_type_is_object {
+                        "{}".to_string()
+                    } else {
+                        self.format_type_for_diagnostic_role(
+                            source,
+                            DiagnosticTypeDisplayRole::AssignmentSource {
+                                target,
+                                anchor_idx: idx,
+                            },
+                        )
+                    }
+                } else {
+                    self.format_type_diagnostic(source_type)
+                };
+                let tgt_str = self
+                    .ctx
+                    .binder
+                    .get_symbol(target_symbol)
+                    .map(|symbol| symbol.escaped_name.to_string())
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_display_type));
+                let ordered_names = self.sort_missing_property_names_for_display(
+                    target_display_type,
+                    &class_own_missing,
+                );
+                let prop_list: Vec<String> = ordered_names
+                    .iter()
+                    .take(5)
+                    .map(|name| self.missing_property_name_for_display(*name, target))
+                    .collect();
+                let props_joined = prop_list.join(", ");
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                    &[&src_str, &tgt_str, &props_joined],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                );
+            }
         }
 
         // When filtering removed brand/prototype properties and only 1 remains, emit TS2741.
@@ -1740,8 +2129,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let src_str = if depth == 0 {
-                if source_type == TypeId::OBJECT {
+                if source_type_is_object {
                     "{}".to_string()
+                } else if let Some(base_display) =
+                    self.private_identifier_missing_source_base_display(source, filtered_names[0])
+                {
+                    base_display
                 } else {
                     self.format_type_for_diagnostic_role(
                         source,
@@ -1751,7 +2144,7 @@ impl<'a> CheckerState<'a> {
                         },
                     )
                 }
-            } else if source_type == TypeId::OBJECT {
+            } else if source_type_is_object {
                 "{}".to_string()
             } else {
                 let widened_source = self.widen_type_for_display(source_type);
@@ -1802,7 +2195,9 @@ impl<'a> CheckerState<'a> {
             // `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
             // line 91, where `type NumberToNumber = NumberTo<number>` is
             // displayed as `NumberTo<number>` in the missing-properties source.
-            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
+            if source_type_is_object {
+                "{}".to_string()
+            } else if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
                 self.format_type_diagnostic(unfolded)
             } else {
                 self.format_type_for_diagnostic_role(
@@ -2145,7 +2540,9 @@ impl<'a> CheckerState<'a> {
                 &[&source_str, &target_str],
             );
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            let source_str = self.format_type_diagnostic(source);
+            let source_str = self
+                .private_identifier_missing_source_base_display(source, property_name)
+                .unwrap_or_else(|| self.format_type_diagnostic(source));
             let target_str = self.format_type_diagnostic(target);
             let detail = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -2169,7 +2566,9 @@ impl<'a> CheckerState<'a> {
             diag
         } else {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            let source_str = self.format_type_diagnostic(source);
+            let source_str = self
+                .private_identifier_missing_source_base_display(source, property_name)
+                .unwrap_or_else(|| self.format_type_diagnostic(source));
             let target_str = self.format_type_diagnostic(target);
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -2183,6 +2582,89 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             )
         }
+    }
+
+    fn private_identifier_missing_source_base_display(
+        &mut self,
+        source: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let property_name = self.ctx.types.resolve_atom_ref(property_name);
+        if !property_name.starts_with('#') {
+            return None;
+        }
+
+        let source_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)?;
+        let source_symbol = self.ctx.binder.get_symbol(source_shape.symbol?)?;
+        let source_declarations = source_symbol.declarations.clone();
+
+        for decl_idx in source_declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+            let Some(heritage_clauses) = &interface.heritage_clauses else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+                    let expr_idx = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        expr_type_args.expression
+                    } else if type_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE
+                    {
+                        self.ctx
+                            .arena
+                            .get_type_ref(type_node)
+                            .map_or(type_idx, |type_ref| type_ref.type_name)
+                    } else {
+                        type_idx
+                    };
+
+                    let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                        continue;
+                    };
+                    let Some(base_symbol) = self
+                        .get_cross_file_symbol(base_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
+                    else {
+                        continue;
+                    };
+                    let base_declarations = base_symbol.declarations.clone();
+
+                    for base_decl_idx in base_declarations {
+                        let Some(base_node) = self.ctx.arena.get(base_decl_idx) else {
+                            continue;
+                        };
+                        let Some(base_class) = self.ctx.arena.get_class(base_node) else {
+                            continue;
+                        };
+                        let base_type = self.get_class_instance_type(base_decl_idx, base_class);
+                        return Some(self.format_type_diagnostic(base_type));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2281,19 +2763,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
 
-            let ret_source_str = self.format_type_diagnostic(source_return);
-            let ret_target_str = self.format_type_diagnostic(target_return);
-            let ret_msg =
-                format!("Return type '{ret_source_str}' is not assignable to '{ret_target_str}'.");
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: file_name,
-                start,
-                length,
-                message_text: ret_msg,
-                category: DiagnosticCategory::Message,
-                code: reason.diagnostic_code(),
-            });
-
+            // tsc's elaboration shape for return-type mismatches goes
+            // straight from the top-level message into the inner mismatch
+            // (e.g. "Type 'Object' is not assignable to type 'string'.")
+            // without an intermediate "Return type 'X' is not assignable
+            // to 'Y'." line. Only emit the "Return type ..." fallback when
+            // there is no nested reason that already carries the inner
+            // mismatch — otherwise we'd double-elaborate the same gap.
             if let Some(nested) = nested_reason
                 && depth < 5
             {
@@ -2311,6 +2787,20 @@ impl<'a> CheckerState<'a> {
                     message_text: nested_diag.message_text,
                     category: DiagnosticCategory::Message,
                     code: nested_diag.code,
+                });
+            } else {
+                let ret_source_str = self.format_type_diagnostic(source_return);
+                let ret_target_str = self.format_type_diagnostic(target_return);
+                let ret_msg = format!(
+                    "Return type '{ret_source_str}' is not assignable to '{ret_target_str}'."
+                );
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: file_name,
+                    start,
+                    length,
+                    message_text: ret_msg,
+                    category: DiagnosticCategory::Message,
+                    code: reason.diagnostic_code(),
                 });
             }
 

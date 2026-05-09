@@ -626,6 +626,21 @@ fn no_ts2365_for_objects_with_all_optional_properties() {
 }
 
 #[test]
+fn ts2365_unknown_addition_without_strict_checks() {
+    let diags = check_source_diagnostics_no_strict_null("let x: unknown; const y = x + 1;");
+    assert!(
+        diags.iter().any(|d| d.code == 2365),
+        "Expected TS2365 for `unknown + 1` without strictNullChecks, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 18046),
+        "Should not emit TS18046 for `unknown + 1` without strictNullChecks, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn no_ts2367_for_objects_with_all_optional_properties() {
     // Objects where ALL properties are optional overlap at `{}`, so equality
     // operators should not emit TS2367 even if the optional property types differ.
@@ -824,21 +839,29 @@ fn ts2367_preserves_literal_types_in_display() {
 }
 
 #[test]
-fn ts2367_for_explicit_unknown_intersection_compared_to_primitive() {
+fn ts2367_for_object_or_null_constrained_intersection_compared_to_primitive() {
     let diags = check_source_diagnostics(
-        r#"function f<T extends unknown>(value: T & ({} | null)) {
+        r#"function unconstrained<T>(value: T & ({} | null)) {
     if (value === 42) {}
 }
 
-function g<T extends {} | undefined>(value: T & ({} | null)) {
-    if (value === 42) {}
-}
-
-function unconstrained<T>(value: T & ({} | null)) {
+function unknown_constrained<T extends unknown>(value: T & ({} | null)) {
     if (value === 42) {}
 }
 
 function object_constrained<T extends {}>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function object_or_undefined<T extends {} | undefined>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function object_or_null<T extends {} | null>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function object_null_or_undefined<T extends {} | null | undefined>(value: T & ({} | null)) {
     if (value === 42) {}
 }"#,
     );
@@ -846,7 +869,7 @@ function object_constrained<T extends {}>(value: T & ({} | null)) {
     assert_eq!(
         relevant.len(),
         2,
-        "Expected TS2367 only for explicit unknown/undefined-bearing constraints, got: {:?}",
+        "Expected TS2367 only for object/null constraints without undefined, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.as_str()))

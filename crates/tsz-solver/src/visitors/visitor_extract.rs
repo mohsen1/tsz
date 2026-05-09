@@ -13,7 +13,36 @@ use crate::types::{
 use crate::visitor::TypeVisitor;
 use crate::{SymbolRef, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 use tsz_common::interner::Atom;
+
+// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS walks in this
+// module (`contains_unresolved_application`, `collect_infer_bindings`).
+// Mirrors the pool pattern from #4722 / #4790. Reentrant calls fall through
+// to fresh allocations because `take()` empties the slot.
+thread_local! {
+    static EXTRACT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_extract_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = EXTRACT_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    EXTRACT_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 struct TypeDataDataVisitor<F, T>
 where
@@ -209,6 +238,66 @@ pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
     })
 }
 
+/// True when `param_name` (or a placeholder unifying with `param_name`) appears
+/// at the **top level** of `ty`, mirroring tsc's `isTypeParameterAtTopLevel`
+/// (checker.ts ~26411). "Top level" means:
+///
+/// - `ty` is the type parameter itself, OR
+/// - `ty` is a union/intersection containing a top-level occurrence, OR
+/// - `ty` is a conditional type whose true- or false-branch contains a
+///   top-level occurrence (recursing up to depth 3).
+///
+/// Used by the inference solver to decide whether literal-type widening should
+/// be suppressed during the Round 1 → Round 2 contextual substitution: if a
+/// type parameter appears at top level in the return type AND has not been
+/// fixed yet, fresh literals are preserved so deferred callbacks see the
+/// literal target type (matching tsc's `getCovariantInference` gate).
+pub fn is_type_parameter_at_top_level(
+    types: &dyn TypeDatabase,
+    ty: TypeId,
+    param_name: tsz_common::interner::Atom,
+) -> bool {
+    is_type_parameter_at_top_level_impl(types, ty, param_name, 0)
+}
+
+fn is_type_parameter_at_top_level_impl(
+    types: &dyn TypeDatabase,
+    ty: TypeId,
+    param_name: tsz_common::interner::Atom,
+    depth: u32,
+) -> bool {
+    if ty.is_intrinsic() {
+        return false;
+    }
+    if let Some(info) = type_param_info(types, ty)
+        && info.name == param_name
+    {
+        return true;
+    }
+    let Some(data) = types.lookup(ty) else {
+        return false;
+    };
+    match data {
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            let members = types.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| is_type_parameter_at_top_level_impl(types, m, param_name, depth))
+        }
+        TypeData::Conditional(cond_id) if depth < 3 => {
+            let cond = types.get_conditional(cond_id);
+            is_type_parameter_at_top_level_impl(types, cond.true_type, param_name, depth + 1)
+                || is_type_parameter_at_top_level_impl(
+                    types,
+                    cond.false_type,
+                    param_name,
+                    depth + 1,
+                )
+        }
+        _ => false,
+    }
+}
+
 /// True when the type is a top-level `infer T` placeholder (`TypeData::Infer`).
 ///
 /// Distinct from `type_param_info`, which collapses `TypeParameter` and `Infer`
@@ -322,6 +411,84 @@ pub fn application_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeA
         TypeData::Application(app_id) => Some(*app_id),
         _ => None,
     })
+}
+
+/// Extract the interned name atom if this is an `UnresolvedTypeName`.
+///
+/// Useful for boundary helpers that need to re-attempt qualified-name
+/// resolution at evaluation time (e.g. for cross-file `Application` bases
+/// that the lowering pass couldn't bind because an imported namespace
+/// member wasn't visible when the alias body was first lowered).
+#[inline]
+pub fn unresolved_type_name_atom(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_common::interner::Atom> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+    extract_type_data(types, type_id, |key| match key {
+        TypeData::UnresolvedTypeName(atom) => Some(*atom),
+        _ => None,
+    })
+}
+
+/// Returns true when `type_id` (recursively) contains an `Application`
+/// whose base is `UnresolvedTypeName`. Used by checker-level evaluation
+/// passes to detect when the first-pass result still carries cross-file
+/// resolution residue and a wider resolver pass is required.
+pub fn contains_unresolved_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    fn walk(
+        types: &dyn TypeDatabase,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+        depth: u32,
+    ) -> bool {
+        if depth > 64 || !visited.insert(type_id) {
+            return false;
+        }
+        let Some(key) = types.lookup(type_id) else {
+            return false;
+        };
+        match key {
+            TypeData::Application(app_id) => {
+                let app = types.type_application(app_id);
+                if matches!(
+                    types.lookup(app.base),
+                    Some(TypeData::UnresolvedTypeName(_))
+                ) {
+                    return true;
+                }
+                if walk(types, app.base, visited, depth + 1) {
+                    return true;
+                }
+                app.args.iter().any(|&a| walk(types, a, visited, depth + 1))
+            }
+            TypeData::Intersection(list_id) | TypeData::Union(list_id) => {
+                let members = types.type_list(list_id);
+                members.iter().any(|&m| walk(types, m, visited, depth + 1))
+            }
+            TypeData::Conditional(id) => {
+                let cond = types.conditional_type(id);
+                walk(types, cond.check_type, visited, depth + 1)
+                    || walk(types, cond.extends_type, visited, depth + 1)
+                    || walk(types, cond.true_type, visited, depth + 1)
+                    || walk(types, cond.false_type, visited, depth + 1)
+            }
+            TypeData::Mapped(id) => {
+                let m = types.mapped_type(id);
+                walk(types, m.constraint, visited, depth + 1)
+                    || walk(types, m.template, visited, depth + 1)
+            }
+            TypeData::Array(elem) => walk(types, elem, visited, depth + 1),
+            TypeData::IndexAccess(obj, idx) => {
+                walk(types, obj, visited, depth + 1) || walk(types, idx, visited, depth + 1)
+            }
+            TypeData::KeyOf(operand) => walk(types, operand, visited, depth + 1),
+            _ => false,
+        }
+    }
+    with_extract_visited(|visited| walk(types, type_id, visited, 0))
 }
 
 /// Extract the mapped type id if this is a mapped type.
@@ -465,14 +632,10 @@ pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// is an unresolved type name.
 pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     let mut current = type_id;
-    let mut seen = FxHashSet::default();
 
-    loop {
+    for _ in 0..16 {
         if current == TypeId::ERROR {
             return true;
-        }
-        if !seen.insert(current) {
-            return false;
         }
 
         match types.lookup(current) {
@@ -483,6 +646,8 @@ pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
             _ => return false,
         }
     }
+
+    false
 }
 
 /// Extract the function shape id if this is a function type.
@@ -519,8 +684,9 @@ pub fn callable_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Ca
 /// belongs in the solver.
 pub fn collect_infer_bindings(types: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId)> {
     let mut result = Vec::new();
-    let mut visited = FxHashSet::default();
-    collect_infer_bindings_inner(types, type_id, &mut result, &mut visited);
+    with_extract_visited(|visited| {
+        collect_infer_bindings_inner(types, type_id, &mut result, visited);
+    });
     result
 }
 
@@ -530,7 +696,7 @@ fn collect_infer_bindings_inner(
     result: &mut Vec<(Atom, TypeId)>,
     visited: &mut FxHashSet<TypeId>,
 ) {
-    if !visited.insert(type_id) {
+    if type_id.is_intrinsic() || visited.contains(&type_id) {
         return;
     }
 
@@ -538,6 +704,12 @@ fn collect_infer_bindings_inner(
         Some(key) => key,
         None => return,
     };
+
+    if is_infer_binding_leaf(&key) {
+        return;
+    }
+
+    visited.insert(type_id);
 
     match key {
         TypeData::Infer(info) => {
@@ -680,6 +852,24 @@ fn collect_infer_bindings_inner(
         | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => {}
     }
+}
+
+#[inline]
+const fn is_infer_binding_leaf(key: &TypeData) -> bool {
+    matches!(
+        key,
+        TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
+            | TypeData::Error
+    )
 }
 
 /// Helper to collect infer bindings from a call signature's params, return type,

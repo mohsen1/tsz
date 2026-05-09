@@ -106,6 +106,7 @@ fn test_emit_es5_class_iife() {
     let class = IRNode::ES5ClassIIFE {
         name: "Point".into(),
         base_class: None,
+        super_param: None,
         body: vec![
             IRNode::func_decl(
                 "Point",
@@ -121,6 +122,7 @@ fn test_emit_es5_class_iife() {
         weakmap_inits: vec![],
         leading_comment: None,
         deferred_static_blocks: vec![],
+        deferred_block_class_alias: None,
     };
 
     let output = IRPrinter::emit_to_string(&class);
@@ -135,9 +137,11 @@ fn test_emit_es5_class_with_extends() {
     let class = IRNode::ES5ClassIIFE {
         name: "Child".into(),
         base_class: Some(Box::new(IRNode::id("Parent"))),
+        super_param: Some("_super".into()),
         body: vec![
             IRNode::ExtendsHelper {
                 class_name: "Child".into(),
+                super_name: "_super".into(),
             },
             IRNode::func_decl("Child", vec![], vec![]),
             IRNode::ret(Some(IRNode::id("Child"))),
@@ -146,6 +150,7 @@ fn test_emit_es5_class_with_extends() {
         weakmap_inits: vec![],
         leading_comment: None,
         deferred_static_blocks: vec![],
+        deferred_block_class_alias: None,
     };
 
     let output = IRPrinter::emit_to_string(&class);
@@ -243,6 +248,7 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
             parent_name: None,
             param_name: None,
             skip_sequence_indent: true,
+            trailing_comment: None,
         },
     ]);
     let mut printer = IRPrinter::new();
@@ -283,6 +289,7 @@ fn test_namespace_iife_generated_object_literal_is_multiline() {
         parent_name: None,
         param_name: None,
         skip_sequence_indent: false,
+        trailing_comment: None,
     };
 
     let output = IRPrinter::emit_to_string(&ns);

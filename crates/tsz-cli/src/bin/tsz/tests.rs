@@ -1,5 +1,12 @@
 use super::*;
 
+fn preprocess_strs(args: &[&str]) -> Vec<String> {
+    preprocess_args(args.iter().map(OsString::from).collect())
+        .into_iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
 #[test]
 fn split_response_line_simple() {
     assert_eq!(
@@ -61,6 +68,29 @@ fn split_response_line_multiple_quoted_args() {
 fn split_response_line_adjacent_quotes() {
     // foo"bar"baz should produce foobarbaz (quotes just delimit, no split)
     assert_eq!(split_response_line(r#"foo"bar"baz"#), vec!["foobarbaz"]);
+}
+
+#[test]
+fn preprocess_response_file_hash_line_is_not_a_comment() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "tsz_response_hash_{}_{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos()
+    ));
+    std::fs::write(&path, "# comment\n--pretty false\na.ts\n").expect("write response file");
+
+    let response_arg = format!("@{}", path.display());
+    let result = preprocess_strs(&["tsz", response_arg.as_str()]);
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        result,
+        vec!["tsz", "#", "comment", "--pretty=false", "a.ts"]
+    );
 }
 
 // ==================== Case-insensitive flag normalization ====================
@@ -159,7 +189,7 @@ fn preprocess_duplicate_valued_flags_last_wins() {
 // ==================== Boolean true/false value handling ====================
 
 #[test]
-fn preprocess_strict_false_removes_flag() {
+fn preprocess_strict_false_forwards_explicit_disable() {
     let args = vec![
         OsString::from("tsz"),
         OsString::from("--strict"),
@@ -167,9 +197,11 @@ fn preprocess_strict_false_removes_flag() {
         OsString::from("file.ts"),
     ];
     let result = preprocess_args(args);
+    // The bare `--strict` flag is dropped (clap's `bool` arg cannot represent
+    // an explicit `false`).
     assert!(
         !result.iter().any(|a| a == "--strict"),
-        "--strict false should remove the flag"
+        "--strict false should remove the bare flag"
     );
     // "false" should NOT appear as a file path
     assert!(
@@ -178,6 +210,14 @@ fn preprocess_strict_false_removes_flag() {
     );
     // file.ts should still be there
     assert!(result.iter().any(|a| a == "file.ts"));
+    // The explicit-disable intent is forwarded through a hidden side-channel
+    // arg so the override pipeline can flip a config `strict: true` to false.
+    assert!(
+        result
+            .iter()
+            .any(|a| a == "--__explicitly-disabled-bool-flag=strict"),
+        "--strict false should record an explicit-disable side-channel arg"
+    );
 }
 
 #[test]
@@ -201,7 +241,7 @@ fn preprocess_strict_true_keeps_flag() {
 }
 
 #[test]
-fn preprocess_noemit_false_removes_flag() {
+fn preprocess_noemit_false_forwards_explicit_disable() {
     let args = vec![
         OsString::from("tsz"),
         OsString::from("--noEmit"),
@@ -211,7 +251,40 @@ fn preprocess_noemit_false_removes_flag() {
     let result = preprocess_args(args);
     assert!(
         !result.iter().any(|a| a == "--noEmit"),
-        "--noEmit false should remove the flag"
+        "--noEmit false should remove the bare flag"
+    );
+    assert!(
+        result
+            .iter()
+            .any(|a| a == "--__explicitly-disabled-bool-flag=noEmit"),
+        "--noEmit false should record an explicit-disable side-channel arg"
+    );
+}
+
+#[test]
+fn preprocess_no_unused_locals_false_forwards_explicit_disable() {
+    let result = preprocess_strs(&["tsz", "--noUnusedLocals", "false", "file.ts"]);
+    assert!(!result.iter().any(|a| a == "--noUnusedLocals"));
+    assert!(
+        result
+            .iter()
+            .any(|a| a == "--__explicitly-disabled-bool-flag=noUnusedLocals")
+    );
+}
+
+#[test]
+fn preprocess_option_bool_false_uses_equals_form_not_side_channel() {
+    // `--strictNullChecks` is an `Option<bool>` arg in `CliArgs`, not a plain
+    // `bool`. Its `--flag false` form already round-trips through clap as
+    // `Some(false)`, so it must NOT receive the explicit-disable side-channel
+    // (otherwise the flag would be applied twice).
+    let result = preprocess_strs(&["tsz", "--strictNullChecks", "false", "file.ts"]);
+    assert!(result.iter().any(|a| a == "--strictNullChecks=false"));
+    assert!(
+        !result
+            .iter()
+            .any(|a| a.starts_with("--__explicitly-disabled-bool-flag")),
+        "Option<bool> flags must not emit an explicit-disable side-channel arg"
     );
 }
 
@@ -227,6 +300,50 @@ fn preprocess_non_boolean_false_not_consumed() {
     let result = preprocess_args(args);
     assert!(result.iter().any(|a| a == "--outDir"));
     assert!(result.iter().any(|a| a == "false"));
+}
+
+#[test]
+fn preprocess_bare_option_bool_defaults_to_true_without_consuming_file() {
+    let result = preprocess_strs(&["tsz", "--strictNullChecks", "file.ts"]);
+    let expected = ["tsz", "--strictNullChecks=true", "file.ts"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn preprocess_bare_option_bool_at_end_defaults_to_true() {
+    let result = preprocess_strs(&["tsz", "--noImplicitAny"]);
+    let expected = ["tsz", "--noImplicitAny=true"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn preprocess_bare_option_bool_before_another_flag_defaults_to_true() {
+    let result = preprocess_strs(&["tsz", "--pretty", "--noEmit", "file.ts"]);
+    let expected = ["tsz", "--pretty=true", "--noEmit", "file.ts"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn preprocess_explicit_option_bool_values_still_win() {
+    let result = preprocess_strs(&["tsz", "--noImplicitAny", "true", "--noImplicitAny", "false"]);
+    let expected = ["tsz", "--noImplicitAny=false"]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    assert_eq!(result, expected);
 }
 
 // ==================== handle_build_clean respects outDir ====================
@@ -305,4 +422,157 @@ fn build_clean_removes_buildinfo_next_to_tsconfig_when_no_out_dir() {
         !buildinfo.exists(),
         "tsconfig.tsbuildinfo next to tsconfig should be deleted when no outDir is set"
     );
+}
+
+#[test]
+fn build_clean_removes_explicit_tsbuildinfo_file() {
+    use std::fs;
+    use tsz_cli::project_refs::ProjectReferenceGraph;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    let tsconfig_path = root.join("tsconfig.json");
+    fs::write(
+        &tsconfig_path,
+        r#"{"compilerOptions":{"composite":true,"tsBuildInfoFile":"custom.info"}}"#,
+    )
+    .expect("write tsconfig");
+
+    let src_dir = root.join("src");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("index.ts"), "export const x = 1;\n").expect("write entry");
+
+    let explicit_buildinfo = root.join("custom.info");
+    fs::write(&explicit_buildinfo, "{}").expect("write explicit buildinfo");
+    let default_buildinfo = root.join("tsconfig.tsbuildinfo");
+    fs::write(&default_buildinfo, "{}").expect("write default buildinfo");
+
+    let graph = ProjectReferenceGraph::load(&tsconfig_path).expect("load graph");
+    handle_build_clean(&graph, false).expect("clean");
+
+    assert!(
+        !explicit_buildinfo.exists(),
+        "explicit tsBuildInfoFile should have been deleted"
+    );
+    assert!(
+        default_buildinfo.exists(),
+        "default buildinfo should be left alone when tsBuildInfoFile is explicit"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// --init template rendering (does not require `tsc` to be installed)
+// ---------------------------------------------------------------------------
+
+fn parse_args_for_init(extra: &[&str]) -> CliArgs {
+    let mut argv: Vec<OsString> = vec![OsString::from("tsz"), OsString::from("--init")];
+    argv.extend(extra.iter().map(OsString::from));
+    let preprocessed = preprocess_args(argv);
+    CliArgs::try_parse_from(&preprocessed).expect("clap should accept --init args")
+}
+
+fn render_init_with(extra: &[&str]) -> String {
+    let args = parse_args_for_init(extra);
+    let raw: Vec<OsString> = std::iter::once(OsString::from("tsz"))
+        .chain(std::iter::once(OsString::from("--init")))
+        .chain(extra.iter().map(OsString::from))
+        .skip(1)
+        .collect();
+    let overrides = collect_init_overrides(&raw, &args);
+    render_init_template(&overrides)
+}
+
+#[test]
+fn init_template_default_matches_baseline() {
+    let body = render_init_with(&[]);
+    assert!(body.contains("// \"rootDir\": \"./src\","));
+    assert!(body.contains("// \"outDir\": \"./dist\","));
+    assert!(body.contains("\"module\": \"nodenext\","));
+    assert!(body.contains("\"target\": \"esnext\","));
+    assert!(body.contains("\"strict\": true,"));
+    assert!(!body.contains("\"pretty\""));
+}
+
+#[test]
+fn init_template_uncomments_root_and_out_dirs_when_user_provides_them() {
+    let body = render_init_with(&["--rootDir", "src", "--outDir", "dist"]);
+    assert!(body.contains("\"rootDir\": \"src\","));
+    assert!(body.contains("\"outDir\": \"dist\","));
+    assert!(!body.contains("// \"rootDir\""));
+    assert!(!body.contains("// \"outDir\""));
+}
+
+#[test]
+fn init_template_canonicalizes_target_es2015_to_es6() {
+    let body = render_init_with(&["--target", "es2015"]);
+    assert!(
+        body.contains("\"target\": \"es6\","),
+        "expected target canonicalized to es6, got:\n{body}"
+    );
+}
+
+#[test]
+fn init_template_explicit_strict_false_overrides_active_default() {
+    let body = render_init_with(&["--strict", "false"]);
+    assert!(
+        body.contains("\"strict\": false,"),
+        "expected strict:false override, got:\n{body}"
+    );
+    assert!(
+        !body.contains("\"strict\": true,"),
+        "default strict:true should have been replaced, got:\n{body}"
+    );
+}
+
+#[test]
+fn init_template_appends_command_line_only_options_in_order() {
+    let body = render_init_with(&[
+        "--listFiles",
+        "--noEmit",
+        "--diagnostics",
+        "--pretty",
+        "false",
+    ]);
+    let li = body
+        .find("\"listFiles\": true,")
+        .expect("listFiles emitted");
+    let ne = body.find("\"noEmit\": true,").expect("noEmit emitted");
+    let di = body
+        .find("\"diagnostics\": true,")
+        .expect("diagnostics emitted");
+    let pr = body
+        .find("\"pretty\": false,")
+        .expect("pretty:false emitted");
+    assert!(
+        li < ne && ne < di && di < pr,
+        "appended options should preserve CLI order, got:\n{body}"
+    );
+}
+
+#[test]
+fn init_template_canonicalizes_alias_flags() {
+    // `--root-dir` is the kebab-case alias for `--rootDir`; both should
+    // produce the same canonical key in the rendered tsconfig.
+    let kebab = render_init_with(&["--root-dir", "lib"]);
+    let camel = render_init_with(&["--rootDir", "lib"]);
+    assert_eq!(kebab, camel);
+}
+
+#[test]
+fn init_template_last_write_wins_for_repeated_flag() {
+    // tsc's preprocessor deduplicates --target so the last value wins; the
+    // generated tsconfig should reflect the final value too.
+    let body = render_init_with(&["--target", "es2015", "--target", "es2020"]);
+    assert!(body.contains("\"target\": \"es2020\","));
+    assert!(!body.contains("\"target\": \"es6\","));
+}
+
+#[test]
+fn init_template_unrecognized_option_does_not_crash() {
+    // Unknown flags shouldn't be appended; clap will have already rejected
+    // truly unknown ones, so this just guards the canonicalization fallback.
+    let body = render_init_with(&[]);
+    assert!(body.starts_with("{\n"));
+    assert!(body.trim_end().ends_with('}'));
 }

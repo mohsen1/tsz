@@ -9,14 +9,676 @@
 //! - `inner` — the main `get_type_of_call_expression_inner` implementation
 
 mod inner;
+mod nominal_lib_object_callbacks;
+mod tail_helpers;
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
-use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
+use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn assertion_predicate_for_call(
+        &mut self,
+        call_idx: NodeIndex,
+    ) -> Option<(TypePredicate, Vec<ParamInfo>)> {
+        if self
+            .ctx
+            .call_type_predicates
+            .is_invalid_assertion_call(call_idx.0)
+        {
+            return None;
+        }
+
+        if let Some((predicate, params)) = self
+            .ctx
+            .call_type_predicates
+            .get(&call_idx.0)
+            .filter(|(predicate, _)| predicate.asserts)
+            .cloned()
+        {
+            return Some((predicate, params));
+        }
+
+        let call = self
+            .ctx
+            .arena
+            .get(call_idx)
+            .and_then(|node| self.ctx.arena.get_call_expr(node))?;
+        let callee_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(call.expression);
+        let callee_type = self
+            .ctx
+            .node_types
+            .get(&callee_idx.0)
+            .copied()
+            .unwrap_or_else(|| self.get_type_of_node(callee_idx));
+        let signature = call_checker::extract_predicate_signature(self.ctx.types, callee_type)?;
+        signature
+            .predicate
+            .asserts
+            .then_some((signature.predicate, signature.params))
+    }
+
+    pub(crate) fn store_call_type_predicate(
+        &mut self,
+        call_idx: NodeIndex,
+        callee_idx: NodeIndex,
+        predicate: (TypePredicate, Vec<ParamInfo>),
+    ) {
+        let assertion_target_is_valid = !predicate.0.asserts
+            || matches!(predicate.0.target, TypePredicateTarget::This)
+            || self.validate_assertion_call_target(call_idx, callee_idx);
+        if assertion_target_is_valid {
+            self.ctx.call_type_predicates.insert(call_idx.0, predicate);
+        }
+    }
+
+    pub(crate) fn assertion_call_asserted_expression(
+        &self,
+        call_idx: NodeIndex,
+        predicate: TypePredicate,
+        params: &[ParamInfo],
+    ) -> Option<NodeIndex> {
+        let call = self
+            .ctx
+            .arena
+            .get(call_idx)
+            .and_then(|node| self.ctx.arena.get_call_expr(node))?;
+        let args = call.arguments.as_ref()?;
+        match predicate.target {
+            TypePredicateTarget::Identifier(_) => {
+                let param_index = predicate.parameter_index.or_else(|| {
+                    let TypePredicateTarget::Identifier(target_name) = predicate.target else {
+                        return None;
+                    };
+                    params
+                        .iter()
+                        .position(|param| param.name == Some(target_name))
+                })?;
+                args.nodes.get(param_index).copied()
+            }
+            TypePredicateTarget::This => {
+                let callee_node = self.ctx.arena.get(
+                    self.ctx
+                        .arena
+                        .skip_parenthesized_and_assertions(call.expression),
+                )?;
+                let access = self.ctx.arena.get_access_expr(callee_node)?;
+                Some(access.expression)
+            }
+        }
+    }
+
+    pub(crate) fn validate_assertion_call_target(
+        &mut self,
+        call_idx: NodeIndex,
+        callee_idx: NodeIndex,
+    ) -> bool {
+        let callee_idx = self.ctx.arena.skip_parenthesized_and_assertions(callee_idx);
+        if !self.is_identifier_or_qualified_assertion_target(callee_idx) {
+            self.error_at_node(
+                call_idx,
+                diagnostic_messages::ASSERTIONS_REQUIRE_THE_CALL_TARGET_TO_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME,
+                diagnostic_codes::ASSERTIONS_REQUIRE_THE_CALL_TARGET_TO_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME,
+            );
+            self.ctx
+                .call_type_predicates
+                .mark_invalid_assertion_call(call_idx.0);
+            return false;
+        }
+
+        if !self.assertion_call_target_has_explicit_annotations(callee_idx) {
+            self.error_at_node(
+                call_idx,
+                diagnostic_messages::ASSERTIONS_REQUIRE_EVERY_NAME_IN_THE_CALL_TARGET_TO_BE_DECLARED_WITH_AN_EXPLICIT,
+                diagnostic_codes::ASSERTIONS_REQUIRE_EVERY_NAME_IN_THE_CALL_TARGET_TO_BE_DECLARED_WITH_AN_EXPLICIT,
+            );
+            self.ctx
+                .call_type_predicates
+                .mark_invalid_assertion_call(call_idx.0);
+            return false;
+        }
+
+        true
+    }
+
+    fn is_identifier_or_qualified_assertion_target(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::ThisKeyword as u16
+                || k == SyntaxKind::SuperKeyword as u16 =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.ctx.arena.get_access_expr(node).is_some_and(|access| {
+                    self.is_identifier_or_qualified_assertion_target(access.expression)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn assertion_call_target_has_explicit_annotations(&mut self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return true;
+        };
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .resolve_identifier_symbol(expr_idx)
+                .is_none_or(|sym_id| self.symbol_has_explicit_assertion_annotation(sym_id)),
+            k if k == SyntaxKind::ThisKeyword as u16 || k == SyntaxKind::SuperKeyword as u16 => {
+                true
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                    return true;
+                };
+                self.assertion_call_target_has_explicit_annotations(access.expression)
+                    && self.assertion_property_has_explicit_annotation(
+                        access.expression,
+                        access.name_or_argument,
+                    )
+            }
+            _ => true,
+        }
+    }
+
+    fn assertion_property_has_explicit_annotation(
+        &mut self,
+        receiver_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> bool {
+        if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&name_idx.0) {
+            return self.symbol_has_explicit_assertion_annotation(sym_id);
+        }
+
+        let receiver_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(receiver_idx);
+        let Some(receiver_node) = self.ctx.arena.get(receiver_idx) else {
+            return true;
+        };
+        let Some(property_name) = self.get_property_name(name_idx) else {
+            return true;
+        };
+
+        if receiver_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ns_sym_id) = self.resolve_identifier_symbol(receiver_idx)
+            && let Some(ns_symbol) = self.ctx.binder.get_symbol(ns_sym_id)
+            && let Some(exports) = ns_symbol.exports.as_ref()
+            && let Some(member_sym_id) = exports.get(&property_name)
+        {
+            return self.symbol_has_explicit_assertion_annotation(member_sym_id);
+        }
+
+        if receiver_node.kind == SyntaxKind::ThisKeyword as u16
+            && let Some(member_idx) = self.enclosing_class_member_by_name(&property_name)
+        {
+            return self.declaration_has_explicit_assertion_annotation(member_idx);
+        }
+
+        true
+    }
+
+    fn enclosing_class_member_by_name(&self, property_name: &str) -> Option<NodeIndex> {
+        self.ctx
+            .enclosing_class
+            .as_ref()?
+            .member_nodes
+            .iter()
+            .copied()
+            .find(|&member_idx| {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    return false;
+                };
+                let name_idx = self.member_declaration_name(member_node);
+                name_idx
+                    .and_then(|idx| self.get_property_name(idx))
+                    .is_some_and(|name| name == property_name)
+            })
+    }
+
+    fn member_declaration_name(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
+            return Some(prop.name);
+        }
+        if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
+            return Some(method.name);
+        }
+        if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+            return Some(accessor.name);
+        }
+        None
+    }
+
+    fn symbol_has_explicit_assertion_annotation(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+        let Some(decl_idx) = symbol.primary_declaration() else {
+            return true;
+        };
+        self.declaration_has_explicit_assertion_annotation(decl_idx)
+    }
+
+    fn declaration_has_explicit_assertion_annotation(&mut self, decl_idx: NodeIndex) -> bool {
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return true;
+        };
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
+            // `const foo = (a) => { … }` with `@returns {asserts a is B}` is a
+            // valid assertion target in JS files: tsc treats the JSDoc
+            // `@returns` predicate as the explicit annotation. Without this
+            // arm, every JS-file arrow-bound assertion function fires a
+            // spurious TS2775 at the call site. The function/method/accessor
+            // arms below already include the same check; this mirrors them
+            // for arrow-/function-expression initializers bound through a
+            // variable declaration.
+            return var_decl.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx)
+                || self
+                    .require_initializer_exports_explicit_assertion_function(var_decl.initializer);
+        }
+        if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
+            return param.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx);
+        }
+        if let Some(prop) = self.ctx.arena.get_property_decl(decl_node) {
+            return prop.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
+        }
+        if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
+            return method.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
+        }
+        if let Some(accessor) = self.ctx.arena.get_accessor(decl_node) {
+            return accessor.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
+        }
+        if let Some(func) = self.ctx.arena.get_function(decl_node) {
+            return func.type_annotation.is_some()
+                || self.declaration_has_jsdoc_type_tag(decl_idx)
+                || self.declaration_has_jsdoc_assertion_return(decl_idx);
+        }
+        if let Some(sig) = self.ctx.arena.get_signature(decl_node) {
+            return sig.type_annotation.is_some();
+        }
+        true
+    }
+
+    fn require_initializer_exports_explicit_assertion_function(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        if !self.is_js_file() || initializer.is_none() {
+            return false;
+        }
+
+        let Some(module_specifier) = self.get_require_module_specifier(initializer) else {
+            return false;
+        };
+        let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, &module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(&module_specifier))
+        else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        if !target_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| source_file.is_declaration_file)
+        {
+            return false;
+        }
+
+        let Some(exports) = self.resolve_effective_module_exports_from_file(
+            &module_specifier,
+            Some(self.ctx.current_file_idx),
+        ) else {
+            return false;
+        };
+        let Some(export_equals_sym_id) = exports.get("export=") else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+        let Some(export_symbol) = target_binder.get_symbol(export_equals_sym_id) else {
+            return false;
+        };
+        let Some(decl_idx) = export_symbol.primary_declaration() else {
+            return false;
+        };
+
+        Self::declaration_has_syntactic_type_annotation(target_arena, decl_idx)
+    }
+
+    fn declaration_has_syntactic_type_annotation(arena: &NodeArena, decl_idx: NodeIndex) -> bool {
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return true;
+        };
+        if let Some(var_decl) = arena.get_variable_declaration(decl_node) {
+            return var_decl.type_annotation.is_some();
+        }
+        if let Some(param) = arena.get_parameter(decl_node) {
+            return param.type_annotation.is_some();
+        }
+        if let Some(prop) = arena.get_property_decl(decl_node) {
+            return prop.type_annotation.is_some();
+        }
+        if let Some(method) = arena.get_method_decl(decl_node) {
+            return method.type_annotation.is_some();
+        }
+        if let Some(accessor) = arena.get_accessor(decl_node) {
+            return accessor.type_annotation.is_some();
+        }
+        if let Some(func) = arena.get_function(decl_node) {
+            return func.type_annotation.is_some();
+        }
+        if let Some(sig) = arena.get_signature(decl_node) {
+            return sig.type_annotation.is_some();
+        }
+        true
+    }
+
+    fn declaration_has_jsdoc_type_tag(&self, decl_idx: NodeIndex) -> bool {
+        self.find_jsdoc_for_assertion_declaration(decl_idx)
+            .is_some_and(|jsdoc| Self::jsdoc_extract_type_tag_expr(&jsdoc).is_some())
+    }
+
+    fn declaration_has_jsdoc_assertion_return(&self, decl_idx: NodeIndex) -> bool {
+        self.find_jsdoc_for_assertion_declaration(decl_idx)
+            .is_some_and(|jsdoc| Self::jsdoc_returns_type_predicate(&jsdoc).is_some())
+    }
+
+    fn find_jsdoc_for_assertion_declaration(&self, decl_idx: NodeIndex) -> Option<String> {
+        if !self.is_js_file() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if self.ctx.arena.get_function(decl_node).is_some()
+            || self.ctx.arena.get_method_decl(decl_node).is_some()
+            || self.ctx.arena.get_accessor(decl_node).is_some()
+        {
+            return self.find_jsdoc_for_function(decl_idx);
+        }
+
+        let sf = self.source_file_data_for_node(decl_idx)?;
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        self.try_jsdoc_with_ancestor_walk(decl_idx, &comments, &source_text)
+    }
+
+    fn first_unannotated_callback_param_name_in_call(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let call = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|node| self.ctx.arena.get_call_expr(node))?;
+        let args = call.arguments.as_ref()?;
+        for &arg_idx in &args.nodes {
+            if let Some(param_name) = self.first_unannotated_callback_param_name_in_node(arg_idx) {
+                return Some(param_name);
+            }
+        }
+        None
+    }
+
+    fn first_unannotated_callback_param_name_in_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::METHOD_DECLARATION
+            || node.kind == syntax_kind_ext::GET_ACCESSOR
+            || node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            let params = if let Some(func) = self.ctx.arena.get_function(node) {
+                Some(func.parameters.nodes.as_slice())
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                Some(method.parameters.nodes.as_slice())
+            } else {
+                self.ctx
+                    .arena
+                    .get_accessor(node)
+                    .map(|accessor| accessor.parameters.nodes.as_slice())
+            }?;
+
+            for &param_idx in params {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if param.type_annotation.is_some() || self.is_this_parameter_name(param.name) {
+                    continue;
+                }
+                return Some(param.name);
+            }
+            return None;
+        }
+
+        if let Some(literal) = self.ctx.arena.get_literal_expr(node) {
+            for &element_idx in &literal.elements.nodes {
+                let Some(element) = self.ctx.arena.get(element_idx) else {
+                    continue;
+                };
+                let child_idx = if let Some(prop) = self.ctx.arena.get_property_assignment(element)
+                {
+                    prop.initializer
+                } else if let Some(spread) = self.ctx.arena.get_spread(element) {
+                    spread.expression
+                } else {
+                    element_idx
+                };
+                if let Some(param_name) =
+                    self.first_unannotated_callback_param_name_in_node(child_idx)
+                {
+                    return Some(param_name);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn node_is_empty_array_literal_for_evolving_call(&self, idx: NodeIndex) -> bool {
+        self.ctx.arena.get(idx).is_some_and(|node| {
+            node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_expr(node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+        })
+    }
+
+    fn reference_has_reachable_empty_array_assignment_for_call(
+        &self,
+        reference: NodeIndex,
+    ) -> bool {
+        let Some(flow_node) = self.flow_node_for_reference_usage(reference) else {
+            return false;
+        };
+        let analyzer = self.flow_analyzer();
+        let mut worklist = vec![flow_node];
+        let mut visited = rustc_hash::FxHashSet::default();
+        while let Some(current) = worklist.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(flow) = self.ctx.binder.flow_nodes.get(current) else {
+                continue;
+            };
+            if flow.has_any_flags(tsz_binder::flow_flags::ASSIGNMENT)
+                && let Some(rhs) = analyzer.assignment_rhs_for_reference(flow.node, reference)
+                && self.node_is_empty_array_literal_for_evolving_call(rhs)
+            {
+                return true;
+            }
+            for &antecedent in flow.antecedent.iter().rev() {
+                if antecedent.is_some() {
+                    worklist.push(antecedent);
+                }
+            }
+        }
+        false
+    }
+
+    pub(crate) fn receiver_reference_for_evolving_array_mutation(
+        &self,
+        receiver: NodeIndex,
+    ) -> NodeIndex {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let receiver = self.ctx.arena.skip_parenthesized_and_assertions(receiver);
+        let Some(node) = self.ctx.arena.get(receiver) else {
+            return receiver;
+        };
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+        {
+            if binary.operator_token == SyntaxKind::CommaToken as u16 {
+                return self.receiver_reference_for_evolving_array_mutation(binary.right);
+            }
+            if crate::query_boundaries::common::is_assignment_operator(binary.operator_token) {
+                return self.receiver_reference_for_evolving_array_mutation(binary.left);
+            }
+        }
+        receiver
+    }
+
+    pub(crate) fn reference_has_direct_empty_array_initializer_for_evolving_mutation(
+        &self,
+        reference: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(sym_id) = self.resolve_identifier_symbol(reference) else {
+            return false;
+        };
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .and_then(|symbol| {
+                let decl_idx = symbol.value_declaration;
+                let mut decl_node = self.ctx.arena.get(decl_idx)?;
+                if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && let Some(parent_idx) = self.ctx.arena.parent_of(decl_idx)
+                    && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                {
+                    decl_node = parent_node;
+                }
+                let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                if decl.type_annotation.is_some() || decl.initializer.is_none() {
+                    return Some(false);
+                }
+                Some(self.node_is_empty_array_literal_for_evolving_call(decl.initializer))
+            })
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn reference_is_reachable_evolving_array_mutation_target(
+        &mut self,
+        reference: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(reference) else {
+            return false;
+        };
+        (self.assignment_target_is_control_flow_typed_any_symbol(sym_id)
+            && self.reference_has_reachable_empty_array_assignment_for_call(reference))
+            || self.reference_has_direct_empty_array_initializer_for_evolving_mutation(reference)
+    }
+
+    fn type_is_array_or_union_of_arrays(&self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common;
+
+        if common::array_element_type(self.ctx.types, type_id).is_some() {
+            return true;
+        }
+        common::union_members(self.ctx.types, type_id).is_some_and(|members| {
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| common::array_element_type(self.ctx.types, member).is_some())
+        })
+    }
+
+    fn call_is_simple_evolving_array_mutation(&mut self, callee_expr: NodeIndex) -> bool {
+        use crate::query_boundaries::common;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let callee_expr = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(callee_expr);
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && callee_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(method_name) = self.get_property_name(access.name_or_argument) else {
+            return false;
+        };
+        if method_name != "push" && method_name != "unshift" {
+            return false;
+        }
+
+        let receiver_ref = self.receiver_reference_for_evolving_array_mutation(access.expression);
+        let Some(sym_id) = self.resolve_identifier_symbol(receiver_ref) else {
+            return false;
+        };
+        let is_control_flow_any = self.assignment_target_is_control_flow_typed_any_symbol(sym_id)
+            && self.reference_has_reachable_empty_array_assignment_for_call(receiver_ref);
+        let is_direct_empty_array =
+            self.reference_has_direct_empty_array_initializer_for_evolving_mutation(receiver_ref);
+        if !is_control_flow_any && !is_direct_empty_array {
+            return false;
+        }
+
+        let receiver_type = self.get_type_of_node(access.expression);
+        if is_direct_empty_array {
+            self.type_is_array_or_union_of_arrays(receiver_type)
+        } else {
+            common::union_members(self.ctx.types, receiver_type).is_none()
+                && common::array_element_type(self.ctx.types, receiver_type).is_some()
+        }
+    }
+
     /// Determine whether a call/new callee that resolved to `TypeId::ERROR`
     /// emitted a name/value resolution diagnostic at the callee site. Used to
     /// suppress contextual `any` for callback arguments so TS7006 still fires
@@ -184,6 +846,11 @@ impl<'a> CheckerState<'a> {
         } else {
             (arg_types.clone(), false)
         };
+        let generic_inference_arg_source_markers = if is_generic_call {
+            self.call_arg_source_type_annotation_markers(args, generic_inference_arg_types.len())
+        } else {
+            Vec::new()
+        };
         let call_resolution_contextual_type = contextual_type;
 
         let (mut result, mut instantiated_predicate, mut generic_instantiated_params) =
@@ -197,6 +864,15 @@ impl<'a> CheckerState<'a> {
                     ),
                     None,
                     None,
+                )
+            } else if generic_inference_arg_source_markers.iter().any(|&m| m) {
+                self.resolve_call_with_checker_adapter_and_arg_sources(
+                    callee_type_for_call,
+                    &generic_inference_arg_types,
+                    force_bivariant_callbacks,
+                    call_resolution_contextual_type,
+                    actual_this_type,
+                    &generic_inference_arg_source_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(
@@ -257,14 +933,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let retry_contextual_param_types = if is_generic_call && had_return_context_substitution {
+            generic_instantiated_params.as_ref().map(|params| {
+                self.contextual_param_types_from_instantiated_params(params, args.len())
+            })
+        } else {
+            None
+        };
+        let has_contextual_signature_instantiation_arg =
+            args.iter().enumerate().any(|(i, &arg_idx)| {
+                let expected_type = retry_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(i).copied().flatten())
+                    .or_else(|| base_contextual_param_types.get(i).copied().flatten());
+                self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type)
+            });
+        let has_contextual_refresh_arg = args.iter().enumerate().any(|(i, &arg_idx)| {
+            self.argument_needs_refresh_for_contextual_call(
+                arg_idx,
+                retry_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(i).copied().flatten())
+                    .or_else(|| base_contextual_param_types.get(i).copied().flatten()),
+            )
+        });
         let should_retry_generic_call = if is_generic_call
-            && !had_return_context_substitution
-            && args.iter().enumerate().any(|(i, &arg_idx)| {
-                self.argument_needs_refresh_for_contextual_call(
-                    arg_idx,
-                    base_contextual_param_types.get(i).copied().flatten(),
-                )
-            }) {
+            && (!had_return_context_substitution || has_contextual_signature_instantiation_arg)
+            && has_contextual_refresh_arg
+        {
             if let Some(ctx_type) = contextual_type {
                 match &result {
                     crate::query_boundaries::common::CallResult::Success(ret) => {
@@ -317,6 +1013,8 @@ impl<'a> CheckerState<'a> {
 
             let (retry_generic_arg_types, retry_sanitized) =
                 self.sanitize_generic_inference_arg_types(callee_expr, args, &arg_types);
+            let retry_arg_source_markers =
+                self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
             let retry = if is_super_call {
                 (
                     self.resolve_new_with_checker_adapter(
@@ -327,6 +1025,15 @@ impl<'a> CheckerState<'a> {
                     ),
                     None,
                     None,
+                )
+            } else if retry_arg_source_markers.iter().any(|&m| m) {
+                self.resolve_call_with_checker_adapter_and_arg_sources(
+                    callee_type_for_call,
+                    &retry_generic_arg_types,
+                    force_bivariant_callbacks,
+                    contextual_type,
+                    actual_this_type,
+                    &retry_arg_source_markers,
                 )
             } else {
                 self.resolve_call_with_checker_adapter(
@@ -375,10 +1082,20 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .collect();
             let same_return_context_application =
-                common::application_info(self.ctx.types, return_type)
+                common::application_info(self.ctx.types, shape.return_type)
                     .zip(common::application_info(self.ctx.types, ctx_type))
                     .is_some_and(|((return_base, _), (ctx_base, _))| return_base == ctx_base);
-            if !return_param_names.is_empty() && !same_return_context_application {
+            let return_context_specializes_return_params = !return_param_names.is_empty()
+                && self.contextual_return_type_specializes_wrapped_params(
+                    shape.return_type,
+                    ctx_type,
+                    &return_param_names,
+                    &mut rustc_hash::FxHashSet::default(),
+                );
+            if !return_param_names.is_empty()
+                && !same_return_context_application
+                && !return_context_specializes_return_params
+            {
                 let mut filtered = crate::query_boundaries::common::TypeSubstitution::new();
                 for (&name, &type_id) in return_context_substitution.map() {
                     if !return_param_names.contains(&name) {
@@ -411,9 +1128,7 @@ impl<'a> CheckerState<'a> {
                     })
                     .map(|sig| (sig.predicate, sig.params))
                     .unwrap_or(predicate);
-            self.ctx
-                .call_type_predicates
-                .insert(idx.0, stored_predicate);
+            self.store_call_type_predicate(idx, callee_expr, stored_predicate);
         } else {
             let is_sound_union = if common::is_union_type(self.ctx.types, callee_type_for_call) {
                 call_checker::is_valid_union_predicate(self.ctx.types, callee_type_for_call)
@@ -424,9 +1139,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(extracted) =
                     call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
             {
-                self.ctx
-                    .call_type_predicates
-                    .insert(idx.0, (extracted.predicate, extracted.params));
+                self.store_call_type_predicate(
+                    idx,
+                    callee_expr,
+                    (extracted.predicate, extracted.params),
+                );
             }
         }
 
@@ -509,12 +1226,22 @@ impl<'a> CheckerState<'a> {
             && fallback_return != TypeId::ERROR
         {}
 
+        if let crate::query_boundaries::common::CallResult::ArgumentTypeMismatch {
+            fallback_return,
+            ..
+        } = result
+            && self.call_is_simple_evolving_array_mutation(callee_expr)
+        {
+            result = crate::query_boundaries::common::CallResult::Success(fallback_return);
+        }
+
         let call_context = super::call_result::CallResultContext {
             callee_expr,
             call_idx: idx,
             args,
             arg_types: &arg_types,
             callee_type: callee_type_for_call,
+            callee_has_declared_generic_signature: is_generic_call,
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,
@@ -558,11 +1285,24 @@ impl<'a> CheckerState<'a> {
         // diagnostic at the call expression that triggered it.
         if self.ctx.types.take_union_too_complex() {
             use crate::diagnostics::diagnostic_messages;
+            let diagnostic_idx = self
+                .first_unannotated_callback_param_name_in_call(idx)
+                .unwrap_or(idx);
             self.error_at_node(
-                idx,
+                diagnostic_idx,
                 diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
                 diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
             );
+            if diagnostic_idx != idx
+                && self.ctx.no_implicit_any()
+                && let Some(param_name) = self.get_parameter_name(diagnostic_idx)
+            {
+                self.error_at_node_msg(
+                    diagnostic_idx,
+                    diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                    &[&param_name, "any"],
+                );
+            }
         }
 
         self.ctx.call_depth.borrow_mut().leave();
@@ -580,9 +1320,10 @@ impl<'a> CheckerState<'a> {
         if !self.is_dynamic_import(call) {
             return None;
         }
+        let in_import_type_context = self.is_import_call_in_type_context(idx);
 
         // TS1323: Dynamic imports require a module kind that supports them
-        if !self.ctx.compiler_options.module.supports_dynamic_import() {
+        if !in_import_type_context && !self.ctx.compiler_options.module.supports_dynamic_import() {
             self.error_at_node(
                 idx,
                 crate::diagnostics::diagnostic_messages::DYNAMIC_IMPORTS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_FLAG_IS_SET_TO_ES2020_ES2022,
@@ -647,6 +1388,30 @@ impl<'a> CheckerState<'a> {
         Some(self.get_dynamic_import_type(call))
     }
 
+    fn is_import_call_in_type_context(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..12 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::TYPE_REFERENCE
+                | syntax_kind_ext::TYPE_QUERY
+                | syntax_kind_ext::IMPORT_TYPE => return true,
+                syntax_kind_ext::QUALIFIED_NAME => current = parent_idx,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     /// Handle `unknown` and `never` callee types with appropriate diagnostics.
     /// Returns `Some(type_id)` if the callee type was handled (caller should return),
     /// or `None` to continue with normal call resolution.
@@ -663,6 +1428,21 @@ impl<'a> CheckerState<'a> {
         // tsc emits TS18046 instead of TS2349 when the callee is `unknown`.
         // Without strictNullChecks, unknown is treated like any (callable, returns any).
         if callee_type == TypeId::UNKNOWN {
+            if !self.ctx.compiler_options.strict_null_checks {
+                // Without strictNullChecks, unknown is treated as callable for
+                // argument typing, but the checker still reports TS2349.
+                self.error_not_callable_at(callee_type, callee_expr);
+                // Still need to check arguments for definite assignment (TS2454)
+                let check_excess_properties = false;
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |_i, _arg_count| None,
+                    check_excess_properties,
+                    None,
+                    CallableContext::none(),
+                );
+                return Some(TypeId::ANY);
+            }
             if self.error_is_of_type_unknown(callee_expr) {
                 // Still need to check arguments for definite assignment (TS2454)
                 let check_excess_properties = false;

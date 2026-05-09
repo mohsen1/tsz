@@ -4,7 +4,22 @@
 //! when assigned to outside the constructor, and that @extends/@augments
 //! on non-class declarations emits TS8022.
 
-use crate::test_utils::check_js_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_js_source_diagnostics, check_source};
+
+fn check_strict_js_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            no_implicit_this: true,
+            no_implicit_override: true,
+            ..CheckerOptions::default()
+        },
+    )
+}
 
 /// @readonly on class property → TS2540 when assigned outside constructor
 #[test]
@@ -148,6 +163,170 @@ const t = 0;
     );
 }
 
+#[test]
+fn invalid_typedef_prefix_does_not_declare_jsdoc_alias() {
+    let source = r#"
+/**
+ * @typedefx {{ n: number }} Foo
+ */
+
+/** @type {Foo} */
+const value = { n: 1 };
+
+value.n.toFixed();
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "Expected unresolved Foo when @typedefx is ignored, got: {codes:?}",
+    );
+    assert!(
+        !codes.contains(&8021),
+        "Expected no malformed @typedef diagnostic for @typedefx, got: {codes:?}",
+    );
+}
+
+#[test]
+fn invalid_import_prefix_does_not_create_jsdoc_alias() {
+    let source = r#"
+/**
+ * @importx { Foo } from "./types"
+ */
+
+/** @type {Foo} */
+const value = { n: 1 };
+
+value.n.toFixed();
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2304),
+        "Expected unresolved Foo when @importx is ignored, got: {codes:?}",
+    );
+    assert!(
+        !codes.contains(&1109),
+        "Expected no malformed @import diagnostic for @importx, got: {codes:?}",
+    );
+}
+
+#[test]
+fn invalid_this_prefix_does_not_suppress_implicit_this() {
+    let source = r#"
+/**
+ * @thisx {{ n: number }}
+ */
+function f() {
+  this.n.toFixed();
+}
+
+f;
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2683),
+        "Expected TS2683 when @thisx is ignored, got: {codes:?}",
+    );
+}
+
+#[test]
+fn invalid_override_prefix_does_not_satisfy_no_implicit_override() {
+    let source = r#"
+class Base {
+  m() {}
+}
+
+class Derived extends Base {
+  /** @overridex */
+  m() {}
+}
+
+Derived;
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&4119),
+        "Expected TS4119 when @overridex is ignored, got: {codes:?}",
+    );
+}
+
+#[test]
+fn invalid_template_prefix_on_constructor_does_not_emit_ts1092() {
+    let source = r#"
+// @ts-check
+class C {
+  /** @templateFoo */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1092),
+        "Expected no TS1092 for @templateFoo, got: {codes:?}",
+    );
+}
+
+#[test]
+fn jsdoc_template_on_constructor_still_emits_ts1092() {
+    let source = r#"
+// @ts-check
+class C {
+  /** @template T */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1092),
+        "Expected TS1092 for a real constructor @template tag, got: {codes:?}",
+    );
+}
+
+#[test]
+fn jsdoc_return_after_constructor_typedef_still_emits_ts1093() {
+    let source = r#"
+// @ts-check
+class C {
+  /**
+   * @typedef {number} N
+   * @return {string}
+   */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1093),
+        "Expected TS1093 for constructor @return after @typedef, got: {codes:?}",
+    );
+}
+
+#[test]
+fn jsdoc_callback_return_on_constructor_does_not_emit_ts1093() {
+    let source = r#"
+// @ts-check
+class C {
+  /**
+   * @callback Getter
+   * @returns {string}
+   */
+  constructor() {}
+}
+"#;
+    let diagnostics = check_strict_js_source_diagnostics(source);
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1093),
+        "Expected nested callback @returns not to emit TS1093, got: {codes:?}",
+    );
+}
+
 /// @typedef with type → no TS8021
 #[test]
 fn test_jsdoc_typedef_with_type_no_ts8021() {
@@ -183,6 +362,59 @@ const person = { name: "" };
         0,
         "Expected no TS8021 for @typedef with @property, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_multiple_typedefs_missing_second_type_emits_ts8021() {
+    let source = r#"
+// @ts-check
+/**
+ * @typedef {object} A
+ * @typedef B
+ */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8021 = diagnostics.iter().filter(|d| d.code == 8021).count();
+    assert_eq!(
+        ts8021, 1,
+        "Expected exactly one TS8021 for the second @typedef, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_type_tags_are_counted_per_typedef() {
+    let source = r#"
+// @ts-check
+/**
+ * @typedef A
+ * @type {string}
+ * @typedef B
+ * @type {number}
+ */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 8033 || d.code == 8021),
+        "Expected one @type per @typedef to be valid, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_duplicate_type_tags_within_one_typedef_emits_ts8033() {
+    let source = r#"
+// @ts-check
+/**
+ * @typedef A
+ * @type {string}
+ * @type {number}
+ */
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let ts8033 = diagnostics.iter().filter(|d| d.code == 8033).count();
+    assert_eq!(
+        ts8033, 1,
+        "Expected duplicate @type tags in one @typedef to emit TS8033, got: {diagnostics:?}"
     );
 }
 

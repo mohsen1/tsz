@@ -5,6 +5,18 @@ export default function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy({ "src/lib": "lib" });
   eleventyConfig.addWatchTarget("../../artifacts");
 
+  const benchmarkArtifacts = [
+    "../../artifacts/bench-vs-tsgo-github-latest.json",
+    "../../artifacts/bench-vs-tsgo-gcs-latest.json",
+    "../../artifacts/bench-vs-tsgo-latest.json",
+  ];
+  const latestBenchmarkArtifact = benchmarkArtifacts.find((file) => fs.existsSync(file));
+  if (latestBenchmarkArtifact) {
+    eleventyConfig.addPassthroughCopy({
+      [latestBenchmarkArtifact]: "benchmark-data/latest.json",
+    });
+  }
+
   eleventyConfig.setServerOptions({
     watch: ["static/playground-app.js", "static/playground-app.js.map"],
   });

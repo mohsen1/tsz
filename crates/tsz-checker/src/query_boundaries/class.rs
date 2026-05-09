@@ -151,6 +151,125 @@ fn needs_strict_generic_target_callable_recheck(
         && has_own_signature_type_params(checker, target)
 }
 
+fn construct_signature_source_captures_nonlocal_type_param(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    let Some(source_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, source)
+    else {
+        return false;
+    };
+    let Some(target_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, target)
+    else {
+        return false;
+    };
+    if !target_signatures
+        .iter()
+        .any(|target_sig| !target_sig.type_params.is_empty())
+    {
+        return false;
+    }
+
+    source_signatures.iter().any(|source_sig| {
+        source_sig.type_params.is_empty()
+            && (source_sig.params.iter().any(|param| {
+                crate::query_boundaries::common::contains_type_parameters(
+                    checker.ctx.types,
+                    param.type_id,
+                )
+            }) || source_sig.this_type.is_some_and(|this_type| {
+                crate::query_boundaries::common::contains_type_parameters(
+                    checker.ctx.types,
+                    this_type,
+                )
+            }) || crate::query_boundaries::common::contains_type_parameters(
+                checker.ctx.types,
+                source_sig.return_type,
+            ))
+    })
+}
+
+fn generic_construct_requires_optional_target_param_recheck(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    let Some(source_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, source)
+    else {
+        return false;
+    };
+    let Some(target_signatures) =
+        crate::query_boundaries::common::construct_signatures_for_type(checker.ctx.types, target)
+    else {
+        return false;
+    };
+
+    source_signatures.iter().any(|source_sig| {
+        target_signatures.iter().any(|target_sig| {
+            construct_signature_required_param_against_optional_target(
+                checker, source_sig, target_sig,
+            )
+        })
+    })
+}
+
+fn construct_signature_required_param_against_optional_target(
+    checker: &CheckerState<'_>,
+    source_sig: &tsz_solver::types::CallSignature,
+    target_sig: &tsz_solver::types::CallSignature,
+) -> bool {
+    if source_sig.type_params.is_empty()
+        || source_sig.type_params.len() != target_sig.type_params.len()
+        || source_sig.params.len() != target_sig.params.len()
+    {
+        return false;
+    }
+
+    source_sig
+        .params
+        .iter()
+        .zip(target_sig.params.iter())
+        .any(|(source_param, target_param)| {
+            if source_param.optional || !target_param.optional {
+                return false;
+            }
+
+            source_sig
+                .type_params
+                .iter()
+                .zip(target_sig.type_params.iter())
+                .any(|(source_tp, target_tp)| {
+                    let source_tp_type = checker.ctx.types.type_param(*source_tp);
+                    let target_tp_type = checker.ctx.types.type_param(*target_tp);
+                    crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        source_param.type_id,
+                        source_tp_type,
+                    ) && crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        target_param.type_id,
+                        target_tp_type,
+                    ) && crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        source_sig.return_type,
+                        source_tp_type,
+                    ) && crate::query_boundaries::common::contains_type_by_id(
+                        checker.ctx.types,
+                        target_sig.return_type,
+                        target_tp_type,
+                    )
+                })
+        })
+}
+
 fn source_this_parameter_is_acceptable_for_target_without_this(
     checker: &mut CheckerState<'_>,
     source: TypeId,
@@ -342,124 +461,7 @@ pub(crate) fn should_report_own_member_type_mismatch(
     if is_coinductive_return_type_cycle(checker, source, target) {
         return false;
     }
-    // Suppress TS2416 when the only incompatibility is a type predicate that tsc
-    // would infer.  tsc infers type predicates for methods without explicit return
-    // type annotations whose bodies consist of narrowing expressions (e.g.
-    // `typeof x === 'number'`).  We don't implement type predicate inference, so
-    // a class method returning `boolean` appears incompatible with an interface
-    // method returning `x is T`.  Suppress the diagnostic when:
-    //   1. The target (interface) function has a type predicate.
-    //   2. The source (class method) has no type predicate and returns `boolean`.
-    //   3. The class member AST node has no explicit return type annotation.
-    //   4. The parameter types are compatible (the only difference is the predicate).
-    if is_type_predicate_inference_suppressed(checker, source, target, node_idx) {
-        return false;
-    }
     true
-}
-
-/// Check if a TS2416 incompatibility is caused solely by a missing type predicate
-/// that tsc would infer from the method body.
-///
-/// tsc infers type predicates for methods without explicit return type annotations
-/// (TS 5.5+ inferred type predicates). That inference only ever produces a
-/// parameter predicate (`x is T`) — `this is T` predicates are never inferred
-/// from a method body. So the suppression below is restricted to parameter
-/// predicates: a `this is T` mismatch must always be reported as TS2416 because
-/// tsc would also report it.
-///
-/// Since we don't implement type predicate inference, suppress the diagnostic
-/// when the only difference between the source and target signatures is a
-/// parameter type predicate that tsc would have inferred.
-fn is_type_predicate_inference_suppressed(
-    checker: &CheckerState<'_>,
-    source: TypeId,
-    target: TypeId,
-    node_idx: NodeIndex,
-) -> bool {
-    // Get target function shape and check for type predicate
-    let Some(target_predicate) = get_type_predicate_from_signature(checker, target) else {
-        return false;
-    };
-
-    // tsc never infers `this is T` predicates from method bodies, so a `this`
-    // predicate target must always emit TS2416.
-    if matches!(
-        target_predicate.target,
-        tsz_solver::types::TypePredicateTarget::This
-    ) {
-        return false;
-    }
-
-    // Source must NOT have a type predicate (it returns plain boolean)
-    let source_has_predicate = get_type_predicate_from_signature(checker, source).is_some();
-    if source_has_predicate {
-        return false;
-    }
-
-    // Source must return boolean
-    let source_returns_boolean = tsz_solver::function_shape_id(checker.ctx.types, source)
-        .map(|id| checker.ctx.types.function_shape(id).return_type)
-        .or_else(|| {
-            tsz_solver::callable_shape_id(checker.ctx.types, source).and_then(|id| {
-                checker
-                    .ctx
-                    .types
-                    .callable_shape(id)
-                    .call_signatures
-                    .first()
-                    .map(|s| s.return_type)
-            })
-        })
-        .is_some_and(|ret| ret == TypeId::BOOLEAN);
-    if !source_returns_boolean {
-        return false;
-    }
-
-    // The class member must not have an explicit return type annotation.
-    // If the developer wrote `: boolean` explicitly, tsc won't infer a predicate.
-    let node = checker.ctx.arena.get(node_idx);
-    let has_explicit_return_type = node
-        .and_then(|n| {
-            checker
-                .ctx
-                .arena
-                .get_method_decl(n)
-                .map(|m| m.type_annotation.is_some())
-                .or_else(|| {
-                    checker
-                        .ctx
-                        .arena
-                        .get_function(n)
-                        .map(|f| f.type_annotation.is_some())
-                })
-        })
-        .unwrap_or(true); // If we can't determine, assume explicit (don't suppress)
-    if has_explicit_return_type {
-        return false;
-    }
-
-    true
-}
-
-/// Extract a type predicate from a function or callable type's signature.
-fn get_type_predicate_from_signature(
-    checker: &CheckerState<'_>,
-    type_id: TypeId,
-) -> Option<tsz_solver::types::TypePredicate> {
-    tsz_solver::function_shape_id(checker.ctx.types, type_id)
-        .and_then(|id| checker.ctx.types.function_shape(id).type_predicate)
-        .or_else(|| {
-            tsz_solver::callable_shape_id(checker.ctx.types, type_id).and_then(|id| {
-                checker
-                    .ctx
-                    .types
-                    .callable_shape(id)
-                    .call_signatures
-                    .first()
-                    .and_then(|s| s.type_predicate)
-            })
-        })
 }
 
 /// Check if two function types differ only in return types that form a coinductive
@@ -584,6 +586,20 @@ pub(crate) fn should_report_property_type_mismatch(
     let outcome = checker.execute_relation_request(&request);
 
     if outcome.related {
+        if generic_construct_requires_optional_target_param_recheck(
+            checker,
+            relation_source,
+            relation_target,
+        ) {
+            return true;
+        }
+        if construct_signature_source_captures_nonlocal_type_param(
+            checker,
+            relation_source,
+            relation_target,
+        ) {
+            return true;
+        }
         if needs_strict_generic_target_callable_recheck(checker, relation_source, relation_target) {
             let strict_source = unwrap_single_property_value_type(checker, relation_source);
             let strict_target = unwrap_single_property_value_type(checker, relation_target);
@@ -704,4 +720,9 @@ pub(crate) fn build_own_member_summary(
 /// Check if a type is a valid base class type (for `extends` clause validation).
 pub(crate) fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::data::is_valid_base_type(db, type_id)
+}
+
+/// Check if a type is a valid interface heritage base.
+pub(crate) fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::data::is_valid_interface_base_type(db, type_id)
 }

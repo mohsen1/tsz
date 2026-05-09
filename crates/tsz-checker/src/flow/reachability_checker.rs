@@ -28,10 +28,33 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .skip_parenthesized_and_assertions(call.expression);
                 self.callee_explicitly_returns_never(callee)
+                    || self.assertion_call_with_false_condition_terminates(expr_idx, callee)
             }
             syntax_kind_ext::NEW_EXPRESSION => self.get_type_of_node(expr_idx).is_never(),
             _ => false,
         }
+    }
+
+    fn assertion_call_with_false_condition_terminates(
+        &mut self,
+        call_idx: NodeIndex,
+        callee_idx: NodeIndex,
+    ) -> bool {
+        let Some((predicate, params)) = self.assertion_predicate_for_call(call_idx) else {
+            return false;
+        };
+        if predicate.type_id.is_some() {
+            return false;
+        }
+        if !self.validate_assertion_call_target(call_idx, callee_idx) {
+            return false;
+        }
+        let Some(asserted_expr) =
+            self.assertion_call_asserted_expression(call_idx, predicate, &params)
+        else {
+            return false;
+        };
+        self.is_false_condition(asserted_expr)
     }
 
     pub(crate) fn terminating_iife_unreachable_anchor(
@@ -59,11 +82,20 @@ impl<'a> CheckerState<'a> {
         let body_idx = func.body;
         let body_node = self.ctx.arena.get(body_idx)?;
         let block = self.ctx.arena.get_block(body_node)?;
-        let statements = block.statements.nodes.clone();
+        let statement_count = block.statements.nodes.len();
 
-        statements
-            .into_iter()
-            .find(|&stmt_idx| self.statement_always_throws(stmt_idx))
+        for statement_index in 0..statement_count {
+            let stmt_idx = {
+                let body_node = self.ctx.arena.get(body_idx)?;
+                let block = self.ctx.arena.get_block(body_node)?;
+                *block.statements.nodes.get(statement_index)?
+            };
+            if self.statement_always_throws(stmt_idx) {
+                return Some(stmt_idx);
+            }
+        }
+
+        None
     }
 
     /// Check if a callee expression explicitly returns `never` based on its
@@ -133,29 +165,28 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = self.ctx.arena.get(access.expression) else {
             return false;
         };
-        if expr_node.kind == SyntaxKind::ThisKeyword as u16
-            && let Some(ref class_info) = self.ctx.enclosing_class.clone()
-        {
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
             // Directly search class member nodes for a method with matching name
             // and check its return type annotation. This avoids reliance on the
             // binder's class symbol members map which may not be available in all
             // checking paths.
-            for &member_idx in &class_info.member_nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
-                    continue;
-                }
-                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                    continue;
-                };
-                let Some(method_name) = self.get_property_name(method.name) else {
-                    continue;
-                };
-                if method_name == *property_name {
-                    return self.declaration_explicitly_returns_never(member_idx, false);
-                }
+            let matching_member = self.ctx.enclosing_class.as_ref().and_then(|class_info| {
+                class_info.member_nodes.iter().copied().find(|&member_idx| {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        return false;
+                    };
+                    if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                        return false;
+                    }
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        return false;
+                    };
+                    self.get_property_name(method.name)
+                        .is_some_and(|method_name| method_name == *property_name)
+                })
+            });
+            if let Some(member_idx) = matching_member {
+                return self.declaration_explicitly_returns_never(member_idx, false);
             }
         }
 
@@ -604,38 +635,10 @@ impl<'a> CheckerState<'a> {
                 };
                 !self.call_expression_terminates_control_flow(expr_stmt.expression)
             }
-            syntax_kind_ext::VARIABLE_STATEMENT => {
-                let Some(var_stmt) = self.ctx.arena.get_variable(node) else {
-                    return true;
-                };
-                for &decl_idx in &var_stmt.declarations.nodes {
-                    let Some(list_node) = self.ctx.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    let Some(var_list) = self.ctx.arena.get_variable(list_node) else {
-                        continue;
-                    };
-                    for &list_decl_idx in &var_list.declarations.nodes {
-                        let Some(list_decl_node) = self.ctx.arena.get(list_decl_idx) else {
-                            continue;
-                        };
-                        let Some(decl) = self.ctx.arena.get_variable_declaration(list_decl_node)
-                        else {
-                            continue;
-                        };
-                        if decl.initializer.is_none() {
-                            continue;
-                        }
-                        // Only treat call/new expressions as non-falling-through when
-                        // they return never. Type assertions like `null as never` still
-                        // complete normally at runtime.
-                        if self.call_expression_terminates_control_flow(decl.initializer) {
-                            return false;
-                        }
-                    }
-                }
-                true
-            }
+            // VARIABLE_STATEMENT falls through (handled by the wildcard arm
+            // below). TypeScript only treats expression-statement-level never
+            // calls as terminators of control flow; `const x = fail()` still
+            // leaves the function falling off the end and must surface TS2355.
             syntax_kind_ext::IF_STATEMENT => {
                 let Some(if_data) = self.ctx.arena.get_if_statement(node) else {
                     return true;
@@ -796,18 +799,61 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a condition is always true.
     pub(crate) fn is_true_condition(&self, condition_idx: NodeIndex) -> bool {
+        let condition_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(condition_idx);
         let Some(node) = self.ctx.arena.get(condition_idx) else {
             return false;
         };
-        node.kind == SyntaxKind::TrueKeyword as u16
+        if node.kind == SyntaxKind::TrueKeyword as u16 {
+            return true;
+        }
+        if let Some(unary) = self.ctx.arena.get_unary_expr(node)
+            && node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && unary.operator == SyntaxKind::ExclamationToken as u16
+        {
+            return self.is_false_condition(unary.operand);
+        }
+        if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+            if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
+                return self.is_true_condition(bin.left) && self.is_true_condition(bin.right);
+            }
+            if bin.operator_token == SyntaxKind::BarBarToken as u16 {
+                return self.is_true_condition(bin.left) || self.is_true_condition(bin.right);
+            }
+        }
+        false
     }
 
     /// Check if a condition is always false.
     pub(crate) fn is_false_condition(&self, condition_idx: NodeIndex) -> bool {
+        let condition_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(condition_idx);
         let Some(node) = self.ctx.arena.get(condition_idx) else {
             return false;
         };
-        node.kind == SyntaxKind::FalseKeyword as u16
+        if node.kind == SyntaxKind::FalseKeyword as u16 {
+            return true;
+        }
+        if let Some(unary) = self.ctx.arena.get_unary_expr(node)
+            && node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && unary.operator == SyntaxKind::ExclamationToken as u16
+        {
+            return self.is_true_condition(unary.operand);
+        }
+        if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+            if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 {
+                return self.is_false_condition(bin.left)
+                    || (self.is_true_condition(bin.left) && self.is_false_condition(bin.right));
+            }
+            if bin.operator_token == SyntaxKind::BarBarToken as u16 {
+                return self.is_false_condition(bin.left) && self.is_false_condition(bin.right);
+            }
+        }
+        false
     }
 
     /// Check if a statement contains a break statement.

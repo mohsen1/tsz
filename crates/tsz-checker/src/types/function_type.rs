@@ -17,6 +17,70 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
+    pub(crate) fn prewarm_inferred_predicate_operand_types(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        let mut stack = Vec::new();
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            let Some(&stmt_idx) = block.statements.nodes.last() else {
+                return;
+            };
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return;
+            }
+            let Some(ret) = self.ctx.arena.get_return_statement(stmt_node) else {
+                return;
+            };
+            if ret.expression.is_some() {
+                stack.push(ret.expression);
+            }
+        } else {
+            stack.push(body_idx);
+        }
+
+        while let Some(expr_idx) = stack.pop() {
+            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+            match expr_node.kind {
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                        continue;
+                    };
+                    if binary.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
+                        self.get_type_of_node(binary.right);
+                    } else if matches!(
+                        binary.operator_token,
+                        k if k == SyntaxKind::AmpersandAmpersandToken as u16
+                            || k == SyntaxKind::BarBarToken as u16
+                    ) {
+                        stack.push(binary.left);
+                        stack.push(binary.right);
+                    }
+                }
+                syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                    if let Some(unary) = self.ctx.arena.get_unary_expr(expr_node) {
+                        stack.push(unary.operand);
+                    }
+                }
+                syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    if let Some(assertion) = self.ctx.arena.get_type_assertion(expr_node) {
+                        stack.push(assertion.expression);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_function_impl(idx, &TypingRequest::NONE)
@@ -314,7 +378,8 @@ impl<'a> CheckerState<'a> {
         // For arrow functions, capture the outer `this` type to preserve lexical `this`
         // Arrow functions should inherit `this` from their enclosing scope
         let outer_this_type = if is_arrow_function {
-            self.current_this_type()
+            self.class_property_arrow_lexical_this_type(idx)
+                .or_else(|| self.current_this_type())
         } else {
             None
         };
@@ -347,13 +412,21 @@ impl<'a> CheckerState<'a> {
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
+        if self.is_js_file()
+            && !is_arrow_function
+            && let Some(ref jsdoc) = func_jsdoc
+            && let Some(this_expr) = Self::extract_jsdoc_tag_type_expression(jsdoc, "this")
+            && let Some(resolved_this) = self.resolve_jsdoc_reference(this_expr)
+        {
+            this_type = Some(resolved_this);
+        }
         // TS2730: Arrow functions cannot have a 'this' parameter.
         // In JS files, a @this JSDoc tag on an arrow function is an error because
         // arrow functions capture `this` lexically.
         if is_arrow_function
             && self.is_js_file()
             && let Some(ref jsdoc) = func_jsdoc
-            && jsdoc.contains("@this")
+            && Self::jsdoc_contains_tag(jsdoc, "this")
             && let Some(sf) = self.source_file_data_for_node(idx)
         {
             let source_text = sf.text.to_string();
@@ -362,25 +435,19 @@ impl<'a> CheckerState<'a> {
                 self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)
             {
                 // jsdoc_start is the comment's pos (start of `/**`).
-                // Search from there to find `@this` in the raw source.
+                // Search from there to find `@this` in the raw source, gated
+                // on a JSDoc tag boundary so `@thisx` is not misread as `@this`.
                 let search_start = jsdoc_start as usize;
-                if let Some(this_off) = source_text[search_start..].find("@this") {
-                    // Verify this is @this tag, not a substring of another tag
+                if let Some(this_off) = Self::jsdoc_tag_offset(&source_text[search_start..], "this")
+                {
                     let at_pos = search_start + this_off;
-                    let after = &source_text[at_pos + 5..];
-                    let is_this_tag = after.starts_with(' ')
-                        || after.starts_with('{')
-                        || after.starts_with('\n')
-                        || after.starts_with('\r');
-                    if is_this_tag {
-                        // tsc points at "this" (after the "@"), not "@this"
-                        self.ctx.error(
-                                (at_pos + 1) as u32,
-                                4, // length of "this"
-                                "An arrow function cannot have a 'this' parameter.".to_string(),
-                                crate::diagnostics::diagnostic_codes::AN_ARROW_FUNCTION_CANNOT_HAVE_A_THIS_PARAMETER,
-                            );
-                    }
+                    // tsc points at "this" (after the "@"), not "@this"
+                    self.ctx.error(
+                        (at_pos + 1) as u32,
+                        4, // length of "this"
+                        "An arrow function cannot have a 'this' parameter.".to_string(),
+                        crate::diagnostics::diagnostic_codes::AN_ARROW_FUNCTION_CANNOT_HAVE_A_THIS_PARAMETER,
+                    );
                 }
             }
         }
@@ -463,7 +530,7 @@ impl<'a> CheckerState<'a> {
             self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
         });
         let js_prototype_owner_instance_type = prototype_owner_target.and_then(|owner_target| {
-            self.js_constructor_body_instance_type_for_function(owner_target)
+            self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
         });
 
         // Check if this closure is inside a decorator expression.
@@ -519,7 +586,7 @@ impl<'a> CheckerState<'a> {
             && parameters.nodes.is_empty()
             && self.body_has_arguments_reference(body)
             && let Some(ref jsdoc) = func_jsdoc
-            && !jsdoc.contains("@callback")
+            && !Self::jsdoc_contains_tag(jsdoc, "callback")
         {
             self.check_jsdoc_param_tag_names(jsdoc, &parameters.nodes, idx);
         }
@@ -762,11 +829,14 @@ impl<'a> CheckerState<'a> {
                     has_contextual_type && !has_never_expected_context;
                 // Use type annotation if present, otherwise infer from context
                 let (type_id, has_external_binding_context) = if param.type_annotation.is_some() {
+                    self.push_typeof_param_scope(&params);
                     // Check parameter type for parameter properties in function types
                     self.check_type_for_parameter_properties(param.type_annotation);
                     // Check for undefined type names in parameter type
                     self.check_type_for_missing_names(param.type_annotation);
-                    (self.get_type_from_type_node(param.type_annotation), false)
+                    let annotation_type = self.get_type_from_type_node(param.type_annotation);
+                    self.pop_typeof_param_scope(&params);
+                    (annotation_type, false)
                 } else if is_this_param {
                     // For `this` parameter without type annotation:
                     // - Arrow functions: inherit outer `this` type to preserve lexical scoping
@@ -1262,7 +1332,7 @@ impl<'a> CheckerState<'a> {
             && params.is_empty()
             && self.is_js_file()
             && let Some(ref jsdoc) = func_jsdoc
-            && !jsdoc.contains("@callback")
+            && !Self::jsdoc_contains_tag(jsdoc, "callback")
             && self.body_has_arguments_reference(body)
         {
             let function_has_name = self.function_has_effective_name(idx);
@@ -1405,10 +1475,10 @@ impl<'a> CheckerState<'a> {
         // Push this_type BEFORE parameter initializer checks so that default
         // values like `a = this.getNumber()` see the correct `this` type and
         // don't trigger false TS2683.
-        let implicit_this = this_type.or_else(|| {
-            if is_arrow_function {
-                outer_this_type
-            } else {
+        let implicit_this = if is_arrow_function {
+            outer_this_type
+        } else {
+            this_type.or_else(|| {
                 ctx_helper.as_ref().and_then(|h| h.get_this_type())
                     .or(js_constructor_instance_type)
                     .or(js_prototype_owner_instance_type)
@@ -1457,8 +1527,8 @@ impl<'a> CheckerState<'a> {
                         }
                         None
                     })
-            }
-        });
+            })
+        };
 
         let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
 
@@ -1685,12 +1755,15 @@ impl<'a> CheckerState<'a> {
 
                 // TS 5.5+ inferred type predicates: when a function expression
                 // or arrow has no explicit predicate, no return-type annotation,
-                // and an inferred boolean return type, see whether its body is a
-                // single guard expression that narrows one of its parameters.
+                // and an inferred boolean-like return type, see whether its body
+                // is a guard expression that narrows one of its parameters. A
+                // guard over an `unknown` parameter may currently infer `unknown`
+                // as the expression type, so let the guard recognizer prove it.
                 if type_predicate.is_none()
                     && !has_type_annotation
-                    && return_type == TypeId::BOOLEAN
+                    && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
                 {
+                    self.prewarm_inferred_predicate_operand_types(body);
                     let analyzer = self.flow_analyzer();
                     if let Some(pred) = analyzer.try_infer_type_predicate_from_body(
                         body,
@@ -2337,10 +2410,10 @@ impl<'a> CheckerState<'a> {
                 // Compute the effective body context as a local variable instead of
                 // modifying the ambient ctx.contextual_type.
                 let outer_ctx = contextual_type;
-                let effective_body_ctx = if let Some(body_node) = self.ctx.arena.get(body)
-                    && body_node.kind != syntax_kind_ext::BLOCK
-                    && !has_type_annotation
-                {
+                let body_kind = self.ctx.arena.get(body).map(|body_node| body_node.kind);
+                let body_is_expression =
+                    body_kind.is_some_and(|kind| kind != syntax_kind_ext::BLOCK);
+                let effective_body_ctx = if body_is_expression && !has_type_annotation {
                     let body_return_context = ctx_helper
                         .as_ref()
                         .and_then(tsz_solver::ContextualTypeContext::get_return_type)
@@ -2361,7 +2434,7 @@ impl<'a> CheckerState<'a> {
                         });
                     let suppress_contextual_return_for_conditional_body = jsdoc_return_context
                         .is_none()
-                        && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                        && body_kind == Some(syntax_kind_ext::CONDITIONAL_EXPRESSION)
                         && body_return_context.is_some_and(|return_type| {
                             self.type_has_unresolved_inference_holes(return_type)
                         });
@@ -2400,7 +2473,12 @@ impl<'a> CheckerState<'a> {
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
                 if !skip_body_check {
-                    self.check_statement_with_request(body, &TypingRequest::NONE);
+                    let body_request = if body_is_expression {
+                        TypingRequest::NONE.contextual_opt(effective_body_ctx)
+                    } else {
+                        TypingRequest::NONE
+                    };
+                    self.check_statement_with_request(body, &body_request);
                 }
                 if let Some(snap) = diag_snap {
                     snap.rollback(&mut self.ctx);
@@ -2684,7 +2762,16 @@ impl<'a> CheckerState<'a> {
             is_constructor: js_constructor_instance_type.is_some(),
             is_method: false,
         };
-        let function_type = self.ctx.types.factory().function(shape);
+        let mut function_type = self.ctx.types.factory().function(shape);
+        if self.is_js_file()
+            && is_function_declaration
+            && let (Some(name), Some(sym_id)) = (
+                name_for_error.as_deref(),
+                self.ctx.binder.get_node_symbol(idx),
+            )
+        {
+            function_type = self.augment_callable_type_with_expandos(name, sym_id, function_type);
+        }
 
         self.pop_type_parameters(jsdoc_type_param_updates);
         self.pop_type_parameters(contextual_signature_type_param_updates);
@@ -2692,6 +2779,51 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(function_type)
+    }
+
+    fn class_property_arrow_owner(&self, arrow_idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
+        let mut current = arrow_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let class_idx = self.ctx.arena.get_extended(parent)?.parent;
+                let class_node = self.ctx.arena.get(class_idx)?;
+                if class_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                    && class_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return None;
+                }
+                return Some((parent, class_idx));
+            }
+
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
+            {
+                return None;
+            }
+
+            current = parent;
+        }
+
+        None
+    }
+
+    fn class_property_arrow_lexical_this_type(&mut self, arrow_idx: NodeIndex) -> Option<TypeId> {
+        let (property_idx, class_idx) = self.class_property_arrow_owner(arrow_idx)?;
+        let property_node = self.ctx.arena.get(property_idx)?;
+        let prop = self.ctx.arena.get_property_decl(property_node)?;
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class_data = self.ctx.arena.get_class(class_node)?;
+
+        Some(if self.has_static_modifier(&prop.modifiers) {
+            self.get_class_constructor_type(class_idx, class_data)
+        } else {
+            self.get_class_instance_type(class_idx, class_data)
+        })
     }
 }
 

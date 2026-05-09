@@ -1,9 +1,8 @@
-use crate::parser::state::ParserState;
+use crate::parser::test_fixture::parse_source_named;
 use tsz_common::diagnostics::diagnostic_codes;
 
 fn parse_diagnostics(source: &str) -> Vec<(u32, u32, String)> {
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("test.tsx", source);
     parser
         .parse_diagnostics
         .iter()
@@ -219,6 +218,65 @@ fn jsx_namespaced_attribute_local_unicode_escape_reports_ts17021() {
                 && message == "Unicode escape sequence cannot appear here."
         }),
         "expected TS17021 for unicode escape in JSX namespaced attribute local name, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_hyphenated_unicode_escape_reports_from_full_name_start() {
+    let source = "let x = <a-\\u0063></a-c>;\nlet y = <video data-\\u0076ideo />;\nlet z = <x.\\u0076ideo />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let tag_pos = source.find("a-\\u0063").expect("tag unicode escape") as u32;
+    let attr_pos = source
+        .find("data-\\u0076ideo")
+        .expect("attribute unicode escape") as u32;
+    let property_pos = source
+        .rfind("\\u0076ideo")
+        .expect("property unicode escape") as u32;
+
+    assert!(
+        diagnostics.iter().any(|(code, start, _)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == tag_pos
+        }),
+        "expected TS17021 at hyphenated tag start, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, start, _)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == attr_pos
+        }),
+        "expected TS17021 at hyphenated attribute start, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, start, _)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == property_pos
+        }),
+        "expected TS17021 at property segment escape, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _, _)| *code == 17002),
+        "escaped hyphenated tag should still match its closing tag, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_attribute_name_allows_hyphen_followed_by_digit() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        x: { "data-123": "ok" };
+    }
+}
+
+const ok = <x data-123="ok" />;
+"#;
+    let diagnostics = parse_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no parser diagnostics for digit-starting hyphen segment, got {diagnostics:?}"
     );
 }
 

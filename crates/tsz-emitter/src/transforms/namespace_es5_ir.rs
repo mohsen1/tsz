@@ -98,6 +98,11 @@ pub struct NamespaceES5Transformer<'a> {
     prior_exported_vars: std::collections::HashSet<String>,
     /// Whether legacy decorators are enabled (experimentalDecorators)
     legacy_decorators: bool,
+    /// Whether `__metadata` calls should be emitted in `__decorate` arrays.
+    /// Mirrors `--emitDecoratorMetadata`. Forwarded to nested
+    /// `ES5ClassTransformer` so metadata is emitted for classes that live
+    /// inside a namespace IIFE.
+    emit_decorator_metadata: bool,
     /// Hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
@@ -114,6 +119,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
+            emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
         }
@@ -128,6 +134,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
             legacy_decorators: false,
+            emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
         }
@@ -136,6 +143,12 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Set whether legacy decorators are enabled
     pub const fn set_legacy_decorators(&mut self, enabled: bool) {
         self.legacy_decorators = enabled;
+    }
+
+    /// Set whether `__metadata` calls should be emitted in `__decorate`
+    /// arrays for classes inside this namespace.
+    pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
+        self.emit_decorator_metadata = enabled;
     }
 
     /// Set source text for comment extraction
@@ -169,6 +182,23 @@ impl<'a> NamespaceES5Transformer<'a> {
             return std::collections::HashSet::new();
         };
         collect_runtime_exported_var_names(self.arena, innermost_body)
+    }
+
+    pub fn collect_namespace_rewrite_var_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> Option<(String, std::collections::HashSet<String>)> {
+        let (parts, innermost_body) = self.collect_all_namespace_parts(ns_idx)?;
+        let ns_name = parts.last()?.clone();
+        let mut names = collect_runtime_exported_var_names(self.arena, innermost_body);
+        if !self.prior_exported_vars.is_empty() {
+            names.extend(self.prior_exported_vars.iter().cloned());
+            let local_names = collect_local_var_names(self.arena, innermost_body);
+            for name in &local_names {
+                names.remove(name);
+            }
+        }
+        Some((ns_name, names))
     }
 
     /// Extract leading comments from source text that fall within [`from_pos`, `to_pos`) range.
@@ -340,6 +370,91 @@ impl<'a> NamespaceES5Transformer<'a> {
         None
     }
 
+    fn extract_namespace_trailing_comment(&self, body_idx: NodeIndex) -> Option<String> {
+        let source_text = self.source_text?;
+        let body_node = self.arena.get(body_idx)?;
+        let pos = self.find_module_block_close_pos(body_node)? as usize;
+
+        let comments = crate::emitter::get_trailing_comment_ranges(source_text, pos + 1);
+        if comments.is_empty() {
+            return None;
+        }
+
+        Some(
+            comments
+                .iter()
+                .map(|comment| source_text[comment.pos as usize..comment.end as usize].to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+
+    fn find_module_block_close_pos(&self, body_node: &Node) -> Option<u32> {
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+        let limit = std::cmp::min(body_node.end as usize, bytes.len());
+        let mut pos = body_node.pos as usize;
+        while pos < limit && bytes.get(pos) != Some(&b'{') {
+            pos += 1;
+        }
+        if pos >= limit {
+            return None;
+        }
+
+        let mut depth = 0u32;
+        while pos < limit {
+            match bytes[pos] {
+                b'{' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(pos as u32);
+                    }
+                    pos += 1;
+                }
+                b'/' if pos + 1 < limit && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < limit && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < limit && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < limit && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                        pos += 1;
+                    }
+                    pos = std::cmp::min(pos + 2, limit);
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < limit {
+                        if bytes[pos] == b'\\' {
+                            pos = std::cmp::min(pos + 2, limit);
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+        None
+    }
+
+    fn trailing_same_line_comment_end_after(&self, pos: u32) -> Option<u32> {
+        let source_text = self.source_text?;
+        crate::emitter::get_trailing_comment_ranges(source_text, pos as usize)
+            .last()
+            .map(|comment| comment.end)
+    }
+
     /// Transform a namespace declaration to IR
     ///
     /// Returns `Some(IRNode::NamespaceIIFE { ... })` for valid namespaces,
@@ -450,6 +565,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             parent_name: None,
             param_name: param_name.map(Into::into),
             skip_sequence_indent: false,
+            trailing_comment: self
+                .extract_namespace_trailing_comment(innermost_body)
+                .map(Into::into),
         })
     }
 
@@ -533,6 +651,71 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         Some(IRNode::ASTRef(member_idx))
+    }
+
+    fn is_uninitialized_exported_var_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let var_idx = if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_data) = self.arena.get_export_decl(member_node)
+        {
+            export_data.export_clause
+        } else {
+            member_idx
+        };
+
+        let Some(var_node) = self.arena.get(var_idx) else {
+            return false;
+        };
+        if var_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_data) = self.arena.get_variable(var_node) else {
+            return false;
+        };
+        let is_exported = member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            || self
+                .arena
+                .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
+        if !is_exported {
+            return false;
+        }
+
+        var_data.declarations.nodes.iter().all(|&decl_list_idx| {
+            self.arena
+                .get_variable_at(decl_list_idx)
+                .is_none_or(|decl_list| {
+                    decl_list.declarations.nodes.iter().all(|&decl_idx| {
+                        self.arena
+                            .get_variable_declaration_at(decl_idx)
+                            .is_none_or(|decl| decl.initializer.is_none())
+                    })
+                })
+        })
+    }
+
+    fn is_stray_export_keyword_member(&self, member_idx: NodeIndex) -> bool {
+        self.arena
+            .get(member_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::ExportKeyword as u16)
+    }
+
+    fn is_class_like_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let inner_idx = if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_data) = self.arena.get_export_decl(member_node)
+        {
+            export_data.export_clause
+        } else {
+            member_idx
+        };
+
+        self.arena
+            .get(inner_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
     }
 
     /// Flatten a module name into parts (handles both identifiers and qualified names)
@@ -711,18 +894,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Find the position of the closing '}' of the module block.
         // The last statement's node.end may extend into this brace, so we
         // constrain ASTRef nodes to not include it.
-        let body_close_pos = if let Some(text) = self.source_text {
-            let mut pos = body_node.end as usize;
-            while pos > body_node.pos as usize {
-                pos -= 1;
-                if text.as_bytes().get(pos) == Some(&b'}') {
-                    break;
-                }
-            }
-            pos as u32
-        } else {
-            body_node.end.saturating_sub(1)
-        };
+        let body_close_pos = self
+            .find_module_block_close_pos(body_node)
+            .unwrap_or_else(|| body_node.end.saturating_sub(1));
 
         // Check if it's a module block
         if let Some(block_data) = self.arena.get_module_block(body_node)
@@ -743,32 +917,48 @@ impl<'a> NamespaceES5Transformer<'a> {
                 // before the next declaration. Capture those comments here so they can
                 // be emitted immediately after the current statement.
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
-                let trailing_standalone =
-                    self.extract_standalone_comments_in_range(code_end, stmt_node.end);
+                let is_class_like = self.is_class_like_member(stmt_idx);
+                let is_namespace_like_stmt = is_namespace_like(self.arena, stmt_node);
+                let trailing_standalone = if is_class_like || is_namespace_like_stmt {
+                    Vec::new()
+                } else {
+                    self.extract_standalone_comments_in_range(code_end, stmt_node.end)
+                };
 
                 // Extract leading comments between previous end and this statement.
+                // We compute them up-front but defer pushing until we know whether
+                // this statement actually produces IR. If the statement is erased
+                // (e.g., a non-instantiated namespace, interface, type alias), its
+                // leading comments belong to the erasure too and must be dropped.
                 let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                if prev_end <= actual_start {
-                    let leading_comments = self.extract_comments_in_range(prev_end, actual_start);
-                    for c in leading_comments {
-                        result.push(c);
+                let leading_comments = if !self.is_uninitialized_exported_var_member(stmt_idx)
+                    && !self.is_stray_export_keyword_member(stmt_idx)
+                {
+                    if prev_end <= actual_start {
+                        self.extract_comments_in_range(prev_end, actual_start)
+                    } else if prev_end == stmt_node.pos && prev_stmt_pos <= actual_start {
+                        // Parser trivia-skipping can move `stmt_node.end` to the next statement token,
+                        // which can skip standalone comments on blank lines. Recover those comments
+                        // by probing from the previous statement start as a fallback.
+                        self.extract_comments_in_range(prev_stmt_pos, actual_start)
+                    } else {
+                        Vec::new()
                     }
-                } else if prev_end == stmt_node.pos && prev_stmt_pos <= actual_start {
-                    // Parser trivia-skipping can move `stmt_node.end` to the next statement token,
-                    // which can skip standalone comments on blank lines. Recover those comments
-                    // by probing from the previous statement start as a fallback.
-                    let fallback_comments =
-                        self.extract_comments_in_range(prev_stmt_pos, actual_start);
-                    for c in fallback_comments {
-                        result.push(c);
-                    }
-                }
+                } else {
+                    Vec::new()
+                };
 
                 let ir = self.transform_namespace_member_with_declared(
                     ns_name,
                     stmt_idx,
                     &declared_names,
                 );
+
+                if ir.is_some() {
+                    for c in leading_comments {
+                        result.push(c);
+                    }
+                }
 
                 if let Some(ir) = ir {
                     // Constrain ASTRef nodes so their source text doesn't extend
@@ -791,7 +981,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                         } else {
                             None
                         };
-                    let skip = is_namespace_like(self.arena, stmt_node)
+                    let skip = is_namespace_like_stmt
                         || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                         || matches!(export_clause_kind, Some(k) if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::MODULE_DECLARATION);
                     let trailing =
@@ -825,7 +1015,25 @@ impl<'a> NamespaceES5Transformer<'a> {
                     result.push(c);
                 }
 
-                prev_end = stmt_node.end;
+                // For class-like members the class sub-emitter handles its own
+                // internal comments and we don't extract `trailing_standalone`
+                // for them — but we still need to surface standalone comments
+                // sitting between the class's `}` and the next statement.
+                // Stop the cursor at `code_end` (after `}`, before any trailing
+                // trivia / inter-statement comments) so the next statement's
+                // leading-comment extraction picks them up. For other members
+                // `trailing_standalone` already drained that gap, so advancing
+                // to `stmt_node.end` is safe and keeps current behavior.
+                prev_end = if is_class_like || is_namespace_like_stmt {
+                    if is_namespace_like_stmt {
+                        self.trailing_same_line_comment_end_after(code_end)
+                            .unwrap_or(code_end)
+                    } else {
+                        code_end
+                    }
+                } else {
+                    stmt_node.end
+                };
                 prev_stmt_pos = stmt_node.pos;
             }
 
@@ -835,8 +1043,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             if let Some(last_stmt) = stmts.nodes.last()
                 && let Some(last_node) = self.arena.get(*last_stmt)
             {
+                let code_end = self.find_code_end_of_erased_stmt(last_node.pos, last_node.end);
                 let standalone_comments =
-                    self.extract_comments_in_range(last_node.end, body_close_pos);
+                    self.extract_standalone_comments_in_range(code_end, body_close_pos);
                 for c in standalone_comments {
                     result.push(c);
                 }
@@ -927,6 +1136,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                     None
                 }
             }
+            k if k == SyntaxKind::ExportKeyword as u16 => None,
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.transform_function_in_namespace(ns_name, member_idx, force_export)
             }
@@ -1050,7 +1260,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             // Convert function to IR (stripping type annotations)
             IRNode::FunctionDecl {
                 name: func_name.clone().into(),
-                parameters: convert_function_parameters(self.arena, &func_data.parameters),
+                parameters: convert_function_parameters(
+                    self.arena,
+                    &func_data.parameters,
+                    self.source_text,
+                ),
                 body: convert_function_body(self.arena, func_data.body),
                 body_source_range,
                 leading_comment: None,
@@ -1091,6 +1305,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
         // Classes in namespace are nested one level deeper than top-level
         class_transformer.set_indent_base(1);
+        // Forward `--emitDecoratorMetadata` so namespace-scoped decorated
+        // classes still emit `__metadata("design:type", T)` etc.
+        class_transformer.set_emit_decorator_metadata(self.emit_decorator_metadata);
 
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
         if self.legacy_decorators {
@@ -1189,7 +1406,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             let (decls, temps) =
                 convert_exported_variable_declarations(self.arena, &var_data.declarations, ns_name);
             self.hoisted_temps.borrow_mut().extend(temps);
-            Some(IRNode::Sequence(decls))
+            if decls.is_empty() {
+                None
+            } else {
+                Some(IRNode::Sequence(decls))
+            }
         } else {
             let empty_decl_keyword =
                 self.declaration_keyword_from_var_declarations(&var_data.declarations);
@@ -1288,6 +1509,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             parent_name: is_exported.then(|| parent_ns.to_string().into()),
             param_name: param_name.map(Into::into),
             skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
+            trailing_comment: self
+                .extract_namespace_trailing_comment(ns_data.body)
+                .map(Into::into),
         })
     }
 }

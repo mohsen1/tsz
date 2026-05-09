@@ -129,6 +129,10 @@ fn async_return_promise_resolve_unfolds_awaited_in_ts2322_source_display() {
             !msg.contains("Awaited<"),
             "async-return TS2322 source-type display must not contain raw `Awaited<` (the alias must be evaluated before display), got: {msg}"
         );
+        assert!(
+            msg.contains("Type '{ x: string; }' is not assignable to type '{ x: \"x\"; }'"),
+            "Promise.resolve(ret) must report the non-contextual variable type, got: {msg}"
+        );
     }
 }
 
@@ -155,6 +159,10 @@ fn async_iterator_return_promise_resolve_unfolds_awaited_in_ts2322_source_displa
         assert!(
             !msg.contains("Awaited<"),
             "async-iterator return TS2322 source-type display must not contain raw `Awaited<`, got: {msg}"
+        );
+        assert!(
+            msg.contains("Type '{ y: string; }' is not assignable to type '{ y: \"y\"; }'"),
+            "Promise.resolve(s) must report the non-contextual variable type, got: {msg}"
         );
     }
 }

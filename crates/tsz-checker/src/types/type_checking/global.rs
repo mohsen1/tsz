@@ -119,10 +119,50 @@ impl<'a> CheckerState<'a> {
         let object_type = self.resolve_lib_type_by_name("Object");
         let function_type = self.resolve_lib_type_by_name("Function");
 
-        // For Array<T>, extract the actual type parameters from the interface definition
-        // rather than synthesizing fresh ones. This ensures the T used in Array's method
-        // signatures has the same TypeId as the T registered in TypeEnvironment.
-        let (array_type_for_params, array_type_params) = self.resolve_lib_type_with_params("Array");
+        // For Array<T>, resolve the merged lib type once, then reuse the type
+        // parameters registered for its canonical symbol. Re-running the
+        // per-lib parameter resolver in every project checker repeatedly lowers
+        // the merged Array declarations and can exhaust the shared interner
+        // before ordinary global constructors are resolved.
+        let (resolved_array_for_params, resolved_array_params) =
+            self.resolve_lib_type_with_params("Array");
+        let existing_array_base = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types);
+        let array_type_for_params = match (resolved_array_for_params, existing_array_base) {
+            (Some(candidate), Some(existing)) => {
+                let candidate_prop_count = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    candidate,
+                )
+                .map_or(0, |shape| shape.properties.len());
+                let existing_prop_count = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    existing,
+                )
+                .map_or(0, |shape| shape.properties.len());
+                if candidate_prop_count >= existing_prop_count {
+                    Some(candidate)
+                } else {
+                    Some(existing)
+                }
+            }
+            (Some(candidate), None) => Some(candidate),
+            (None, Some(existing)) => Some(existing),
+            (None, None) => None,
+        };
+        let mut array_type_params = self
+            .ctx
+            .binder
+            .file_locals
+            .get("Array")
+            .map(|sym_id| self.get_type_params_for_symbol(sym_id))
+            .unwrap_or_default();
+        if !resolved_array_params.is_empty() {
+            array_type_params = resolved_array_params;
+        }
+        if array_type_params.is_empty() {
+            array_type_params =
+                tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
+        }
         let array_type_params_for_flow = array_type_params.clone();
 
         // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
@@ -211,7 +251,7 @@ impl<'a> CheckerState<'a> {
         // are already on the Callable itself
         let array_instance_type =
             array_type_for_params.or_else(|| self.resolve_lib_type_by_name("Array"));
-        let array_display_type = self.resolve_lib_type_by_name("Array");
+        let array_display_type = array_instance_type;
 
         // PropertyAccessEvaluator runs through multiple database backends
         // (query cache, interner, binder-backed resolver). Register Array<T>
@@ -254,9 +294,21 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|v| !v.is_empty())
             && let Some(augmented_type) = self.resolve_lib_type_by_name("Array")
         {
-            self.ctx
-                .types
-                .register_array_base_type(augmented_type, array_type_params.clone());
+            let augmented_prop_count = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                augmented_type,
+            )
+            .map_or(0, |shape| shape.properties.len());
+            let current_prop_count = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+                .and_then(|current| {
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, current)
+                })
+                .map_or(0, |shape| shape.properties.len());
+            if augmented_prop_count >= current_prop_count {
+                self.ctx
+                    .types
+                    .register_array_base_type(augmented_type, array_type_params.clone());
+            }
         }
 
         // Register boxed types through the query database so PropertyAccessEvaluator

@@ -14,6 +14,44 @@ fn test_union_type_in_declaration() {
 }
 
 #[test]
+fn test_type_printer_preserves_union_display_origin() {
+    let interner = TypeInterner::new();
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let array_member = interner.array(TypeId::NUMBER);
+    let union = interner.union(vec![array_member, object_member]);
+    interner.replace_union_origin_for_display(union, vec![array_member, object_member]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "number[] | { x: number }");
+}
+
+#[test]
+fn test_type_printer_prints_named_unique_symbol_as_typeof() {
+    let source = "export const x = Symbol();\nexport const y = Symbol();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let x_sym = binder.file_locals.get("x").expect("missing x symbol");
+    let y_sym = binder.file_locals.get("y").expect("missing y symbol");
+    let interner = TypeInterner::new();
+    let x_type = interner.unique_symbol(SymbolRef(x_sym.0));
+    let y_type = interner.unique_symbol(SymbolRef(y_sym.0));
+    let union = interner.union_preserve_members(vec![x_type, y_type]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner)
+        .with_symbols(&binder.symbols)
+        .print_type(union);
+
+    assert_eq!(printed, "typeof x | typeof y");
+}
+
+#[test]
 fn test_intersection_type_in_declaration() {
     let output = emit_dts("export type Combined = { a: number } & { b: string };");
     assert!(output.contains("&"), "Expected intersection type: {output}");
@@ -25,6 +63,336 @@ fn test_function_type_in_declaration() {
     assert!(
         output.contains("(x: number, y: string) => void"),
         "Expected function type: {output}"
+    );
+}
+
+#[test]
+fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
+    let source = "class A {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, _root);
+
+    let class_sym = binder.file_locals.get("A").expect("missing class symbol");
+    let interner = TypeInterner::new();
+    let def_id = DefId(9103);
+    let type_id = interner.lazy(def_id);
+    let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(def_id, class_sym);
+    let a_param = interner.intern_string("A");
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner)
+        .with_symbols(&binder.symbols)
+        .with_type_cache(&type_cache)
+        .with_outer_type_params(vec![a_param])
+        .print_type(type_id);
+
+    assert_eq!(printed, "globalThis.A");
+}
+
+#[test]
+fn test_default_export_type_text_retains_local_type_alias_dependency() {
+    let source = r#"
+type Experiment<Name> = {
+    name: Name;
+};
+declare const createExperiment: <Name extends string>(
+    options: Experiment<Name>
+) => Experiment<Name>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_used_symbols(FxHashMap::default());
+
+    emitter.retain_local_type_names_for_public_api(r#"Experiment<"foo">"#);
+
+    let experiment_sym = binder
+        .file_locals
+        .get("Experiment")
+        .expect("missing Experiment symbol");
+    let create_sym = binder
+        .file_locals
+        .get("createExperiment")
+        .expect("missing createExperiment symbol");
+    let used = emitter.used_symbols.as_ref().expect("missing used symbols");
+    assert!(
+        used.contains_key(&experiment_sym),
+        "Expected type text to retain local type alias dependency"
+    );
+    assert!(
+        !used.contains_key(&create_sym),
+        "Did not expect type text retention to keep local value helpers"
+    );
+}
+
+#[test]
+fn test_node_modules_types_entry_uses_bare_package_specifier() {
+    let root =
+        std::env::temp_dir().join(format!("tsz-emitter-package-entry-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_root = root.join("node_modules/@babel/parser");
+    let typings_dir = package_root.join("typings");
+    std::fs::create_dir_all(&typings_dir).expect("create package dirs");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{"name":"@babel/parser","types":"./typings/babel-parser.d.ts"}"#,
+    )
+    .expect("write package json");
+    std::fs::write(
+        typings_dir.join("babel-parser.d.ts"),
+        "export declare class PluginConfig {}",
+    )
+    .expect("write declaration");
+
+    let arena = tsz_parser::parser::node::NodeArena::default();
+    let emitter = DeclarationEmitter::new(&arena);
+    let current_path = root.join("packages/compiler-sfc/src/index.ts");
+    let source_path = typings_dir.join("babel-parser.d.ts");
+    let specifier = emitter
+        .package_specifier_for_node_modules_path(
+            current_path.to_str().expect("current path utf8"),
+            source_path.to_str().expect("source path utf8"),
+        )
+        .expect("package specifier");
+
+    assert_eq!(specifier, "@babel/parser");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn test_static_super_method_call_preserves_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class C1 {
+    protected static sx: number;
+    protected static sf() {
+        return this.sx;
+    }
+}
+class C2 extends C1 {
+    protected static sf() {
+        return super.sf() + this.sx;
+    }
+}
+class C3 extends C2 {
+    static sf() {
+        return super.sf();
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("protected static sf(): number;"),
+        "Expected protected static super method return to be number: {output}"
+    );
+    assert!(
+        output.contains("static sf(): number;"),
+        "Expected public static super method return to be number: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_generic_function_type_omits_synthesized_optional_undefined() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let f_name = interner.intern_string("f");
+    let value_name = interner.intern_string("value");
+    let t_param = tsz_solver::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let u_param = tsz_solver::TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
+    let callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::optional(
+            value_name,
+            interner.union(vec![t_type, TypeId::UNDEFINED]),
+        )],
+        u_type,
+    ));
+    let outer = interner.function(FunctionShape {
+        type_params: vec![t_param, u_param],
+        params: vec![ParamInfo::required(f_name, callback)],
+        this_type: None,
+        return_type: u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(outer);
+
+    assert_eq!(printed, "<T, U>(f: (value?: T) => U) => U");
+}
+
+#[test]
+fn test_returned_local_generic_function_renames_shadowed_type_param() {
+    let source = r#"
+const foo = <T,>(x: T) => {
+    const inner = <T,>(y: T) => [x, y] as const;
+    return inner;
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let var_stmt_idx = source_file.statements.nodes[0];
+    let outer_func = parser
+        .arena
+        .get(var_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .and_then(|decl| parser.arena.get(decl.initializer))
+        .and_then(|node| parser.arena.get_function(node))
+        .expect("missing outer function");
+    let interner = TypeInterner::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let returned_identifier = emitter
+        .function_body_unique_return_identifier(outer_func.body)
+        .expect("missing returned identifier");
+    let type_text = emitter
+        .function_return_identifier_type_text(outer_func, returned_identifier)
+        .expect("missing returned function type");
+
+    assert_eq!(type_text, "<T_1>(y: T_1) => readonly [T, T_1]");
+}
+
+#[test]
+fn test_direct_returned_function_expression_preserves_outer_alias() {
+    let source = r#"
+export function needsRenameForShadowing<T>() {
+  type A = T;
+  return function O<T>(t: A, t2: T) {
+  }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let func = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser.arena.get_function(node).filter(|func| {
+                parser.arena.get_identifier_text(func.name) == Some("needsRenameForShadowing")
+            })
+        })
+        .expect("missing function");
+    let interner = TypeInterner::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .direct_returned_function_expression_type_text(func)
+        .expect("missing returned function type");
+
+    assert_eq!(type_text, "<T_1>(t: T, t2: T_1) => void");
+}
+
+#[test]
+fn test_returned_class_expression_preserves_extends_type_parameter() {
+    let source = r#"
+export type Constructor<T = {}> = new (...args: any[]) => T;
+
+export function Timestamped<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        timestamp = Date.now();
+    };
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let source_file = parser
+        .arena
+        .get(root)
+        .and_then(|node| parser.arena.get_source_file(node))
+        .expect("missing source file");
+    let func = source_file
+        .statements
+        .nodes
+        .iter()
+        .find_map(|&stmt_idx| {
+            let stmt_node = parser.arena.get(stmt_idx)?;
+            if let Some(func) = parser.arena.get_function(stmt_node) {
+                return Some(func);
+            }
+            let export = parser.arena.get_export_decl(stmt_node)?;
+            let clause_node = parser.arena.get(export.export_clause)?;
+            parser.arena.get_function(clause_node)
+        })
+        .expect("missing function");
+    let return_expr = parser
+        .arena
+        .get(func.body)
+        .and_then(|node| parser.arena.get_block(node))
+        .and_then(|block| parser.arena.get(block.statements.nodes[0]))
+        .and_then(|node| parser.arena.get_return_statement(node))
+        .and_then(|ret| ret.expression.is_some().then_some(ret.expression))
+        .expect("missing returned class expression");
+
+    let interner = TypeInterner::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .preferred_expression_type_text(return_expr)
+        .expect("missing class expression type text");
+    assert!(
+        type_text.contains("} & TBase"),
+        "Expected returned class expression to preserve extends type parameter: {type_text}"
+    );
+    assert!(
+        type_text.contains("new (...args: any[]):"),
+        "Expected mixin constructor to forward base constructor args: {type_text}"
+    );
+}
+
+#[test]
+fn test_returned_local_call_preserves_typeof_parameter_return() {
+    let output = emit_dts_with_binding(
+        r#"
+export const g = (v: "outer") => {
+    const f = (v: "inner") => () => null! as typeof v;
+    const r = f(null!);
+    return r;
+};
+"#,
+    );
+
+    assert!(
+        output.contains(r#"export declare const g: (v: "outer") => () => "inner";"#),
+        "Expected returned local call to preserve typeof parameter return: {output}"
     );
 }
 

@@ -201,6 +201,12 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn enclosing_function_has_jsdoc_this_tag(&self, idx: NodeIndex) -> bool {
+        self.find_enclosing_non_arrow_function(idx)
+            .and_then(|func_idx| self.get_jsdoc_for_function(func_idx))
+            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
+    }
+
     /// Check if `this` is inside a nested regular function (`FUNCTION_EXPRESSION` or
     /// `FUNCTION_DECLARATION`) within a class body. In such cases, the regular function
     /// creates its own `this` binding, so the enclosing class's `this` type should
@@ -500,6 +506,116 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn type_parameter_name_is_shadowed_before_static_member(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION,
+            CONSTRUCTOR, CONSTRUCTOR_TYPE, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+            FUNCTION_TYPE, GET_ACCESSOR, METHOD_DECLARATION, PROPERTY_DECLARATION, SET_ACCESSOR,
+        };
+
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                k if k == FUNCTION_DECLARATION
+                    || k == FUNCTION_EXPRESSION
+                    || k == ARROW_FUNCTION =>
+                {
+                    if let Some(function) = self.ctx.arena.get_function(node)
+                        && self.type_parameter_list_contains_name(&function.type_parameters, name)
+                    {
+                        return true;
+                    }
+                }
+                k if k == FUNCTION_TYPE || k == CONSTRUCTOR_TYPE => {
+                    if let Some(function_type) = self.ctx.arena.get_function_type(node)
+                        && self
+                            .type_parameter_list_contains_name(&function_type.type_parameters, name)
+                    {
+                        return true;
+                    }
+                }
+                k if k == METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                        if self.type_parameter_list_contains_name(&method.type_parameters, name) {
+                            return true;
+                        }
+                        if self.has_static_modifier(&method.modifiers) {
+                            return false;
+                        }
+                    }
+                }
+                k if k == GET_ACCESSOR || k == SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                        if self.type_parameter_list_contains_name(&accessor.type_parameters, name) {
+                            return true;
+                        }
+                        if self.has_static_modifier(&accessor.modifiers) {
+                            return false;
+                        }
+                    }
+                }
+                k if k == PROPERTY_DECLARATION => {
+                    return false;
+                }
+                k if k == CLASS_STATIC_BLOCK_DECLARATION
+                    || k == CONSTRUCTOR
+                    || k == CLASS_DECLARATION
+                    || k == CLASS_EXPRESSION =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+
+        false
+    }
+
+    fn type_parameter_list_contains_name(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        name: &str,
+    ) -> bool {
+        let Some(type_parameters) = type_parameters else {
+            return false;
+        };
+
+        type_parameters.nodes.iter().any(|&type_param_idx| {
+            let Some(type_param_node) = self.ctx.arena.get(type_param_idx) else {
+                return false;
+            };
+            let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node) else {
+                return false;
+            };
+            let Some(name_node) = self.ctx.arena.get(type_param.name) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == name)
+        })
+    }
+
     /// Check if the enclosing non-arrow function has an explicit `this` parameter.
     ///
     /// TypeScript allows functions to declare `this` as their first parameter
@@ -577,9 +693,7 @@ impl<'a> CheckerState<'a> {
     /// the `this` type is contextually provided. TS2683 should be suppressed because
     /// the contextual typing pass will properly type `this`.
     pub(crate) fn enclosing_function_has_contextual_this_type(&mut self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{
-            FUNCTION_DECLARATION, FUNCTION_EXPRESSION, VARIABLE_DECLARATION,
-        };
+        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
 
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
             Some(f) => f,
@@ -595,12 +709,6 @@ impl<'a> CheckerState<'a> {
         // from @constructor or @this JSDoc annotations, or from being treated as constructors
         if fn_node.kind != FUNCTION_EXPRESSION && !self.is_js_file() {
             return false;
-        }
-
-        // In JS files, function declarations are treated as potential constructors
-        // and will have synthesized instance types for `this`. Suppress TS2683.
-        if self.is_js_file() && fn_node.kind == FUNCTION_DECLARATION {
-            return true;
         }
 
         // Walk up to find the parent variable declaration
@@ -653,7 +761,10 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file()
             && self
                 .get_jsdoc_for_function(enclosing_fn)
-                .is_some_and(|jsdoc| jsdoc.contains("@this") || jsdoc.contains("@constructor"))
+                .is_some_and(|jsdoc| {
+                    Self::jsdoc_contains_tag(&jsdoc, "this")
+                        || Self::jsdoc_contains_tag(&jsdoc, "constructor")
+                })
         {
             return true;
         }
@@ -730,6 +841,90 @@ impl<'a> CheckerState<'a> {
             );
 
             return param_ctx.get_this_type();
+        }
+    }
+
+    pub(crate) fn report_untyped_this_references_in_find_callback(&mut self, call_idx: NodeIndex) {
+        if !self.ctx.no_implicit_this() {
+            return;
+        }
+        let Some(call_node) = self.ctx.arena.get(call_idx) else {
+            return;
+        };
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(call_node) else {
+            return;
+        };
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return;
+        };
+        let is_find_call = self
+            .ctx
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .is_some_and(|ident| ident.escaped_text == "find");
+        if !is_find_call {
+            return;
+        }
+        let Some(args) = call.arguments.as_ref() else {
+            return;
+        };
+        let Some(&callback_idx) = args.nodes.first() else {
+            return;
+        };
+        let Some(callback_node) = self.ctx.arena.get(callback_idx) else {
+            return;
+        };
+        if callback_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+            return;
+        }
+        if self.enclosing_function_has_explicit_this_parameter(callback_idx) {
+            return;
+        }
+        if self.is_js_file()
+            && self
+                .get_jsdoc_for_function(callback_idx)
+                .is_some_and(|jsdoc| {
+                    Self::jsdoc_contains_tag(&jsdoc, "this")
+                        || Self::jsdoc_contains_tag(&jsdoc, "constructor")
+                })
+        {
+            return;
+        }
+        let Some(func) = self.ctx.arena.get_function(callback_node) else {
+            return;
+        };
+        let body = func.body;
+        if body.is_none() {
+            return;
+        }
+
+        let mut refs = Vec::new();
+        self.collect_untyped_this_references_in_function_body(body, &mut refs, true);
+        for this_idx in refs {
+            let already_reported = self.ctx.diagnostics.iter().any(|diag| {
+                diag.code
+                    == crate::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION
+                    && self.ctx.arena.get(this_idx).is_some_and(|node| {
+                        diag.start == node.pos && diag.length == node.end - node.pos
+                    })
+            });
+            if !already_reported {
+                self.error_at_node(
+                    this_idx,
+                    crate::diagnostics::diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                    crate::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                );
+            }
         }
     }
 
@@ -931,6 +1126,24 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn is_arguments_in_async_function_or_method(&self, idx: NodeIndex) -> bool {
+        let Some(function_idx) = self.find_enclosing_non_arrow_function(idx) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(function_idx) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_function(node)
+            .is_some_and(|function| function.is_async)
+            || self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|method| self.has_async_modifier(&method.modifiers))
+    }
+
     /// Returns true when `func_idx` is the executor callback passed to
     /// `new Promise(...)` (first argument, function/arrow expression).
     pub(crate) fn is_promise_executor_function(&self, func_idx: NodeIndex) -> bool {
@@ -962,6 +1175,9 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_identifier(callee)
             .is_some_and(|i| i.escaped_text == "Promise")
+            && self
+                .resolve_identifier_symbol_without_tracking(call.expression)
+                .is_some_and(|sym_id| self.symbol_has_standard_lib_origin(sym_id))
     }
 
     /// Returns true when the parameter name belongs to a Promise executor callback.

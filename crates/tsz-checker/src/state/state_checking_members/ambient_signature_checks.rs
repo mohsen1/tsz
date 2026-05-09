@@ -358,11 +358,14 @@ impl<'a> CheckerState<'a> {
                 };
             let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
 
+            // Match tsc TS2322 on `null = () => Unresolved`: allow the check
+            // through a nested-error target only for nullish initializers.
+            let init_is_nullish = init_type == TypeId::NULL || init_type == TypeId::UNDEFINED;
+            let nested_err =
+                declared_type != TypeId::ERROR && self.type_contains_error(declared_type);
             if declared_type != TypeId::ANY
-                && !self.type_contains_error(declared_type)
-                // Use prop.initializer as source_idx for excess-property resolution,
-                // and prop.name as diag_idx for TS2322 diagnostic anchoring (tsc
-                // points at the property name, not the initializer value).
+                && declared_type != TypeId::ERROR
+                && (!nested_err || init_is_nullish)
                 && self.check_assignable_or_report_at(
                     init_type,
                     declared_type,
@@ -642,7 +645,7 @@ impl<'a> CheckerState<'a> {
             self.js_prototype_owner_expression_for_node(member_idx)
                 .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
                 .and_then(|owner_target| {
-                    self.js_constructor_body_instance_type_for_function(owner_target)
+                    self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
                 })
         } else {
             None
@@ -797,6 +800,15 @@ impl<'a> CheckerState<'a> {
         // Check for async modifier (needed for both abstract and concrete methods)
         let is_async = self.has_async_modifier(&method.modifiers);
         let is_generator = method.asterisk_token;
+
+        // TS1064/TS1055/TS2705: parity with fn declarations (issue #4762).
+        self.check_async_return_type_is_promise(
+            has_type_annotation,
+            is_async,
+            is_generator,
+            return_type,
+            method.type_annotation,
+        );
 
         // Check method body
         if method.body.is_some() {
@@ -1409,7 +1421,7 @@ impl<'a> CheckerState<'a> {
         let raw_comment = &source_text[comment_pos as usize..comment_end.min(source_text.len())];
 
         // TS1092: Check for @template tag on constructor
-        if let Some(template_offset) = raw_comment.find("@template") {
+        if let Some(template_offset) = Self::jsdoc_tag_offset(raw_comment, "template") {
             let rest = &raw_comment[template_offset + "@template".len()..];
             let trimmed = rest.trim_start();
             // tsc points at the first type parameter name after @template
@@ -1425,29 +1437,22 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS1093: Check for @return/@returns tag with type annotation on constructor.
-        // We must skip @returns tags that appear after @callback or @typedef, since
-        // those tags create nested type definitions whose @returns belong to the
-        // callback/typedef, not to the constructor itself.
-        let nested_scope_start = ["@callback", "@typedef"]
-            .iter()
-            .filter_map(|t| raw_comment.find(t))
-            .min();
+        // A preceding @callback creates a nested function type whose return tag
+        // belongs to that callback. A plain @typedef does not consume later
+        // constructor-level return tags.
+        let callback_scope_start = Self::jsdoc_tag_offset(raw_comment, "callback");
 
-        for tag in ["@returns", "@return"] {
-            if let Some(tag_offset) = raw_comment.find(tag) {
-                // Skip if this @returns belongs to a @callback/@typedef block
-                if let Some(scope_start) = nested_scope_start
-                    && tag_offset > scope_start
-                {
+        for tag in ["returns", "return"] {
+            if let Some(tag_offset) = Self::jsdoc_tag_offset(raw_comment, tag) {
+                if callback_scope_start.is_some_and(|scope_start| tag_offset > scope_start) {
                     continue;
                 }
-                let rest = &raw_comment[tag_offset + tag.len()..];
+                let tag_len = tag.len() + 1;
+                let rest = &raw_comment[tag_offset + tag_len..];
                 let trimmed = rest.trim_start();
                 if trimmed.starts_with('{') {
-                    // tsc points one past the `{` of the type annotation
                     let ws_len = rest.len() - trimmed.len();
-                    let error_offset = tag_offset + tag.len() + ws_len + 1;
+                    let error_offset = tag_offset + tag_len + ws_len + 1;
                     let abs_pos = comment_pos + error_offset as u32;
                     self.ctx.error(
                         abs_pos,
@@ -1461,7 +1466,6 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
     fn is_accessor_circular_reference(
         &self,
         type_node_idx: NodeIndex,

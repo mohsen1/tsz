@@ -23,15 +23,12 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use crate::query_boundaries::common::PropertyAccessResult;
         let skip_flow_narrowing = request.flow.skip_flow_narrowing();
-
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return TypeId::ERROR; // Missing access expression data - propagate error
         };
-
         // Handle import.meta: emit TS1470 in files that compile to CommonJS output
         if let Some(result) =
             self.try_resolve_import_meta_access(idx, access.expression, access.name_or_argument)
@@ -40,7 +37,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-
         // Get the property name first (needed for abstract property check regardless of object type)
         let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
             // Preserve diagnostics on the base expression (e.g. TS2304 for `missing.`)
@@ -61,6 +57,22 @@ impl<'a> CheckerState<'a> {
             // Preserve diagnostics on the base expression when member name is missing.
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
+        }
+
+        if let Some(type_id) = self.partial_object_literal_initializer_property_type(
+            access.expression,
+            access.name_or_argument,
+        ) {
+            return type_id;
+        }
+
+        if let Some(literal_type) = self.const_array_to_enum_member_literal_type_query(idx) {
+            return literal_type;
+        }
+        if let Some(literal_type) = self
+            .imported_array_to_enum_member_literal_type(access.expression, access.name_or_argument)
+        {
+            return literal_type;
         }
 
         if self.is_js_file()
@@ -236,48 +248,14 @@ impl<'a> CheckerState<'a> {
                             })
                     });
 
-            let property_name_for_probe = self
-                .ctx
-                .arena
-                .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.clone());
-            let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
-                let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
-                let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
-                !matches!(
-                    self.resolve_property_access_with_env(resolved_no_flow, property_name),
-                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
-                )
-            } else {
-                false
-            };
-
-            if can_use_no_flow || preserve_non_js_write_base {
-                let read_object_type =
-                    self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE);
-                if let Some(property_name) = property_name_for_probe.as_deref() {
-                    let evaluated_read = self.evaluate_application_type(read_object_type);
-                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
-                    if self.union_write_requires_existing_named_member(resolved_read, property_name)
-                    {
-                        (read_object_type, false)
-                    } else {
-                        let read_has_property = !matches!(
-                            self.resolve_property_access_with_env(resolved_read, property_name),
-                            PropertyAccessResult::PropertyNotFound { .. }
-                                | PropertyAccessResult::IsUnknown
-                        );
-                        (object_type_no_flow, !read_has_property)
-                    }
-                } else {
-                    (object_type_no_flow, false)
-                }
-            } else {
-                (
-                    self.get_type_of_node_with_request(access.expression, &TypingRequest::NONE),
-                    false,
-                )
-            }
+            let property_name_for_probe = self.ctx.arena.get_identifier(name_node);
+            self.write_receiver_type_for_property_access(
+                idx,
+                access.expression,
+                property_name_for_probe.map(|ident| ident.escaped_text.as_str()),
+                object_type_no_flow,
+                preserve_non_js_write_base,
+            )
         } else if skip_optional_base_flow {
             (
                 self.get_type_of_write_target_base_expression(access.expression),
@@ -319,7 +297,6 @@ impl<'a> CheckerState<'a> {
                 false,
             )
         };
-
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
                 if write_presence_only {
@@ -364,30 +341,11 @@ impl<'a> CheckerState<'a> {
         // not the DOM `Location` global type.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && self.is_known_global_value_name(&ident.escaped_text)
+            && !self.known_global_value_has_local_shadow(access.expression, &ident.escaped_text)
         {
-            // Check if there's a local binding shadowing the global
-            let is_local_shadow = self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    // Local declarations shadow global value names. This includes
-                    // variables, classes, and functions — e.g., a file-local
-                    // `export declare class Promise<R>` must shadow the global
-                    // `Promise` so that its custom static members are visible.
-                    (symbol.flags
-                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::PROPERTY
-                            | symbol_flags::CLASS
-                            | symbol_flags::FUNCTION))
-                        != 0
-                });
-
-            if !is_local_shadow {
-                let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                    object_type = value_type;
-                }
+            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                object_type = value_type;
             }
         }
 
@@ -501,18 +459,16 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-
         let mut commonjs_namespace_override: Option<TypeId> = None;
         if object_type == TypeId::ANY
             && self.is_js_file()
+            && !self.current_source_file_has_esm_syntax()
             && self
                 .ctx
                 .arena
                 .get_identifier_at(access.expression)
                 .is_some_and(|ident| ident.escaped_text == "exports")
-            && self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .is_none()
+            && self.is_unshadowed_commonjs_exports_identifier(access.expression)
         {
             let namespace_type = self.current_file_commonjs_namespace_type();
             object_type = namespace_type;
@@ -742,23 +698,11 @@ impl<'a> CheckerState<'a> {
         // actually resolves to a global, not when a local variable shadows it.
         if let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
             && self.is_known_global_value_name(&ident.escaped_text)
+            && !self.known_global_value_has_local_shadow(access.expression, &ident.escaped_text)
         {
-            let is_local_shadow = self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    (symbol.flags
-                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::PROPERTY))
-                        != 0
-                });
-
-            if !is_local_shadow {
-                let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
-                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                    display_object_type = value_type;
-                }
+            let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                display_object_type = value_type;
             }
         }
 
@@ -921,16 +865,12 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some_and(|declares| !declares)
             {
-                let type_display = if let Some(obj_lit_idx) = self
-                    .prior_js_prototype_object_literal_assignment_node(
+                let type_display = self
+                    .prior_js_prototype_object_literal_assignment_display(
                         prototype_access.expression,
                         read_pos,
-                    ) {
-                    let obj_lit_type = self.get_type_of_node(obj_lit_idx);
-                    self.format_type(obj_lit_type)
-                } else {
-                    self.format_type(display_object_type)
-                };
+                    )
+                    .unwrap_or_else(|| self.format_type(display_object_type));
                 self.error_property_not_exist_with_apparent_type(property_name, &type_display, idx);
             }
             if !commonjs_named_props_disallowed {
@@ -942,19 +882,11 @@ impl<'a> CheckerState<'a> {
             }
             if js_expando_before_assignment {
                 // Suppress TS2565 when a leading JSDoc `@type` annotation
-                // declares the property's type AND the receiver is a
-                // function-as-constructor (not an ES `class`):
+                // declares a function constructor prototype property's type:
                 //   function C() { this.x = false; }
                 //   /** @type {number} */
                 //   C.prototype.x;
-                // tsc treats this as a typed declaration of `C.prototype.x`
-                // and skips the "used before being assigned" error so the
-                // JSDoc type can flow into downstream `this.x = ...` checks.
-                // For ES `class`-declared receivers tsc still emits TS2565
-                // (the prototype shape is the class's instance type, so
-                // late-attaching a property via prototype is genuinely
-                // "used before assigned"). Restricting to FUNCTION-flagged
-                // receivers preserves that behavior.
+                // ES class receivers still report TS2565.
                 let suppress_for_jsdoc_type_decl = self.is_js_file()
                     && self.ctx.compiler_options.check_js
                     && self.expando_receiver_is_function_constructor(access.expression)
@@ -972,6 +904,15 @@ impl<'a> CheckerState<'a> {
                             &[property_name],
                         ),
                         diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                    );
+                } else if let Some(declared_type) = self
+                    .enclosing_expression_statement(idx)
+                    .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
+                {
+                    self.check_jsdoc_prototype_type_decl_constructor_assignment(
+                        access.expression,
+                        property_name,
+                        declared_type,
                     );
                 }
             }
@@ -1079,15 +1020,16 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;
-                if self.known_declared_receiver_has_property(
-                    access.expression,
-                    display_object_type,
-                    property_name,
-                ) {
-                    return TypeId::ERROR;
-                }
-                if !property_name.starts_with('#') {
-                    // Report at the property name node, not the full expression (matches tsc behavior)
+                // tsc emits TS2339 on property access against `never` even when
+                // the property exists on the un-narrowed declared receiver —
+                // the narrowed type is `never`, the code is unreachable, so the
+                // property genuinely doesn't exist on the value at this point.
+                // The earlier blanket suppression hid the diagnostic for type-
+                // predicate / typeof narrowing chains that exhaust a union to
+                // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
+                let suppress_declared_intersection_access = self
+                    .declared_intersection_receiver_has_property(access.expression, property_name);
+                if !property_name.starts_with('#') && !suppress_declared_intersection_access {
                     self.error_property_not_exist_at(
                         property_name,
                         TypeId::NEVER,
@@ -1380,7 +1322,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if self.namespace_has_type_only_member(object_type, property_name) {
+            let type_only_namespace_access_name = self.type_only_namespace_member_access_name(idx);
+            if self.namespace_has_type_only_member(object_type, property_name)
+                || type_only_namespace_access_name.is_some()
+            {
                 if self.is_js_file()
                     && self.ctx.compiler_options.check_js
                     && let Some(ns_name) = self.entity_name_text(access.expression)
@@ -1429,9 +1374,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // Suppress TS2339/TS2693 when base expression is a property access on an unresolved import
-                // TS2307 was already emitted for the missing module, so we shouldn't
-                // emit additional errors about properties not existing on the import.
+                // TS2307 already covers missing modules; suppress property follow-on noise.
                 if self.is_property_access_on_unresolved_import(access.expression) {
                     return TypeId::ERROR;
                 }
@@ -1447,17 +1390,14 @@ impl<'a> CheckerState<'a> {
                     && !(self.is_js_file()
                         && self.ctx.compiler_options.check_js
                         && self.property_access_is_write_target_or_base(idx))
+                    && let Some(ns_name) = type_only_namespace_access_name
+                        .or_else(|| self.entity_name_text(access.expression))
                 {
-                    // Emit TS2708 for namespace member access (e.g., ns.Interface())
-                    // This is "Cannot use namespace as a value"
-                    // Get the namespace name from the left side of the access
-                    if let Some(ns_name) = self.entity_name_text(access.expression) {
-                        self.report_wrong_meaning_diagnostic(
-                            &ns_name,
-                            access.expression,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
-                        );
-                    }
+                    self.report_wrong_meaning_diagnostic(
+                        &ns_name,
+                        access.expression,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                    );
                     // tsc does NOT emit TS2693 for the type-only member
                     // when TS2708 was already emitted for the namespace.
                 }
@@ -1658,8 +1598,8 @@ impl<'a> CheckerState<'a> {
                     self.resolve_class_for_access(access.expression, object_type_for_access)
                 && !is_static_access
                 && matches!(
-                    self.summarize_class_chain(class_idx)
-                        .member_kind(property_name, false, true),
+                    self.class_chain_member_kind_name_only(class_idx, property_name, false, true)
+                        .map(|(kind, _)| kind),
                     Some(ClassMemberKind::FieldLike)
                 )
             {
@@ -1760,6 +1700,31 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
+                    let direct_class_this_receiver = self.is_this_expression(access.expression)
+                        && self.ctx.enclosing_class.is_some()
+                        && !self.is_this_in_nested_function_inside_class(idx)
+                        && !self.is_this_in_static_class_member(idx);
+                    if direct_class_this_receiver
+                        && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            object_type_for_access,
+                        )
+                        && let Some(raw_prop) = shape.properties.iter().find(|prop| {
+                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
+                                == property_name.as_str()
+                        })
+                        && crate::query_boundaries::common::contains_this_type(
+                            self.ctx.types,
+                            raw_prop.type_id,
+                        )
+                    {
+                        prop_type = crate::query_boundaries::common::substitute_this_type(
+                            self.ctx.types,
+                            raw_prop.type_id,
+                            self.ctx.types.this_type(),
+                        );
+                    }
+
                     // Substitute polymorphic `this` type with the receiver type.
                     // E.g., for `class C<T> { x = this; }`, accessing `c.x` where
                     // `c: C<string>` should yield `C<string>`, not raw `ThisType`.
@@ -1772,6 +1737,8 @@ impl<'a> CheckerState<'a> {
                     // instead of `(other: Dog) => boolean`, which diverges from tsc.
                     let this_substitution_target = if self.is_super_expression(access.expression) {
                         self.current_this_type().unwrap_or(original_object_type)
+                    } else if direct_class_this_receiver {
+                        self.ctx.types.this_type()
                     } else {
                         original_object_type
                     };
@@ -1969,8 +1936,7 @@ impl<'a> CheckerState<'a> {
 
                     let resolved_class_access =
                         self.resolve_class_for_access(access.expression, object_type_for_access);
-                    let class_chain_summary = resolved_class_access
-                        .map(|(class_idx, _)| self.summarize_class_chain(class_idx));
+                    let mut class_chain_summary = None;
                     let static_this_member_context = is_this_access
                         && (self
                             .find_enclosing_static_block(access.expression)
@@ -2020,14 +1986,21 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
                     }
-
                     if !access.question_dot_token
                         && is_this_access
-                        && let Some((_, is_static_access)) = resolved_class_access
+                        && let Some((class_idx, is_static_access)) = resolved_class_access
                         && is_static_access
-                        && let Some(summary) = class_chain_summary.as_ref()
-                        && summary.lookup(property_name, true, true).is_none()
-                        && summary.lookup(property_name, false, true).is_some()
+                        && self
+                            .class_chain_member_kind_name_only(class_idx, property_name, true, true)
+                            .is_none()
+                        && self
+                            .class_chain_member_kind_name_only(
+                                class_idx,
+                                property_name,
+                                false,
+                                true,
+                            )
+                            .is_some()
                     {
                         self.error_property_not_exist_at(
                             property_name,
@@ -2048,8 +2021,6 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // Check global interface augmentations for primitive wrappers
-                    // and other built-in types (e.g., `interface Boolean { doStuff() }`)
                     if let Some(augmented_type) = self.resolve_general_global_augmentation_property(
                         object_type_for_access,
                         property_name,
@@ -2061,8 +2032,6 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // Check module augmentations (declare module "X" { interface Y { ... } })
-                    // for properties added by cross-file augmentation declarations.
                     if let Some(augmented_type) = self
                         .resolve_module_augmentation_property(object_type_for_access, property_name)
                     {
@@ -2073,8 +2042,6 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // For callable/function types, check the Function interface
-                    // for augmented members (e.g., declare global { interface Function { ... } })
                     if crate::query_boundaries::property_access::is_function_type(
                         self.ctx.types,
                         object_type_for_access,
@@ -2101,13 +2068,32 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    // Check for optional chaining (?.) - suppress TS2339 error when using optional chaining
+                    if class_chain_summary.is_none()
+                        && self.property_access_is_current_class_construction_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        )
+                        && let Some((class_idx, _)) = resolved_class_access
+                    {
+                        class_chain_summary = Some(self.summarize_class_chain(class_idx));
+                    }
+                    if let Some(member_type) = self.recover_property_from_class_chain_summary(
+                        access.expression,
+                        object_type_for_access,
+                        resolved_class_access,
+                        class_chain_summary.as_deref(),
+                        property_name,
+                    ) {
+                        return self.finalize_property_access_result(
+                            idx,
+                            member_type,
+                            skip_flow_narrowing,
+                            false,
+                        );
+                    }
                     if access.question_dot_token {
-                        // With optional chaining, missing property results in undefined
                         return TypeId::UNDEFINED;
                     }
-                    // In JS checkJs mode, unresolved CommonJS `module.exports` accesses
-                    // should use the current file's export surface instead of `any`.
                     if property_name == "exports"
                         && self.is_js_file()
                         && let Some(obj_node) = self.ctx.arena.get(access.expression)
@@ -2125,18 +2111,10 @@ impl<'a> CheckerState<'a> {
                             .enclosing_expression_statement(idx)
                             .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                             .or_else(|| self.jsdoc_type_annotation_for_node_direct(idx))
-                            .or_else(|| {
-                                self.jsdoc_type_annotation_for_node_direct(access.expression)
-                            })
-                            .or_else(|| {
-                                let root = self.expression_root(idx);
-                                (root != idx)
-                                    .then(|| self.jsdoc_type_annotation_for_node_direct(root))?
-                            })
                     {
                         return jsdoc_type;
                     }
-                    let skip_js_write_assigned_value_fallback = skip_flow_narrowing
+                    let checked_js_write_has_non_expando_global_type = skip_flow_narrowing
                         && self.property_access_is_direct_write_target(idx)
                         && self.is_js_file()
                         && self.ctx.compiler_options.check_js
@@ -2168,7 +2146,7 @@ impl<'a> CheckerState<'a> {
                             });
                     if self.is_js_file()
                         && self.ctx.compiler_options.check_js
-                        && !skip_js_write_assigned_value_fallback
+                        && !checked_js_write_has_non_expando_global_type
                         && !self.property_access_root_is_imported_namespace(access.expression)
                         && let Some(expr_text) = self.expression_text(idx)
                         && let Some(jsdoc_type) = if skip_flow_narrowing
@@ -2176,12 +2154,23 @@ impl<'a> CheckerState<'a> {
                         {
                             self.resolve_jsdoc_assigned_value_type_for_write(&expr_text)
                         } else {
-                            self.resolve_jsdoc_assigned_value_type(&expr_text)
+                            self.resolve_jsdoc_declared_assigned_value_type(&expr_text)
                         }
                     {
                         return jsdoc_type;
                     }
-                    if js_expando_before_assignment {
+                    if js_expando_before_assignment && !checked_js_write_has_non_expando_global_type
+                    {
+                        return TypeId::ANY;
+                    }
+                    if skip_flow_narrowing
+                        && self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && self.property_access_is_direct_write_target(idx)
+                        && !checked_js_write_has_non_expando_global_type
+                        && !commonjs_named_props_disallowed
+                        && self.is_expando_property_read(access.expression, property_name)
+                    {
                         return TypeId::ANY;
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
@@ -2206,6 +2195,7 @@ impl<'a> CheckerState<'a> {
                             .is_some_and(|(_, is_static_access)| is_static_access);
                     if !commonjs_named_props_disallowed
                         && !static_class_this_write
+                        && !checked_js_write_has_non_expando_global_type
                         && self.is_expando_function_assignment(
                             idx,
                             access.expression,
@@ -2219,7 +2209,8 @@ impl<'a> CheckerState<'a> {
                         access.expression,
                         object_type_for_access,
                         property_name,
-                    ) {
+                    ) && !checked_js_write_has_non_expando_global_type
+                    {
                         return TypeId::ANY;
                     }
 
@@ -2230,6 +2221,13 @@ impl<'a> CheckerState<'a> {
                         && self
                             .current_this_type()
                             .is_some_and(|ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN);
+                    let this_direct_write_rhs_is_void_zero = is_this_access
+                        && self
+                            .property_access_direct_write_rhs(idx)
+                            .is_some_and(|rhs| self.js_assignment_rhs_is_void_zero(rhs));
+                    let has_jsdoc_this_context = is_this_access
+                        && self.is_js_file()
+                        && self.enclosing_function_has_jsdoc_this_tag(access.expression);
                     // When `this` type comes from a ThisType<T> marker (e.g., Vue 2
                     // Options API pattern), property access on unresolved type parameters
                     // should not emit TS2339. The type parameters will be inferred from the
@@ -2276,7 +2274,6 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
-
                     if self.is_js_file()
                         && is_this_access
                         && this_owner_is_js_prototype_method
@@ -2284,7 +2281,6 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
-
                     if self.is_js_file()
                         && is_this_access
                         && skip_flow_narrowing
@@ -2302,11 +2298,14 @@ impl<'a> CheckerState<'a> {
                                 access.expression,
                                 property_name,
                             );
-                        if !object_literal_owned_this || prototype_object_literal_expando_write {
+                        if !(has_jsdoc_this_context
+                            || (object_literal_owned_this
+                                && !prototype_object_literal_expando_write)
+                            || (has_explicit_this_context && this_direct_write_rhs_is_void_zero))
+                        {
                             return TypeId::ANY;
                         }
                     }
-
                     if self.is_js_file() && is_this_access && !has_explicit_this_context {
                         // Allow dynamic property on `this` in loose JS contexts, but
                         // keep checks when `this` is contextually owned by a class/object
@@ -2318,7 +2317,6 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ANY;
                         }
                     }
-
                     if self.is_js_file()
                         && property_name == "prototype"
                         && self.property_access_is_direct_write_target(idx)
@@ -2332,21 +2330,23 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
-
                     if self.is_js_file()
                         && self.is_super_expression(access.expression)
-                        && let Some((_, is_static_access)) = resolved_class_access
+                        && let Some((class_idx, is_static_access)) = resolved_class_access
                         && is_static_access
                         && matches!(
-                            class_chain_summary
-                                .as_ref()
-                                .and_then(|summary| summary.member_kind(property_name, true, true)),
+                            self.class_chain_member_kind_name_only(
+                                class_idx,
+                                property_name,
+                                true,
+                                true,
+                            )
+                            .map(|(kind, _)| kind),
                             Some(ClassMemberKind::FieldLike)
                         )
                     {
                         return TypeId::ANY;
                     }
-
                     // TSC does not emit TS2576 for `super.member` access. When accessing a
                     // property through `super`, TypeScript suppresses "did you mean to access
                     // the static member?" errors entirely. The TS2576 check only applies to
@@ -2354,29 +2354,36 @@ impl<'a> CheckerState<'a> {
                     // super access. See: superAccess2.ts — `super.y()` in instance method and
                     // `super.x()` in static method produce no TS2576 errors in tsc.
 
-                    if let Some((_, is_static_access)) = resolved_class_access
+                    if let Some((class_idx, is_static_access)) = resolved_class_access
                         && is_static_access
-                        && let Some(member_info) = class_chain_summary
+                    {
+                        if class_chain_summary.is_none() {
+                            class_chain_summary = Some(self.summarize_class_chain(class_idx));
+                        }
+                        if let Some(member_info) = class_chain_summary
                             .as_ref()
                             .and_then(|summary| summary.lookup(property_name, true, true))
-                    {
-                        return self.finalize_property_access_result(
-                            idx,
-                            effective_write_result(member_info.type_id, Some(member_info.type_id)),
-                            skip_flow_narrowing,
-                            false,
-                        );
+                        {
+                            return self.finalize_property_access_result(
+                                idx,
+                                effective_write_result(
+                                    member_info.type_id,
+                                    Some(member_info.type_id),
+                                ),
+                                skip_flow_narrowing,
+                                false,
+                            );
+                        }
                     }
 
                     // TS2576: instance.member where `member` exists on the class static side.
-                    // Route this through the shared class summary so inherited
-                    // static fields/accessors don't force another class walk.
+                    // This diagnostic only needs to know whether a static member
+                    // exists, not its full type.
                     if !self.is_super_expression(access.expression)
-                        && let Some((_, is_static_access)) = resolved_class_access
+                        && let Some((class_idx, is_static_access)) = resolved_class_access
                         && !is_static_access
-                        && class_chain_summary
-                            .as_ref()
-                            .and_then(|summary| summary.lookup(property_name, true, true))
+                        && self
+                            .class_chain_member_kind_name_only(class_idx, property_name, true, true)
                             .is_some()
                     {
                         use crate::diagnostics::{
@@ -2417,11 +2424,17 @@ impl<'a> CheckerState<'a> {
                     let in_circular_computed_property =
                         self.ctx.checking_computed_property_name.is_some()
                             && !self.ctx.class_instance_resolution_set.is_empty();
+                    let in_current_class_construction = self
+                        .property_access_is_current_class_construction_recovery(
+                            access.expression,
+                            display_object_type,
+                        );
                     if !property_name.starts_with('#')
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)
                         && !self.is_property_access_on_unresolved_import(access.expression)
                         && !in_circular_computed_property
+                        && !in_current_class_construction
                     {
                         if self.is_js_file()
                             && self.is_current_file_commonjs_export_base(access.expression)
@@ -2463,6 +2476,14 @@ impl<'a> CheckerState<'a> {
                                 access.name_or_argument,
                             );
                             return TypeId::ERROR;
+                        }
+
+                        if self.known_declared_receiver_has_property(
+                            access.expression,
+                            display_object_type,
+                            property_name,
+                        ) {
+                            return TypeId::ANY;
                         }
 
                         if enum_instance_like_access {
@@ -2517,18 +2538,26 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            // Suppress TS2339 for index access types (like T[keyof T])
-                            // or for unknown/error types that result from unresolved generics.
-                            //
-                            // Do not suppress bare type parameters here: tsc reports property
-                            // misses on generic receivers and formats constrained type parameters
-                            // through their constraint.
-                            let should_suppress =
+                            // Suppress TS2339 for IndexAccess display (T[keyof T]) when the
+                            // evaluated receiver still contains type parameters; tsc emits
+                            // TS2339 once the access resolves to a concrete shape (e.g. E[K]
+                            // → A | B). Also suppress for unknown/error fallbacks. Bare type
+                            // parameters are NOT suppressed — tsc reports property misses on
+                            // generic receivers via their constraint.
+                            let display_is_index_access =
                                 crate::query_boundaries::common::is_index_access_type(
                                     self.ctx.types,
                                     display_object_type,
-                                ) || display_object_type == TypeId::UNKNOWN
-                                    || display_object_type == TypeId::ERROR;
+                                );
+                            let evaluated_receiver_is_resolved =
+                                !crate::query_boundaries::common::contains_type_parameters(
+                                    self.ctx.types,
+                                    object_type_for_access,
+                                );
+                            let should_suppress = (display_is_index_access
+                                && !evaluated_receiver_is_resolved)
+                                || display_object_type == TypeId::UNKNOWN
+                                || display_object_type == TypeId::ERROR;
                             if !should_suppress {
                                 self.error_property_not_exist_at(
                                     property_name,
@@ -2540,6 +2569,9 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
+                    }
+                    if in_current_class_construction {
+                        return TypeId::ANY;
                     }
                     if receiver_has_daa_error {
                         return self.finalize_property_access_result(
@@ -2569,13 +2601,19 @@ impl<'a> CheckerState<'a> {
                 ),
 
                 PropertyAccessResult::IsUnknown => {
-                    // TS18046: 'x' is of type 'unknown'.
-                    // Without strictNullChecks, unknown is treated like any (no error).
-                    if self.error_is_of_type_unknown(access.expression) {
-                        TypeId::ERROR
-                    } else {
-                        TypeId::ANY
+                    if self.ctx.compiler_options.strict_null_checks {
+                        return if self.error_is_of_type_unknown(access.expression) {
+                            TypeId::ERROR
+                        } else {
+                            TypeId::ANY
+                        };
                     }
+                    self.error_property_not_exist_at(
+                        property_name,
+                        object_type_for_access,
+                        access.name_or_argument,
+                    );
+                    TypeId::ERROR
                 }
             }
         } else {
@@ -3045,34 +3083,30 @@ impl<'a> CheckerState<'a> {
         skip_flow_narrowing: bool,
     ) -> Option<TypeId> {
         let is_this_global = self.is_this_resolving_to_global(expression);
-        if !self.is_global_this_like_expression(expression) && !is_this_global {
+        let is_global_this = self.is_global_this_expression(expression);
+        let is_global_this_like = is_global_this || self.is_global_this_like_expression(expression);
+        let is_declared_window_global_this =
+            self.is_window_and_global_this_declared_expression(expression);
+        if !(is_global_this_like || is_this_global || is_declared_window_global_this) {
             return None;
         }
-
-        let base_display = if self.is_global_this_expression(expression) || is_this_global {
+        let base_display = if is_global_this || is_this_global {
             "typeof globalThis"
         } else {
             "Window & typeof globalThis"
         };
         let allow_unknown_property_fallback =
-            self.is_global_this_expression(expression) || is_this_global;
+            (is_global_this || is_this_global) && !is_declared_window_global_this;
         let property_type = self.resolve_global_this_property_type(
             property_name,
             name_or_argument,
             allow_unknown_property_fallback,
             base_display,
         );
-
         if property_type == TypeId::ERROR {
             return Some(TypeId::ERROR);
         }
-
-        // TS7017: When noImplicitAny is enabled and the access target is
-        // `typeof globalThis` and the property is not found, emit the index
-        // signature error. Both `this.X` (when `this` resolves to global) and
-        // a direct `globalThis.X` access trigger this — tsc treats them
-        // identically because both bottom out in `typeof globalThis`, which
-        // has no index signature.
+        // TS7017 for missing `typeof globalThis` member access under noImplicitAny.
         let access_targets_global_this =
             is_this_global || self.is_global_this_expression(expression);
         if access_targets_global_this

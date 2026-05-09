@@ -30,6 +30,92 @@ const z: TestSynthetic = '3'; // Should error TS2322: string not assignable to n
     );
 }
 
+#[test]
+fn keyof_mapped_application_uses_instantiated_constraint() {
+    let source = r#"
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+type PickedKeys = keyof MyPick<{ a: string; b: number }, "a">;
+
+const accepted: PickedKeys = "a";
+const rejected: PickedKeys = "b";
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "expected only the non-picked key assignment to fail; all diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_props_equality_preserves_pick_alias_body() {
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+type IsOptional<T> =
+    undefined | null extends T ? true :
+    undefined extends T ? true :
+    null extends T ? true :
+    false;
+
+interface Validator<T> {
+    __type: T;
+}
+
+type InferType<V> = V extends Validator<infer T> ? T : never;
+type RequiredKeys<V> = {
+    [K in keyof V]-?:
+        MyExclude<V[K], undefined> extends Validator<infer T>
+            ? IsOptional<T> extends true ? never : K
+            : never
+}[keyof V];
+type OptionalKeys<V> = MyExclude<keyof V, RequiredKeys<V>>;
+type InferPropsInner<V> = { [K in keyof V]-?: InferType<V[K]> };
+type InferProps<V> =
+    InferPropsInner<MyPick<V, RequiredKeys<V>>> &
+    MyPartial<InferPropsInner<MyPick<V, OptionalKeys<V>>>>;
+
+declare const stringValidator: Validator<string>;
+declare const maybeValidator: Validator<string | null | undefined>;
+
+const propTypes: {
+    name: Validator<string>;
+    maybe?: Validator<string | null | undefined>;
+} = {
+    name: stringValidator,
+    maybe: maybeValidator,
+};
+const propTypesWithoutAnnotation = {
+    name: stringValidator,
+    maybe: maybeValidator,
+};
+
+type ExtractedProps = InferProps<typeof propTypes>;
+type ExtractedPropsWithoutAnnotation = InferProps<typeof propTypesWithoutAnnotation>;
+type ExtractPropsMatch =
+    ExtractedProps extends ExtractedPropsWithoutAnnotation ? true : false;
+
+const matched: true = null as any as ExtractPropsMatch;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "expected InferProps equality to hold; all diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that conditional types with constrained type parameters don't emit false TS2322.
 ///
 /// `UnrollOnHover<S>` is `S extends object ? { [K in keyof S]: S[K] } : never`.
@@ -67,6 +153,311 @@ const ColumnSelectView2: new <S extends Schema>() => Table<UnrollOnHover<S>> = T
 }
 
 #[test]
+fn recursive_conditional_index_access_does_not_report_property_missing() {
+    let source = r#"
+type Flatten<T extends readonly unknown[]> = T extends unknown[] ? _Flatten<T>[] : readonly _Flatten<T>[];
+type _Flatten<T> = T extends readonly (infer U)[] ? _Flatten<U> : T;
+
+type InfiniteArray<T> = InfiniteArray<T>[];
+
+type B2 = Flatten<InfiniteArray<string>>;
+type B3 = B2[0];
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2589_count = diagnostics.iter().filter(|diag| diag.code == 2589).count();
+    assert_eq!(
+        ts2589_count, 1,
+        "recursive indexed access should emit one TS2589 at the index site. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2339),
+        "recursive indexed access must not cascade into TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_awaited_application_emits_ts2589_at_outer_alias() {
+    let source = r#"
+interface Promise<T> {
+    then(onfulfilled: (value: T) => any): any;
+}
+
+type __Awaited<T> = T extends null | undefined ? T :
+    T extends object & { then(onfulfilled: infer F): any } ?
+        F extends ((value: infer V) => any) ? __Awaited<V> : never :
+    T;
+
+type DeeplyNested<T> = Promise<DeeplyNested<T>>;
+type A = __Awaited<DeeplyNested<number>>;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2589_count = diagnostics.iter().filter(|diag| diag.code == 2589).count();
+    assert_eq!(
+        ts2589_count, 1,
+        "recursive __Awaited alias application should emit exactly one TS2589. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+fn assert_no_ts2589(source: &str) {
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2589),
+        "bounded recursive conditional alias should not emit TS2589. \
+         Actual diagnostics: {diagnostics:#?}\nSource:\n{source}"
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_array_branch_no_ts2589() {
+    assert_no_ts2589(
+        r#"
+type Test<T> = [T] extends [any[]] ? { array: Test<T[0]> } : { notArray: T };
+declare const x: Test<number[]>;
+const y: { array: { notArray: number } } = x;
+"#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_action_payload_no_ts2589() {
+    assert_no_ts2589(
+        r#"
+type Action<T, P> = P extends void ? { type: T } : { type: T, payload: P };
+
+enum ActionType {
+    Foo,
+    Batch
+}
+
+type ReducerAction =
+    | Action<ActionType.Foo, string>
+    | Action<ActionType.Batch, ReducerAction[]>;
+"#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_infer_recursive_box_no_ts2589() {
+    assert_no_ts2589(
+        r#"
+interface Box<T> {
+    __: T;
+}
+
+type Recursive<T> =
+    | T
+    | Box<Recursive<T>>;
+
+type InferRecursive<T> = T extends Recursive<infer R> ? R : "never!";
+type t1 = Box<string | Box<number | boolean>>;
+type t2 = InferRecursive<t1>;
+type t3 = InferRecursive<Box<string | Box<number | boolean>>>;
+"#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_abstract_class_infer_no_ts2589() {
+    assert_no_ts2589(
+        r#"
+abstract class SomeAbstractClass<C, M, R> {
+    foo!: (r?: R) => void;
+    bar!: (r?: any) => void;
+    abstract baz(c: C): M;
+}
+
+declare class SomeClass extends SomeAbstractClass<number, string, boolean> {}
+
+type RType<T> = T extends SomeAbstractClass<any, any, infer R> ? R : never;
+type SomeClassR = RType<SomeClass>;
+declare const r: SomeClassR;
+const ok: boolean = r;
+"#,
+    );
+}
+
+#[test]
+fn bounded_recursive_conditional_alias_jsonify_no_ts2589() {
+    assert_no_ts2589(
+        r#"
+type JsonifiedObject<T extends object> = { [K in keyof T]: Jsonified<T[K]> };
+
+type Jsonified<T> =
+    T extends string | number | boolean | null ? T
+    : T extends undefined | Function ? never
+    : T extends { toJSON(): infer R } ? R
+    : T extends object ? JsonifiedObject<T>
+    : "what is this";
+
+declare class MyClass {
+    toJSON(): "correct";
+}
+
+type Example = {
+    customClass: MyClass,
+    obj: {
+        nested: { attr: MyClass }
+    },
+};
+
+type JsonifiedExample = Jsonified<Example>;
+declare let ex: JsonifiedExample;
+const z1: "correct" = ex.customClass;
+"#,
+    );
+}
+
+#[test]
+fn nested_tuple_rest_infer_result_satisfies_array_constraint() {
+    let source = r#"
+interface Array<T> {
+    length: number;
+}
+
+type _PrependNextNum<A extends unknown[]> = A['length'] extends infer T
+    ? [T, ...A] extends [...infer X]
+        ? X
+        : never
+    : never;
+
+type _Enumerate<A extends unknown[], N extends number> = N extends A['length']
+    ? A
+    : _Enumerate<_PrependNextNum<A>, N> & number;
+
+type Enumerate<N extends number> = number extends N
+    ? number
+    : _Enumerate<[], N> extends (infer E)[]
+    ? E
+    : never;
+
+function foo2<T extends unknown[]>(value: T): Enumerate<T['length']> {
+    return value.length;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "tuple-rest infer result should satisfy Array<unknown> and not emit TS2344. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.code != 2339 && diag.code != 2536),
+        "array-like length access should not cascade into TS2339/TS2536. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("Type 'number' is not assignable to type 'Enumerate<T[\"length\"]>'")
+        }),
+        "generic tuple length return should preserve Enumerate<T[\"length\"]> in TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_tuple_spread_length_index_access_is_valid() {
+    let source = r#"
+type NTuple<N extends number, Tup extends unknown[] = []> =
+    Tup['length'] extends N ? Tup : NTuple<N, [...Tup, unknown]>;
+
+type Add<A extends number, B extends number> =
+    [...NTuple<A>, ...NTuple<B>]['length'];
+
+let five: Add<2, 3>;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2536),
+        "tuple spread length indexed access should not emit TS2536. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn structurally_identical_recursive_conditionals_are_assignable() {
+    let source = r#"
+type Unpack1<T> = T extends (infer U)[] ? Unpack1<U> : T;
+type Unpack2<T> = T extends (infer U)[] ? Unpack2<U> : T;
+
+function f20<T>(x: Unpack1<T>, y: Unpack2<T>) {
+    x = y;
+    y = x;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "structurally identical recursive conditional aliases should be mutually assignable. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_tuple_alias_assignment_reports_both_directions() {
+    let source = r#"
+type TupleOf<T, N extends number> =
+    N extends N ? number extends N ? T[] : _TupleOf<T, N, []> : never;
+type _TupleOf<T, N extends number, R extends unknown[]> =
+    R['length'] extends N ? R : _TupleOf<T, N, [T, ...R]>;
+
+function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<number, M>) {
+    tn = tm;
+    tm = tn;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains(
+                    "Type 'TupleOf<number, M>' is not assignable to type 'TupleOf<number, N>'",
+                )
+        }),
+        "expected TupleOf<number, M> to TupleOf<number, N> assignment error. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains(
+                    "Type 'TupleOf<number, N>' is not assignable to type 'TupleOf<number, M>'",
+                )
+        }),
+        "expected TupleOf<number, N> to TupleOf<number, M> assignment error. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_conditional_call_parameter_keeps_alias_display() {
+    let source = r#"
+type Grow1<T extends unknown[], N extends number> =
+    T['length'] extends N ? T : Grow1<[number, ...T], N>;
+type Grow2<T extends unknown[], N extends number> =
+    T['length'] extends N ? T : Grow2<[string, ...T], N>;
+
+function f21<T extends number>(x: Grow1<[], T>, y: Grow2<[], T>) {
+    f21(y, x);
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2345
+                && diag
+                    .message_text
+                    .contains("parameter of type 'Grow1<[], T>'")
+        }),
+        "recursive conditional parameter diagnostics should preserve the alias target. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_conditional_object_multi_infer_resolves_true_branch() {
     let source = r#"
 type PickMeta<T> = T extends { defaultProps: infer D; propTypes: infer P } ? [D, P] : never;
@@ -84,6 +475,86 @@ const bad: Result = [{ foo: 1 }, { bar: "x" }];
         ts2322_errors.len(),
         2,
         "Expected tuple element assignment errors from resolved multi-infer conditional, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_distributive_conditional_identity_accepts_type_parameter_source() {
+    let source = r#"
+type ExtractWithDefault<T, U, D = never> = T extends U ? T : D;
+type TemplatedConditional<TCheck, TExtends, TTrue, TFalse> =
+    TCheck extends TExtends ? TTrue : TFalse;
+
+function extractBuiltin<T>(x: Extract<T, T>) {
+    const y: T = x;
+    x = y;
+}
+
+function extractWithDefault<T>(x: ExtractWithDefault<T, T>) {
+    const y: T = x;
+    x = y;
+}
+
+function templated<T>(x: TemplatedConditional<T, T, T, never>) {
+    const y: T = x;
+    x = y;
+}
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        0,
+        "`T extends T ? T : never` aliases must simplify to T in target position; got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn conditional_keyof_pick_identity_assignable_to_type_parameter() {
+    let source = r#"
+const fn1 = <Params>(
+    params: Pick<Params, Exclude<keyof Params, never>>,
+): Params => params;
+
+type ExtractWithDefault<T, U, D = never> = T extends U ? T : D;
+type ExcludeWithDefault<T, U, D = never> = T extends U ? D : T;
+type TemplatedConditional<TCheck, TExtends, TTrue, TFalse> =
+    TCheck extends TExtends ? TTrue : TFalse;
+
+const fn3 = <Params>(
+    params: Pick<Params, Extract<keyof Params, keyof Params>>,
+): Params => params;
+
+const fn5 = <Params>(
+    params: Pick<Params, ExcludeWithDefault<keyof Params, never>>,
+): Params => params;
+
+const fn7 = <Params>(
+    params: Pick<Params, ExtractWithDefault<keyof Params, keyof Params>>,
+): Params => params;
+
+const fn9 = <Params>(
+    params: Pick<Params, TemplatedConditional<keyof Params, never, never, keyof Params>>,
+): Params => params;
+
+const fn11 = <Params>(
+    params: Pick<Params, TemplatedConditional<keyof Params, keyof Params, keyof Params, never>>,
+): Params => params;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        0,
+        "keyof Pick identity conditionals should be assignable to the original type parameter; got diagnostics: {:?}",
         diagnostics
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
@@ -193,6 +664,62 @@ const bad: Key<[any, any], 2> = 0;
     assert!(
         codes == vec![2322],
         "Tuple length conditional key should resolve to literal 1, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_conditional_infer_matches_explicit_this_parameters() {
+    let source = r#"
+type MyThis<T> = T extends (this: infer U, ...args: any[]) => any ? U : never;
+type MyOmitThis<T> = T extends (this: any, ...args: infer A) => infer R ? (...args: A) => R : T;
+
+type FnType = (this: { x: number }, y: string) => boolean;
+
+type ThisFromFnType = MyThis<FnType>;
+let badFromFnType: ThisFromFnType = { x: "wrong" };
+
+type NoThisFromFnType = MyOmitThis<FnType>;
+declare const noThisFromFnType: NoThisFromFnType;
+let boolFromFnType: boolean = noThisFromFnType("ok");
+noThisFromFnType.call({ x: 1 }, "ok");
+
+function withThis(this: { x: number }, y: string): boolean {
+  return this.x > y.length;
+}
+
+type ThisParameterType<T> = T extends (this: infer U, ...args: any[]) => any ? U : unknown;
+type OmitThisParameter<T> = T extends (this: any, ...args: infer A) => infer R ? (...args: A) => R : T;
+
+type BuiltinThis = ThisParameterType<typeof withThis>;
+let badBuiltinThis: BuiltinThis = { x: "wrong" };
+
+type BuiltinNoThis = OmitThisParameter<typeof withThis>;
+declare const builtinNoThis: BuiltinNoThis;
+let boolFromBuiltin: boolean = builtinNoThis("ok");
+builtinNoThis.call({ x: 1 }, "ok");
+
+type FirstParam<T> = T extends (arg: infer A) => any ? A : never;
+let badFirstParam: FirstParam<(arg: string) => void> = 123;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let ts2322_count = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        3,
+        "Expected two inferred-this assignment errors plus ordinary parameter control, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !codes.contains(&2684),
+        "Omitted-this function types should not retain the original this parameter, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -370,6 +897,42 @@ type FunctionProps<T extends object> = Pick<T, FunctionKeys<T>>;
     assert!(
         diagnostics.is_empty(),
         "Expected utility-types FunctionKeys/Pick pattern to check cleanly, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_infer_inside_type_predicate_target_resolves_in_true_branch() {
+    // `target is infer X` exposes `X` to the conditional's true branch the
+    // same way return-position `infer X` does.
+    let source = r#"
+type X<F> = F extends (x: any) => x is infer N ? N : never;
+type Test = X<(x: any) => x is string>;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected `infer` inside type predicate to bind in conditional true branch, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_infer_inside_asserts_predicate_resolves_in_true_branch() {
+    let source = r#"
+type AssertedType<F> = F extends (target: any) => asserts target is infer N ? N : never;
+type Test = AssertedType<(target: any) => asserts target is number>;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected `infer` inside asserts predicate to bind, got: {:?}",
         diagnostics
             .iter()
             .map(|d| (d.code, d.message_text.clone()))

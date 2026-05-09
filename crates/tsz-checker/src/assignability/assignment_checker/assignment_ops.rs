@@ -84,6 +84,23 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sym_id| self.assignment_target_is_control_flow_typed_any_symbol(sym_id))
     }
 
+    fn is_evolving_array_element_assignment_target(&mut self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        if access.question_dot_token {
+            return false;
+        }
+        let receiver_ref = self.receiver_reference_for_evolving_array_mutation(access.expression);
+        self.reference_is_reachable_evolving_array_mutation_target(receiver_ref)
+    }
+
     // =========================================================================
     // Assignment Expression Checking
     // =========================================================================
@@ -781,6 +798,8 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_node(right_idx);
         }
 
+        let js_global_fallback =
+            self.is_checked_js_global_element_access_fallback_assignment(left_idx, right_idx);
         let contextual_request = if is_destructuring {
             self.destructuring_assignment_initializer_request(left_idx, right_idx)
         } else if left_type != TypeId::ANY
@@ -824,13 +843,35 @@ impl<'a> CheckerState<'a> {
                     self.invalidate_expression_for_contextual_retry(right_idx);
                 }
             }
-            TypingRequest::with_contextual_type(contextual_target)
+            if self
+                .ctx
+                .arena
+                .get(left_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && self
+                    .ctx
+                    .arena
+                    .get(right_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            {
+                TypingRequest::NONE
+            } else {
+                TypingRequest::with_contextual_type(contextual_target)
+            }
         } else {
             TypingRequest::NONE
         };
 
+        let diag_count_before_rhs = self.ctx.diagnostics.len();
         let right_raw = self.get_type_of_node_with_request(right_idx, &contextual_request);
         let right_type = self.resolve_type_query_type(right_raw);
+        if js_global_fallback {
+            self.relocate_js_global_element_access_fallback_diagnostics(
+                left_idx,
+                right_idx,
+                diag_count_before_rhs,
+            );
+        }
 
         // Ensure the RHS type is also available in node_types for flow analysis.
         // When clear_type_cache_recursive removes the RHS entry for contextual
@@ -849,9 +890,32 @@ impl<'a> CheckerState<'a> {
             self.ctx.node_types.or_insert(right_idx.0, right_raw);
         }
 
+        let declared_flat_array_assignment =
+            self.flat_array_declared_assignment_types(left_idx, right_idx);
+        let declared_recursive_tuple_assignment =
+            self.recursive_tuple_declared_assignment_types(left_idx, right_idx);
+        let (compat_source_type, compat_target_type, flat_array_any_target_accepted) =
+            if let Some((source_declared, target_declared)) = declared_flat_array_assignment {
+                self.store_evaluated_flat_array_assignment_alias(source_declared);
+                self.store_evaluated_flat_array_assignment_alias(target_declared);
+                let accepts_any_target =
+                    self.declared_application_any_target_accepts(source_declared, target_declared);
+                (source_declared, target_declared, accepts_any_target)
+            } else if let Some((source_declared, target_declared)) =
+                declared_recursive_tuple_assignment
+            {
+                (source_declared, target_declared, false)
+            } else {
+                (right_type, left_type, false)
+            };
+
         if !has_explicit_jsdoc_left_type
             && (self.is_control_flow_typed_any_assignment_target(left_idx)
-                || self.is_checked_js_implicit_any_member_assignment_target(left_idx))
+                || self.is_evolving_array_element_assignment_target(left_idx)
+                || self.is_checked_js_implicit_any_member_assignment_target(left_idx)
+                || self.is_checked_js_constructor_provisional_this_property_assignment(
+                    left_idx, right_idx,
+                ))
         {
             return right_type;
         }
@@ -861,6 +925,8 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
+        self.ensure_relation_input_ready(compat_source_type);
+        self.ensure_relation_input_ready(compat_target_type);
 
         let mut is_not_iterable = false;
         if is_array_destructuring {
@@ -913,6 +979,10 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if flat_array_any_target_accepted {
+                check_assignability = false;
+            }
+
             if check_assignability {
                 let widened_left =
                     crate::query_boundaries::common::widen_type(self.ctx.types, left_type);
@@ -954,11 +1024,23 @@ impl<'a> CheckerState<'a> {
                 check_assignability = false;
             }
 
+            if check_assignability
+                && let Some((source_declared, target_declared)) =
+                    declared_recursive_tuple_assignment
+            {
+                self.error_type_not_assignable_at_with_anchor(
+                    source_declared,
+                    target_declared,
+                    left_idx,
+                );
+                check_assignability = false;
+            }
+
             self.check_assignment_compatibility(
                 left_idx,
                 right_idx,
-                right_type,
-                left_type,
+                compat_source_type,
+                compat_target_type,
                 check_assignability, // check_assignability
                 true,
             );
@@ -1147,7 +1229,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // The RHS is not this-typed — emit TS2322
-        let source_display = self.format_type_for_assignability_message(right_type);
+        let mut source_display = self.format_type_for_assignability_message(right_type);
+        if source_display.contains(" & ")
+            && let Some((head, _)) = source_display.split_once(" & ")
+            && !head.contains('{')
+            && !head.contains('<')
+        {
+            source_display = head.to_string();
+        }
         self.error_at_node_msg(
             left_idx,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1460,7 +1549,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn enclosing_statement_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn enclosing_statement_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
         while current.is_some() {
             let node = self.ctx.arena.get(current)?;
@@ -1644,12 +1733,24 @@ impl<'a> CheckerState<'a> {
         if let Some(generic_target) =
             self.deferred_generic_element_write_target(left_idx, source_type)
         {
-            let _ = self.check_assignable_or_report_at(
-                source_type,
-                generic_target,
-                right_idx,
-                left_idx,
-            );
+            if (source_type != generic_target
+                && !self.is_assignable_to(source_type, generic_target))
+                || (source_type != generic_target
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        source_type,
+                    )
+                    && crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        generic_target,
+                    ))
+            {
+                self.error_type_not_assignable_at_with_display_types(
+                    source_type,
+                    generic_target,
+                    left_idx,
+                );
+            }
             return;
         }
 
@@ -1697,13 +1798,7 @@ impl<'a> CheckerState<'a> {
         left_idx: NodeIndex,
         source_type: TypeId,
     ) -> Option<TypeId> {
-        if source_type == TypeId::ANY
-            || source_type == TypeId::NEVER
-            || crate::query_boundaries::assignability::contains_type_parameters(
-                self.ctx.types,
-                source_type,
-            )
-        {
+        if source_type == TypeId::ANY || source_type == TypeId::NEVER {
             return None;
         }
 
@@ -1729,6 +1824,12 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = true;
         let index_type = self.get_type_of_node(access.name_or_argument);
         self.ctx.preserve_literal_types = prev_preserve;
+
+        if let Some(write_target) =
+            self.constraint_keyof_write_target_for_type_param(index_type, object_type)
+        {
+            return Some(write_target);
+        }
 
         if !self.is_valid_index_for_type_param(index_type, object_type) {
             return None;
@@ -1763,5 +1864,105 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn assignment_identifier_declared_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.ctx.binder.resolve_identifier(self.ctx.arena, idx)?;
+        self.assignment_target_declared_type(sym_id)
+    }
+
+    fn flat_array_declared_assignment_types(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        let target_declared = self.assignment_identifier_declared_type(left_idx)?;
+        let source_declared = self.assignment_identifier_declared_type(right_idx)?;
+
+        let (target_base, target_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
+        let (source_base, source_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
+        if target_base != source_base || target_args.len() != source_args.len() {
+            return None;
+        }
+
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        let name = self.ctx.types.resolve_atom_ref(def.name);
+        if name.as_ref() != "FlatArray" {
+            return None;
+        }
+
+        Some((source_declared, target_declared))
+    }
+
+    fn recursive_tuple_declared_assignment_types(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        let target_declared = self.assignment_identifier_declared_type(left_idx)?;
+        let source_declared = self.assignment_identifier_declared_type(right_idx)?;
+
+        let (target_base, target_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
+        let (source_base, source_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
+        if target_base != source_base || target_args.len() != source_args.len() {
+            return None;
+        }
+
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        let name = self.ctx.types.resolve_atom_ref(def.name);
+        if name.as_ref() != "TupleOf" {
+            return None;
+        }
+
+        let has_type_parameter_arg = target_args.iter().chain(source_args.iter()).any(|arg| {
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, *arg)
+        });
+        if !has_type_parameter_arg || target_args == source_args {
+            return None;
+        }
+
+        Some((source_declared, target_declared))
+    }
+
+    fn declared_application_any_target_accepts(
+        &self,
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> bool {
+        let Some((source_base, source_args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source_type)
+        else {
+            return false;
+        };
+        let Some((target_base, target_args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target_type)
+        else {
+            return false;
+        };
+        source_base == target_base
+            && source_args.len() == target_args.len()
+            && target_args.iter().any(|arg| arg.is_any())
+            && source_args
+                .iter()
+                .zip(target_args.iter())
+                .all(|(source_arg, target_arg)| target_arg.is_any() || source_arg == target_arg)
+    }
+
+    fn store_evaluated_flat_array_assignment_alias(&mut self, alias_type: TypeId) {
+        let evaluated = self.evaluate_type_with_env(alias_type);
+        if evaluated != alias_type && evaluated != TypeId::ERROR {
+            self.ctx.types.store_display_alias(evaluated, alias_type);
+        }
     }
 }

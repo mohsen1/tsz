@@ -177,7 +177,31 @@ impl<'a> CheckerState<'a> {
                 // variants instead of generic Application types.
                 // NoInfer, Uppercase, etc. are intrinsic — their DefId has no body,
                 // so Application(Lazy(DefId), args) can never be evaluated.
-                if self.lookup_type_parameter(name).is_none() {
+                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
+                let type_param = self.lookup_type_parameter(name);
+                let type_resolution =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx);
+                let sym_id = match type_resolution {
+                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
+                    TypeSymbolResolution::ValueOnly(sym_id) => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
+                        return TypeId::ERROR;
+                    }
+                    TypeSymbolResolution::NotFound => None,
+                };
+
+                let intrinsic_reference_is_unshadowed = type_param.is_none()
+                    && match sym_id {
+                        Some(sym_id) => self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id),
+                        None => true,
+                    };
+                if intrinsic_reference_is_unshadowed {
                     match name {
                         "NoInfer" => {
                             if let Some(args) = &type_ref.type_arguments
@@ -201,24 +225,6 @@ impl<'a> CheckerState<'a> {
                         _ => {}
                     }
                 }
-                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
-                let type_param = self.lookup_type_parameter(name);
-                let type_resolution =
-                    self.resolve_identifier_symbol_in_type_position(type_name_idx);
-                let sym_id = match type_resolution {
-                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
-                    TypeSymbolResolution::ValueOnly(sym_id) => {
-                        self.report_wrong_meaning(
-                            name,
-                            type_name_idx,
-                            sym_id,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                        );
-                        return TypeId::ERROR;
-                    }
-                    TypeSymbolResolution::NotFound => None,
-                };
 
                 if is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     // Array/ReadonlyArray not found - check if lib files are loaded
@@ -291,12 +297,19 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types.application(base, lowered_args)
                     };
                 }
+                let local_array_name =
+                    self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
+                        !self.ctx.symbol_is_from_actual_lib(sym_id)
+                            && self.symbol_has_declared_type_meaning(sym_id)
+                    });
+                let array_is_unshadowed =
+                    is_builtin_array && type_param.is_none() && !local_array_name;
+
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
                 // proper array types (Array(T) / Readonly(Array(T))) instead of
                 // Application(Lazy(DefId), [T]). This matches what TypeLowering does
                 // and ensures assignability with `T[]` / `readonly T[]`.
-                if is_builtin_array
-                    && type_param.is_none()
+                if array_is_unshadowed
                     && let Some(args) = &type_ref.type_arguments
                     && let Some(&first_arg) = args.nodes.first()
                 {
@@ -422,9 +435,36 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
                     self.prime_lib_type_params(name);
                 }
-                // Resolve the symbol's structural body first
-                let _ = self.type_reference_symbol_type(sym_id);
                 let type_params = self.get_type_params_for_symbol(sym_id);
+                let is_interface = self.get_cross_file_symbol(sym_id).is_some_and(|symbol| {
+                    symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+                });
+                if is_interface
+                    && Self::in_cross_arena_interface_delegation()
+                    && type_params.is_empty()
+                    && !self.ctx.symbol_resolution_set.contains(&sym_id)
+                {
+                    self.ctx.symbol_resolution_set.insert(sym_id);
+                    let interface_type = self.compute_interface_type_from_declarations(sym_id);
+                    self.ctx.symbol_resolution_set.remove(&sym_id);
+                    if interface_type != TypeId::ERROR && interface_type != TypeId::UNKNOWN {
+                        let has_members = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            interface_type,
+                        )
+                        .is_some_and(|shape| !shape.properties.is_empty());
+                        if has_members {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(interface_type, def_id);
+                            return interface_type;
+                        }
+                    }
+                } else {
+                    // Resolve the symbol's structural body first.
+                    let _ = self.type_reference_symbol_type(sym_id);
+                }
                 // Mirror `resolve_simple_type_reference`: when a bare type reference
                 // omits required type arguments, return ERROR so cascading TS2322
                 // checks against the naked-type-parameter form are suppressed.  The
@@ -674,6 +714,52 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn check_type_literal_self_indexed_property_annotations(
+        &mut self,
+        type_node_idx: NodeIndex,
+        owner_name: &str,
+    ) {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(type_node) else {
+            return;
+        };
+
+        let members: Vec<NodeIndex> = type_lit.members.nodes.to_vec();
+        for member_idx in members {
+            let Some(member) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                continue;
+            }
+            let Some(sig) = self.ctx.arena.get_signature(member) else {
+                continue;
+            };
+            if sig.type_annotation.is_none() {
+                continue;
+            }
+            let Some(name) = self.get_property_name_resolved(sig.name) else {
+                continue;
+            };
+            if !self.indexed_access_references_owner_property(
+                sig.type_annotation,
+                owner_name,
+                &name,
+            ) {
+                continue;
+            }
+            let message = format!(
+                "'{name}' is referenced directly or indirectly in its own type annotation."
+            );
+            self.error_at_node(sig.name, &message, 2502);
+        }
+    }
+
     pub(crate) fn type_literal_has_circular_accessor_reference(
         &self,
         type_node_idx: NodeIndex,
@@ -830,6 +916,8 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut extra_string_indices = Vec::new();
+        let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
         // Global member counter for preserving source declaration order across
         // both properties and methods. Using properties.len() would give methods
@@ -903,6 +991,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
 
                         if member.kind == METHOD_SIGNATURE {
                             if let Some(ref _params) = sig.parameters {}
@@ -965,6 +1054,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order: member_order,
                                 is_string_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             });
                         }
@@ -998,6 +1088,8 @@ impl<'a> CheckerState<'a> {
                 // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                 let has_param_grammar_error =
                     param_data.dot_dot_dot_token || param_data.question_token;
+                let mut is_valid_index_type = false;
+                let mut is_valid_via_ast = false;
                 if !has_param_grammar_error && param_data.type_annotation.is_some() {
                     // Check the AST node kind first: type parameters and literal types
                     // trigger TS1337 regardless of what their constraint resolves to
@@ -1019,7 +1111,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
                         );
                     } else {
-                        let is_valid_index_type = key_type == TypeId::STRING
+                        is_valid_index_type = key_type == TypeId::STRING
                             || key_type == TypeId::NUMBER
                             || key_type == TypeId::SYMBOL
                             || is_template_literal_type(self.ctx.types, key_type);
@@ -1027,7 +1119,7 @@ impl<'a> CheckerState<'a> {
                         // intersections (`string | number`, `string & Tag`)
                         // resolve to composite TypeIds that don't match the
                         // primitive checks above.
-                        let is_valid_via_ast = !is_valid_index_type
+                        is_valid_via_ast = !is_valid_index_type
                             && crate::query_boundaries::index_signature::is_valid_index_sig_param_type_ast(
                                 self.ctx.arena,
                                 self.ctx.binder,
@@ -1102,10 +1194,20 @@ impl<'a> CheckerState<'a> {
                     readonly,
                     param_name,
                 };
-                if key_type == TypeId::NUMBER {
-                    number_index = Some(info);
-                } else {
-                    string_index = Some(info);
+                if is_valid_index_type || is_valid_via_ast {
+                    if key_type == TypeId::NUMBER {
+                        if number_index.is_none() {
+                            number_index = Some(info);
+                        } else {
+                            extra_number_indices.push(info);
+                        }
+                    } else {
+                        if string_index.is_none() {
+                            string_index = Some(info);
+                        } else {
+                            extra_string_indices.push(info);
+                        }
+                    }
                 }
                 continue;
             }
@@ -1114,7 +1216,7 @@ impl<'a> CheckerState<'a> {
             if (member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
                 || member.kind == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR)
                 && let Some(accessor) = self.ctx.arena.get_accessor(member)
-                && let Some(name) = self.get_property_name(accessor.name)
+                && let Some(name) = self.get_property_name_resolved(accessor.name)
             {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_new_accessor = !accessors.contains_key(&name_atom);
@@ -1234,6 +1336,11 @@ impl<'a> CheckerState<'a> {
             let read_type = getter_type.or(setter_type).unwrap_or(TypeId::UNKNOWN);
             let write_type = setter_type.or(getter_type).unwrap_or(read_type);
             let readonly = getter_type.is_some() && setter_type.is_none();
+            let is_symbol_named = accessor
+                .getter
+                .as_ref()
+                .or(accessor.setter.as_ref())
+                .is_some_and(|member| self.is_symbol_property_name(member.name_idx));
             properties.push(PropertyInfo {
                 name,
                 type_id: read_type,
@@ -1246,6 +1353,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
                 is_string_named: false,
+                is_symbol_named,
                 single_quoted_name: false,
             });
         }
@@ -1295,13 +1403,14 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: decl_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-            return factory.callable(CallableShape {
+            let mut result = factory.callable(CallableShape {
                 call_signatures,
                 construct_signatures,
                 properties,
@@ -1310,15 +1419,45 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
                 is_abstract: has_abstract_construct_sig,
             });
+            for idx in extra_string_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    string_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            for idx in extra_number_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    number_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            return result;
         }
 
         if string_index.is_some() || number_index.is_some() {
-            return factory.object_with_index(ObjectShape {
+            let mut result = factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
                 ..ObjectShape::default()
             });
+            for idx in extra_string_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    string_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            for idx in extra_number_indices {
+                let member = factory.object_with_index(ObjectShape {
+                    number_index: Some(idx),
+                    ..ObjectShape::default()
+                });
+                result = self.ctx.types.intersect_types_raw2(result, member);
+            }
+            return result;
         }
 
         factory.object(properties)

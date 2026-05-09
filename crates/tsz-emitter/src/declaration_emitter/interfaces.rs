@@ -204,14 +204,13 @@ impl<'a> DeclarationEmitter<'a> {
 
                         // Emit the constraint (e.g., "keyof T")
                         if type_param.constraint.is_some() {
-                            self.emit_type(type_param.constraint);
+                            self.emit_mapped_type_constraint(type_param.constraint);
                         }
                     }
 
                     // Handle the optional 'as' clause (key remapping)
                     if mapped_type.name_type.is_some() {
-                        self.write(" as ");
-                        self.emit_type(mapped_type.name_type);
+                        self.emit_mapped_type_as_clause(mapped_type.name_type);
                     }
 
                     self.write("]");
@@ -393,14 +392,13 @@ impl<'a> DeclarationEmitter<'a> {
 
                         // Emit constraint
                         if type_param.constraint.is_some() {
-                            self.emit_type(type_param.constraint);
+                            self.emit_mapped_type_constraint(type_param.constraint);
                         }
                     }
 
                     // Handle the optional 'as' clause (key remapping)
                     if mapped_type.name_type.is_some() {
-                        self.write(" as ");
-                        self.emit_type(mapped_type.name_type);
+                        self.emit_mapped_type_as_clause(mapped_type.name_type);
                     }
 
                     self.write("]");

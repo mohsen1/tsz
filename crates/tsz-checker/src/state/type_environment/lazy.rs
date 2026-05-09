@@ -68,6 +68,20 @@ pub(crate) fn reset_global_resolution_fuel() {
     GLOBAL_RESOLUTION_FUEL.set(0);
 }
 
+/// Read the current global resolution fuel counter (for snapshot/restore).
+pub(crate) fn global_resolution_fuel_value() -> u32 {
+    GLOBAL_RESOLUTION_FUEL.get()
+}
+
+/// Restore the global resolution fuel counter to a previously captured value.
+///
+/// Used by speculative sites (return-type inference) that should not bill
+/// their work against the global fuel budget when the speculation is rolled
+/// back — the work will be redone in the non-speculative pass.
+pub(crate) fn restore_global_resolution_fuel(value: u32) {
+    GLOBAL_RESOLUTION_FUEL.set(value);
+}
+
 /// Reset ALL thread-local state in the lazy resolution module.
 /// Called between compilation sessions to prevent cross-compilation contamination.
 pub(crate) fn reset_all_thread_local_state() {
@@ -245,7 +259,17 @@ impl<'a> CheckerState<'a> {
                     || crate::query_boundaries::common::is_template_literal_type(
                         self.ctx.types,
                         result,
-                    )));
+                    )))
+            // When the first pass leaves an
+            // `Application(UnresolvedTypeName(...), args)` residue from
+            // cross-file lowering, retry with `CheckerContext` as the
+            // resolver. CheckerContext can walk the merged binder graph
+            // via `resolve_unresolved_type_name`, recover the alias's
+            // `DefId`, and let the application expand normally.
+            || crate::query_boundaries::spread::contains_unresolved_application(
+                self.ctx.types,
+                result,
+            );
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 let cache = self.ctx.env_eval_cache.borrow();
@@ -271,7 +295,11 @@ impl<'a> CheckerState<'a> {
             if use_cache {
                 self.persist_eval_cache_entries(eval_result.cache_entries);
             }
-            eval_result.result
+            if eval_result.result == type_id {
+                result
+            } else {
+                eval_result.result
+            }
         } else {
             result
         };
@@ -279,6 +307,8 @@ impl<'a> CheckerState<'a> {
         // Same Infer guard for the top-level result: don't cache results
         // containing unbound infer types from partially-evaluated conditional types.
         if use_cache
+            && !crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
+            && !crate::query_boundaries::common::contains_this_type(self.ctx.types, final_result)
             && !contains_infer_types_db(self.ctx.types, final_result)
             && !contains_type_query_db(self.ctx.types, final_result)
         {
@@ -325,6 +355,8 @@ impl<'a> CheckerState<'a> {
         for (k, v) in entries {
             if k != v
                 && !k.is_intrinsic()
+                && !crate::query_boundaries::common::contains_this_type(self.ctx.types, k)
+                && !crate::query_boundaries::common::contains_this_type(self.ctx.types, v)
                 && !contains_infer_types_db(self.ctx.types, v)
                 && !contains_type_query_db(self.ctx.types, v)
             {
@@ -1231,16 +1263,24 @@ impl<'a> CheckerState<'a> {
         let type_params = if let Some(params) = cached_env_params {
             params
         } else if let Some(def_id) = def_id {
-            self.ctx
-                .get_def_type_params(def_id)
-                .unwrap_or_else(|| self.get_type_params_for_symbol(sym_id))
+            match self.ctx.get_def_type_params(def_id) {
+                Some(params)
+                    if !params.is_empty()
+                        && params
+                            .iter()
+                            .all(|param| param.constraint.is_none() && param.default.is_none()) =>
+                {
+                    self.get_type_params_for_symbol(sym_id)
+                }
+                Some(params) => params,
+                None => self.get_type_params_for_symbol(sym_id),
+            }
         } else {
             self.get_type_params_for_symbol(sym_id)
         };
 
         if let Some(def_id) = def_id
             && !type_params.is_empty()
-            && self.ctx.get_def_type_params(def_id).is_none()
         {
             self.ctx.insert_def_type_params(def_id, type_params.clone());
         }
@@ -1551,7 +1591,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_of_symbol(sym_id)
             };
-
             let inserted = self.insert_type_env_symbol(sym_id, resolved);
 
             // When import alias resolution remapped the symbol (e.g., ALIAS

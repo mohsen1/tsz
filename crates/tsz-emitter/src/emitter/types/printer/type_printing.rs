@@ -35,6 +35,9 @@ impl<'a> TypePrinter<'a> {
         }
 
         let name = self.resolve_atom(property.name);
+        if !property.is_string_named && name.starts_with('-') && name.parse::<f64>().is_ok() {
+            return format!("[{name}]");
+        }
         if needs_property_name_quoting_with_flag(&name, property.is_string_named) {
             if property.single_quoted_name {
                 quote_property_name_single(&name)
@@ -183,13 +186,86 @@ impl<'a> TypePrinter<'a> {
     }
 
     pub(crate) fn widen_synthesized_method_return_type(&self, type_id: TypeId) -> TypeId {
-        match visitor::literal_value(self.interner, type_id) {
-            Some(tsz_solver::types::LiteralValue::String(_)) => TypeId::STRING,
-            Some(tsz_solver::types::LiteralValue::Number(_)) => TypeId::NUMBER,
-            Some(tsz_solver::types::LiteralValue::Boolean(_)) => TypeId::BOOLEAN,
-            Some(tsz_solver::types::LiteralValue::BigInt(_)) => TypeId::BIGINT,
-            None => type_id,
+        self.widen_synthesized_method_return_type_depth(type_id, 0)
+    }
+
+    fn widen_synthesized_method_return_type_depth(&self, type_id: TypeId, depth: usize) -> TypeId {
+        if depth > 16 {
+            return type_id;
         }
+        match visitor::literal_value(self.interner, type_id) {
+            Some(tsz_solver::types::LiteralValue::String(_)) => return TypeId::STRING,
+            Some(tsz_solver::types::LiteralValue::Number(_)) => return TypeId::NUMBER,
+            Some(tsz_solver::types::LiteralValue::Boolean(_)) => return TypeId::BOOLEAN,
+            Some(tsz_solver::types::LiteralValue::BigInt(_)) => return TypeId::BIGINT,
+            None => {}
+        }
+
+        if let Some(list_id) = visitor::union_list_id(self.interner, type_id) {
+            let members = self.interner.type_list(list_id);
+            let widened: Vec<_> = members
+                .iter()
+                .map(|&member| self.widen_synthesized_method_return_type_depth(member, depth + 1))
+                .collect();
+            return self.interner.union(widened);
+        }
+
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            let mut shape = (*self.interner.function_shape(func_id)).clone();
+            shape.return_type =
+                self.widen_synthesized_method_return_type_depth(shape.return_type, depth + 1);
+            return self.interner.function(shape);
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+        {
+            let mut shape = (*self.interner.object_shape(shape_id)).clone();
+            for prop in &mut shape.properties {
+                prop.type_id =
+                    self.widen_synthesized_method_return_type_depth(prop.type_id, depth + 1);
+                prop.write_type =
+                    self.widen_synthesized_method_return_type_depth(prop.write_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.string_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.number_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            return self.interner.object_with_index(shape);
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let mut shape = (*self.interner.callable_shape(callable_id)).clone();
+            for sig in &mut shape.call_signatures {
+                sig.return_type =
+                    self.widen_synthesized_method_return_type_depth(sig.return_type, depth + 1);
+            }
+            for sig in &mut shape.construct_signatures {
+                sig.return_type =
+                    self.widen_synthesized_method_return_type_depth(sig.return_type, depth + 1);
+            }
+            for prop in &mut shape.properties {
+                prop.type_id =
+                    self.widen_synthesized_method_return_type_depth(prop.type_id, depth + 1);
+                prop.write_type =
+                    self.widen_synthesized_method_return_type_depth(prop.write_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.string_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.number_index {
+                index.value_type =
+                    self.widen_synthesized_method_return_type_depth(index.value_type, depth + 1);
+            }
+            return self.interner.callable(shape);
+        }
+
+        type_id
     }
 
     /// Check if a name is a valid JavaScript/TypeScript identifier
@@ -262,7 +338,27 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    const fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+    fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+        let Some(list_id) = visitor::union_list_id(self.interner, type_id) else {
+            return type_id;
+        };
+        let members = self.interner.type_list(list_id);
+        if !members.contains(&TypeId::UNDEFINED) {
+            return type_id;
+        }
+
+        let non_undefined = members
+            .iter()
+            .copied()
+            .filter(|&member| member != TypeId::UNDEFINED)
+            .collect::<Vec<_>>();
+
+        if non_undefined.len() == 1
+            && visitor::contains_type_parameters(self.interner, non_undefined[0])
+        {
+            return non_undefined[0];
+        }
+
         type_id
     }
 
@@ -288,10 +384,10 @@ impl<'a> TypePrinter<'a> {
             .declarations
             .iter()
             .copied()
-            .any(|decl_idx| self.class_declares_accessor(node_arena, decl_idx, property.name))
+            .any(|decl_idx| self.declaration_declares_accessor(node_arena, decl_idx, property.name))
     }
 
-    pub(crate) fn class_declares_accessor(
+    pub(crate) fn declaration_declares_accessor(
         &self,
         node_arena: &NodeArena,
         decl_idx: tsz_parser::NodeIndex,
@@ -300,32 +396,67 @@ impl<'a> TypePrinter<'a> {
         let Some(decl_node) = node_arena.get(decl_idx) else {
             return false;
         };
-        let Some(class_data) = node_arena.get_class(decl_node) else {
+
+        if let Some(class_data) = node_arena.get_class(decl_node) {
+            return class_data.members.nodes.iter().copied().any(|member_idx| {
+                self.member_is_accessor_named(node_arena, member_idx, property_name)
+            });
+        }
+
+        if let Some(interface_data) = node_arena.get_interface(decl_node) {
+            return interface_data
+                .members
+                .nodes
+                .iter()
+                .copied()
+                .any(|member_idx| {
+                    self.member_is_accessor_named(node_arena, member_idx, property_name)
+                });
+        }
+
+        if let Some(type_alias) = node_arena.get_type_alias(decl_node)
+            && let Some(type_node) = node_arena.get(type_alias.type_node)
+            && let Some(type_literal) = node_arena.get_type_literal(type_node)
+        {
+            return type_literal
+                .members
+                .nodes
+                .iter()
+                .copied()
+                .any(|member_idx| {
+                    self.member_is_accessor_named(node_arena, member_idx, property_name)
+                });
+        }
+
+        false
+    }
+
+    fn member_is_accessor_named(
+        &self,
+        node_arena: &NodeArena,
+        member_idx: tsz_parser::NodeIndex,
+        property_name: Atom,
+    ) -> bool {
+        let Some(member_node) = node_arena.get(member_idx) else {
             return false;
         };
 
-        class_data.members.nodes.iter().copied().any(|member_idx| {
-            let Some(member_node) = node_arena.get(member_idx) else {
-                return false;
-            };
-
-            match member_node.kind {
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    node_arena
-                        .get_accessor(member_node)
-                        .is_some_and(|accessor| {
-                            self.node_name_matches_atom(node_arena, accessor.name, property_name)
-                        })
-                }
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => node_arena
-                    .get_property_decl(member_node)
-                    .is_some_and(|prop| {
-                        node_arena.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                            && self.node_name_matches_atom(node_arena, prop.name, property_name)
-                    }),
-                _ => false,
+        match member_node.kind {
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                node_arena
+                    .get_accessor(member_node)
+                    .is_some_and(|accessor| {
+                        self.node_name_matches_atom(node_arena, accessor.name, property_name)
+                    })
             }
-        })
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => node_arena
+                .get_property_decl(member_node)
+                .is_some_and(|prop| {
+                    node_arena.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                        && self.node_name_matches_atom(node_arena, prop.name, property_name)
+                }),
+            _ => false,
+        }
     }
 
     pub(crate) fn find_member_name_node(
@@ -360,6 +491,20 @@ impl<'a> TypePrinter<'a> {
                     return iface.members.nodes.iter().copied().find_map(|member_idx| {
                         self.member_name_matches_atom(node_arena, member_idx, property_name)
                     });
+                }
+
+                if let Some(type_alias) = node_arena.get_type_alias(decl_node)
+                    && let Some(type_node) = node_arena.get(type_alias.type_node)
+                    && let Some(type_literal) = node_arena.get_type_literal(type_node)
+                {
+                    return type_literal
+                        .members
+                        .nodes
+                        .iter()
+                        .copied()
+                        .find_map(|member_idx| {
+                            self.member_name_matches_atom(node_arena, member_idx, property_name)
+                        });
                 }
 
                 None
@@ -521,8 +666,16 @@ impl<'a> TypePrinter<'a> {
         result
     }
 
-    pub(crate) fn print_union(&self, type_list_id: tsz_solver::types::TypeListId) -> String {
-        let types = self.interner.type_list(type_list_id);
+    pub(crate) fn print_union(
+        &self,
+        type_id: TypeId,
+        type_list_id: tsz_solver::types::TypeListId,
+    ) -> String {
+        let canonical_types = self.interner.type_list(type_list_id);
+        let origin_types = self.interner.get_union_origin(type_id);
+        let types = origin_types
+            .as_deref()
+            .map_or(canonical_types.as_ref(), Vec::as_slice);
         if types.is_empty() {
             return "never".to_string();
         }
@@ -670,6 +823,44 @@ impl<'a> TypePrinter<'a> {
             return "unknown".to_string(); // Intersection of 0 types is unknown
         }
 
+        // Recover `NonNullable<T>` from a 2-member intersection of a type
+        // parameter and `{}`. tsc's narrowing of a type-parameter-typed
+        // value through truthy guards produces `T & {}` but tags it with
+        // the `NonNullable<T>` alias so users see the meaningful name.
+        // tsz's narrower constructs the intersection without storing the
+        // alias on every code path, so apply the same shape detection at
+        // print time (the diagnostic compound formatter already does
+        // this for TS2322 messages).
+        if types.len() == 2 {
+            let is_type_param_like = |type_id: tsz_solver::types::TypeId| {
+                visitor::type_param_info(self.interner, type_id).is_some()
+            };
+            let is_empty_object = |type_id: tsz_solver::types::TypeId| {
+                if type_id.is_intrinsic() {
+                    return false;
+                }
+                visitor::object_shape_id(self.interner, type_id)
+                    .map(|shape_id| self.interner.object_shape(shape_id))
+                    .is_some_and(|shape| {
+                        shape.properties.is_empty()
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                            && shape.symbol.is_none()
+                    })
+            };
+            let (a, b) = (types[0], types[1]);
+            let pair = if is_type_param_like(a) && is_empty_object(b) {
+                Some(a)
+            } else if is_type_param_like(b) && is_empty_object(a) {
+                Some(b)
+            } else {
+                None
+            };
+            if let Some(t) = pair {
+                return format!("NonNullable<{}>", self.print_type(t));
+            }
+        }
+
         let mut members: Vec<(u8, String)> = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
             let s = self.composition_member_text(type_id);
@@ -728,7 +919,7 @@ impl<'a> TypePrinter<'a> {
             }
 
             // Type annotation
-            part.push_str(&self.print_type(elem.type_id));
+            part.push_str(&self.print_tuple_element_type(elem.type_id, elem.rest));
 
             // Optional marker for unlabeled non-rest tuples (comes after type): [T?]
             if elem.name.is_none() && elem.optional && !elem.rest {
@@ -751,6 +942,17 @@ impl<'a> TypePrinter<'a> {
         }
 
         format!("[{}]", parts.join(", "))
+    }
+
+    fn print_tuple_element_type(&self, type_id: TypeId, is_rest: bool) -> String {
+        if is_rest
+            && let Some(param_info) = visitor::type_param_info(self.interner, type_id)
+            && !visitor::is_infer_type(self.interner, type_id)
+        {
+            return self.print_type_parameter(&param_info);
+        }
+
+        self.print_type(type_id)
     }
 
     pub(crate) fn print_function_type(
@@ -802,7 +1004,18 @@ impl<'a> TypePrinter<'a> {
         let return_str = if let Some(ref pred) = func_shape.type_predicate {
             scoped.print_type_predicate(pred)
         } else {
-            scoped.print_type(func_shape.return_type)
+            let inner = scoped.print_type(func_shape.return_type);
+            // tsc parenthesises a conditional return when emitting an
+            // arrow-form callable so the printed text round-trips
+            // unambiguously through the parser even when nested inside
+            // a larger conditional or extends position (the outer
+            // conditional's `? : ` would otherwise capture the inner's
+            // `? :`).  Mirror that here.
+            if tsz_solver::is_conditional_type(self.interner, func_shape.return_type) {
+                format!("({inner})")
+            } else {
+                inner
+            }
         };
 
         format!(
@@ -894,11 +1107,12 @@ impl<'a> TypePrinter<'a> {
                 .param_name
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
+            let widened = self.widen_synthesized_method_return_type(idx.value_type);
             parts.push(format!(
                 "{}[{}: number]: {}",
                 readonly,
                 param,
-                self.print_type(idx.value_type)
+                self.print_type(widened)
             ));
         }
         if let Some(ref idx) = callable.string_index {
@@ -907,11 +1121,12 @@ impl<'a> TypePrinter<'a> {
                 .param_name
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
+            let widened = self.widen_synthesized_method_return_type(idx.value_type);
             parts.push(format!(
                 "{}[{}: string]: {}",
                 readonly,
                 param,
-                self.print_type(idx.value_type)
+                self.print_type(widened)
             ));
         }
 
@@ -1075,7 +1290,18 @@ impl<'a> TypePrinter<'a> {
         let return_str = if let Some(ref pred) = sig.type_predicate {
             nested.print_type_predicate(pred)
         } else {
-            nested.print_type(sig.return_type)
+            let inner = nested.print_type(sig.return_type);
+            // tsc parenthesises a conditional return when emitting an
+            // arrow-form callable so the printed text round-trips
+            // unambiguously through the parser even when nested inside
+            // a larger conditional or extends position (the outer
+            // conditional's `? : ` would otherwise capture the inner's
+            // `? :`).  Mirror that here.
+            if tsz_solver::is_conditional_type(self.interner, sig.return_type) {
+                format!("({inner})")
+            } else {
+                inner
+            }
         };
         format!(
             "{}({}) => {}",
@@ -1217,6 +1443,36 @@ impl<'a> TypePrinter<'a> {
         param_info: &tsz_solver::types::TypeParamInfo,
     ) -> String {
         self.resolve_type_param_name(param_info.name)
+    }
+
+    pub(crate) fn replace_type_param_name_with_any(text: &str, name: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let bytes = text.as_bytes();
+        let name_bytes = name.as_bytes();
+        let mut last_copied = 0usize;
+        let mut i = 0usize;
+
+        while i + name_bytes.len() <= bytes.len() {
+            if &bytes[i..i + name_bytes.len()] == name_bytes
+                && (i == 0 || !Self::is_identifier_continue(bytes[i - 1]))
+                && (i + name_bytes.len() == bytes.len()
+                    || !Self::is_identifier_continue(bytes[i + name_bytes.len()]))
+            {
+                result.push_str(&text[last_copied..i]);
+                result.push_str("any");
+                i += name_bytes.len();
+                last_copied = i;
+                continue;
+            }
+            i += 1;
+        }
+
+        result.push_str(&text[last_copied..]);
+        result
+    }
+
+    const fn is_identifier_continue(byte: u8) -> bool {
+        byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
     }
 
     /// Print a type parameter declaration with constraint and default.
@@ -1490,7 +1746,6 @@ impl<'a> TypePrinter<'a> {
 
         false
     }
-
     pub(crate) fn type_contains_symbol_reference(
         &self,
         type_id: TypeId,
@@ -1777,11 +2032,66 @@ impl<'a> TypePrinter<'a> {
             let args: Vec<String> = app
                 .args
                 .iter()
+                .take(self.visible_type_application_arg_count(app.base, &app.args))
                 .enumerate()
                 .map(|(index, &id)| self.print_type_argument(id, index == 0))
                 .collect();
-            format!("{base_text}<{}>", args.join(", "))
+            if args.is_empty() {
+                base_text
+            } else {
+                format!("{base_text}<{}>", args.join(", "))
+            }
         }
+    }
+
+    fn visible_type_application_arg_count(&self, base: TypeId, args: &[TypeId]) -> usize {
+        let Some(type_params) = self.type_application_type_params(base) else {
+            return args.len();
+        };
+        if type_params.len() < args.len() {
+            return args.len();
+        }
+
+        let mut visible = args.len();
+        while visible > 0 {
+            let Some(default) = type_params.get(visible - 1).and_then(|param| param.default) else {
+                break;
+            };
+            if args[visible - 1] != default {
+                break;
+            }
+            visible -= 1;
+        }
+        visible
+    }
+
+    fn type_application_type_params(
+        &self,
+        base: TypeId,
+    ) -> Option<&'a [tsz_solver::types::TypeParamInfo]> {
+        let cache = self.type_cache?;
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, base) {
+            return cache
+                .def_type_params
+                .get(&def_id.0)
+                .map(std::vec::Vec::as_slice);
+        }
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, base) {
+            let sym_id = SymbolId(sym_ref.0);
+            return cache
+                .def_to_symbol
+                .iter()
+                .find_map(|(def_id, &candidate_sym_id)| {
+                    (candidate_sym_id == sym_id).then_some(def_id)
+                })
+                .and_then(|def_id| {
+                    cache
+                        .def_type_params
+                        .get(&def_id.0)
+                        .map(std::vec::Vec::as_slice)
+                });
+        }
+        None
     }
 
     pub(crate) fn print_type_argument(&self, type_id: TypeId, is_first: bool) -> String {
@@ -1862,8 +2172,17 @@ impl<'a> TypePrinter<'a> {
                     result.push_str(&self.resolve_atom(*atom));
                 }
                 tsz_solver::types::TemplateSpan::Type(type_id) => {
+                    let printed = self.print_type(*type_id);
+                    if printed.len() >= 2
+                        && printed.starts_with('"')
+                        && printed.ends_with('"')
+                        && !printed[1..printed.len() - 1].contains('"')
+                    {
+                        result.push_str(&printed[1..printed.len() - 1]);
+                        continue;
+                    }
                     result.push_str("${");
-                    result.push_str(&self.print_type(*type_id));
+                    result.push_str(&printed);
                     result.push('}');
                 }
             }
@@ -1889,7 +2208,17 @@ impl<'a> TypePrinter<'a> {
         };
 
         let param_name = self.resolve_atom(mapped.type_param.name);
-        let constraint = self.print_type(mapped.constraint);
+        let mut constraint = self.print_type(mapped.constraint);
+        let recovered_as_clause = if mapped.name_type.is_none() {
+            Self::split_recovered_mapped_as_clause(&constraint)
+                .map(|(before, after)| (before.to_string(), after.to_string()))
+        } else {
+            None
+        };
+        let recovered_as_clause = recovered_as_clause.map(|(before, after)| {
+            constraint = before;
+            after
+        });
 
         let mut nested = self.clone();
         if let Some(indent) = nested.indent_level {
@@ -1898,7 +2227,10 @@ impl<'a> TypePrinter<'a> {
         let template = nested.print_type(mapped.template);
 
         let as_clause = if let Some(name_type) = mapped.name_type {
-            format!(" as {}", self.print_type(name_type))
+            let name_type = self.print_type(name_type);
+            format!(" as {}", Self::mapped_name_type_text(&name_type))
+        } else if let Some(name_type) = recovered_as_clause {
+            format!(" as {name_type}")
         } else {
             String::new()
         };
@@ -1912,9 +2244,67 @@ impl<'a> TypePrinter<'a> {
             )
         } else {
             format!(
-                "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template} }}"
+                "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template}; }}"
             )
         }
+    }
+
+    fn trim_mapped_constraint_trailing_as(constraint: &str) -> &str {
+        let trimmed = constraint.trim_end();
+        let Some(before_as) = trimmed.strip_suffix("as") else {
+            return trimmed;
+        };
+
+        let had_separator = before_as
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace);
+        let before_as = before_as.trim_end();
+        let has_keyword_boundary = before_as
+            .chars()
+            .next_back()
+            .is_some_and(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$');
+
+        if had_separator || has_keyword_boundary {
+            before_as
+        } else {
+            trimmed
+        }
+    }
+
+    fn mapped_name_type_text(name_type: &str) -> &str {
+        let mut name_type = Self::trim_mapped_constraint_trailing_as(name_type).trim_start();
+        while let Some(after_as) = name_type.strip_prefix("as") {
+            let has_keyword_boundary = after_as.chars().next().is_some_and(|ch| {
+                ch.is_whitespace() || !Self::is_identifier_part_for_mapped_as(ch)
+            });
+            if !has_keyword_boundary {
+                break;
+            }
+            name_type = after_as.trim_start();
+        }
+        name_type
+    }
+
+    fn split_recovered_mapped_as_clause(constraint: &str) -> Option<(&str, &str)> {
+        for (idx, _) in constraint.match_indices("as") {
+            let before = &constraint[..idx];
+            let after = &constraint[idx + 2..];
+            let before_boundary = before.chars().next_back().is_some_and(|ch| {
+                ch.is_whitespace() || !Self::is_identifier_part_for_mapped_as(ch)
+            });
+            let after_boundary = after.chars().next().is_some_and(|ch| {
+                ch.is_whitespace() || !Self::is_identifier_part_for_mapped_as(ch)
+            });
+            if before_boundary && after_boundary {
+                return Some((before.trim_end(), after.trim_start()));
+            }
+        }
+        None
+    }
+
+    const fn is_identifier_part_for_mapped_as(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
     }
 
     pub(crate) fn print_index_access(&self, container: TypeId, index: TypeId) -> String {
@@ -2009,5 +2399,104 @@ impl<'a> TypePrinter<'a> {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tsz_solver::TypeInterner;
+    use tsz_solver::types::{TypeId, TypeParamInfo};
+
+    use super::TypePrinter;
+
+    #[test]
+    fn unscoped_type_parameter_prints_constraint_or_unknown() {
+        let interner = TypeInterner::new();
+        let s = interner.intern_string("S");
+
+        let unconstrained = interner.type_param(TypeParamInfo {
+            name: s,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        assert_eq!(
+            TypePrinter::new(&interner).print_type(unconstrained),
+            "unknown"
+        );
+
+        let constrained = interner.type_param(TypeParamInfo {
+            name: s,
+            constraint: Some(TypeId::NUMBER),
+            default: None,
+            is_const: false,
+        });
+        assert_eq!(
+            TypePrinter::new(&interner).print_type(constrained),
+            "number"
+        );
+
+        assert_eq!(
+            TypePrinter::replace_type_param_name_with_any("S[]", "S"),
+            "any[]"
+        );
+    }
+
+    #[test]
+    fn type_param_intersection_with_empty_object_prints_as_non_nullable() {
+        // Regression: tsc's truthy-narrowing of a type-parameter-typed
+        // value yields `T & {}` structurally and renders it as the
+        // alias `NonNullable<T>`. tsz constructs the same intersection
+        // in narrowing without storing the alias on every code path,
+        // so the printer must recover the spelling from the structural
+        // shape (mirroring the diagnostic compound formatter).
+        let interner = TypeInterner::new();
+        let t_atom = interner.intern_string("T");
+        let t = interner.type_param(TypeParamInfo {
+            name: t_atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let empty = interner.object(Vec::new());
+
+        // Mark `T` as visible in the printer scope so it renders as `T`
+        // rather than its `unknown` fallback for unscoped type parameters.
+        let printer = TypePrinter::new(&interner).with_outer_type_params(vec![t_atom]);
+        let intersection = interner.intersection2(t, empty);
+        assert_eq!(printer.print_type(intersection), "NonNullable<T>");
+
+        let printer = TypePrinter::new(&interner).with_outer_type_params(vec![t_atom]);
+        let intersection_swapped = interner.intersection2(empty, t);
+        assert_eq!(printer.print_type(intersection_swapped), "NonNullable<T>");
+    }
+
+    #[test]
+    fn mapped_constraint_trims_parser_recovered_as_keyword() {
+        assert_eq!(
+            TypePrinter::trim_mapped_constraint_trailing_as("T[number]as"),
+            "T[number]"
+        );
+        assert_eq!(
+            TypePrinter::trim_mapped_constraint_trailing_as("T[number] as"),
+            "T[number]"
+        );
+        assert_eq!(
+            TypePrinter::trim_mapped_constraint_trailing_as("Alias"),
+            "Alias"
+        );
+        assert_eq!(
+            TypePrinter::split_recovered_mapped_as_clause("T[number]as Item[Attr]"),
+            Some(("T[number]", "Item[Attr]"))
+        );
+        assert_eq!(
+            TypePrinter::mapped_name_type_text("as `get${Capitalize<string & K>}`"),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(
+            TypePrinter::mapped_name_type_text("as as `get${Capitalize<string & K>}`"),
+            "`get${Capitalize<string & K>}`"
+        );
+        assert_eq!(TypePrinter::mapped_name_type_text("asserts T"), "asserts T");
     }
 }

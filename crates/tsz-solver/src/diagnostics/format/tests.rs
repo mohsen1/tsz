@@ -52,6 +52,59 @@ fn union_no_nullish_unchanged() {
 }
 
 #[test]
+fn union_registered_to_nominal_interface_formats_structurally() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+    let audio_data = crate::def::DefinitionInfo::interface(
+        db.intern_string("AudioData"),
+        vec![],
+        vec![PropertyInfo::new(
+            db.intern_string("duration"),
+            TypeId::NUMBER,
+        )],
+    );
+    let audio_data_def = def_store.register(audio_data);
+    def_store.register_type_to_def(primitive_key_union, audio_data_def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(primitive_key_union),
+        "string | number | symbol",
+        "Nominal interface registrations must not repaint structural unions"
+    );
+}
+
+#[test]
+fn primitive_key_union_registered_to_type_alias_formats_structurally_without_origin() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+    let alias_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("AudioData"),
+        vec![],
+        primitive_key_union,
+    ));
+    def_store.register_type_to_def(primitive_key_union, alias_def);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(primitive_key_union),
+        "string | number | symbol",
+        "The shared `keyof any` union must not be repainted by same-body aliases"
+    );
+}
+
+#[test]
+fn primitive_key_union_formats_as_property_key_in_diagnostic_mode() {
+    let db = TypeInterner::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+
+    let mut fmt = TypeFormatter::new(&db).with_diagnostic_mode();
+    assert_eq!(fmt.format(primitive_key_union), "PropertyKey");
+}
+
+#[test]
 fn needs_property_name_quotes_basic() {
     // Valid identifiers: no quotes needed
     assert!(!super::needs_property_name_quotes("foo"));
@@ -134,6 +187,7 @@ fn object_type_with_hyphenated_property_quoted() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     let obj = db.object(vec![prop]);
@@ -1103,6 +1157,129 @@ fn format_function_type_param_with_constraint() {
 }
 
 #[test]
+fn format_function_type_param_with_structural_array_constraint_uses_shorthand() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let t_atom = db.intern_string("T");
+    let constraint = db.array(TypeId::ANY);
+    let t_param = db.type_param(TypeParamInfo {
+        name: t_atom,
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    });
+    let func = db.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = fmt.format(func);
+    assert!(
+        result.contains("<T extends any[]>"),
+        "Expected structural array constraint shorthand, got: {result}"
+    );
+}
+
+#[test]
+fn format_function_type_param_with_non_primitive_array_constraint_uses_generic_form() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let t_atom = db.intern_string("T");
+    let foo = PropertyInfo::new(db.intern_string("foo"), TypeId::STRING);
+    let object = db.object(vec![foo]);
+    let constraint = db.array(object);
+    let t_param = db.type_param(TypeParamInfo {
+        name: t_atom,
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    });
+    let func = db.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = fmt.format(func);
+    assert!(
+        result.contains("<T extends Array<{ foo: string; }>>"),
+        "Expected non-primitive array constraint to preserve generic form, got: {result}"
+    );
+}
+
+#[test]
+fn format_function_type_param_with_array_application_constraint_preserves_generic_form() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let t_atom = db.intern_string("T");
+    let array_name = db.unresolved_type_name(db.intern_string("Array"));
+    let constraint = db.application(array_name, vec![TypeId::ANY]);
+    let t_param = db.type_param(TypeParamInfo {
+        name: t_atom,
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    });
+    let func = db.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = fmt.format(func);
+    assert!(
+        result.contains("<T extends Array<any>>"),
+        "Expected explicit Array<T> constraint syntax to be preserved, got: {result}"
+    );
+}
+
+#[test]
 fn format_function_type_param_with_default() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
@@ -1544,6 +1721,74 @@ fn format_template_literal_complex() {
     );
 }
 
+#[test]
+fn format_template_literal_flattens_nested_alias_interpolations() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let number_pattern = db.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let alias_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("A"),
+        vec![],
+        number_pattern,
+    ));
+    let alias_ref = db.lazy(alias_def);
+    let spaced = db.template_literal(vec![
+        TemplateSpan::Type(alias_ref),
+        TemplateSpan::Text(db.intern_string(" ")),
+        TemplateSpan::Type(alias_ref),
+    ]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(spaced), "`${number} ${number}`");
+}
+
+#[test]
+fn format_template_literal_pattern_union_does_not_repaint_application_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let protocol_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Protocol"),
+        vec![
+            TypeParamInfo {
+                name: db.intern_string("T"),
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("U"),
+                constraint: Some(TypeId::STRING),
+                default: None,
+                is_const: false,
+            },
+        ],
+        TypeId::STRING,
+    ));
+    let protocols = db.union(vec![
+        db.literal_string("http"),
+        db.literal_string("https"),
+        db.literal_string("ftp"),
+    ]);
+    let evaluated = db.template_literal(vec![
+        TemplateSpan::Type(protocols),
+        TemplateSpan::Text(db.intern_string("://")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let app = db.application(db.lazy(protocol_def), vec![protocols, TypeId::STRING]);
+    db.store_display_alias(evaluated, app);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(evaluated);
+
+    assert!(
+        !result.starts_with("Protocol<"),
+        "template pattern unions should show the expanded pattern, got {result}"
+    );
+    assert!(result.contains("`http://${string}`"), "{result}");
+    assert!(result.contains("`https://${string}`"), "{result}");
+    assert!(result.contains("`ftp://${string}`"), "{result}");
+}
+
 // =================================================================
 // String intrinsic formatting
 // =================================================================
@@ -1711,7 +1956,7 @@ fn format_keyof_intersection_distributes() {
 
 #[test]
 fn format_keyof_nullish_collapses_to_never() {
-    // tsc reduces `keyof null`, `keyof undefined`, `keyof void`, `keyof never`
+    // tsc reduces `keyof null`, `keyof undefined`, and `keyof void`
     // to `never` in error messages. The evaluator already maps these to
     // TypeId::NEVER; the formatter must not bypass that reduction.
     let db = TypeInterner::new();
@@ -1720,7 +1965,10 @@ fn format_keyof_nullish_collapses_to_never() {
     assert_eq!(fmt.format(db.keyof(TypeId::NULL)), "never");
     assert_eq!(fmt.format(db.keyof(TypeId::UNDEFINED)), "never");
     assert_eq!(fmt.format(db.keyof(TypeId::VOID)), "never");
-    assert_eq!(fmt.format(db.keyof(TypeId::NEVER)), "never");
+    assert_eq!(
+        fmt.format(db.keyof(TypeId::NEVER)),
+        "string | number | symbol"
+    );
 }
 
 #[test]
@@ -1760,6 +2008,156 @@ fn format_index_access_type() {
 
     let idx = db.index_access(TypeId::STRING, TypeId::NUMBER);
     assert_eq!(fmt.format(idx), "string[number]");
+}
+
+/// Helper for the homomorphic-mapped indexed-access tests below: builds a
+/// homomorphic identity Mapped type `{ readonly? [bound in keyof source]?: source[bound] }`
+/// using `bound_name` as the iteration variable name. Switching `bound_name`
+/// across tests guards against any name-hardcoded simplification logic.
+fn make_homomorphic_mapped(
+    db: &TypeInterner,
+    source: TypeId,
+    bound_name: &str,
+    optional: Option<MappedModifier>,
+    readonly: Option<MappedModifier>,
+) -> TypeId {
+    let bound = db.type_param(TypeParamInfo {
+        name: db.intern_string(bound_name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let template = db.index_access(source, bound);
+    db.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: db.intern_string(bound_name),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: db.keyof(source),
+        template,
+        name_type: None,
+        readonly_modifier: readonly,
+        optional_modifier: optional,
+    })
+}
+
+#[test]
+fn homomorphic_mapped_index_access_partial_simplifies() {
+    // `Partial<U>[K]` — homomorphic identity Mapped with `optional_modifier = Add` —
+    // displays as `U[K] | undefined`, matching tsc, instead of the structural
+    // `{ [P in keyof U]?: U[P] | undefined; }[K]` form.
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let partial_u = make_homomorphic_mapped(&db, u, "P", Some(MappedModifier::Add), None);
+    let access = db.index_access(partial_u, k);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(access), "U[K] | undefined");
+}
+
+#[test]
+fn homomorphic_mapped_index_access_readonly_simplifies() {
+    // `Readonly<U>[K]` — homomorphic identity Mapped with `readonly_modifier = Add` —
+    // displays as `U[K]` (readonly is a property-level modifier and does not
+    // appear in indexed-access value types).
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let readonly_u = make_homomorphic_mapped(&db, u, "P", None, Some(MappedModifier::Add));
+    let access = db.index_access(readonly_u, k);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(access), "U[K]");
+}
+
+#[test]
+fn homomorphic_mapped_index_access_independent_of_bound_name() {
+    // The simplification is structural: it must hold for any iteration
+    // variable name (P, X, Q, ...). A name-hardcoded check (e.g. `name == "P"`)
+    // would silently fall back to the structural form for non-`P` aliases.
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let key_index = db.keyof(u);
+    let partial_u_q = make_homomorphic_mapped(&db, u, "Q", Some(MappedModifier::Add), None);
+    let partial_u_x = make_homomorphic_mapped(&db, u, "X", Some(MappedModifier::Add), None);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(
+        fmt.format(db.index_access(partial_u_q, key_index)),
+        "U[keyof U] | undefined"
+    );
+    assert_eq!(
+        fmt.format(db.index_access(partial_u_x, key_index)),
+        "U[keyof U] | undefined"
+    );
+}
+
+#[test]
+fn homomorphic_mapped_index_access_skips_non_identity_template() {
+    // A non-homomorphic mapped (template body is not `source[P]`) must keep
+    // the structural display, since `M[K]` no longer reduces to `source[K]`.
+    let db = TypeInterner::new();
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let mapped = db.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: db.intern_string("P"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: db.keyof(u),
+        template: TypeId::NUMBER, // not `U[P]`
+        name_type: None,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let access = db.index_access(mapped, k);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let formatted = fmt.format(access);
+    assert!(
+        formatted.contains("[P in keyof U]"),
+        "expected structural mapped form for non-homomorphic template, got: {formatted}"
+    );
 }
 
 #[test]
@@ -1878,6 +2276,7 @@ fn format_no_infer_in_union_with_function_member() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let no_infer_obj = db.no_infer(obj);
@@ -1975,6 +2374,45 @@ fn format_application_pads_missing_args_with_param_defaults() {
 }
 
 #[test]
+fn format_iterable_iterator_elides_trailing_any_without_recorded_default() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let info = crate::def::DefinitionInfo::interface(
+        db.intern_string("IterableIterator"),
+        vec![
+            TypeParamInfo {
+                name: db.intern_string("T"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("TReturn"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("TNext"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        vec![],
+    );
+    let def_id = def_store.register(info);
+    let app = db.application(
+        db.lazy(def_id),
+        vec![TypeId::STRING, TypeId::VOID, TypeId::ANY],
+    );
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(app), "IterableIterator<string, void>");
+}
+
+#[test]
 fn format_application_two_args() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
@@ -2013,6 +2451,50 @@ fn display_alias_does_not_repaint_preexisting_structural_type() {
 }
 
 #[test]
+fn skip_application_alias_names_suppresses_nested_application_display_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: db.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let merge_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("merge"),
+        vec![type_param("base"), type_param("props")],
+        TypeId::UNKNOWN,
+    ));
+    let omit_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Omit"),
+        vec![type_param("T"), type_param("K")],
+        TypeId::UNKNOWN,
+    ));
+
+    let p1 = db.object(vec![PropertyInfo::new(
+        db.intern_string("p1"),
+        TypeId::NUMBER,
+    )]);
+    let p2 = db.object(vec![PropertyInfo::new(
+        db.intern_string("p2"),
+        TypeId::NUMBER,
+    )]);
+    let merged = db.intersection(vec![p1, p2]);
+    let merge_app = db.application(db.lazy(merge_def), vec![p1, p2]);
+    db.store_display_alias(merged, merge_app);
+
+    let omit_app = db.application(db.lazy(omit_def), vec![merged, db.literal_string("p2")]);
+    let mut fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_skip_application_alias_names();
+
+    assert_eq!(
+        fmt.format(omit_app),
+        "Omit<{ p1: number; } & { p2: number; }, \"p2\">"
+    );
+}
+
+#[test]
 fn concrete_display_alias_can_name_preexisting_structural_type() {
     let db = TypeInterner::new();
     let evaluated = db.object(vec![PropertyInfo::new(
@@ -2030,6 +2512,27 @@ fn concrete_display_alias_can_name_preexisting_structural_type() {
         db.get_display_alias(evaluated),
         Some(app),
         "Concrete application aliases should still name reused structural interface shapes"
+    );
+}
+
+#[test]
+fn preferred_application_display_alias_can_name_preexisting_structural_type() {
+    let db = TypeInterner::new();
+    let evaluated = db.object(vec![PropertyInfo::new(
+        db.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+    let app = db.application(
+        db.lazy(crate::def::DefId(1)),
+        vec![TypeId::NUMBER, TypeId::VOID, TypeId::UNKNOWN],
+    );
+
+    db.store_display_alias_preferring_application(evaluated, app);
+
+    assert_eq!(
+        db.get_display_alias(evaluated),
+        Some(app),
+        "Explicitly preferred application aliases should preserve nominal generic display"
     );
 }
 
@@ -2129,6 +2632,82 @@ fn empty_object_interface_application_preserves_type_args() {
         "AsyncGenerator<number, void, unknown>",
         "Named generic interfaces with empty structural bodies must keep their \
          application display."
+    );
+}
+
+/// Regression test for `undefinedAssignableToEveryType`: the lib resolution
+/// path registers `Promise`'s interface def against the canonical empty `{}`
+/// TypeId without setting `instance_shape` and without a `display_alias`.
+/// The interface has type params (`Promise<T>`), so the formatter would
+/// reach the bare-type-param fallback and render every user-written `{}`
+/// annotation as `Promise<T>`. The formatter must render `{}` structurally
+/// when there is no concrete instantiation to display.
+#[test]
+fn empty_object_does_not_repaint_as_generic_interface_without_display_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let evaluated = db.object(vec![]);
+    let name = db.intern_string("Promise");
+    let info = crate::def::DefinitionInfo::interface(
+        name,
+        vec![TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        vec![],
+    );
+    let def_id = def_store.register(info);
+    def_store.register_type_to_def(evaluated, def_id);
+    // Note: no `store_display_alias`. This mirrors the lib-resolution
+    // registration path for `Promise`, which never sets a display alias for
+    // the canonical empty `{}` TypeId.
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(evaluated),
+        "{}",
+        "A user-written `{{}}` annotation must format as `{{}}`, not as \
+         `Promise<T>`, when a generic interface def has been registered \
+         against the universal empty-object TypeId without provenance."
+    );
+
+    // The same shape must hold inside derived TypeData, e.g. inside a
+    // function return type. `var j: () => {} = undefined` previously
+    // rendered the target as `() => Promise<T>`.
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: evaluated,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut fmt2 = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt2.format(func),
+        "() => {}",
+        "Empty `{{}}` inside a function return type must render structurally \
+         even when an unrelated generic interface is keyed on its TypeId."
+    );
+
+    // A non-generic empty interface (`interface I {}`) must still display
+    // its name when registered against the empty-object TypeId.
+    let db2 = TypeInterner::new();
+    let store2 = crate::def::DefinitionStore::new();
+    let evaluated2 = db2.object(vec![]);
+    let i_name = db2.intern_string("I");
+    let i_info = crate::def::DefinitionInfo::interface(i_name, vec![], vec![]);
+    let i_def = store2.register(i_info);
+    store2.register_type_to_def(evaluated2, i_def);
+    let mut fmt3 = TypeFormatter::new(&db2).with_def_store(&store2);
+    assert_eq!(
+        fmt3.format(evaluated2),
+        "I",
+        "A non-generic empty interface registered against the empty-object \
+         TypeId must keep its name."
     );
 }
 
@@ -2998,6 +3577,7 @@ fn optional_property_shows_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);
@@ -3026,6 +3606,7 @@ fn optional_property_never_shows_as_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);
@@ -3054,6 +3635,7 @@ fn optional_property_with_union_undefined_keeps_it() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let result = fmt.format(obj);
@@ -3549,4 +4131,232 @@ fn typeof_prefix_for_namespace_and_class_constructor_defs() {
     assert_eq!(fmt.format(class_ctor_obj), "typeof Foo");
     assert_eq!(fmt.format(iface_obj), "IFoo");
     assert_eq!(fmt.format(class_instance_obj), "Bar");
+}
+
+/// Regression: `T[]` (modeled as `TypeData::Array(T)`) should inherit its
+/// element type's source position when sorting union members. Without this,
+/// `Cover[]` falls through to the tier-2 sentinel and a union written as
+/// `Cover | Cover[]` displays out of order.
+#[test]
+fn union_array_inherits_element_source_position() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let cover = crate::def::DefinitionInfo::interface(
+        db.intern_string("Cover"),
+        vec![],
+        vec![PropertyInfo::new(db.intern_string("color"), TypeId::STRING)],
+    )
+    .with_file_id(0)
+    .with_span(100, 110);
+    let cover_def = def_store.register(cover);
+    let cover_ref = db.lazy(cover_def);
+    let cover_array = db.array(cover_ref);
+
+    // Source order: `Cover | Cover[]`.
+    let union_id = db.union_preserve_members(vec![cover_ref, cover_array]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(union_id),
+        "Cover | Cover[]",
+        "Array(T) should inherit T's position so `Cover | Cover[]` stays in source order"
+    );
+}
+
+#[test]
+fn union_array_of_intrinsic_stays_after_primitive_builtin() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let react_child = crate::def::DefinitionInfo::type_alias(
+        db.intern_string("ReactChild"),
+        vec![],
+        TypeId::STRING,
+    )
+    .with_file_id(0)
+    .with_span(100, 110);
+    let react_child_def = def_store.register(react_child);
+    let react_child_ref = db.lazy(react_child_def);
+    let any_array = db.array(TypeId::ANY);
+
+    let union_id = db.union_preserve_members(vec![react_child_ref, any_array, TypeId::BOOLEAN]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(union_id),
+        "boolean | any[] | ReactChild",
+        "Arrays of intrinsic element types should not inherit `any`'s low builtin key"
+    );
+}
+
+/// Regression: `Application(Container, [T])` should use the MAX position of
+/// the base and its arguments. This keeps generic instantiations sorted with
+/// the user-defined element type rather than with a built-in / lib base.
+#[test]
+fn union_application_uses_max_arg_position() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // A built-in-like generic with a low source position.
+    let container = crate::def::DefinitionInfo::interface(
+        db.intern_string("Container"),
+        vec![TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        vec![],
+    )
+    .with_file_id(0)
+    .with_span(0, 10);
+    let container_def = def_store.register(container);
+
+    // A user type with a much later source position.
+    let user_iface = crate::def::DefinitionInfo::interface(
+        db.intern_string("Item"),
+        vec![],
+        vec![PropertyInfo::new(db.intern_string("v"), TypeId::STRING)],
+    )
+    .with_file_id(0)
+    .with_span(500, 510);
+    let user_def = def_store.register(user_iface);
+    let user_ref = db.lazy(user_def);
+
+    let application = db.application(db.lazy(container_def), vec![user_ref]);
+
+    // Source order: `Item | Container<Item>`.
+    let union_id = db.union_preserve_members(vec![user_ref, application]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(union_id);
+    // `Container<Item>` inherits Item's position via the MAX rule, so the
+    // union preserves source order.
+    assert_eq!(result, "Item | Container<Item>");
+}
+
+/// Regression: a union mixing a named type (tier 1, has source position) with
+/// a literal type (tier 2, no source position) should display the named type
+/// first, matching tsc. Source order alone — `"foo" | Refrigerator` — is not
+/// what tsc renders; tsc displays `Refrigerator | "foo"`.
+///
+/// Source: `stringLiteralsWithEqualityChecks03` (and 04).
+#[test]
+fn union_named_type_renders_before_string_literal() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // Build an interface with a real source position so it lands in tier 1.
+    let iface = crate::def::DefinitionInfo::interface(
+        db.intern_string("Refrigerator"),
+        vec![],
+        vec![PropertyInfo::new(
+            db.intern_string("makesFoodGoBrrr"),
+            TypeId::BOOLEAN,
+        )],
+    )
+    .with_file_id(0)
+    .with_span(10, 20);
+    let iface_def_id = def_store.register(iface);
+    let iface_ref = db.lazy(iface_def_id);
+
+    // Insertion order matches the source `let y: "foo" | Refrigerator`.
+    let union_id = db.union_preserve_members(vec![db.literal_string("foo"), iface_ref]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(union_id);
+    assert_eq!(
+        result, "Refrigerator | \"foo\"",
+        "Named type (tier 1) must render before a literal (tier 2) regardless of source order"
+    );
+}
+
+/// Sibling test: multiple named types stay sorted by source position, and any
+/// number of trailing literals retain their relative declaration order.
+#[test]
+fn union_multiple_named_types_sorted_then_literals_in_source_order() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let alpha = crate::def::DefinitionInfo::interface(db.intern_string("Alpha"), vec![], vec![])
+        .with_file_id(0)
+        .with_span(10, 20);
+    let beta = crate::def::DefinitionInfo::interface(db.intern_string("Beta"), vec![], vec![])
+        .with_file_id(0)
+        .with_span(30, 40);
+    let alpha_def = def_store.register(alpha);
+    let beta_def = def_store.register(beta);
+    let alpha_ref = db.lazy(alpha_def);
+    let beta_ref = db.lazy(beta_def);
+
+    // Source order: `"x" | Beta | "y" | Alpha`.
+    let union_id = db.union_preserve_members(vec![
+        db.literal_string("x"),
+        beta_ref,
+        db.literal_string("y"),
+        alpha_ref,
+    ]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(union_id);
+    // Named types come first, sorted by span (Alpha at 10 < Beta at 30).
+    // Literals follow in the order they appeared in the input.
+    assert_eq!(result, "Alpha | Beta | \"x\" | \"y\"");
+}
+
+/// Regression: tsc renders the eight `typeof` result string literals in
+/// JS-spec order regardless of how the interner pre-sorted them. The
+/// interner can put `"symbol"` ahead of `"string"` whenever lib processing
+/// of `Symbol.toPrimitive` allocates the literal first; without the
+/// canonical-order carve-out, that allocation history leaks into TS2367
+/// overlap diagnostics.
+#[test]
+fn typeof_result_union_renders_in_canonical_order() {
+    let db = TypeInterner::new();
+    // Build the union with `"symbol"` first so the interner's
+    // allocation order (and any input-order-based sort) can't satisfy the
+    // expected output by accident.
+    let members = vec![
+        db.literal_string("symbol"),
+        db.literal_string("function"),
+        db.literal_string("object"),
+        db.literal_string("undefined"),
+        db.literal_string("boolean"),
+        db.literal_string("bigint"),
+        db.literal_string("number"),
+        db.literal_string("string"),
+    ];
+    let union_id = db.union_preserve_members(members);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(union_id);
+    assert_eq!(
+        result,
+        "\"string\" | \"number\" | \"bigint\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | \"function\""
+    );
+}
+
+/// Anti-regression: a SUBSET of the typeof literals must NOT be reordered
+/// — only the exact eight-member set is the JS-spec `typeof` vocabulary,
+/// and reordering arbitrary string-literal subsets would break legitimate
+/// declaration-order display elsewhere.
+#[test]
+fn typeof_result_carve_out_does_not_apply_to_subset() {
+    let db = TypeInterner::new();
+    let members = vec![
+        db.literal_string("symbol"),
+        db.literal_string("string"),
+        db.literal_string("number"),
+    ];
+    let union_id = db.union_preserve_members(members);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(union_id);
+    // Three-element subset must keep the input order — not reordered to
+    // tsc's typeof canonical order (which would put "string" first).
+    assert!(
+        !result.starts_with("\"string\""),
+        "Three-literal subset `symbol | string | number` must NOT be reordered to tsc's typeof canonical order; got: {result}"
+    );
 }

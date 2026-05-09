@@ -25,11 +25,43 @@ impl<'a> Printer<'a> {
             self.emit_exponentiation_assignment(binary.left, left, right);
         } else {
             self.write("Math.pow(");
+            self.emit_replayed_leading_exponentiation_comment(left);
             self.emit(left);
             self.write(", ");
             self.emit(right);
             self.write(")");
         }
+    }
+
+    fn emit_replayed_leading_exponentiation_comment(&mut self, left: NodeIndex) {
+        let Some(left_node) = self.arena.get(left) else {
+            return;
+        };
+        if left_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return;
+        }
+        let left_start = self.skip_trivia_forward(left_node.pos, left_node.end);
+        let Some(text) = self.source_text_for_map() else {
+            return;
+        };
+        let Some(comment) = self.all_comments.iter().rev().find(|comment| {
+            !comment.is_multi_line
+                && comment.has_trailing_new_line
+                && comment.end <= left_start
+                && text
+                    .get(comment.end as usize..left_start as usize)
+                    .is_some_and(|between| between.chars().all(char::is_whitespace))
+        }) else {
+            return;
+        };
+        let Some(comment_text) = text
+            .get(comment.pos as usize..comment.end as usize)
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        self.write(&comment_text);
+        self.write_line();
     }
 
     /// Emit `lhs **= rhs` as `lhs = Math.pow(lhs, rhs)` with temp variables
@@ -97,25 +129,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        let base_is_simple = self.is_simple_logical_assignment_base(access.expression);
-        let needs_base_temp = if is_element_access {
-            // Element access: tsc always temps both base and index
-            true
-        } else {
-            // Property access: temp only for complex base
-            !base_is_simple
-        };
-
-        if !needs_base_temp {
-            // Simple property access: `obj.prop **= y` → `obj.prop = Math.pow(obj.prop, y)`
-            self.emit(original_left);
-            self.write(" = Math.pow(");
-            self.emit(unwrapped_left);
-            self.write(", ");
-            self.emit(right);
-            self.write(")");
-            return;
-        }
+        // tsc always temps the base for property/element access in `**=`
+        // lowering, even when the base is a simple identifier. The spec
+        // requires the LHS receiver to be evaluated once, so the lowered
+        // `lhs.prop = Math.pow(lhs.prop, rhs)` form must capture the
+        // receiver in a temp before re-reading the property.
 
         // Emit the RHS into a buffer first, so inner `**=` expressions allocate
         // their temps before we allocate ours (matching tsc's bottom-up order).
@@ -754,7 +772,14 @@ impl<'a> Printer<'a> {
             || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
     }
 
-    /// Check if a token is a compound assignment operator (+=, -=, etc.)
+    /// Check if a token is a compound assignment operator (+=, -=, etc.).
+    ///
+    /// Includes the logical-assignment family (`||=`, `&&=`, `??=`) so the
+    /// private-field compound-assignment lowering can route them through the
+    /// same `__classPrivateFieldSet(get() <op> rhs)` shape as `+=` and friends.
+    /// This intentionally drops the short-circuit semantics of native `||=`/
+    /// `&&=`/`??=` (the `set` always runs); tsc makes the same trade-off for
+    /// private-field lowering — see issue #61109.
     pub(in crate::emitter) const fn is_compound_assignment(&self, token: u16) -> bool {
         token == SyntaxKind::PlusEqualsToken as u16
             || token == SyntaxKind::MinusEqualsToken as u16
@@ -768,6 +793,9 @@ impl<'a> Printer<'a> {
             || token == SyntaxKind::AmpersandEqualsToken as u16
             || token == SyntaxKind::CaretEqualsToken as u16
             || token == SyntaxKind::BarEqualsToken as u16
+            || token == SyntaxKind::BarBarEqualsToken as u16
+            || token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || token == SyntaxKind::QuestionQuestionEqualsToken as u16
     }
 
     /// Get the base operator for a compound assignment (e.g., `+=` → `+`)
@@ -787,6 +815,9 @@ impl<'a> Printer<'a> {
             t if t == SyntaxKind::AmpersandEqualsToken as u16 => "&".to_string(),
             t if t == SyntaxKind::CaretEqualsToken as u16 => "^".to_string(),
             t if t == SyntaxKind::BarEqualsToken as u16 => "|".to_string(),
+            t if t == SyntaxKind::BarBarEqualsToken as u16 => "||".to_string(),
+            t if t == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => "&&".to_string(),
+            t if t == SyntaxKind::QuestionQuestionEqualsToken as u16 => "??".to_string(),
             _ => "=".to_string(),
         }
     }

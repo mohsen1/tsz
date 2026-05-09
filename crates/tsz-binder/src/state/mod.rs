@@ -83,7 +83,9 @@ type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
 /// Populated by the binder during its AST walk (zero-cost at check time).
 /// The checker queries these to decide whether to emit TS2318 diagnostics
 /// for missing global types like `IterableIterator`, `TypedPropertyDescriptor`, etc.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct FileFeatures(u8);
 
 impl FileFeatures {
@@ -112,7 +114,7 @@ impl FileFeatures {
 }
 
 /// Configuration options for the binder.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BinderOptions {
     /// ECMAScript target version.
     /// This affects language-specific behaviors like block-scoped function hoisting.
@@ -164,7 +166,7 @@ pub struct LibContext {
 /// and `map` from File B's arena.
 /// Represents a global augmentation declaration from a `declare global {}` block.
 /// For cross-file merging, the arena tracks which file's AST contains the declaration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GlobalAugmentation {
     /// Declaration node for this augmentation (interface/type alias inside `declare global {}`)
     pub node: NodeIndex,
@@ -198,7 +200,7 @@ impl GlobalAugmentation {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ModuleAugmentation {
     /// Name of the augmented interface/type member (e.g., "map", "filter")
     pub name: String,
@@ -231,7 +233,14 @@ impl ModuleAugmentation {
 }
 
 /// Binder state using `NodeArena`.
-#[derive(Clone, Debug)]
+///
+/// `Serialize`/`Deserialize` impls round-trip the bound state to disk for
+/// the lib snapshot cache (see `docs/plan/PERFORMANCE_PLAN.md`).
+/// Two `CloneableRwLock<...>` fields below carry resolution caches that
+/// are intentionally `#[serde(skip)]` — they're regenerable on first
+/// access (the `clear_resolution_caches` method confirms the lazy-rebuild
+/// invariant), and serialising lock state isn't meaningful.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BinderState {
     /// Binder options (ES target, etc.)
     pub options: BinderOptions,
@@ -493,11 +502,21 @@ pub struct BinderState {
     /// This cache dramatically speeds up barrel file imports where the same export
     /// is looked up multiple times across different files.
     /// Uses `RwLock` for thread-safety in parallel compilation.
+    ///
+    /// `#[serde(skip)]`: lock state isn't meaningful to serialize, and the
+    /// cache content is regenerable on first access. `clear_resolution_caches`
+    /// confirms this — the field is treated as a pure cache. Snapshot-loaded
+    /// binders start with an empty cache and lazily repopulate.
+    #[serde(skip)]
     pub(crate) resolved_export_cache: ExportCacheStorage,
     /// Cache for identifier resolution by AST node.
     /// Key: (`arena_pointer`, `node_index`) -> resolved `SymbolId` (or None if not found).
     /// This avoids repeated scope walks for hot checker paths that ask for the same
     /// identifier symbol many times (e.g. large switch/flow analysis files).
+    ///
+    /// `#[serde(skip)]`: see `resolved_export_cache`. Same lazy-rebuild
+    /// rationale.
+    #[serde(skip)]
     pub(crate) resolved_identifier_cache: IdentifierCacheStorage,
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
@@ -593,7 +612,7 @@ pub struct BinderState {
 /// Mirrors `tsz_solver::def::DefKind` but lives in the binder crate to avoid
 /// a circular dependency (solver depends on binder). The checker converts these
 /// to solver `DefKind` during `DefId` pre-population.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SemanticDefKind {
     /// Type alias: `type Foo = number`
     TypeAlias,
@@ -616,7 +635,7 @@ pub enum SemanticDefKind {
 /// Contains exactly the information needed for the checker to create a solver
 /// `DefId` + `DefinitionInfo` without re-examining the AST or symbol table.
 /// This is populated during binding and consumed during checker construction.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SemanticDefEntry {
     /// What kind of declaration this is.
     pub kind: SemanticDefKind,

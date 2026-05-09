@@ -13,7 +13,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 #[inline]
-const fn should_cache_base_expr_result(
+pub(super) const fn should_cache_base_expr_result(
     type_argument_count: usize,
     has_active_type_parameter_scope: bool,
 ) -> bool {
@@ -40,14 +40,20 @@ impl<'a> CheckerState<'a> {
         self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, true)
     }
 
+    pub(crate) fn apply_type_argument_ids_to_constructor_type_for_extends(
+        &mut self,
+        ctor_type: TypeId,
+        type_args: &[TypeId],
+    ) -> TypeId {
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, true)
+    }
+
     fn apply_type_arguments_to_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
         strip_on_non_generic_mismatch: bool,
     ) -> TypeId {
-        use tsz_solver::CallableShape;
-
         let explicit_type_arg_count = type_arguments.map_or(0, |args| args.nodes.len());
         let missing_type_args_become_any = self.is_js_file() && explicit_type_arg_count == 0;
 
@@ -70,6 +76,27 @@ impl<'a> CheckerState<'a> {
             return ctor_type;
         }
 
+        self.apply_type_argument_ids_to_constructor_type_inner(
+            ctor_type,
+            &type_args,
+            missing_type_args_become_any,
+            strip_on_non_generic_mismatch,
+        )
+    }
+
+    fn apply_type_argument_ids_to_constructor_type_inner(
+        &mut self,
+        ctor_type: TypeId,
+        type_args: &[TypeId],
+        missing_type_args_become_any: bool,
+        strip_on_non_generic_mismatch: bool,
+    ) -> TypeId {
+        use tsz_solver::CallableShape;
+
+        if type_args.is_empty() && !missing_type_args_become_any {
+            return ctor_type;
+        }
+
         // Handle intersection types: for `T & Constructor<MyMixin>`, decompose
         // the intersection, apply type args to members with generic construct
         // signatures, and rebuild the intersection.
@@ -78,9 +105,10 @@ impl<'a> CheckerState<'a> {
             let mut new_members = Vec::with_capacity(members.len());
             let mut any_applied = false;
             for member in &members {
-                let applied = self.apply_type_arguments_to_constructor_type_inner(
+                let applied = self.apply_type_argument_ids_to_constructor_type_inner(
                     *member,
-                    type_arguments,
+                    type_args,
+                    missing_type_args_become_any,
                     strip_on_non_generic_mismatch,
                 );
                 if applied != *member {
@@ -92,6 +120,63 @@ impl<'a> CheckerState<'a> {
                 return factory.intersection(new_members);
             }
             return ctor_type;
+        }
+
+        if let Some(function_shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ctor_type)
+            && function_shape.is_constructor
+        {
+            let sig = tsz_solver::CallSignature {
+                type_params: function_shape.type_params.clone(),
+                params: function_shape.params.clone(),
+                this_type: function_shape.this_type,
+                return_type: function_shape.return_type,
+                type_predicate: function_shape.type_predicate,
+                is_method: function_shape.is_method,
+            };
+            if sig.type_params.is_empty() {
+                return ctor_type;
+            }
+
+            let mut args = type_args.to_vec();
+            if args.len() < sig.type_params.len() {
+                for (param_index, param) in sig.type_params.iter().enumerate().skip(args.len()) {
+                    let fallback = if missing_type_args_become_any {
+                        TypeId::ANY
+                    } else {
+                        param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN)
+                    };
+                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &sig.type_params[..param_index],
+                        &args,
+                    );
+                    args.push(
+                        crate::query_boundaries::common::instantiate_type_preserving_meta(
+                            self.ctx.types,
+                            fallback,
+                            &substitution,
+                        ),
+                    );
+                }
+            }
+            if args.len() > sig.type_params.len() {
+                args.truncate(sig.type_params.len());
+            }
+            let instantiated_construct = self.instantiate_signature(&sig, &args);
+            let new_shape = CallableShape {
+                call_signatures: vec![],
+                construct_signatures: vec![instantiated_construct],
+                properties: vec![],
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            };
+            return self.ctx.types.factory().callable(new_shape);
         }
 
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, ctor_type) else {
@@ -145,7 +230,7 @@ impl<'a> CheckerState<'a> {
         let instantiated_constructs: Vec<tsz_solver::CallSignature> = matching
             .iter()
             .map(|sig| {
-                let mut args = type_args.clone();
+                let mut args = type_args.to_vec();
                 if args.len() < sig.type_params.len() {
                     for (param_index, param) in sig.type_params.iter().enumerate().skip(args.len())
                     {
@@ -245,23 +330,24 @@ impl<'a> CheckerState<'a> {
             query::SignatureTypeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
 
-                // Find call signatures that match the type argument count
-                let mut matching: Vec<&tsz_solver::CallSignature> = shape
+                // Find signatures that can accept the supplied explicit type
+                // arguments. Exact arity for instantiation expressions is
+                // checked before this path; ordinary calls may supply a prefix
+                // when remaining type parameters have defaults or can infer.
+                let matching_calls: Vec<tsz_solver::CallSignature> = shape
                     .call_signatures
                     .iter()
-                    .filter(|sig| sig.type_params.len() == type_args.len())
+                    .filter(|&sig| sig.type_params.len() >= type_args.len())
+                    .cloned()
+                    .collect();
+                let matching_constructs: Vec<tsz_solver::CallSignature> = shape
+                    .construct_signatures
+                    .iter()
+                    .filter(|&sig| sig.type_params.len() >= type_args.len())
+                    .cloned()
                     .collect();
 
-                // If no exact match, try signatures with type params
-                if matching.is_empty() {
-                    matching = shape
-                        .call_signatures
-                        .iter()
-                        .filter(|sig| !sig.type_params.is_empty())
-                        .collect();
-                }
-
-                if matching.is_empty() {
+                if matching_calls.is_empty() && matching_constructs.is_empty() {
                     return callee_type;
                 }
 
@@ -271,53 +357,18 @@ impl<'a> CheckerState<'a> {
                 // references after substituting explicit args).  Type parameters whose
                 // defaults still reference other unsupplied params are left for the
                 // solver to infer from call-site arguments.
-                let instantiated_calls: Vec<tsz_solver::CallSignature> = matching
+                let instantiated_calls: Vec<tsz_solver::CallSignature> = matching_calls
                     .iter()
-                    .map(|sig| {
-                        let mut args = type_args.clone();
-                        if args.len() > sig.type_params.len() {
-                            args.truncate(sig.type_params.len());
-                        }
-                        if args.len() < sig.type_params.len() {
-                            // Check if all remaining defaults are fully determined.
-                            let all_defaults_resolved =
-                                self.all_remaining_defaults_resolved(sig, &args);
-                            if all_defaults_resolved {
-                                // All defaults are fully resolved — apply them eagerly
-                                // (e.g., `f12<number>("a")` where U = T = number).
-                                for (param_index, param) in
-                                    sig.type_params.iter().enumerate().skip(args.len())
-                                {
-                                    let fallback = param
-                                        .default
-                                        .or(param.constraint)
-                                        .unwrap_or(TypeId::UNKNOWN);
-                                    let substitution = tsz_solver::TypeSubstitution::from_args(
-                                        self.ctx.types,
-                                        &sig.type_params[..param_index],
-                                        &args,
-                                    );
-                                    args.push(crate::query_boundaries::common::instantiate_type_preserving_meta(
-                                        self.ctx.types,
-                                        fallback,
-                                        &substitution,
-                                    ));
-                                }
-                                self.instantiate_signature(sig, &args)
-                            } else {
-                                // Some defaults reference unsupplied type params —
-                                // leave those for solver inference.
-                                self.partially_instantiate_signature(sig, &args)
-                            }
-                        } else {
-                            self.instantiate_signature(sig, &args)
-                        }
-                    })
+                    .map(|sig| self.instantiate_instantiation_expression_signature(sig, &type_args))
+                    .collect();
+                let instantiated_constructs: Vec<tsz_solver::CallSignature> = matching_constructs
+                    .iter()
+                    .map(|sig| self.instantiate_instantiation_expression_signature(sig, &type_args))
                     .collect();
 
                 let new_shape = CallableShape {
                     call_signatures: instantiated_calls,
-                    construct_signatures: shape.construct_signatures.clone(),
+                    construct_signatures: instantiated_constructs,
                     properties: shape.properties.clone(),
                     string_index: shape.string_index,
                     number_index: shape.number_index,
@@ -386,6 +437,205 @@ impl<'a> CheckerState<'a> {
             }
             _ => callee_type,
         }
+    }
+
+    fn instantiate_instantiation_expression_signature(
+        &mut self,
+        sig: &tsz_solver::CallSignature,
+        type_args: &[TypeId],
+    ) -> tsz_solver::CallSignature {
+        let mut args = type_args.to_vec();
+        if args.len() > sig.type_params.len() {
+            args.truncate(sig.type_params.len());
+        }
+        if args.len() < sig.type_params.len() {
+            if self.all_remaining_defaults_resolved(sig, &args) {
+                for (param_index, param) in sig.type_params.iter().enumerate().skip(args.len()) {
+                    let fallback = param
+                        .default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN);
+                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &sig.type_params[..param_index],
+                        &args,
+                    );
+                    args.push(
+                        crate::query_boundaries::common::instantiate_type_preserving_meta(
+                            self.ctx.types,
+                            fallback,
+                            &substitution,
+                        ),
+                    );
+                }
+                self.instantiate_signature(sig, &args)
+            } else {
+                self.partially_instantiate_signature(sig, &args)
+            }
+        } else {
+            self.instantiate_signature(sig, &args)
+        }
+    }
+
+    pub(crate) fn apply_instantiation_expression_type_arguments(
+        &mut self,
+        expr_type: TypeId,
+        type_arguments: &NodeList,
+    ) -> TypeId {
+        if self
+            .instantiation_expression_applicability_error_type(
+                expr_type,
+                type_arguments.nodes.len(),
+            )
+            .is_some()
+        {
+            return TypeId::ERROR;
+        }
+        self.apply_type_arguments_to_callable_type(expr_type, Some(type_arguments))
+    }
+
+    pub(crate) fn instantiation_expression_applicability_error_type(
+        &mut self,
+        expr_type: TypeId,
+        type_argument_count: usize,
+    ) -> Option<TypeId> {
+        self.instantiation_expression_applicability_error_type_inner(expr_type, type_argument_count)
+    }
+
+    fn instantiation_expression_applicability_error_type_inner(
+        &mut self,
+        expr_type: TypeId,
+        type_argument_count: usize,
+    ) -> Option<TypeId> {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return None;
+        }
+        let query_type = self.resolve_lazy_type(expr_type);
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, query_type)
+        {
+            let mut invalid = Vec::new();
+            let mut saw_applicable = false;
+            let mut saw_signature = false;
+            for member in members.iter().copied() {
+                let has_applicable =
+                    self.instantiation_type_has_applicable_signature(member, type_argument_count);
+                saw_applicable |= has_applicable;
+                let has_signature = self.instantiation_type_has_signature(member);
+                saw_signature |= has_signature;
+                if !has_applicable && has_signature {
+                    invalid.push(member);
+                }
+            }
+            if saw_applicable && invalid.is_empty() {
+                return None;
+            }
+            if saw_applicable {
+                return if invalid.len() == 1 {
+                    invalid.first().copied()
+                } else {
+                    Some(self.ctx.types.union(invalid))
+                };
+            }
+            return if !saw_signature || invalid.len() == members.len() {
+                Some(expr_type)
+            } else if invalid.len() == 1 {
+                invalid.first().copied()
+            } else {
+                Some(self.ctx.types.union(invalid))
+            };
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, query_type)
+        {
+            if members.iter().copied().any(|member| {
+                self.instantiation_type_has_applicable_signature(member, type_argument_count)
+            }) {
+                return None;
+            }
+            return Some(expr_type);
+        }
+
+        if self.instantiation_type_has_applicable_signature(query_type, type_argument_count) {
+            None
+        } else {
+            Some(expr_type)
+        }
+    }
+
+    fn instantiation_type_has_applicable_signature(
+        &mut self,
+        type_id: TypeId,
+        type_argument_count: usize,
+    ) -> bool {
+        let type_id = self.resolve_lazy_type(type_id);
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            && shape.type_params.len() == type_argument_count
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+            && sigs
+                .iter()
+                .any(|sig| sig.type_params.len() == type_argument_count)
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            && sigs
+                .iter()
+                .any(|sig| sig.type_params.len() == type_argument_count)
+        {
+            return true;
+        }
+        false
+    }
+
+    fn instantiation_type_has_signature(&mut self, type_id: TypeId) -> bool {
+        let type_id = self.resolve_lazy_type(type_id);
+        if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            .is_some()
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+            && !sigs.is_empty()
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            && !sigs.is_empty()
+        {
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn instantiation_expression_empty_type_args_error_pos(
+        &self,
+        instantiation_idx: NodeIndex,
+        base_expr_idx: NodeIndex,
+    ) -> Option<u32> {
+        let (_, base_end) = self.get_node_span(base_expr_idx)?;
+        let (_, instantiation_end) = self.get_node_span(instantiation_idx)?;
+        let source = self.ctx.arena.source_files.first()?;
+        let text = source.text.as_bytes();
+        let start = base_end as usize;
+        let end = instantiation_end as usize;
+        if start >= end || end > text.len() {
+            return None;
+        }
+        text[start..end]
+            .iter()
+            .position(|&byte| byte == b'>')
+            .map(|offset| (start + offset) as u32)
     }
 
     /// Check whether all remaining (unsupplied) type parameter defaults in a
@@ -556,8 +806,17 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             factory.intersection(ctor_types)
         };
-        let ctor_type =
-            self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments);
+        let has_syntactic_type_args = type_arguments.is_some_and(|args| !args.nodes.is_empty());
+        let ctor_type = if !has_syntactic_type_args {
+            if let Some(jsdoc_args) = self.jsdoc_extends_type_arguments_for_heritage_expr(expr_idx)
+            {
+                self.apply_type_argument_ids_to_constructor_type_for_extends(ctor_type, &jsdoc_args)
+            } else {
+                self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments)
+            }
+        } else {
+            self.apply_type_arguments_to_constructor_type_for_extends(ctor_type, type_arguments)
+        };
 
         // Preserve non-constructor static members on call-expression heritage
         // bases (e.g. mixin-style intersections like `CoreObject.extend(...)`
@@ -866,6 +1125,23 @@ impl<'a> CheckerState<'a> {
                         .insert(expr_idx, resolved);
                 }
                 return resolved;
+            }
+
+            if self.symbol_has_js_constructor_evidence(base_sym_id) {
+                let ctor_type = self
+                    .base_constructor_type_from_expression(expr_idx, type_arguments)
+                    .unwrap_or_else(|| self.get_type_of_symbol(base_sym_id));
+                if let Some(instance_type) =
+                    self.cross_file_js_constructor_instance_type(base_sym_id, ctor_type)
+                {
+                    if should_cache {
+                        self.ctx
+                            .base_instance_expr_cache
+                            .borrow_mut()
+                            .insert(expr_idx, Some(instance_type));
+                    }
+                    return Some(instance_type);
+                }
             }
         }
 
@@ -1719,18 +1995,5 @@ impl<'a> CheckerState<'a> {
 
         // Class is transparent - return the type parameter
         Some(base_type_param)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::should_cache_base_expr_result;
-
-    #[test]
-    fn base_expr_cache_predicate_only_caches_non_generic_paths() {
-        assert!(should_cache_base_expr_result(0, false));
-        assert!(!should_cache_base_expr_result(0, true));
-        assert!(!should_cache_base_expr_result(1, false));
-        assert!(!should_cache_base_expr_result(3, false));
     }
 }

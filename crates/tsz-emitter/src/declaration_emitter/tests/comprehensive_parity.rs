@@ -1049,7 +1049,7 @@ fn test_object_literal_shorthand_function_emits_typeof() {
     // function symbol must emit `typeof doSomethingWithKeys`, not the
     // expanded function signature. Mirrors tsc's
     // declarationEmitIndexTypeArray baseline.
-    let output = emit_dts_with_binding(
+    let output = emit_dts_with_usage_analysis(
         r#"
 function doSomethingWithKeys<T>(...keys: (keyof T)[]) { }
 
@@ -1065,6 +1065,34 @@ const utilityFunctions = {
     assert!(
         !output.contains("doSomethingWithKeys: <T>"),
         "expanded generic signature should not appear in place of typeof: {output}"
+    );
+}
+
+#[test]
+fn test_default_object_literal_shorthand_function_emits_typeof() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Fns = Record<string, (...params: unknown[]) => unknown>;
+
+function fn<T extends Fns>(value: T): T {
+  return value;
+}
+
+export default { fn };
+"#,
+    );
+
+    assert!(
+        output.contains("declare const _default: {\n    fn: typeof fn;\n};"),
+        "default object shorthand function should use typeof: {output}"
+    );
+    assert!(
+        output.contains("type Fns = Record<string, (...params: unknown[]) => unknown>;"),
+        "default object shorthand function should preserve signature dependencies: {output}"
+    );
+    assert!(
+        !output.contains("fn: <T>"),
+        "default object shorthand function should not expand the generic signature: {output}"
     );
 }
 

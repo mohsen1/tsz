@@ -64,8 +64,6 @@ pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
     idx: NodeIndex,
 ) -> bool {
     let mut current = idx;
-    let mut saw_parameter = false;
-
     while let Some(ext) = arena.get_extended(current) {
         let parent = ext.parent;
         if parent.is_none() {
@@ -77,14 +75,13 @@ pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
         };
 
         match parent_node.kind {
-            syntax_kind_ext::PARAMETER => saw_parameter = true,
             k if k == syntax_kind_ext::CALL_SIGNATURE
                 || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
                 || k == syntax_kind_ext::METHOD_SIGNATURE
                 || k == syntax_kind_ext::FUNCTION_TYPE
                 || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
             {
-                return saw_parameter;
+                return true;
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -103,6 +100,32 @@ pub(crate) fn is_type_query_in_non_flow_sensitive_signature_parameter(
     }
 
     false
+}
+
+/// TS1229: A type predicate is only allowed in return type position for
+/// functions and methods. Reports the diagnostic on the predicate when it
+/// appears as the return-type annotation of a `CONSTRUCTOR_TYPE` node.
+pub(crate) fn report_type_predicate_in_constructor_type(
+    ctx: &mut crate::CheckerContext,
+    node_kind: u16,
+    type_annotation: tsz_parser::parser::NodeIndex,
+) {
+    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+    if node_kind != syntax_kind_ext::CONSTRUCTOR_TYPE {
+        return;
+    }
+    let Some(tn) = ctx.arena.get(type_annotation) else {
+        return;
+    };
+    if tn.kind != syntax_kind_ext::TYPE_PREDICATE {
+        return;
+    }
+    ctx.error(
+        tn.pos,
+        tn.end - tn.pos,
+        diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO.to_string(),
+        diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+    );
 }
 
 // Check duplicate parameters from a TypeNodeChecker context.
@@ -625,6 +648,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
+    /// Conservative AST-side check for concrete array/tuple rest element forms
+    /// whose lowered type may still be an application, e.g. `...Array<T>`.
+    pub(super) fn ast_kind_is_obviously_array_or_tuple(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = arena.get_type_ref(node) else {
+                    return false;
+                };
+                let has_type_args = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|args| !args.nodes.is_empty());
+                if !has_type_args {
+                    return false;
+                }
+                let Some(name_node) = arena.get(type_ref.type_name) else {
+                    return false;
+                };
+                let Some(ident) = arena.get_identifier(name_node) else {
+                    return false;
+                };
+                matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
     /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
     /// type parameter spreads. Only concrete array/tuple rest elements are subject to
@@ -632,6 +689,84 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(super) fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
         crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
             || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
+    }
+
+    /// If `idx` is a direct, unshadowed reference to the lib's `Array` /
+    /// `ReadonlyArray`, return the canonical `array(elem)` (or `readonly array(elem)`)
+    /// representation. Returns `None` for any other type node, including aliases that
+    /// happen to resolve to `Array<T>`.
+    ///
+    /// This canonicalization mirrors the path in `type_literal_checker.rs:308` and
+    /// ensures that downstream consumers which inspect the solver array variant
+    /// directly (e.g. tuple rest element extraction in `array_element_type`) see
+    /// the array shape instead of `Application(Lazy(Array_DefId), [T])`. Without
+    /// it, `[T, ...Array<U>]` and `[T, ...Array]` store the entire array type as
+    /// the rest element, causing false TS2322 on tuple initialization and false
+    /// TS2339 on destructured rest elements.
+    ///
+    /// When the reference has no type argument (e.g. bare `...Array`), we fall back
+    /// to `any` to match tsc's recovery behaviour after TS2314.
+    pub(super) fn try_canonicalize_array_type_reference(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        let name_node = self.ctx.arena.get(type_ref.type_name)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let name = ident.escaped_text.as_str();
+        if name != "Array" && name != "ReadonlyArray" {
+            return None;
+        }
+
+        if self.ctx.type_parameter_scope.contains_key(name) {
+            return None;
+        }
+
+        // Skip canonicalization if the user has declared their own `Array` /
+        // `ReadonlyArray` symbol that shadows the lib's. Declaration merging with
+        // the lib counts as the lib symbol, so `interface Array<T> { custom: T }`
+        // still hits the canonicalization path.
+        let shadowed_by_user = self
+            .ctx
+            .binder
+            .file_locals
+            .get(name)
+            .is_some_and(|sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id));
+        if shadowed_by_user {
+            return None;
+        }
+
+        let elem_type = type_ref
+            .type_arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+            .map_or(TypeId::ANY, |arg_idx| self.check(arg_idx));
+
+        let factory = self.ctx.types.factory();
+        let array_type = factory.array(elem_type);
+        Some(if name == "ReadonlyArray" {
+            factory.readonly_type(array_type)
+        } else {
+            array_type
+        })
+    }
+
+    pub(super) fn check_tuple_rest_type_node(
+        &mut self,
+        idx: NodeIndex,
+        canonicalize_array_ref: bool,
+    ) -> TypeId {
+        if canonicalize_array_ref
+            && let Some(array_type) = self.try_canonicalize_array_type_reference(idx)
+        {
+            array_type
+        } else {
+            self.check(idx)
+        }
     }
 
     pub(super) fn is_this_type_allowed(

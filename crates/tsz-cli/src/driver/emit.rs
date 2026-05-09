@@ -5,19 +5,32 @@ use std::path::{Path, PathBuf};
 
 use super::resolution::{
     canonicalize_or_owned, canonicalize_with_missing_tail, implied_resolution_mode_for_file,
-    is_declaration_file,
+    is_declaration_file, normalize_path,
 };
 use crate::config::{JsxEmit, ResolvedCompilerOptions};
 use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emitter::{NewLineKind, Printer};
-use tsz::parallel::MergedProgram;
+use tsz::enums::evaluator::{EnumEvaluator, EnumValue};
+use tsz::parallel::{BoundFile, MergedProgram};
 use tsz_common::common::ModuleKind;
-use tsz_common::diagnostics::Diagnostic;
+use tsz_common::diagnostics::{Diagnostic, DiagnosticCategory};
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputFile {
     pub(crate) path: PathBuf,
     pub(crate) contents: String,
+    pub(crate) source_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct DeclarationBundleChunk {
+    path_key: String,
+    referenced_path_keys: Vec<String>,
+    contents: String,
 }
 
 pub(crate) struct EmitOutputsContext<'a> {
@@ -47,15 +60,16 @@ pub(crate) fn emit_outputs(
     let mut declaration_bundle_chunks = Vec::new();
     let mut declaration_bundle_blocked = false;
 
-    // When --outFile is set and there are multiple source files, collect JS
-    // chunks and concatenate at the end instead of emitting individual files.
-    // Single-file tests emit normally (bundle would just wrap the same content).
-    let has_multiple_files = context.program.files.len() > 1;
-    let js_bundle_path: Option<PathBuf> = if has_multiple_files {
-        context.options.out_file.clone()
-    } else {
-        None
-    };
+    // When --outFile is set, collect JS chunks and concatenate at the end
+    // instead of emitting individual files. TypeScript honors outFile even for
+    // a single source file.
+    let js_bundle_path = context.options.out_file.as_ref().map(|out_file| {
+        if out_file.is_absolute() {
+            out_file.to_path_buf()
+        } else {
+            context.base_dir.join(out_file)
+        }
+    });
     let mut js_bundle_chunks: Vec<String> = Vec::new();
 
     // Build mapping from arena address to file path for module resolution
@@ -78,6 +92,7 @@ pub(crate) fn emit_outputs(
         .enumerate()
         .map(|(idx, file)| (idx as u32, file.file_name.clone()))
         .collect();
+    let file_lookup = build_program_file_lookup(context.program);
 
     // Use the MergedProgram's global symbol-to-arena mapping.
     // This enables the declaration emitter's portability check to resolve
@@ -96,6 +111,15 @@ pub(crate) fn emit_outputs(
         .filter(|file| !file.module_augmentations.is_empty())
         .map(|file| file.file_name.clone())
         .collect();
+    let declaration_const_enum_exports = build_declaration_const_enum_exports(context.program);
+    let ambient_global_type_only_names = build_ambient_global_type_only_names(
+        context.program,
+        context.options.printer.preserve_const_enums,
+    );
+    let type_only_export_equals_modules = build_type_only_export_equals_modules(
+        context.program,
+        context.options.printer.preserve_const_enums,
+    );
 
     // Build the set of JS output paths produced by TypeScript source files
     // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
@@ -150,23 +174,55 @@ pub(crate) fn emit_outputs(
             continue;
         }
 
-        if let Some(js_path) = js_output_path(
-            context.base_dir,
-            context.root_dir,
-            context.out_dir,
-            context.options.jsx,
-            &input_path,
-        ) {
-            // Get type_only_nodes from the type cache (if available)
-            let type_only_nodes = context.type_caches.get(&input_path).map_or_else(
-                || std::sync::Arc::new(rustc_hash::FxHashSet::default()),
-                |cache| std::sync::Arc::new(cache.type_only_nodes.clone()),
-            );
+        if !context.options.emit_declaration_only
+            && let Some(js_path) = js_output_path(
+                context.base_dir,
+                context.root_dir,
+                context.out_dir,
+                context.options.jsx,
+                &input_path,
+            )
+        {
+            if is_js_input
+                && js_input_skipped_by_node_modules_depth(
+                    &input_path,
+                    context.options.max_node_module_js_depth,
+                )
+            {
+                let contents = std::fs::read_to_string(&input_path).with_context(|| {
+                    format!("failed to read skipped JS source {}", input_path.display())
+                })?;
+                if js_bundle_path.is_some() {
+                    js_bundle_chunks.push(contents);
+                } else {
+                    outputs.push(OutputFile {
+                        path: js_path,
+                        contents,
+                        source_path: Some(input_path.clone()),
+                    });
+                }
+                continue;
+            }
 
-            // Clone and update printer options with type_only_nodes
             let mut printer_options = context.options.printer.clone();
-            printer_options.type_only_nodes = type_only_nodes;
+            let mut type_only_nodes = context
+                .type_caches
+                .get(&input_path)
+                .map_or_else(rustc_hash::FxHashSet::default, |cache| {
+                    cache.type_only_nodes.clone()
+                });
+            mark_ambient_global_type_only_export_specifiers(
+                &file.arena,
+                file.source_file,
+                &ambient_global_type_only_names,
+                &mut type_only_nodes,
+            );
+            printer_options.type_only_nodes = std::sync::Arc::new(type_only_nodes);
+            printer_options.type_only_export_equals_modules =
+                type_only_export_equals_modules.clone();
 
+            printer_options.no_lib = context.options.checker.no_lib;
+            printer_options.isolated_modules = context.options.checker.isolated_modules;
             // Wire JSX options from resolved compiler options to printer
             if let Some(jsx) = context.options.jsx {
                 printer_options.jsx = config_jsx_to_emitter_jsx(jsx);
@@ -243,12 +299,25 @@ pub(crate) fn emit_outputs(
                 printer_options.module = ModuleKind::ESNext;
             }
 
+            if js_bundle_path.is_some()
+                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System)
+            {
+                printer_options.bundled_module_name =
+                    bundled_module_name(context.base_dir, context.root_dir, &input_path);
+            }
+
             // tsc's isFileForcedToBeModuleByFormat: .cjs/.cts/.mjs/.mts files are
             // always modules in "auto" mode. This applies even when the config-level
             // module_detection_force is false (e.g., explicit moduleDetection=auto).
             if !printer_options.module_detection_force && (is_cts_or_cjs || is_mts_or_mjs) {
                 printer_options.module_detection_force = true;
             }
+            apply_external_const_enum_values(
+                &mut printer_options,
+                context.program,
+                file,
+                &declaration_const_enum_exports,
+            );
 
             // Run the lowering pass to generate transform directives
             let mut ctx = tsz::context::emit::EmitContext::with_options(printer_options.clone());
@@ -271,7 +340,7 @@ pub(crate) fn emit_outputs(
                 printer.set_source_text(source_text);
             }
 
-            let map_info = if context.options.source_map {
+            let map_info = if context.options.source_map || context.options.inline_source_map {
                 map_output_info(&js_path)
             } else {
                 None
@@ -302,11 +371,16 @@ pub(crate) fn emit_outputs(
             if let Some((map_path, map_name, _)) = map_info
                 && let Some(map_json) = map_json
             {
-                append_source_mapping_url(&mut contents, &map_name, new_line);
-                map_output = Some(OutputFile {
-                    path: map_path,
-                    contents: map_json,
-                });
+                if context.options.inline_source_map {
+                    append_inline_source_mapping_url(&mut contents, &map_json, new_line);
+                } else {
+                    append_source_mapping_url(&mut contents, &map_name, new_line);
+                    map_output = Some(OutputFile {
+                        path: map_path,
+                        contents: map_json,
+                        source_path: Some(input_path.clone()),
+                    });
+                }
             }
 
             // When --outFile is set, collect content for bundling.
@@ -316,6 +390,7 @@ pub(crate) fn emit_outputs(
                 outputs.push(OutputFile {
                     path: js_path,
                     contents,
+                    source_path: Some(input_path.clone()),
                 });
                 if let Some(map_output) = map_output {
                     outputs.push(map_output);
@@ -407,7 +482,7 @@ pub(crate) fn emit_outputs(
                         None
                     };
 
-                if let Some((_, _, output_name)) = map_info.as_ref() {
+                if let Some((map_path, _, output_name)) = map_info.as_ref() {
                     if let Some(source_text) = file
                         .arena
                         .get(file.source_file)
@@ -416,7 +491,8 @@ pub(crate) fn emit_outputs(
                     {
                         emitter.set_source_map_text(source_text);
                     }
-                    emitter.enable_source_map(output_name, &file.file_name);
+                    let source_name = declaration_map_source_name(map_path, &input_path);
+                    emitter.enable_source_map_without_sources_content(output_name, &source_name);
                 }
 
                 // Run usage analysis and calculate required imports if we have type cache
@@ -460,7 +536,7 @@ pub(crate) fn emit_outputs(
                 let emitter_diagnostics = normalize_ts2883_diagnostics(emitter.take_diagnostics());
                 let declaration_emit_blocked = emitter_diagnostics
                     .iter()
-                    .any(|diagnostic| diagnostic.code == 7056);
+                    .any(|diagnostic| diagnostic.category == DiagnosticCategory::Error);
                 emit_diagnostics.extend(emitter_diagnostics);
                 if declaration_emit_blocked {
                     declaration_bundle_blocked = true;
@@ -478,18 +554,36 @@ pub(crate) fn emit_outputs(
                     map_output = Some(OutputFile {
                         path: map_path,
                         contents: map_json,
+                        source_path: Some(input_path.clone()),
                     });
                 }
 
                 if declaration_bundle_path.is_some() {
-                    declaration_bundle_chunks.push(bundle_declaration_output(
-                        &contents,
-                        context.options.printer.module,
-                    ));
+                    let declaration_module_name = file
+                        .is_external_module
+                        .then(|| {
+                            bundled_module_name(context.base_dir, context.root_dir, &input_path)
+                        })
+                        .flatten();
+                    declaration_bundle_chunks.push(DeclarationBundleChunk {
+                        path_key: normalized_file_key(&file.file_name),
+                        referenced_path_keys: declaration_bundle_reference_path_keys(
+                            &file.file_name,
+                            &file.arena,
+                            file.source_file,
+                            &file_lookup,
+                        ),
+                        contents: bundle_declaration_output(
+                            &contents,
+                            context.options.printer.module,
+                            declaration_module_name.as_deref(),
+                        ),
+                    });
                 } else {
                     outputs.push(OutputFile {
                         path: dts_path,
                         contents,
+                        source_path: Some(input_path.clone()),
                     });
                     if let Some(map_output) = map_output {
                         outputs.push(map_output);
@@ -500,7 +594,8 @@ pub(crate) fn emit_outputs(
     }
 
     // Emit bundled JS output when --outFile is set
-    if let Some(bundle_path) = js_bundle_path
+    if !context.options.emit_declaration_only
+        && let Some(bundle_path) = js_bundle_path
         && !js_bundle_chunks.is_empty()
     {
         let mut bundled = String::new();
@@ -528,9 +623,26 @@ pub(crate) fn emit_outputs(
         if bundled.ends_with(new_line) {
             bundled.truncate(bundled.len() - new_line.len());
         }
+        if matches!(context.options.printer.module, ModuleKind::AMD)
+            && context.options.printer.always_strict
+        {
+            // Only prepend a top-level `"use strict";` when the bundle
+            // contains at least one script (a non-module file). For an
+            // all-modules bundle, every chunk is wrapped in `define(...)`
+            // and emits its own `"use strict";` inside the callback —
+            // tsc does not add a second one at the top of the bundle.
+            let any_script_chunk = js_bundle_chunks.iter().any(|chunk| {
+                let trimmed = chunk.trim_start();
+                !(trimmed.starts_with("define(") || trimmed.starts_with("System.register("))
+            });
+            if any_script_chunk {
+                prepend_use_strict_to_bundle(&mut bundled, new_line);
+            }
+        }
         outputs.push(OutputFile {
             path: bundle_path,
             contents: bundled,
+            source_path: None,
         });
     }
 
@@ -541,10 +653,525 @@ pub(crate) fn emit_outputs(
         outputs.push(OutputFile {
             path: bundle_path,
             contents: join_declaration_bundle_chunks(&declaration_bundle_chunks, new_line),
+            source_path: None,
         });
     }
 
     Ok((outputs, emit_diagnostics))
+}
+
+fn prepend_use_strict_to_bundle(contents: &mut String, new_line: &str) {
+    let directive = format!("\"use strict\";{new_line}");
+    if contents.starts_with(&directive) {
+        return;
+    }
+
+    if contents.starts_with("#!") {
+        if let Some(line_end) = contents.find('\n') {
+            let insert_at = line_end + 1;
+            if !contents[insert_at..].starts_with(&directive) {
+                contents.insert_str(insert_at, &directive);
+            }
+        }
+        return;
+    }
+
+    contents.insert_str(0, &directive);
+}
+
+type ConstEnumValues = FxHashMap<String, EnumValue>;
+
+#[derive(Clone, Default, PartialEq)]
+struct DeclarationConstEnumExports {
+    named: FxHashMap<String, ConstEnumValues>,
+    default: Option<ConstEnumValues>,
+}
+
+fn build_declaration_const_enum_exports(
+    program: &MergedProgram,
+) -> FxHashMap<String, DeclarationConstEnumExports> {
+    let file_lookup = build_program_file_lookup(program);
+    let mut exports_by_file: FxHashMap<String, DeclarationConstEnumExports> = FxHashMap::default();
+
+    for file in &program.files {
+        let path = normalized_file_key(&file.file_name);
+        if !is_declaration_file(Path::new(&file.file_name)) {
+            continue;
+        }
+        let mut exports = DeclarationConstEnumExports::default();
+        collect_direct_const_enum_exports(file, &mut exports);
+        exports_by_file.insert(path, exports);
+    }
+
+    for _ in 0..4 {
+        let previous = exports_by_file.clone();
+        let mut changed = false;
+        for file in &program.files {
+            if !is_declaration_file(Path::new(&file.file_name)) {
+                continue;
+            }
+            let path = normalized_file_key(&file.file_name);
+            let mut exports = previous.get(&path).cloned().unwrap_or_default();
+            collect_aliased_const_enum_exports(file, &file_lookup, &previous, &mut exports);
+            if previous.get(&path) != Some(&exports) {
+                exports_by_file.insert(path, exports);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    exports_by_file
+}
+
+fn apply_external_const_enum_values(
+    options: &mut tsz::emitter::PrinterOptions,
+    program: &MergedProgram,
+    file: &BoundFile,
+    exports_by_file: &FxHashMap<String, DeclarationConstEnumExports>,
+) {
+    if options.no_const_enum_inlining || exports_by_file.is_empty() {
+        return;
+    }
+
+    let file_lookup = build_program_file_lookup(program);
+    let Some(statements) = source_statements(file) else {
+        return;
+    };
+    for &stmt_idx in &statements.nodes {
+        let Some(stmt_node) = file.arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            continue;
+        }
+        let Some(import_data) = file.arena.get_import_decl(stmt_node) else {
+            continue;
+        };
+        let Some(module_spec) = literal_text(&file.arena, import_data.module_specifier) else {
+            continue;
+        };
+        let Some(target_path) =
+            resolve_relative_module_file(&file.file_name, &module_spec, &file_lookup)
+        else {
+            continue;
+        };
+        let Some(exports) = exports_by_file.get(&target_path) else {
+            continue;
+        };
+        let Some(clause_node) = file.arena.get(import_data.import_clause) else {
+            continue;
+        };
+        let Some(clause) = file.arena.get_import_clause(clause_node) else {
+            continue;
+        };
+
+        if clause.name.is_some()
+            && let Some(values) = &exports.default
+        {
+            let local_name = identifier_text(&file.arena, clause.name);
+            if !local_name.is_empty() {
+                options
+                    .external_const_enum_values
+                    .insert(local_name.clone(), values.clone());
+                options.external_const_enum_bindings.insert(local_name);
+            }
+        }
+
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = file.arena.get(clause.named_bindings)
+            && let Some(named_imports) = file.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_none()
+        {
+            for &spec_idx in &named_imports.elements.nodes {
+                let Some(spec_node) = file.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = file.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                let imported_name = if spec.property_name.is_some() {
+                    identifier_text(&file.arena, spec.property_name)
+                } else {
+                    identifier_text(&file.arena, spec.name)
+                };
+                let local_name = identifier_text(&file.arena, spec.name);
+                if imported_name.is_empty() || local_name.is_empty() {
+                    continue;
+                }
+                if let Some(values) = exports.named.get(&imported_name) {
+                    options
+                        .external_const_enum_values
+                        .insert(local_name.clone(), values.clone());
+                    options.external_const_enum_bindings.insert(local_name);
+                }
+            }
+        }
+    }
+}
+
+fn collect_direct_const_enum_exports(file: &BoundFile, exports: &mut DeclarationConstEnumExports) {
+    let Some(statements) = source_statements(file) else {
+        return;
+    };
+    let mut evaluator = EnumEvaluator::new(&file.arena);
+    for &stmt_idx in &statements.nodes {
+        collect_direct_const_enum_export_from_node(
+            &file.arena,
+            &mut evaluator,
+            stmt_idx,
+            false,
+            exports,
+        );
+    }
+}
+
+fn collect_direct_const_enum_export_from_node(
+    arena: &NodeArena,
+    evaluator: &mut EnumEvaluator<'_>,
+    node_idx: NodeIndex,
+    force_exported: bool,
+    exports: &mut DeclarationConstEnumExports,
+) {
+    let Some(node) = arena.get(node_idx) else {
+        return;
+    };
+    if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+        && let Some(export_data) = arena.get_export_decl(node)
+        && export_data.module_specifier.is_none()
+        && let Some(clause_node) = arena.get(export_data.export_clause)
+    {
+        collect_direct_const_enum_export_from_node(
+            arena,
+            evaluator,
+            export_data.export_clause,
+            true,
+            exports,
+        );
+        if clause_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return;
+        }
+    }
+
+    if node.kind != syntax_kind_ext::ENUM_DECLARATION {
+        return;
+    }
+    let Some(enum_data) = arena.get_enum(node) else {
+        return;
+    };
+    if !arena.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+        || (!force_exported && !arena.has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword))
+    {
+        return;
+    }
+    let name = identifier_text(arena, enum_data.name);
+    if name.is_empty() {
+        return;
+    }
+    let values = evaluator.evaluate_enum(node_idx);
+    if !values.is_empty() {
+        exports.named.insert(name, values);
+    }
+}
+
+fn collect_aliased_const_enum_exports(
+    file: &BoundFile,
+    file_lookup: &FxHashMap<String, String>,
+    exports_by_file: &FxHashMap<String, DeclarationConstEnumExports>,
+    exports: &mut DeclarationConstEnumExports,
+) {
+    let Some(statements) = source_statements(file) else {
+        return;
+    };
+    let local_aliases = collect_const_enum_import_aliases(file, file_lookup, exports_by_file);
+    for &stmt_idx in &statements.nodes {
+        let Some(stmt_node) = file.arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            && let Some(export_assignment) = file.arena.get_export_assignment(stmt_node)
+            && !export_assignment.is_export_equals
+        {
+            let name = identifier_text(&file.arena, export_assignment.expression);
+            if let Some(values) = local_aliases
+                .get(&name)
+                .or_else(|| exports.named.get(&name))
+                .cloned()
+            {
+                exports.default = Some(values);
+            }
+            continue;
+        }
+
+        if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            continue;
+        }
+        let Some(export_data) = file.arena.get_export_decl(stmt_node) else {
+            continue;
+        };
+        if export_data.is_default_export {
+            let name = identifier_text(&file.arena, export_data.export_clause);
+            if let Some(values) = local_aliases
+                .get(&name)
+                .or_else(|| exports.named.get(&name))
+                .cloned()
+            {
+                exports.default = Some(values);
+            }
+            continue;
+        }
+        let Some(clause_node) = file.arena.get(export_data.export_clause) else {
+            continue;
+        };
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            continue;
+        }
+        let Some(named_exports) = file.arena.get_named_imports(clause_node) else {
+            continue;
+        };
+        let source_exports = if export_data.module_specifier.is_some() {
+            literal_text(&file.arena, export_data.module_specifier)
+                .and_then(|module_spec| {
+                    resolve_relative_module_file(&file.file_name, &module_spec, file_lookup)
+                })
+                .and_then(|path| exports_by_file.get(&path))
+        } else {
+            None
+        };
+
+        for &spec_idx in &named_exports.elements.nodes {
+            let Some(spec_node) = file.arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = file.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            if spec.is_type_only {
+                continue;
+            }
+            let exported_name = identifier_text(&file.arena, spec.name);
+            let local_or_imported_name = if spec.property_name.is_some() {
+                identifier_text(&file.arena, spec.property_name)
+            } else {
+                exported_name.clone()
+            };
+            let values = source_exports
+                .and_then(|source| source.named.get(&local_or_imported_name))
+                .cloned()
+                .or_else(|| local_aliases.get(&local_or_imported_name).cloned())
+                .or_else(|| exports.named.get(&local_or_imported_name).cloned());
+            let Some(values) = values else {
+                continue;
+            };
+            if exported_name == "default" {
+                exports.default = Some(values);
+            } else if !exported_name.is_empty() {
+                exports.named.insert(exported_name, values);
+            }
+        }
+    }
+}
+
+fn collect_const_enum_import_aliases(
+    file: &BoundFile,
+    file_lookup: &FxHashMap<String, String>,
+    exports_by_file: &FxHashMap<String, DeclarationConstEnumExports>,
+) -> FxHashMap<String, ConstEnumValues> {
+    let mut aliases = FxHashMap::default();
+    let Some(statements) = source_statements(file) else {
+        return aliases;
+    };
+    for &stmt_idx in &statements.nodes {
+        let Some(stmt_node) = file.arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            continue;
+        }
+        let Some(import_data) = file.arena.get_import_decl(stmt_node) else {
+            continue;
+        };
+        let Some(module_spec) = literal_text(&file.arena, import_data.module_specifier) else {
+            continue;
+        };
+        let Some(target_path) =
+            resolve_relative_module_file(&file.file_name, &module_spec, file_lookup)
+        else {
+            continue;
+        };
+        let Some(source_exports) = exports_by_file.get(&target_path) else {
+            continue;
+        };
+        let Some(clause_node) = file.arena.get(import_data.import_clause) else {
+            continue;
+        };
+        let Some(clause) = file.arena.get_import_clause(clause_node) else {
+            continue;
+        };
+        if clause.name.is_some()
+            && let Some(values) = &source_exports.default
+        {
+            let name = identifier_text(&file.arena, clause.name);
+            if !name.is_empty() {
+                aliases.insert(name, values.clone());
+            }
+        }
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = file.arena.get(clause.named_bindings)
+            && let Some(named_imports) = file.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_none()
+        {
+            for &spec_idx in &named_imports.elements.nodes {
+                let Some(spec_node) = file.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = file.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                let imported_name = if spec.property_name.is_some() {
+                    identifier_text(&file.arena, spec.property_name)
+                } else {
+                    identifier_text(&file.arena, spec.name)
+                };
+                let local_name = identifier_text(&file.arena, spec.name);
+                if let Some(values) = source_exports.named.get(&imported_name)
+                    && !local_name.is_empty()
+                {
+                    aliases.insert(local_name, values.clone());
+                }
+            }
+        }
+    }
+    aliases
+}
+
+fn source_statements(file: &BoundFile) -> Option<&tsz_parser::parser::NodeList> {
+    file.arena
+        .get(file.source_file)
+        .and_then(|node| file.arena.get_source_file(node))
+        .map(|source| &source.statements)
+}
+
+fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> String {
+    arena.identifier_text_owned(idx).unwrap_or_default()
+}
+
+fn literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    arena
+        .get(idx)
+        .and_then(|node| arena.get_literal(node))
+        .map(|lit| lit.text.clone())
+}
+
+fn build_program_file_lookup(program: &MergedProgram) -> FxHashMap<String, String> {
+    program
+        .files
+        .iter()
+        .map(|file| {
+            let key = normalized_file_key(&file.file_name);
+            (key.clone(), key)
+        })
+        .collect()
+}
+
+fn normalized_file_key(file_name: &str) -> String {
+    normalize_path(Path::new(file_name))
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn resolve_relative_module_file(
+    containing_file: &str,
+    module_spec: &str,
+    file_lookup: &FxHashMap<String, String>,
+) -> Option<String> {
+    if !(module_spec.starts_with("./") || module_spec.starts_with("../")) {
+        return None;
+    }
+    let containing = Path::new(containing_file);
+    let base = containing
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(module_spec);
+    for candidate in module_resolution_candidates(&base) {
+        let key = normalize_path(&candidate)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if let Some(path) = file_lookup.get(&key) {
+            return Some(path.clone());
+        }
+    }
+    None
+}
+
+fn module_resolution_candidates(base: &Path) -> Vec<PathBuf> {
+    if base.extension().is_some() {
+        return vec![base.to_path_buf()];
+    }
+    vec![
+        base.with_extension("ts"),
+        base.with_extension("tsx"),
+        base.with_extension("d.ts"),
+        base.with_extension("js"),
+        base.join("index.ts"),
+        base.join("index.tsx"),
+        base.join("index.d.ts"),
+        base.join("index.js"),
+    ]
+}
+
+fn declaration_bundle_reference_path_keys(
+    containing_file: &str,
+    arena: &NodeArena,
+    source_file_idx: NodeIndex,
+    file_lookup: &FxHashMap<String, String>,
+) -> Vec<String> {
+    let Some(source_text) = arena
+        .get(source_file_idx)
+        .and_then(|node| arena.get_source_file(node))
+        .map(|source| source.text.as_ref())
+    else {
+        return Vec::new();
+    };
+
+    tsz::checker::triple_slash_validator::extract_reference_paths(source_text)
+        .into_iter()
+        .filter_map(|(reference_path, _, _)| {
+            resolve_declaration_reference_path_file(containing_file, &reference_path, file_lookup)
+        })
+        .collect()
+}
+
+fn resolve_declaration_reference_path_file(
+    containing_file: &str,
+    reference_path: &str,
+    file_lookup: &FxHashMap<String, String>,
+) -> Option<String> {
+    if reference_path.is_empty() {
+        return None;
+    }
+
+    let containing = Path::new(containing_file);
+    let base_dir = containing.parent().unwrap_or_else(|| Path::new(""));
+    let direct_reference = base_dir.join(reference_path);
+    let mut candidates = vec![direct_reference];
+    if !reference_path.contains('.') {
+        for ext in tsz::checker::triple_slash_validator::reference_path_probe_extensions(true) {
+            candidates.push(base_dir.join(format!("{reference_path}{ext}")));
+        }
+    }
+
+    candidates.into_iter().find_map(|candidate| {
+        let key = normalize_path(&candidate)
+            .to_string_lossy()
+            .replace('\\', "/");
+        file_lookup.get(&key).cloned()
+    })
 }
 
 fn normalize_ts2883_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
@@ -657,12 +1284,91 @@ fn map_output_info(output_path: &Path) -> Option<(PathBuf, String, String)> {
     Some((map_path, map_name, output_name))
 }
 
+fn declaration_map_source_name(map_path: &Path, source_path: &Path) -> String {
+    let map_dir = map_path.parent().unwrap_or_else(|| Path::new(""));
+    relative_path_from_dir(map_dir, source_path)
+        .unwrap_or_else(|| source_path.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn relative_path_from_dir(from_dir: &Path, to_path: &Path) -> Option<PathBuf> {
+    if from_dir.is_absolute() != to_path.is_absolute() {
+        return None;
+    }
+
+    let from_components = normalized_path_components(from_dir);
+    let to_components = normalized_path_components(to_path);
+    let mut common_len = 0;
+    while common_len < from_components.len()
+        && common_len < to_components.len()
+        && from_components[common_len] == to_components[common_len]
+    {
+        common_len += 1;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common_len..from_components.len() {
+        relative.push("..");
+    }
+    for component in &to_components[common_len..] {
+        relative.push(component);
+    }
+
+    Some(relative)
+}
+
+fn normalized_path_components(path: &Path) -> Vec<std::ffi::OsString> {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::CurDir | std::path::Component::RootDir => None,
+            std::path::Component::ParentDir => Some(std::ffi::OsString::from("..")),
+            std::path::Component::Normal(part) => Some(part.to_os_string()),
+            std::path::Component::Prefix(prefix) => Some(prefix.as_os_str().to_os_string()),
+        })
+        .collect()
+}
+
 fn append_source_mapping_url(contents: &mut String, map_name: &str, new_line: &str) {
     if !contents.is_empty() && !contents.ends_with(new_line) {
         contents.push_str(new_line);
     }
     contents.push_str("//# sourceMappingURL=");
     contents.push_str(map_name);
+}
+
+fn append_inline_source_mapping_url(contents: &mut String, map_json: &str, new_line: &str) {
+    if !contents.is_empty() && !contents.ends_with(new_line) {
+        contents.push_str(new_line);
+    }
+    contents.push_str("//# sourceMappingURL=data:application/json;base64,");
+    contents.push_str(&base64_encode(map_json.as_bytes()));
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+
+        encoded.push(ALPHABET[(b0 >> 2) as usize] as char);
+        encoded.push(ALPHABET[(((b0 & 0b0000_0011) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(ALPHABET[(((b1 & 0b0000_1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(ALPHABET[(b2 & 0b0011_1111) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+
+    encoded
 }
 
 const fn new_line_str(kind: NewLineKind) -> &'static str {
@@ -672,13 +1378,18 @@ const fn new_line_str(kind: NewLineKind) -> &'static str {
     }
 }
 
-pub(crate) fn write_outputs(outputs: &[OutputFile]) -> Result<Vec<PathBuf>> {
+pub(crate) fn write_outputs(outputs: &[OutputFile], emit_bom: bool) -> Result<Vec<PathBuf>> {
     outputs.par_iter().try_for_each(|output| -> Result<()> {
         if let Some(parent) = output.path.parent() {
             std::fs::create_dir_all::<&Path>(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        std::fs::write(&output.path, &output.contents)
+        let contents = if emit_bom && !output.contents.starts_with('\u{feff}') {
+            format!("\u{feff}{}", output.contents)
+        } else {
+            output.contents.clone()
+        };
+        std::fs::write(&output.path, contents)
             .with_context(|| format!("failed to write {}", output.path.display()))?;
         Ok(())
     })?;
@@ -698,10 +1409,14 @@ fn js_output_path(
     }
 
     let extension = js_extension_for(input_path, jsx)?;
-    let relative = output_relative_path(base_dir, root_dir, input_path);
-    let mut output = match out_dir {
-        Some(out_dir) => out_dir.join(relative),
-        None => input_path.to_path_buf(),
+    let mut output = if should_emit_next_to_source(root_dir, out_dir, input_path) {
+        input_path.to_path_buf()
+    } else {
+        let relative = output_relative_path(base_dir, root_dir, input_path);
+        match out_dir {
+            Some(out_dir) => out_dir.join(relative),
+            None => input_path.to_path_buf(),
+        }
     };
     output.set_extension(extension);
     Some(output)
@@ -721,9 +1436,13 @@ fn declaration_output_path(
     let file_name = relative.file_name()?.to_str()?;
     let new_name = declaration_file_name(file_name)?;
 
-    let mut output = match out_dir {
-        Some(out_dir) => out_dir.join(relative),
-        None => input_path.to_path_buf(),
+    let mut output = if should_emit_next_to_source(root_dir, out_dir, input_path) {
+        input_path.to_path_buf()
+    } else {
+        match out_dir {
+            Some(out_dir) => out_dir.join(relative),
+            None => input_path.to_path_buf(),
+        }
     };
     output.set_file_name(new_name);
     Some(output)
@@ -751,9 +1470,14 @@ fn declaration_bundle_output_path(
     Some(output)
 }
 
-fn join_declaration_bundle_chunks(chunks: &[String], new_line: &str) -> String {
+fn join_declaration_bundle_chunks(chunks: &[DeclarationBundleChunk], new_line: &str) -> String {
+    let ordered_indices = declaration_bundle_chunk_order(chunks);
     let mut bundled = String::new();
-    for chunk in chunks {
+    for chunk in ordered_indices
+        .into_iter()
+        .filter_map(|idx| chunks.get(idx))
+        .map(|chunk| chunk.contents.as_str())
+    {
         if !bundled.is_empty() && !bundled.ends_with(new_line) {
             bundled.push_str(new_line);
         }
@@ -766,15 +1490,71 @@ fn join_declaration_bundle_chunks(chunks: &[String], new_line: &str) -> String {
     bundled
 }
 
-fn bundle_declaration_output(contents: &str, module_kind: ModuleKind) -> String {
+fn declaration_bundle_chunk_order(chunks: &[DeclarationBundleChunk]) -> Vec<usize> {
+    let by_path: FxHashMap<&str, usize> = chunks
+        .iter()
+        .enumerate()
+        .map(|(idx, chunk)| (chunk.path_key.as_str(), idx))
+        .collect();
+    let mut ordered = Vec::with_capacity(chunks.len());
+    let mut emitted = FxHashSet::default();
+    let mut visiting = FxHashSet::default();
+
+    fn visit(
+        idx: usize,
+        chunks: &[DeclarationBundleChunk],
+        by_path: &FxHashMap<&str, usize>,
+        emitted: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
+        ordered: &mut Vec<usize>,
+    ) {
+        if emitted.contains(&idx) || !visiting.insert(idx) {
+            return;
+        }
+
+        for referenced_path in &chunks[idx].referenced_path_keys {
+            if let Some(&referenced_idx) = by_path.get(referenced_path.as_str()) {
+                visit(referenced_idx, chunks, by_path, emitted, visiting, ordered);
+            }
+        }
+
+        visiting.remove(&idx);
+        if emitted.insert(idx) {
+            ordered.push(idx);
+        }
+    }
+
+    for idx in 0..chunks.len() {
+        visit(
+            idx,
+            chunks,
+            &by_path,
+            &mut emitted,
+            &mut visiting,
+            &mut ordered,
+        );
+    }
+
+    ordered
+}
+
+fn bundle_declaration_output(
+    contents: &str,
+    module_kind: ModuleKind,
+    fallback_module_name: Option<&str>,
+) -> String {
     if !matches!(module_kind, ModuleKind::AMD) {
         return contents.to_string();
     }
 
-    wrap_amd_declaration_output(contents).unwrap_or_else(|| contents.to_string())
+    wrap_amd_declaration_output(contents, fallback_module_name)
+        .unwrap_or_else(|| contents.to_string())
 }
 
-fn wrap_amd_declaration_output(contents: &str) -> Option<String> {
+fn wrap_amd_declaration_output(
+    contents: &str,
+    fallback_module_name: Option<&str>,
+) -> Option<String> {
     let mut directive_lines = Vec::new();
     let mut body_lines = Vec::new();
     let mut in_header = true;
@@ -783,7 +1563,7 @@ fn wrap_amd_declaration_output(contents: &str) -> Option<String> {
     for line in contents.lines() {
         if in_header && line.trim_start().starts_with("///") {
             directive_lines.push(line.to_string());
-            if amd_module_name.is_none() {
+            if amd_module_name.is_none() && is_amd_module_directive(line) {
                 amd_module_name = extract_amd_module_name(line);
             }
             continue;
@@ -792,7 +1572,7 @@ fn wrap_amd_declaration_output(contents: &str) -> Option<String> {
         body_lines.push(line.to_string());
     }
 
-    let amd_module_name = amd_module_name?;
+    let amd_module_name = amd_module_name.or_else(|| fallback_module_name.map(str::to_string))?;
     let mut wrapped = String::new();
     for directive in directive_lines {
         wrapped.push_str(&directive);
@@ -830,6 +1610,19 @@ fn extract_amd_module_name(line: &str) -> Option<String> {
     Some(after[1..1 + end].to_string())
 }
 
+fn is_amd_module_directive(line: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix("///") else {
+        return false;
+    };
+    let Some(after_tag) = rest.trim_start().strip_prefix("<amd-module") else {
+        return false;
+    };
+    match after_tag.chars().next() {
+        None => true,
+        Some(ch) => ch.is_ascii_whitespace() || matches!(ch, '/' | '>'),
+    }
+}
+
 fn rewrite_ambient_module_member_line(line: &str) -> String {
     let trimmed = line.trim_start();
     let indent = &line[..line.len() - trimmed.len()];
@@ -855,6 +1648,25 @@ fn output_relative_path(base_dir: &Path, root_dir: Option<&Path>, input_path: &P
         .strip_prefix(base_dir)
         .unwrap_or(input_path)
         .to_path_buf()
+}
+
+fn should_emit_next_to_source(
+    root_dir: Option<&Path>,
+    out_dir: Option<&Path>,
+    input_path: &Path,
+) -> bool {
+    root_dir.is_some_and(|root_dir| input_path.strip_prefix(root_dir).is_err()) && out_dir.is_some()
+}
+
+fn bundled_module_name(
+    base_dir: &Path,
+    root_dir: Option<&Path>,
+    input_path: &Path,
+) -> Option<String> {
+    let mut relative = output_relative_path(base_dir, root_dir, input_path);
+    relative.set_extension("");
+    let module_name = relative.to_string_lossy().replace('\\', "/");
+    (!module_name.is_empty()).then_some(module_name)
 }
 
 fn declaration_file_name(file_name: &str) -> Option<String> {
@@ -918,6 +1730,243 @@ fn js_extension_for(path: &Path, jsx: Option<JsxEmit>) -> Option<&'static str> {
     }
 }
 
+fn js_input_skipped_by_node_modules_depth(path: &Path, max_depth: u32) -> bool {
+    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    if !matches!(ext, "js" | "jsx" | "mjs" | "cjs") {
+        return false;
+    }
+    let depth = path
+        .components()
+        .filter(|component| component.as_os_str() == "node_modules")
+        .count() as u32;
+    depth > max_depth
+}
+
+fn build_ambient_global_type_only_names(
+    program: &MergedProgram,
+    preserve_const_enums: bool,
+) -> FxHashSet<String> {
+    let mut type_only_names = FxHashSet::default();
+    let mut value_names = FxHashSet::default();
+
+    for file in &program.files {
+        let input_path = PathBuf::from(&file.file_name);
+        if !is_declaration_file(&input_path) {
+            continue;
+        }
+
+        let Some(source) = file
+            .arena
+            .get(file.source_file)
+            .and_then(|node| file.arena.get_source_file(node))
+        else {
+            continue;
+        };
+
+        if source_file_has_top_level_module_syntax(&file.arena, &source.statements.nodes) {
+            continue;
+        }
+
+        type_only_names.extend(
+            tsz_emitter::transforms::module_commonjs::build_type_only_declaration_names(
+                &file.arena,
+                &source.statements.nodes,
+                preserve_const_enums,
+            ),
+        );
+        value_names.extend(
+            tsz_emitter::transforms::module_commonjs::build_value_declaration_names(
+                &file.arena,
+                &source.statements.nodes,
+                preserve_const_enums,
+            ),
+        );
+    }
+
+    type_only_names.retain(|name| !value_names.contains(name));
+    type_only_names
+}
+
+fn build_type_only_export_equals_modules(
+    program: &MergedProgram,
+    preserve_const_enums: bool,
+) -> FxHashSet<String> {
+    let mut modules = FxHashSet::default();
+
+    for file in &program.files {
+        let input_path = PathBuf::from(&file.file_name);
+        if !is_declaration_file(&input_path) {
+            continue;
+        }
+
+        let Some(source) = file
+            .arena
+            .get(file.source_file)
+            .and_then(|node| file.arena.get_source_file(node))
+        else {
+            continue;
+        };
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module) = file.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if !file
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
+            let Some(module_name) = file
+                .arena
+                .get(module.name)
+                .and_then(|node| file.arena.get_literal(node))
+                .map(|lit| lit.text.clone())
+            else {
+                continue;
+            };
+            let Some(statements) = module_block_statements(&file.arena, module.body) else {
+                continue;
+            };
+            let Some(export_name) = export_equals_identifier_name(&file.arena, statements) else {
+                continue;
+            };
+            let value_names =
+                tsz_emitter::transforms::module_commonjs::build_value_declaration_names(
+                    &file.arena,
+                    statements,
+                    preserve_const_enums,
+                );
+
+            if !value_names.contains(&export_name) {
+                modules.insert(module_name);
+            }
+        }
+    }
+
+    modules
+}
+
+fn module_block_statements(arena: &NodeArena, body_idx: NodeIndex) -> Option<&[NodeIndex]> {
+    let body_node = arena.get(body_idx)?;
+    let block = arena.get_module_block(body_node)?;
+    block
+        .statements
+        .as_ref()
+        .map(|statements| statements.nodes.as_slice())
+}
+
+fn export_equals_identifier_name(arena: &NodeArena, statements: &[NodeIndex]) -> Option<String> {
+    statements.iter().find_map(|&stmt_idx| {
+        let node = arena.get(stmt_idx)?;
+        if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+            return None;
+        }
+        let export_assignment = arena.get_export_assignment(node)?;
+        if !export_assignment.is_export_equals {
+            return None;
+        }
+        arena.identifier_text_owned(export_assignment.expression)
+    })
+}
+
+fn source_file_has_top_level_module_syntax(arena: &NodeArena, statements: &[NodeIndex]) -> bool {
+    statements.iter().any(|&stmt_idx| {
+        let Some(node) = arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                let Some(import_data) = arena.get_import_decl(node) else {
+                    return false;
+                };
+                let Some(spec_node) = arena.get(import_data.module_specifier) else {
+                    return false;
+                };
+                spec_node.kind == SyntaxKind::StringLiteral as u16
+                    || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+            }
+            _ => false,
+        }
+    })
+}
+
+fn mark_ambient_global_type_only_export_specifiers(
+    arena: &NodeArena,
+    source_file_idx: NodeIndex,
+    ambient_global_type_only_names: &FxHashSet<String>,
+    type_only_nodes: &mut FxHashSet<NodeIndex>,
+) {
+    if ambient_global_type_only_names.is_empty() {
+        return;
+    }
+
+    let Some(source) = arena
+        .get(source_file_idx)
+        .and_then(|node| arena.get_source_file(node))
+    else {
+        return;
+    };
+
+    for &stmt_idx in &source.statements.nodes {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            continue;
+        }
+
+        let Some(export_decl) = arena.get_export_decl(node) else {
+            continue;
+        };
+        if export_decl.is_type_only || export_decl.module_specifier.is_some() {
+            continue;
+        }
+
+        let Some(clause_node) = arena.get(export_decl.export_clause) else {
+            continue;
+        };
+        let Some(named_exports) = arena.get_named_imports(clause_node) else {
+            continue;
+        };
+
+        for &spec_idx in &named_exports.elements.nodes {
+            let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                continue;
+            };
+            if spec.is_type_only {
+                continue;
+            }
+
+            let local_name_idx = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                spec.name
+            };
+            if let Some(local_name) = arena.identifier_text_owned(local_name_idx)
+                && ambient_global_type_only_names.contains(&local_name)
+            {
+                type_only_nodes.insert(spec_idx);
+            }
+        }
+    }
+}
+
 pub(crate) fn normalize_base_url(base_dir: &Path, dir: Option<PathBuf>) -> Option<PathBuf> {
     dir.map(|dir| {
         let resolved = if dir.is_absolute() || is_windows_absolute_like(&dir) {
@@ -961,6 +2010,20 @@ pub(crate) fn normalize_root_dir(base_dir: &Path, dir: Option<PathBuf>) -> Optio
         };
         canonicalize_or_owned(&resolved)
     })
+}
+
+pub(crate) fn normalize_root_dirs(base_dir: &Path, roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    roots
+        .into_iter()
+        .map(|root| {
+            let resolved = if root.is_absolute() {
+                root
+            } else {
+                base_dir.join(root)
+            };
+            canonicalize_with_missing_tail(&resolved)
+        })
+        .collect()
 }
 
 pub(crate) fn normalize_type_roots(

@@ -12,6 +12,7 @@
 //! - `complex` — new expression type computation core
 //! - `complex_new_target` — new expression target validation and abstract constructor detection
 //! - `complex_js_constructor` — JS constructor instance type synthesis
+//! - `expression_guards` — expression-shape helpers for diagnostics/contextual typing
 //! - `identifier` — identifier reference resolution
 //! - `identifier_flow` — flow-based helpers for identifier type computation (evolving arrays, implicit any)
 //! - `object_literal` — object literal type construction
@@ -22,6 +23,8 @@ pub(crate) mod access;
 pub(crate) mod access_await;
 pub(crate) mod access_helpers;
 pub(crate) mod access_super;
+#[cfg(test)]
+mod access_tests;
 pub(crate) mod array_literal;
 pub(crate) mod assignment_target;
 pub(crate) mod binary;
@@ -36,9 +39,11 @@ pub(crate) mod complex_constructors;
 pub(crate) mod complex_js_constructor;
 pub(crate) mod complex_new_target;
 pub(crate) mod contextual;
+pub(crate) mod expression_guards;
 pub mod helpers;
 pub(crate) mod identifier;
 pub(crate) mod identifier_flow;
+pub(crate) mod large_tuple;
 pub(crate) mod object_literal;
 pub(crate) mod object_literal_circularity;
 pub(crate) mod object_literal_context;

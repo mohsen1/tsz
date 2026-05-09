@@ -159,6 +159,10 @@ export function parseBaseline(content: string): BaselineContent {
       ?? segments[i + 1].markerStart;
   }
 
+  const trimSegmentBoundaryNewlines = (text: string): string => {
+    return text.replace(/^(?:\r?\n)+/, '').replace(/(?:\r?\n)+$/, '');
+  };
+
   const isTsSourceLike = (name: string): boolean => {
     return /\.(ts|tsx|mts|cts)$/.test(name) && !name.endsWith('.d.ts');
   };
@@ -283,7 +287,26 @@ export function parseBaseline(content: string): BaselineContent {
           const laterName = seg.name.trim();
           return !laterName.startsWith('tests/cases/') && isTsSourceLike(laterName);
         });
-        if (hasLaterTsSource) {
+        const hasLaterJsOutput = segments.slice(i + 1).some(seg => {
+          const laterName = seg.name.trim();
+          if (laterName.startsWith('tests/cases/') || !isJsLikeOutput(laterName)) {
+            return false;
+          }
+          const laterBase = toJsOutputBase(laterName);
+          if (seenTsSources.some(src => {
+            if (src.endsWith('.d.ts')) return false;
+            return src.replace(/\.(ts|tsx|mts|cts)$/, '') === laterBase;
+          })) {
+            return true;
+          }
+          return [...seenNames].some(seen => {
+            if (!isJsLikeOutput(seen) || toJsOutputBase(seen) !== laterBase || seen === laterName) return false;
+            const seenExt = seen.match(/\.(js|jsx|mjs|cjs)$/)?.[1];
+            const laterExt = laterName.match(/\.(js|jsx|mjs|cjs)$/)?.[1];
+            return seenExt === 'jsx' && laterExt === 'js';
+          });
+        });
+        if (hasLaterTsSource || hasLaterJsOutput) {
           seenNames.add(name);
           continue;
         }
@@ -304,7 +327,7 @@ export function parseBaseline(content: string): BaselineContent {
   for (let segIndex = 0; segIndex < segments.length; segIndex++) {
     const seg = segments[segIndex];
     const name = seg.name.trim();
-    const fileContent = content.slice(seg.start, seg.end).trim();
+    const fileContent = trimSegmentBoundaryNewlines(content.slice(seg.start, seg.end));
 
     if (name.startsWith('tests/cases/')) {
       continue;
@@ -337,6 +360,7 @@ export function parseBaseline(content: string): BaselineContent {
   }
 
   for (const sourceName of sourceLikeFiles.map((f) => f.name)) {
+    if (sourceName.endsWith('.d.ts')) continue;
     dtsOutputCandidates.add(toSourceDtsOutputName(sourceName));
   }
   for (const seg of outputSegments) {
@@ -350,7 +374,7 @@ export function parseBaseline(content: string): BaselineContent {
   for (let segIndex = 0; segIndex < segments.length; segIndex++) {
     const seg = segments[segIndex];
     const name = seg.name.trim();
-    const fileContent = content.slice(seg.start, seg.end).trim();
+    const fileContent = trimSegmentBoundaryNewlines(content.slice(seg.start, seg.end));
 
     if (seg.differsFromOriginalEmit) {
       continue;
@@ -456,6 +480,42 @@ export function parseBaseline(content: string): BaselineContent {
           break;
         }
       }
+    }
+  }
+
+  // Some scanner baselines intentionally emit text that looks like baseline
+  // file markers. Once a JS output is followed by its source marker, keep the
+  // marker-looking text as emitted JS instead of splitting it into fake files.
+  if (result.sourceFileName && result.jsFileName) {
+    const sourceName = result.sourceFileName;
+    const jsName = result.jsFileName;
+    for (let i = outputStart; i < segments.length - 1; i++) {
+      const seg = segments[i];
+      if (seg.name.trim() !== jsName || !isJsLikeOutput(seg.name.trim())) {
+        continue;
+      }
+      const nextName = segments[i + 1].name.trim();
+      if (nextName !== sourceName || !isTsSourceLike(nextName)) {
+        continue;
+      }
+
+      let end = content.length;
+      for (let j = i + 1; j < segments.length; j++) {
+        const markerName = segments[j].name.trim();
+        if (markerName === sourceName || markerName === jsName) {
+          continue;
+        }
+        end = segments[j].markerStart;
+        break;
+      }
+
+      const fileContent = content.slice(seg.start, end).trim();
+      if (fileContent.length > 0) {
+        result.js = fileContent;
+        result.jsFileName = jsName;
+        result.files.set(jsName, fileContent);
+      }
+      break;
     }
   }
 

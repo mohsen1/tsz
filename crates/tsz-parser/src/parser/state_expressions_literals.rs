@@ -212,7 +212,10 @@ impl ParserState {
                     break;
                 }
                 // Missing comma - emit error and continue parsing for recovery
-                self.parse_expected(SyntaxKind::CommaToken);
+                self.parse_error_at_current_token(
+                    "',' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                );
 
                 // Skip tokens that cannot start a binding element so the
                 // next loop iteration sees either a valid element start, `}`
@@ -309,9 +312,26 @@ impl ParserState {
             // Later reserved words in an array binding should stay on the
             // structural recovery path instead of surfacing a reserved-word
             // identifier diagnostic that tsc does not emit here.
-            if !elements.is_empty() && self.is_reserved_word() {
+            let in_parameter_binding_pattern = (self.context_flags
+                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+                != 0;
+            let hard_reserved_word = self.is_reserved_word();
+            let parameter_future_reserved_word =
+                in_parameter_binding_pattern && self.is_strict_mode_future_reserved_word();
+            if !elements.is_empty() && (hard_reserved_word || parameter_future_reserved_word) {
                 if let Some(comma_pos) = last_comma_pos {
-                    self.parse_error_at(comma_pos, 1, "';' expected.", diagnostic_codes::EXPECTED);
+                    let message = if in_parameter_binding_pattern {
+                        "'(' expected."
+                    } else {
+                        "';' expected."
+                    };
+                    self.parse_error_at(comma_pos, 1, message, diagnostic_codes::EXPECTED);
+                }
+                if in_parameter_binding_pattern && hard_reserved_word {
+                    self.parse_companion_error_at_current_token(
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
                 }
                 self.pending_array_binding_tail_recovery = true;
                 reserved_word_element_needs_close_error = true;
@@ -394,14 +414,25 @@ impl ParserState {
             last_comma_pos = Some(self.token_pos().saturating_sub(1));
         }
 
+        let in_parameter_binding_pattern = (self.context_flags
+            & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+            != 0;
         if reserved_word_element_needs_close_error {
-            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            let message = if in_parameter_binding_pattern {
+                "';' expected."
+            } else {
+                "'(' expected."
+            };
+            self.parse_error_at_current_token(message, diagnostic_codes::EXPECTED);
         }
 
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
-        if reserved_word_element_needs_close_error && self.is_token(SyntaxKind::EqualsToken) {
+        if reserved_word_element_needs_close_error
+            && ((in_parameter_binding_pattern && self.is_token(SyntaxKind::CloseParenToken))
+                || self.is_token(SyntaxKind::EqualsToken))
+        {
             self.parse_error_at_current_token(
                 "Declaration or statement expected.",
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
@@ -1232,13 +1263,46 @@ impl ParserState {
     }
 
     fn report_unterminated_template_recovery_delimiters(&mut self, start: u32, end: u32) {
-        let Some(source_tail) = self.get_source_text().get(start as usize..end as usize) else {
+        let source = self.get_source_text();
+        let Some(source_tail) = source.get(start as usize..end as usize) else {
             return;
         };
 
         let Some(backtick_before_comma) = source_tail.rfind("`,") else {
             return;
         };
+
+        // Suppress synthetic recovery markers when the recovered tail
+        // template's content (between its opening backtick and
+        // `backtick_before_comma`) contains a `${` interpolation. tsc
+        // treats interpolated tail templates as continuation of the outer
+        // unterminated template's text and does NOT surface synthetic
+        // markers — only plain tail templates yield TS1005 markers.
+        // Difference between
+        // `labeledStatementDeclarationListInLoopNoCrash3.ts`
+        // (interpolated — no markers) and `...NoCrash4.ts`
+        // (plain — markers).
+        // The `\`,` pattern's backtick is the CLOSING backtick of a tail
+        // template literal `\`<text>\`,`. Find that template's OPENING
+        // backtick and check whether its content contains `${`. The
+        // opening may be inside the tail (e.g., `...\`a\`,...\`b\`,`) OR
+        // before `start` (when the closing backtick at position 0 of the
+        // tail belongs to a template that started before `start`). For
+        // the latter, walk the source backwards from `start` to locate
+        // the opening.
+        //
+        // tsc emits the synthetic recovery markers only for plain
+        // (non-interpolated) tail templates. If the recovered template
+        // segment contains `${`, suppress the markers — matching
+        // `labeledStatementDeclarationListInLoopNoCrash3.ts` (interpolated
+        // tail) vs `...NoCrash4.ts` (plain tail).
+        let abs_close_backtick = start as usize + backtick_before_comma;
+        let opening_backtick = source[..abs_close_backtick].rfind('`');
+        let opening_backtick_segment_has_interp = opening_backtick
+            .is_some_and(|open| source[open + 1..abs_close_backtick].contains("${"));
+        if opening_backtick_segment_has_interp {
+            return;
+        }
 
         use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at(
@@ -2041,11 +2105,13 @@ impl ParserState {
             self.token_pos()
         };
 
-        // Parse body if present. Missing body is reported in grammar check, not here.
-        // This matches TypeScript's behavior of allowing ASI and checking later.
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            }
             NodeIndex::NONE
         };
 
@@ -2132,10 +2198,13 @@ impl ParserState {
             let _ = self.parse_return_type();
         }
 
-        // Parse body if present. Missing body is reported in grammar check, not here.
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            }
             NodeIndex::NONE
         };
 

@@ -60,14 +60,11 @@ impl<'a> Printer<'a> {
 
         // Store file name for jsx=react-jsxdev source location emission
         if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
-            // Extract just the basename from the full file path
-            let base_name = source
-                .file_name
-                .rsplit('/')
-                .next()
-                .unwrap_or(&source.file_name);
-            self.jsx_dev_file_name = Some(base_name.to_string());
+            self.jsx_dev_file_name = Some(jsx_dev_file_name(&source.file_name));
+        } else {
+            self.jsx_dev_file_name = None;
         }
+        self.jsx_legacy_cjs_runtime_var = None;
 
         // Collect all identifiers in the file for temp name collision detection.
         // This mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
@@ -85,8 +82,11 @@ impl<'a> Printer<'a> {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
+        self.namespace_all_exported_names.clear();
+        self.collect_all_namespace_exports(&source.statements);
 
         // Pre-pass: collect const enum values for inlining at usage sites.
         // tsc replaces property/element access to const enum members with their
@@ -462,6 +462,17 @@ impl<'a> Printer<'a> {
             && self.ctx.original_module_kind.is_none()
             && !(is_es_module_output && is_file_module)
             && !jsx_will_add_esm_imports;
+        // moduleDetection=legacy: a non-module file under module=System still
+        // emits a top-level "use strict" because System modules are strict.
+        // Without legacy, the file would either be a module wrapped in
+        // System.register (which already emits its own strict) or we'd add a
+        // JSX import (which would promote to a module). Under legacy, neither
+        // happens — but the implicit strictness of the module setting still
+        // applies, matching tsc's emit.
+        let needs_use_strict_legacy_system = self.ctx.options.module_detection_legacy
+            && !is_file_module
+            && matches!(self.ctx.options.module, ModuleKind::System)
+            && !has_module_wrapper_stmt;
         let has_invalid_export_recovery = source.statements.nodes.iter().any(|&idx| {
             self.arena
                 .get(idx)
@@ -476,13 +487,26 @@ impl<'a> Printer<'a> {
             && !has_module_wrapper_stmt
             && !jsx_will_add_esm_imports;
 
+        // Issue #3516: when the `using`/`await using` downlevel transform
+        // fires for a script (target < esnext.disposable), tsc emits a
+        // `"use strict"` prologue because the transform's helpers and the
+        // surrounding lowered code rely on strict-mode semantics. Mirror
+        // that by detecting top-level using declarations and forcing the
+        // prologue.
+        let needs_use_strict_using_transform = !is_es_module_output
+            && !is_file_module
+            && !self.ctx.options.target.supports_es2025()
+            && self.block_has_using_declarations(&source.statements);
+
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
             && (needs_use_strict_cjs
                 || needs_use_strict_amd_umd
                 || needs_use_strict_inside_wrapper
                 || needs_use_strict_always
-                || needs_use_strict_invalid_export_recovery);
+                || needs_use_strict_invalid_export_recovery
+                || needs_use_strict_legacy_system
+                || needs_use_strict_using_transform);
 
         // When the source has its own "use strict" prologue AND this is a CJS
         // module file, we must emit "use strict" at the correct position (before
@@ -501,7 +525,6 @@ impl<'a> Printer<'a> {
             self.write("\"use strict\";");
             self.write_line();
         }
-
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
         // node.pos may include leading trivia (where comments live).
@@ -706,12 +729,51 @@ impl<'a> Printer<'a> {
                     // line before the next content) are file-level and go BEFORE
                     // the __esModule marker. "Attached" comments (no blank line
                     // after them) are deferred to AFTER the preamble.
+                    //
+                    // For triple-slash references, treat a contiguous run of
+                    // refs (no blank lines between them) as one group. If the
+                    // LAST ref in the group is detached (blank line before the
+                    // next non-ref content), the entire group is detached. tsc
+                    // emits all of them together before `__esModule` in that
+                    // case, instead of splitting the group around the preamble.
+                    let mut group_end_pos = c_end;
+                    let mut group_end_idx = self.comment_emit_idx;
+                    if is_triple_slash_reference {
+                        let mut probe_idx = self.comment_emit_idx;
+                        let mut probe_end = c_end;
+                        while probe_idx + 1 < self.all_comments.len() {
+                            let next_c = &self.all_comments[probe_idx + 1];
+                            if next_c.end > first_stmt_pos {
+                                break;
+                            }
+                            let gap = &text[probe_end as usize..next_c.pos as usize];
+                            if gap.contains("\n\n") || gap.contains("\r\n\r\n") {
+                                break;
+                            }
+                            let next_text = crate::safe_slice::slice(
+                                text,
+                                next_c.pos as usize,
+                                next_c.end as usize,
+                            )
+                            .unwrap_or("");
+                            let next_trimmed = next_text.trim_start();
+                            if !(next_trimmed.starts_with("///<reference")
+                                || next_trimmed.starts_with("/// <reference"))
+                            {
+                                break;
+                            }
+                            probe_idx += 1;
+                            probe_end = next_c.end;
+                        }
+                        group_end_idx = probe_idx;
+                        group_end_pos = probe_end;
+                    }
                     let next_content_pos = self
                         .all_comments
-                        .get(self.comment_emit_idx + 1)
+                        .get(group_end_idx + 1)
                         .filter(|next_c| next_c.end <= first_stmt_pos)
                         .map_or(first_stmt_pos, |next_c| next_c.pos);
-                    let between_after = &text[c_end as usize..next_content_pos as usize];
+                    let between_after = &text[group_end_pos as usize..next_content_pos as usize];
                     let is_detached =
                         between_after.contains("\n\n") || between_after.contains("\r\n\r\n");
                     let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
@@ -755,8 +817,36 @@ impl<'a> Printer<'a> {
         }
 
         // Emit JSX auto-import for jsx=react-jsx / react-jsxdev (ESM only here;
-        // CJS require() is emitted after __esModule below)
-        let jsx_import_text = self.jsx_auto_import_text();
+        // CJS require() is emitted after __esModule below).
+        // Under `--moduleDetection legacy`, JSX usage in a file that has no
+        // explicit import/export must NOT auto-promote the file to a module —
+        // tsc emits the `_jsx` calls bare (referencing an undefined identifier
+        // at runtime, but matching tsc's output verbatim).
+        let suppress_jsx_import_legacy =
+            self.ctx.options.module_detection_legacy && !is_file_module;
+        if suppress_jsx_import_legacy
+            && self.ctx.is_effectively_commonjs()
+            && matches!(
+                self.ctx.options.jsx,
+                JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
+            )
+        {
+            let usage = self.scan_jsx_usage();
+            if usage.needs_jsx || usage.needs_jsxs || usage.needs_fragment {
+                self.jsx_legacy_cjs_runtime_var = Some(self.make_unique_name());
+            }
+        }
+        let jsx_legacy_dev_file_name_text =
+            if suppress_jsx_import_legacy && matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+                self.jsx_dev_file_name_text()
+            } else {
+                None
+            };
+        let jsx_import_text = if suppress_jsx_import_legacy {
+            None
+        } else {
+            self.jsx_auto_import_text()
+        };
         let mut emitted_jsx_esm_import = false;
         if !self.ctx.is_commonjs()
             && let Some(ref jsx_import) = jsx_import_text
@@ -770,6 +860,9 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
             }
+        }
+        if let Some(ref file_name_text) = jsx_legacy_dev_file_name_text {
+            self.write(file_name_text);
         }
 
         let cjs_pre_preamble_prologue_count =
@@ -850,22 +943,71 @@ impl<'a> Printer<'a> {
         }
 
         // Emit all needed helpers (unless no_emit_helpers is set)
+        let mut emitted_inline_helpers = false;
+        let mut post_helpers_hoist_byte_offset = self.writer.len();
+        let mut post_helpers_hoist_line = self.writer.current_line();
         if !(self.ctx.options.no_emit_helpers || self.ctx.options.import_helpers && is_file_module)
         {
             let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
             if !helpers_code.is_empty() {
                 self.write(&helpers_code);
+                emitted_inline_helpers = true;
+                post_helpers_hoist_byte_offset = self.writer.len();
+                post_helpers_hoist_line = self.writer.current_line();
                 // emit_helpers() already adds newlines, no need to add more
             }
         }
+        // Capture the post-helpers position for script files. tsc places the
+        // `var _a, _Class_*_accessor_storage, ...` class-temp hoist AFTER the
+        // helpers (`__classPrivateFieldGet`/`__decorate`/etc.), not before.
+        // Without this, scripts with class private-field temps emit the
+        // hoisted `var` BEFORE the helpers and diff against the baseline.
+        let script_post_helpers_hoist_byte_offset = self.writer.len();
+        let script_post_helpers_hoist_line = self.writer.current_line();
 
-        // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`
+        // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`.
+        // tsc places the `var _a, ...` hoist for class private fields BEFORE
+        // this import (see the `privateNameStaticEmitHelpers` baseline), so
+        // capture the writer position now and let the post-statement hoist
+        // insertion target it. Without this, vars would sort under the
+        // post-import `hoisted_var_byte_offset` and emit invalid-order ESM.
         let mut emitted_tslib_esm_import = false;
+        let pre_tslib_import_byte_offset = self.writer.len();
+        let pre_tslib_import_line = self.writer.current_line();
         if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
             let names = helpers.needed_names();
             if !names.is_empty() {
+                // When a helper name collides with a local identifier (e.g.
+                // `declare var __decorate`), tsc renames the import alias to
+                // `__decorate_1` and uses the alias at call sites. Detect
+                // those collisions and emit `import { name as name_1 } from
+                // "tslib"`. The aliases are stored on the printer so later
+                // helper-call emission picks them up.
                 self.write("import { ");
-                self.write(&names.join(", "));
+                let mut first = true;
+                for name in &names {
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.write(name);
+                    let name_str: &str = name;
+                    let collides = self.file_identifiers.contains(name_str);
+                    if collides {
+                        let mut suffix = 1u32;
+                        let mut alias = format!("{name_str}_{suffix}");
+                        while self.file_identifiers.contains(alias.as_str())
+                            || self.helper_import_aliases.values().any(|v| v == &alias)
+                        {
+                            suffix += 1;
+                            alias = format!("{name_str}_{suffix}");
+                        }
+                        self.write(" as ");
+                        self.write(&alias);
+                        self.helper_import_aliases
+                            .insert(name_str.to_string(), alias);
+                    }
+                }
                 self.write(" } from \"tslib\";");
                 self.write_line();
                 emitted_tslib_esm_import = true;
@@ -889,6 +1031,13 @@ impl<'a> Printer<'a> {
                     self.ctx.options.preserve_const_enums,
                 );
             self.ctx.module_state.value_decl_names_computed = true;
+            self.ctx.module_state.runtime_declaration_names =
+                module_commonjs::build_runtime_declaration_names(
+                    self.arena,
+                    &source.statements.nodes,
+                    self.ctx.options.preserve_const_enums,
+                );
+            self.ctx.module_state.runtime_decl_names_computed = true;
         }
 
         let has_top_level_using = !self.ctx.options.target.supports_es2025()
@@ -927,6 +1076,7 @@ impl<'a> Printer<'a> {
                 self.arena,
                 &source.statements.nodes,
                 self.ctx.options.preserve_const_enums,
+                &self.ctx.options.type_only_nodes,
             );
 
             if has_top_level_using
@@ -964,6 +1114,7 @@ impl<'a> Printer<'a> {
             let inline_var_names = module_commonjs::collect_inline_exported_var_names(
                 self.arena,
                 &source.statements.nodes,
+                self.ctx.options.preserve_const_enums,
             );
             self.commonjs_exported_var_names.extend(inline_var_names);
             // When `export =` is present, suppress hoisted function exports
@@ -1023,33 +1174,80 @@ impl<'a> Printer<'a> {
             {
                 // Build a merged list of (source_position, export_name, local_name)
                 let mut all_func_exports: Vec<(u32, String, String)> = Vec::new();
+                // Walk anonymous-default functions in source order so the Nth
+                // synthesized name (`default_1`, `default_2`, ...) matches the
+                // Nth occurrence. Without this, the position lookup below
+                // would short-circuit on the first match and assign every
+                // anonymous default the same position (or fall back to 0),
+                // sorting them backwards in the hoisted preamble — see
+                // `exportDefaultInterfaceAndTwoFunctions`.
+                let mut anonymous_default_positions: Vec<u32> = Vec::new();
+                for &idx in &source.statements.nodes {
+                    let Some(node) = self.arena.get(idx) else {
+                        continue;
+                    };
+                    if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                        continue;
+                    }
+                    let Some(export) = self.arena.get_export_decl(node) else {
+                        continue;
+                    };
+                    if !export.is_default_export {
+                        continue;
+                    }
+                    let Some(clause) = self.arena.get(export.export_clause) else {
+                        continue;
+                    };
+                    if clause.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                        continue;
+                    }
+                    let Some(func) = self.arena.get_function(clause) else {
+                        continue;
+                    };
+                    let fn_name = self.get_identifier_text_idx(func.name);
+                    if fn_name.is_empty() || fn_name == "function" {
+                        anonymous_default_positions.push(node.pos);
+                    }
+                }
+                let mut anonymous_default_cursor = 0_usize;
                 for name in &default_func_exports {
-                    // Find source position of the default function export
-                    let pos = source
-                        .statements
-                        .nodes
-                        .iter()
-                        .find_map(|&idx| {
-                            let node = self.arena.get(idx)?;
-                            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                                let export = self.arena.get_export_decl(node)?;
-                                if export.is_default_export {
-                                    let clause = self.arena.get(export.export_clause)?;
-                                    if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                                        let func = self.arena.get_function(clause)?;
-                                        let fn_name = self.get_identifier_text_idx(func.name);
-                                        if &fn_name == name
-                                            || (name == "default_1"
-                                                && (fn_name.is_empty() || fn_name == "function"))
-                                        {
-                                            return Some(node.pos);
+                    // Anonymous synthesized names are `default_1`, `default_2`, ...
+                    // — their source positions come from the source-order walk
+                    // above. Real-name defaults still resolve via the normal
+                    // by-name lookup.
+                    let is_anonymous_synthetic = name.starts_with("default_")
+                        && name[8..].chars().all(|c| c.is_ascii_digit());
+                    let pos = if is_anonymous_synthetic {
+                        let p = anonymous_default_positions
+                            .get(anonymous_default_cursor)
+                            .copied()
+                            .unwrap_or(0);
+                        anonymous_default_cursor += 1;
+                        p
+                    } else {
+                        source
+                            .statements
+                            .nodes
+                            .iter()
+                            .find_map(|&idx| {
+                                let node = self.arena.get(idx)?;
+                                if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                    let export = self.arena.get_export_decl(node)?;
+                                    if export.is_default_export {
+                                        let clause = self.arena.get(export.export_clause)?;
+                                        if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                                            let func = self.arena.get_function(clause)?;
+                                            let fn_name = self.get_identifier_text_idx(func.name);
+                                            if &fn_name == name {
+                                                return Some(node.pos);
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            None
-                        })
-                        .unwrap_or(0);
+                                None
+                            })
+                            .unwrap_or(0)
+                    };
                     all_func_exports.push((pos, "default".to_string(), name.clone()));
                 }
                 for (exported_name, local_name) in &func_exports {
@@ -1116,11 +1314,15 @@ impl<'a> Printer<'a> {
 
             // Emit CJS tslib require after exports preamble
             if self.ctx.options.import_helpers && helpers.any_needed() {
+                self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
                 if self.ctx.options.target.is_es5() {
-                    self.write("var tslib_1 = require(\"tslib\");");
+                    self.write("var ");
                 } else {
-                    self.write("const tslib_1 = require(\"tslib\");");
+                    self.write("const ");
                 }
+                let binding = self.commonjs_tslib_import_binding.clone();
+                self.write(&binding);
+                self.write(" = require(\"tslib\");");
                 self.write_line();
             }
         }
@@ -1170,8 +1372,20 @@ impl<'a> Printer<'a> {
         self.prepare_logical_assignment_value_temps(source_idx);
         self.prepare_object_rest_assignment_temps(source_idx);
 
-        let mut hoisted_var_byte_offset = self.writer.len();
-        let mut hoisted_var_line = self.writer.current_line();
+        let mut hoisted_var_byte_offset = if is_file_module {
+            self.writer.len()
+        } else if emitted_inline_helpers {
+            post_helpers_hoist_byte_offset
+        } else {
+            script_post_helpers_hoist_byte_offset
+        };
+        let mut hoisted_var_line = if is_file_module {
+            self.writer.current_line()
+        } else if emitted_inline_helpers {
+            post_helpers_hoist_line
+        } else {
+            script_post_helpers_hoist_line
+        };
 
         // Emit statements with their leading comments.
         // In this parser, node.pos includes leading trivia (whitespace + comments).
@@ -1191,6 +1405,11 @@ impl<'a> Printer<'a> {
         } else {
             rustc_hash::FxHashMap::default()
         };
+        let cjs_deferred_export_bindings_all = if is_top_level_cjs {
+            self.collect_cjs_deferred_export_bindings_all(&source.statements)
+        } else {
+            rustc_hash::FxHashMap::default()
+        };
 
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
@@ -1201,6 +1420,17 @@ impl<'a> Printer<'a> {
         let mut has_deferred_empty_export = false;
         let mut skip_recovered_yield_operand_statement = false;
         let mut skip_recovered_debugger_namespace_until: Option<u32> = None;
+        if source.statements.nodes.is_empty()
+            && self
+                .source_text
+                .is_some_and(|text| text.trim_start().starts_with("@<"))
+        {
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.write(";");
+            self.write_line();
+        }
         for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -1411,10 +1641,25 @@ impl<'a> Printer<'a> {
             // Previously we used skip_whitespace_forward which stopped at
             // comments, causing `c_end > actual_start` for the comment itself.
             let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+            let next_stmt_node = source
+                .statements
+                .nodes
+                .get(stmt_i + 1)
+                .and_then(|&next_idx| self.arena.get(next_idx));
 
             if is_erased {
                 if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                     self.emit_recovered_interface_body_statements(stmt_node);
+                }
+                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    let scan_end = next_stmt_node.map_or_else(
+                        || {
+                            self.source_text
+                                .map_or(stmt_node.end, |text| text.len() as u32)
+                        },
+                        |n| n.pos,
+                    );
+                    self.emit_recovered_template_module_declaration(stmt_node, scan_end);
                 }
                 if let Some(recovered_tail) =
                     self.recovered_ambient_class_parenthesized_tail_text(stmt_node)
@@ -1431,11 +1676,6 @@ impl<'a> Printer<'a> {
                 //   - Comments on subsequent lines → keep for the next statement
                 // Cap the scan end at the next statement's pos to avoid scanning
                 // into subsequent statements (same fix as initialization phase).
-                let next_stmt_node = source
-                    .statements
-                    .nodes
-                    .get(stmt_i + 1)
-                    .and_then(|&next_idx| self.arena.get(next_idx));
                 let scan_end = next_stmt_node.map_or(stmt_node.end, |n| n.pos);
                 let stmt_token_end = self.find_token_end_before_trivia(stmt_node.pos, scan_end);
                 let mut line_end = if let Some(text) = self.source_text {
@@ -1540,7 +1780,12 @@ impl<'a> Printer<'a> {
                 .map(|next_node| next_node.pos);
 
             let before_len = self.writer.len();
-            if let Some(recovered_yield_call) = self.recovered_yield_call_statement_text(stmt_node)
+            if let Some(recovered_jsx_closing) =
+                self.recovered_invalid_jsx_closing_fragment_statement_text(stmt_node)
+            {
+                self.write(&recovered_jsx_closing);
+            } else if let Some(recovered_yield_call) =
+                self.recovered_yield_call_statement_text(stmt_node)
             {
                 self.write(&recovered_yield_call);
                 skip_recovered_yield_operand_statement = true;
@@ -1565,11 +1810,8 @@ impl<'a> Printer<'a> {
                     && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
                     && stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION;
                 let prev_deferred_local_export_bindings = if use_deferred_nested_cjs_exports {
-                    let bindings = cjs_deferred_export_names
-                        .iter()
-                        .map(|name| (name.clone(), name.clone()))
-                        .collect();
-                    self.deferred_local_export_bindings.replace(bindings)
+                    self.deferred_local_export_bindings
+                        .replace(cjs_deferred_export_bindings.clone())
                 } else {
                     None
                 };
@@ -1582,6 +1824,7 @@ impl<'a> Printer<'a> {
             }
             let emitted_output = self.writer.len() > before_len;
             let mut handled_legacy_decorated_deferred_export = false;
+            let mut handled_deferred_enum_iife_export = false;
 
             if emitted_output
                 && is_top_level_cjs
@@ -1612,27 +1855,78 @@ impl<'a> Printer<'a> {
                 handled_legacy_decorated_deferred_export = true;
             }
 
+            if emitted_output
+                && is_top_level_cjs
+                && !cjs_deferred_export_bindings.is_empty()
+                && stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                && let Some(enum_decl) = self.arena.get_enum(stmt_node)
+                && let Some(name) = self.get_identifier_text_opt(enum_decl.name)
+                && let Some(export_name) = cjs_deferred_export_bindings.get(&name)
+                && export_name == &name
+                && !self.ctx.module_state.iife_exported_names.contains(&name)
+            {
+                let full_output = self.writer.get_output().to_string();
+                let emitted = full_output[before_len..].to_string();
+                let from = format!("({name} || ({name} = {{}}))");
+                let to = format!("({name} || (exports.{name} = {name} = {{}}))");
+                if emitted.contains(&from) {
+                    let separate_assignment = format!("exports.{name} = {name};");
+                    let rewritten = emitted.replacen(&from, &to, 1);
+                    let had_trailing_newline = rewritten.ends_with('\n');
+                    let mut rewritten = rewritten
+                        .lines()
+                        .filter(|line| line.trim() != separate_assignment)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if had_trailing_newline {
+                        rewritten.push('\n');
+                    }
+                    self.writer.truncate(before_len);
+                    self.writer.write_raw_text(&rewritten);
+                    self.ctx
+                        .module_state
+                        .iife_exported_names
+                        .insert(name.clone());
+                    self.ctx
+                        .module_state
+                        .inline_exported_names
+                        .insert(export_name.clone());
+                    handled_deferred_enum_iife_export = true;
+                }
+            }
+
             // CJS: emit inline `exports.X = X;` right after var/class declarations
             // whose names appear in a later `export { X }` clause. This matches
             // tsc's interleaved ordering where exports follow their declarations.
             if emitted_output
                 && !handled_legacy_decorated_deferred_export
+                && !handled_deferred_enum_iife_export
                 && !cjs_deferred_export_names.is_empty()
             {
                 let names = self.get_declaration_export_names(stmt_node);
                 for name in names {
-                    if cjs_deferred_export_names.contains(name.as_str())
-                        && !self.ctx.module_state.iife_exported_names.contains(&name)
-                    {
+                    if self.ctx.module_state.iife_exported_names.contains(&name) {
+                        continue;
+                    }
+                    let Some(export_names) = cjs_deferred_export_bindings_all.get(&name) else {
+                        continue;
+                    };
+                    for export_name in export_names {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
-                        self.write("exports.");
-                        self.write(&name);
+                        // Arbitrary module namespace identifiers (e.g.
+                        // `export { someValue as "<X>" }`) yield non-identifier
+                        // export names that must use bracket access — `exports.<X>`
+                        // is a syntax error.
+                        self.write_export_property_access(export_name);
                         self.write(" = ");
                         self.write(&name);
                         self.write(";");
-                        self.ctx.module_state.inline_exported_names.insert(name);
+                        self.ctx
+                            .module_state
+                            .inline_exported_names
+                            .insert(export_name.clone());
                     }
                 }
             }
@@ -1813,8 +2107,16 @@ impl<'a> Printer<'a> {
         // path captures the pre-preamble offset in `cjs_destr_hoist_byte_offset`; when set,
         // route hoisted temps through that position instead of the post-preamble
         // `hoisted_var_byte_offset`.
+        //
+        // For ESM with `--importHelpers` and at least one private-field class,
+        // tsc emits `var _a, ...` BEFORE the synthesized `import { ... } from "tslib";`
+        // (see the `privateNameStaticEmitHelpers` baseline). When the tslib
+        // import was actually emitted, route the hoist through the
+        // pre-import position so the ordering matches.
         let (hoist_byte_offset, hoist_line) = if self.ctx.is_commonjs() {
             (self.cjs_destr_hoist_byte_offset, self.cjs_destr_hoist_line)
+        } else if emitted_tslib_esm_import {
+            (pre_tslib_import_byte_offset, pre_tslib_import_line)
         } else {
             (hoisted_var_byte_offset, hoisted_var_line)
         };
@@ -1925,6 +2227,17 @@ impl<'a> Printer<'a> {
 
         let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
         Some(format!("{recovered};"))
+    }
+
+    fn recovered_invalid_jsx_closing_fragment_statement_text(&self, node: &Node) -> Option<String> {
+        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let tail = text.get(start..)?;
+        tail.starts_with("</>").then(|| " > ;".to_string())
     }
 
     fn recovered_ambient_class_parenthesized_tail_text(&self, node: &Node) -> Option<String> {
@@ -2107,7 +2420,9 @@ impl<'a> Printer<'a> {
         }
 
         let line = crate::safe_slice::slice(text, start, line_end).ok()?;
-        if !line.trim_start().starts_with("declare namespace debugger") {
+        let trimmed = line.trim_start();
+        let rest = trimmed.strip_prefix("declare namespace debugger")?;
+        if rest.as_bytes().first().is_some_and(is_identifier_continue) {
             return None;
         }
 
@@ -2116,4 +2431,23 @@ impl<'a> Printer<'a> {
             .map(|comment_start| line[comment_start..].trim());
         Some((line_end as u32, trailing_comment))
     }
+}
+
+const fn is_identifier_continue(byte: &u8) -> bool {
+    byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$'
+}
+
+fn jsx_dev_file_name(file_name: &str) -> String {
+    let normalized = file_name.replace('\\', "/");
+    if let Some(src_start) = normalized.find("/.src/") {
+        return normalized[src_start..].to_string();
+    }
+    if let Some(stripped) = normalized.strip_prefix(".src/") {
+        return format!("/.src/{stripped}");
+    }
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized)
+        .to_string()
 }

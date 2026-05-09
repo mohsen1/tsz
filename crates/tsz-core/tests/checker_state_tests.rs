@@ -5151,6 +5151,48 @@ class NoError {
 }
 
 #[test]
+fn test_new_expression_property_used_before_initialization_2729() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+class CtorTyped {
+    value: { new (): object };
+    copy = new this.value();
+}
+
+class CtorGeneric {
+    value: { new <T>(): T };
+    copy = new this.value<string>();
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let count_2729 = codes.iter().filter(|&&c| c == 2729).count();
+    assert_eq!(
+        count_2729, 2,
+        "Expected TS2729 for new this.value() and new this.value<T>(), got {count_2729} in: {codes:?}"
+    );
+}
+
+#[test]
 fn test_static_block_property_used_before_initialization_2729() {
     // Error 2729: Property used before initialization in static blocks
     // Static blocks referencing later-declared static properties via C.X or this.X
@@ -6140,6 +6182,7 @@ fn test_contextual_typing_for_object_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -6154,6 +6197,7 @@ fn test_contextual_typing_for_object_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -6814,6 +6858,7 @@ fn test_strict_null_checks_property_access() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6859,6 +6904,7 @@ fn test_strict_null_checks_undefined_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6902,6 +6948,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6957,6 +7004,7 @@ fn test_strict_null_checks_non_nullable_success() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -7190,13 +7238,17 @@ fn test_symbol_property_access_methods() {
     let types = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&types);
 
-    // toString and valueOf should return ANY for now (function types are complex)
+    // toString and valueOf should use the symbol apparent method return types.
     let result_to_string = evaluator.resolve_property_access(TypeId::SYMBOL, "toString");
     match result_to_string {
         PropertyAccessResult::Success {
             type_id: prop_type, ..
         } => {
-            assert_eq!(prop_type, TypeId::ANY);
+            let Some(TypeData::Function(shape_id)) = types.lookup(prop_type) else {
+                panic!("Expected symbol.toString to resolve to function type");
+            };
+            let shape = types.function_shape(shape_id);
+            assert_eq!(shape.return_type, TypeId::STRING);
         }
         _ => panic!("Expected Success for symbol.toString, got: {result_to_string:?}"),
     }
@@ -7206,7 +7258,11 @@ fn test_symbol_property_access_methods() {
         PropertyAccessResult::Success {
             type_id: prop_type, ..
         } => {
-            assert_eq!(prop_type, TypeId::ANY);
+            let Some(TypeData::Function(shape_id)) = types.lookup(prop_type) else {
+                panic!("Expected symbol.valueOf to resolve to function type");
+            };
+            let shape = types.function_shape(shape_id);
+            assert_eq!(shape.return_type, TypeId::SYMBOL);
         }
         _ => panic!("Expected Success for symbol.valueOf, got: {result_value_of:?}"),
     }
@@ -9607,9 +9663,10 @@ async function f(): PromiseAlias<void> {
     );
 }
 
-/// Test that calling a never-returning function doesn't trigger TS2355
-/// This is a known limitation - calls to functions returning `never` should
-/// terminate control flow but aren't currently detected.
+/// Test that calling a never-returning function as a bare statement
+/// terminates control flow and suppresses TS2355, while a variable
+/// declaration whose initializer is a never-returning call does NOT
+/// terminate control flow (matching tsc — see issue #3662).
 #[test]
 fn test_never_returning_call_no_2355() {
     use crate::parser::ParserState;
@@ -9620,8 +9677,7 @@ function fail(message: string): never {
     throw new Error(message);
 }
 
-// Function that calls fail() should NOT get 2355
-// because fail() never returns
+// Bare `fail("boom");` statement terminates control flow → no TS2355.
 function usesFail(): number {
     fail("boom");
 }
@@ -9631,11 +9687,13 @@ function fallsThrough(): number {
     console.log("oops");
 }
 
-// Never-returning initializer should also avoid 2355
+// `const value = fail("boom")` is a variable declaration; tsc treats the
+// statement as falling through, so TS2355 fires.
 function usesFailInInit(): number {
     const value = fail("boom");
 }
 
+// Same for a declaration list with a never-returning initializer.
 function usesFailInList(): number {
     const a = 1, b = fail("boom");
 }
@@ -9669,8 +9727,10 @@ function usesFailInList(): number {
 
     let actual_2355_count = count(2355);
     assert_eq!(
-        actual_2355_count, 1,
-        "Expected only fallsThrough() to get TS2355, got: {codes:?}"
+        actual_2355_count, 3,
+        "Expected fallsThrough(), usesFailInInit(), and usesFailInList() to each emit TS2355 \
+         (bare `fail()` in usesFail() is the only never-returning call that suppresses it), \
+         got: {codes:?}"
     );
 }
 
@@ -9789,6 +9849,7 @@ function implicitAnyParam(x) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -9897,6 +9958,7 @@ function implicitAnyParam(x) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -13476,7 +13538,6 @@ const bad = NS["Foo"];
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_namespace_type_only_nested_member_value_error() {
     use crate::parser::ParserState;
 
@@ -13509,10 +13570,10 @@ const bad = Outer.Inner.Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let count = codes.iter().filter(|&&code| code == 2693).count();
+    let count = codes.iter().filter(|&&code| code == 2708).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for nested type-only namespace member used as value, got: {codes:?}"
+        "Expected one 2708 error for nested type-only namespace member used as value, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),
@@ -13551,9 +13612,11 @@ const bad = Alias;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // TODO: TS2693 is not yet emitted for type-only namespace aliases used as values.
-    // Update this assertion when that diagnostic is implemented.
-    let _ = codes;
+    let count = codes.iter().filter(|&&code| code == 2693).count();
+    assert_eq!(
+        count, 1,
+        "Expected one 2693 error for type-only namespace alias used as value, got: {codes:?}"
+    );
 }
 
 #[test]
@@ -13601,7 +13664,6 @@ const bad = Alias.Foo;
 }
 
 #[test]
-#[ignore = "behavior changed after merge"]
 fn test_namespace_type_only_nested_member_via_alias_value_error() {
     use crate::parser::ParserState;
 
@@ -13635,10 +13697,10 @@ const bad = Alias.Inner.Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let count = codes.iter().filter(|&&code| code == 2693).count();
+    let count = codes.iter().filter(|&&code| code == 2708).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for nested type-only namespace member via alias, got: {codes:?}"
+        "Expected one 2708 error for nested type-only namespace member via alias, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),
@@ -24936,6 +24998,7 @@ function maybeReturn(x: boolean) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -25045,6 +25108,7 @@ class Example {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -25105,6 +25169,7 @@ class Example {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    checker.enable_source_file_test_pragmas();
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
@@ -30275,6 +30340,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             exact_optional_property_types: false,
             no_lib: false,
             no_types_and_symbols: false,
+            types_explicitly_set: false,
             no_property_access_from_index_signature: false,
             target: crate::checker::context::ScriptTarget::ESNext,
             module: crate::common::ModuleKind::ESNext,

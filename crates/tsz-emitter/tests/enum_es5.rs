@@ -31,6 +31,21 @@ fn emit_enum_legacy(source: &str) -> String {
     String::new()
 }
 
+fn emit_enum_legacy_with_source(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&enum_idx) = source_file.statements.nodes.first()
+    {
+        let mut emitter = EnumES5Emitter::new(&parser.arena);
+        emitter.set_source_text(source);
+        return emitter.emit_enum(enum_idx);
+    }
+    String::new()
+}
+
 #[test]
 fn test_numeric_enum() {
     let output = transform_enum("enum E { A, B, C }");
@@ -64,6 +79,27 @@ fn test_enum_with_initializer() {
     assert!(
         output.contains("E[E[\"C\"] = 20] = \"C\""),
         "C should be 20"
+    );
+}
+
+#[test]
+fn test_enum_with_special_numeric_globals() {
+    let output = transform_enum("enum E { A = Infinity, B, C = NaN, D }");
+    assert!(
+        output.contains("E[E[\"A\"] = Infinity] = \"A\""),
+        "A should emit Infinity, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"B\"] = Infinity] = \"B\""),
+        "B should auto-increment to Infinity, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"C\"] = NaN] = \"C\""),
+        "C should emit NaN, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"D\"] = NaN] = \"D\""),
+        "D should auto-increment to NaN, got: {output}"
     );
 }
 
@@ -297,6 +333,32 @@ fn test_constant_folding_complex_expression() {
 }
 
 #[test]
+fn test_enum_initializer_erases_type_only_wrappers() {
+    let output =
+        transform_enum("enum E { A = (1 as number), B = (<number>2), C = 3! satisfies number }");
+
+    assert!(
+        output.contains("E[E[\"A\"] = 1] = \"A\""),
+        "as-expression initializer should emit valid JS, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"B\"] = 2] = \"B\""),
+        "type-assertion initializer should emit valid JS, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"C\"] = 3] = \"C\""),
+        "non-null/satisfies initializer should emit valid JS, got: {output}"
+    );
+    assert!(
+        !output.contains(" as ")
+            && !output.contains("satisfies")
+            && !output.contains("<number>")
+            && !output.contains("!"),
+        "TypeScript-only syntax should not leak into JS output: {output}"
+    );
+}
+
+#[test]
 fn test_no_folding_for_non_constant_expressions() {
     // External function call cannot be folded
     let output = transform_enum("enum E { A = foo() }");
@@ -320,5 +382,39 @@ fn test_constant_folding_negative_values() {
     assert!(
         output.contains("E[E[\"C\"] = -1] = \"C\""),
         "Auto-increment after -2 should be -1, got: {output}"
+    );
+}
+
+#[test]
+fn emit_enum_preserves_string_literal_initializer_via_astref() {
+    // Regression for #4165: when source text is set, string literals are
+    // emitted as IRNode::ASTRef to preserve quote style. The emitter's
+    // IRPrinter must be constructed with both arena and source text, or
+    // the ASTRef falls back to the placeholder "undefined".
+    let output = emit_enum_legacy_with_source("enum E { A = \"\".length, B }");
+    assert!(
+        output.contains("E[E[\"A\"] = \"\".length] = \"A\""),
+        "string-literal initializer should round-trip, got: {output}"
+    );
+    assert!(
+        !output.contains("undefined.length"),
+        "ASTRef must not collapse to `undefined`, got: {output}"
+    );
+}
+
+#[test]
+fn emit_enum_preserves_single_quoted_string_member_initializer() {
+    // Single-quoted string literals must keep their original quotes when
+    // source text is available (otherwise IRNode::StringLiteral would
+    // re-emit them as double quotes). This is the same code path that
+    // produced `undefined` in #4165 when the printer lacked arena/source.
+    let output = emit_enum_legacy_with_source("enum E { A = 'foo'.length, B }");
+    assert!(
+        output.contains("E[E[\"A\"] = 'foo'.length] = \"A\""),
+        "single-quoted initializer should be preserved verbatim, got: {output}"
+    );
+    assert!(
+        !output.contains("undefined.length"),
+        "ASTRef must not collapse to `undefined`, got: {output}"
     );
 }

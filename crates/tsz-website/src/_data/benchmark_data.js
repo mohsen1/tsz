@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { marked } from "marked";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -15,6 +16,25 @@ function formatDurationMs(value, fractionDigits = 0) {
     return `${(ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}s`;
   }
   return `${ms.toFixed(fractionDigits)}ms`;
+}
+
+function durationLabelFitsBar(label, widthPx) {
+  const width = Number(widthPx);
+  if (!Number.isFinite(width) || width <= 0) return false;
+
+  // Bench labels use the monospace 0.8rem style plus 0.45rem horizontal padding
+  // on each side. Estimate conservatively so labels move outside before clipping.
+  const approximateTextWidth = String(label).length * 8;
+  const horizontalPadding = 14.5;
+  return width >= approximateTextWidth + horizontalPadding;
+}
+
+function renderBenchmarkBar(kind, widthPx, label) {
+  const width = Number.isFinite(Number(widthPx)) ? Math.max(0, Number(widthPx)) : 0;
+  const placementClass = durationLabelFitsBar(label, width) ? "" : " value-outside";
+  return `<div class="bench-bar ${kind}${placementClass}" style="width: ${width.toFixed(2)}px">
+          <span class="bench-bar-value">${label}</span>
+        </div>`;
 }
 
 function formatSpeedupLabel(tszMs, tsgoMs) {
@@ -35,8 +55,34 @@ function hasTiming(value) {
   return Number.isFinite(time) && time > 0;
 }
 
+function fastestTiming(row) {
+  const timings = [row?.tsz_ms, row?.tsgo_ms].map(Number).filter((time) => Number.isFinite(time) && time > 0);
+  return timings.length ? Math.min(...timings) : Infinity;
+}
+
+function tszSpeedupScore(row) {
+  const tsz = Number(row?.tsz_ms);
+  const tsgo = Number(row?.tsgo_ms);
+  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+    return -Infinity;
+  }
+  return tsgo / tsz;
+}
+
+function compareByTszSpeedup(a, b) {
+  const aScore = tszSpeedupScore(a);
+  const bScore = tszSpeedupScore(b);
+  if (aScore !== bScore) return bScore - aScore;
+
+  const aFastest = fastestTiming(a);
+  const bFastest = fastestTiming(b);
+  if (aFastest !== bFastest) return aFastest - bFastest;
+
+  return String(a?.name || "").localeCompare(String(b?.name || ""));
+}
+
 function hasSuccessfulTiming(row) {
-  return hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
+  return !row?.status && row?.winner !== "error" && hasTiming(row?.tsz_ms) && hasTiming(row?.tsgo_ms);
 }
 
 function isFailedBenchmark(row) {
@@ -50,67 +96,99 @@ function statusLabel(row) {
 
 const TINY_BENCHMARK_MAX_LINES = 200;
 
-const PROJECT_FALLBACK_CONFIG = {
-  "Projects: utility-types": {
-    libraryCategory: "Single file: utility-types",
-    fallbackName: "utility-types-project",
-    libraryName: "utility-types",
-  },
-  "Projects: ts-toolbelt": {
-    libraryCategory: "Single file: ts-toolbelt",
-    fallbackName: "ts-toolbelt-project",
-    libraryName: "ts-toolbelt",
-  },
-  "Projects: ts-essentials": {
-    libraryCategory: "Single file: ts-essentials",
-    fallbackName: "ts-essentials-project",
-    libraryName: "ts-essentials",
-  },
-  "Projects: next.js": {
-    libraryCategory: null,
-    fallbackName: "nextjs",
-    libraryName: "nextjs",
-  },
-  "Projects: fresh Next.js app": {
-    libraryCategory: null,
-    fallbackName: "nextjs-fresh-app",
-    libraryName: "nextjs-fresh-app",
-  },
-  "Projects: rxjs": {
-    libraryCategory: null,
-    fallbackName: "rxjs-project",
-    libraryName: "rxjs",
-  },
-  "Projects: type-fest": {
-    libraryCategory: null,
-    fallbackName: "type-fest-project",
-    libraryName: "type-fest",
-  },
-  "Projects: zod": {
-    libraryCategory: null,
-    fallbackName: "zod-project",
-    libraryName: "zod",
-  },
-};
+const EXPECTED_PROJECT_BENCHMARKS = [
+  "large-ts-repo",
+  "utility-types-project",
+  "ts-toolbelt-project",
+  "ts-essentials-project",
+  "nextjs",
+  "nextjs-fresh-app",
+  "vite-vanilla-ts-app",
+  "rxjs-project",
+  "type-fest-project",
+  "zod-project",
+  "kysely-project",
+];
+
+function withExpectedProjectRows(results) {
+  const rows = Array.isArray(results) ? results.slice() : [];
+  const existingNames = new Set(rows.map((row) => row?.name).filter(Boolean));
+
+  for (const name of EXPECTED_PROJECT_BENCHMARKS) {
+    if (existingNames.has(name)) continue;
+    rows.push({
+      name,
+      lines: 0,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      tsz_lps: null,
+      tsgo_lps: null,
+      winner: "error",
+      ratio: 0,
+      status: "not recorded in latest benchmark artifact",
+    });
+  }
+
+  return rows;
+}
 
 const PROJECT_README_PATHS = {
   "large-ts-repo": [".target-bench/external/large-ts-repo/README.md"],
   nextjs: [".target-bench/external/next.js/README.md"],
   "nextjs-fresh-app": [".target-bench/external/next-app-live/README.md"],
+  "vite-vanilla-ts-app": [".target-bench/external/vite-vanilla-ts-live/README.md"],
   "rxjs-project": [".target-bench/external/rxjs/README.md"],
   "type-fest-project": [".target-bench/external/type-fest/readme.md", ".target-bench/external/type-fest/README.md"],
   "zod-project": [".target-bench/external/zod/README.md"],
+  "kysely-project": [".target-bench/external/kysely/README.md"],
   "utility-types-project": [".target-bench/external/utility-types/README.md"],
   "ts-toolbelt-project": [".target-bench/external/ts-toolbelt/README.md"],
   "ts-essentials-project": [".target-bench/external/ts-essentials/README.md"],
 };
 
-const LIBRARY_CATEGORY_TO_PROJECT_CATEGORY = Object.entries(PROJECT_FALLBACK_CONFIG).reduce((map, [projectCategory, conf]) => {
-  if (conf.libraryCategory) {
-    map.set(conf.libraryCategory, projectCategory);
-  }
-  return map;
-}, new Map());
+const PROJECT_README_URLS = {
+  "large-ts-repo": "https://raw.githubusercontent.com/mohsen1/large-ts-repo/e1b22bda18664a507ed0da19c155e0365d585b18/README.md",
+  "rxjs-project": "https://raw.githubusercontent.com/ReactiveX/rxjs/e5351d02e225e275ac0e497c7b66eaa5f0c88791/README.md",
+  "zod-project": "https://raw.githubusercontent.com/colinhacks/zod/93b0b6892cc0cfee8d0bec4e2e1242c7df771f95/README.md",
+  "utility-types-project": "https://raw.githubusercontent.com/piotrwitek/utility-types/2ee1f6ecb241651ab22390fee7ee5349942efda2/README.md",
+  "ts-toolbelt-project": "https://raw.githubusercontent.com/millsp/ts-toolbelt/b8a49285e3ed3a7d8bb8e0b433389eac46a5f140/README.md",
+  "ts-essentials-project": "https://raw.githubusercontent.com/ts-essentials/ts-essentials/5abe8700b42068048bd3c368e0531b6defe56558/README.md",
+};
+
+const NEXTJS_FRESH_APP_README = `# Fresh Next.js app benchmark
+
+This fixture is generated by \`scripts/bench/generate-next-app-fixture.mjs\`.
+
+Each benchmark run recreates the app, installs current npm versions, and type-checks the generated Next.js project with:
+
+\`\`\`sh
+tsz --noEmit -p tsconfig.json
+tsgo --noEmit -p tsconfig.json
+\`\`\`
+
+The app intentionally imports and uses common type-heavy dependencies:
+
+- \`zod\`
+- \`@tanstack/react-query\`
+- \`react-hook-form\`
+- \`type-fest\`
+- \`ts-pattern\`
+- \`superjson\`
+- \`date-fns\`
+- \`clsx\`
+- \`zustand\`
+- \`valibot\`
+
+The generated source mixes App Router pages, server actions, schema inference, discriminated unions, form helpers, query typing, store typing, and JSON-safe utility types so the benchmark reflects a modern application rather than a tiny startup file.`;
+
+const REMOTE_FIXTURE_REFS = {
+  "utility-types": "2ee1f6ecb241651ab22390fee7ee5349942efda2",
+  "ts-toolbelt": "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
+  "ts-essentials": "5abe8700b42068048bd3c368e0531b6defe56558",
+};
+
+const remoteSourceCache = new Map();
 
 function escapeHtml(str) {
   return String(str)
@@ -147,18 +225,21 @@ function sanitizeLegacyBenchmarkData(data) {
 
 function loadBenchmarks() {
   const artifactsDir = path.join(ROOT, "artifacts");
-  const ciLatest = path.join(artifactsDir, "bench-vs-tsgo-gcs-latest.json");
+  const ciLatest = [
+    "bench-vs-tsgo-github-latest.json",
+    "bench-vs-tsgo-gcs-latest.json",
+  ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => file !== "bench-vs-tsgo-gcs-latest.json")
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
-      return [ciLatest, ...localArtifacts];
+      return [...ciLatest, ...localArtifacts];
     } catch {
-      return [ciLatest];
+      return ciLatest;
     }
   })();
 
@@ -182,9 +263,11 @@ function categoryFor(name, lines) {
   if (name === "large-ts-repo") return "Projects: large-ts-repo";
   if (name === "nextjs") return "Projects: next.js";
   if (name === "nextjs-fresh-app") return "Projects: fresh Next.js app";
+  if (name === "vite-vanilla-ts-app") return "Projects: fresh Vite app";
   if (name === "rxjs-project") return "Projects: rxjs";
   if (name === "type-fest-project") return "Projects: type-fest";
   if (name === "zod-project") return "Projects: zod";
+  if (name === "kysely-project") return "Projects: kysely";
   if (name === "utility-types-project") return "Projects: utility-types";
   if (name === "ts-toolbelt-project") return "Projects: ts-toolbelt";
   if (name === "ts-essentials-project") return "Projects: ts-essentials";
@@ -228,39 +311,6 @@ function libraryNameForCategory(category) {
   return "";
 }
 
-function hasProjectRowForLibrary(category, grouped) {
-  const projectRowName = {
-    "Single file: utility-types": "utility-types-project",
-    "Single file: ts-toolbelt": "ts-toolbelt-project",
-    "Single file: ts-essentials": "ts-essentials-project",
-  }[category];
-  if (!projectRowName) return false;
-  const projectCategory = LIBRARY_CATEGORY_TO_PROJECT_CATEGORY.get(category);
-  if (!projectCategory) {
-    return grouped
-      .get(category)
-      ?.some((row) => row.name === projectRowName) ?? false;
-  }
-  return (grouped.get(projectCategory)?.length ?? 0) > 0;
-}
-
-function ensureProjectRows(grouped) {
-  for (const [projectCategory, conf] of Object.entries(PROJECT_FALLBACK_CONFIG)) {
-    const existing = grouped.get(projectCategory);
-    if (existing?.length) continue;
-    if (!conf.libraryCategory) continue;
-
-    const libraryRows = grouped.get(conf.libraryCategory) || [];
-    const aggregate = buildAggregateBenchmark(libraryRows, conf.libraryName);
-    if (!aggregate) continue;
-
-    grouped.set(projectCategory, [{
-      ...aggregate,
-      name: conf.fallbackName,
-    }]);
-  }
-}
-
 function categoryMeta(category) {
   return {
     "Projects: large-ts-repo": {
@@ -276,6 +326,11 @@ function categoryMeta(category) {
     "Projects: fresh Next.js app": {
       title: "Fresh Next.js app",
     },
+    "Projects: fresh Vite app": {
+      title: "Fresh Vite app",
+      repo: "https://github.com/vitejs/vite",
+      repoLabel: "vitejs/vite",
+    },
     "Projects: rxjs": {
       title: "RxJS",
       repo: "https://github.com/ReactiveX/rxjs",
@@ -290,6 +345,11 @@ function categoryMeta(category) {
       title: "Zod",
       repo: "https://github.com/colinhacks/zod",
       repoLabel: "colinhacks/zod",
+    },
+    "Projects: kysely": {
+      title: "Kysely",
+      repo: "https://github.com/kysely-org/kysely",
+      repoLabel: "kysely-org/kysely",
     },
     "Projects: utility-types": {
       title: "utility-types",
@@ -343,45 +403,6 @@ function categoryMeta(category) {
   }[category] || { description: "" };
 }
 
-function buildAggregateBenchmark(rows, libraryName) {
-  const timedRows = rows.filter(hasSuccessfulTiming);
-  if (!timedRows.length) return null;
-
-  const tszTotal = timedRows.reduce((sum, row) => sum + row.tsz_ms, 0);
-  const tsgoTotal = timedRows.reduce((sum, row) => sum + row.tsgo_ms, 0);
-
-  if (!Number.isFinite(tszTotal) || !Number.isFinite(tsgoTotal)) return null;
-
-  const winner =
-    tszTotal > 0 && tsgoTotal > 0
-      ? tszTotal < tsgoTotal
-        ? "tsz"
-        : tsgoTotal < tszTotal
-          ? "tsgo"
-          : null
-      : null;
-
-  const factor =
-    winner === "tsz"
-      ? tsgoTotal / tszTotal
-      : winner === "tsgo"
-        ? tszTotal / tsgoTotal
-        : null;
-
-  return {
-    name: `${libraryName} (all files)`,
-    lines: timedRows.reduce((sum, row) => sum + row.lines, 0),
-    kb: timedRows.reduce((sum, row) => sum + row.kb, 0),
-    tsz_ms: tszTotal,
-    tsgo_ms: tsgoTotal,
-    tsz_lps: timedRows.reduce((sum, row) => sum + row.tsz_lps, 0),
-    tsgo_lps: timedRows.reduce((sum, row) => sum + row.tsgo_lps, 0),
-    winner,
-    factor,
-    status: null,
-  };
-}
-
 function displayName(name) {
   if (name === "privacyFunctionParameterDeclFile.ts") {
     return "Privacy function parameter declaration file";
@@ -390,6 +411,8 @@ function displayName(name) {
   if (name === "type-fest-project") return "type-fest project";
   if (name === "zod-project") return "Zod project";
   if (name === "nextjs-fresh-app") return "Fresh Next.js app";
+  if (name === "vite-vanilla-ts-app") return "Fresh Vite app";
+  if (name === "kysely-project") return "Kysely project";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
@@ -964,14 +987,53 @@ function externalFixturePath(name) {
   return null;
 }
 
-function readExternalFixtureSource(name) {
-  const sourcePath = externalFixturePath(name);
-  if (!sourcePath) return null;
+function externalFixtureUrl(name) {
+  const fixtureName = String(name || "");
+  if (fixtureName.startsWith("utility-types/")) {
+    const rel = fixtureName.slice("utility-types/".length);
+    return `https://raw.githubusercontent.com/piotrwitek/utility-types/${REMOTE_FIXTURE_REFS["utility-types"]}/src/${rel}`;
+  }
+  if (fixtureName.startsWith("ts-toolbelt/")) {
+    const rel = fixtureName.slice("ts-toolbelt/".length);
+    return `https://raw.githubusercontent.com/millsp/ts-toolbelt/${REMOTE_FIXTURE_REFS["ts-toolbelt"]}/sources/${rel}`;
+  }
+  if (fixtureName.startsWith("ts-essentials/")) {
+    const rel = fixtureName.slice("ts-essentials/".length).replace(/\.ts$/, "/index.ts");
+    return `https://raw.githubusercontent.com/ts-essentials/ts-essentials/${REMOTE_FIXTURE_REFS["ts-essentials"]}/lib/${rel}`;
+  }
+  return null;
+}
+
+function readRemoteText(url) {
+  if (!url) return null;
+  if (remoteSourceCache.has(url)) return remoteSourceCache.get(url);
+
   try {
-    return fs.readFileSync(sourcePath, "utf8").trimEnd();
+    const text = execFileSync("curl", ["-fsSL", url], {
+      encoding: "utf8",
+      timeout: 10000,
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trimEnd();
+    remoteSourceCache.set(url, text);
+    return text;
   } catch {
+    remoteSourceCache.set(url, null);
     return null;
   }
+}
+
+function readExternalFixtureSource(name) {
+  const sourcePath = externalFixturePath(name);
+  if (sourcePath) {
+    try {
+      return fs.readFileSync(sourcePath, "utf8").trimEnd();
+    } catch {
+      // Deployed static builds may not have the prepared benchmark fixtures.
+    }
+  }
+
+  return readRemoteText(externalFixtureUrl(name));
 }
 
 function sourceFilesForBenchmark(row, category) {
@@ -1013,18 +1075,31 @@ function benchmarkCommand(row, category, compiler) {
 function readProjectReadme(row, category) {
   if (!isProjectCategory(category)) return null;
 
+  if (row.readme) return truncateReadme(row.readme);
+
   const candidates = PROJECT_README_PATHS[row.name] || [];
   for (const candidate of candidates) {
     try {
       const text = fs.readFileSync(path.join(ROOT, candidate), "utf8").trim();
       if (!text) continue;
-      return text.length > 18000 ? `${text.slice(0, 18000).trimEnd()}\n\n...` : text;
+      return truncateReadme(text);
     } catch {
       // README is optional for local benchmark fixtures that have not been prepared.
     }
   }
 
+  if (row.name === "nextjs-fresh-app") return NEXTJS_FRESH_APP_README;
+
+  const remoteReadme = readRemoteText(PROJECT_README_URLS[row.name]);
+  if (remoteReadme) return truncateReadme(remoteReadme);
+
   return null;
+}
+
+function truncateReadme(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return null;
+  return trimmed.length > 18000 ? `${trimmed.slice(0, 18000).trimEnd()}\n\n...` : trimmed;
 }
 
 function comparison(row) {
@@ -1086,7 +1161,7 @@ function decorateRow(row, category, options = {}) {
 }
 
 function buildGroupedBenchmarks(data) {
-  const allResults = data?.results || [];
+  const allResults = withExpectedProjectRows(data?.results);
   const results = allResults.filter(hasSuccessfulTiming);
   const grouped = new Map();
 
@@ -1097,7 +1172,6 @@ function buildGroupedBenchmarks(data) {
     grouped.set(category, bucket);
   }
 
-  ensureProjectRows(grouped);
   const successfulNames = new Set([
     ...results.map((row) => row.name),
     ...[...grouped.values()].flat().map((row) => row.name),
@@ -1111,9 +1185,11 @@ function buildGroupedBenchmarks(data) {
     "Projects: ts-essentials",
     "Projects: next.js",
     "Projects: fresh Next.js app",
+    "Projects: fresh Vite app",
     "Projects: rxjs",
     "Projects: type-fest",
     "Projects: zod",
+    "Projects: kysely",
     "Single file: utility-types",
     "Single file: ts-toolbelt",
     "Single file: ts-essentials",
@@ -1145,13 +1221,6 @@ export function getBenchmarkPages() {
 
   for (const category of categories) {
     const entries = (grouped.get(category) || []).slice();
-    if (isExternalLibraryCategory(category)) {
-      const libraryName = libraryNameForCategory(category);
-      const aggregate = buildAggregateBenchmark(entries, libraryName);
-      if (aggregate && !hasProjectRowForLibrary(category, grouped)) {
-        entries.push({ ...aggregate, is_aggregate: true });
-      }
-    }
 
     entries.sort((a, b) => {
       const aLines = Number(a.lines) || 0;
@@ -1205,40 +1274,49 @@ function generateCharts(data, mode = "projects") {
   if (!results.length && !failedResults.length) return "";
 
   const barMaxWidth = 420;
+  const entriesForCategory = (category) => {
+    return (grouped.get(category) || []).slice();
+  };
+  const categoryTszSpeedupScore = (category) => Math.max(
+    -Infinity,
+    ...entriesForCategory(category).map(tszSpeedupScore),
+  );
   const visibleCategories = categories
     .filter((category) => categoryBelongsToMode(category, mode))
     .sort((a, b) => {
       if (mode !== "projects") return 0;
-      const aFastest = Math.min(...(grouped.get(a) || []).map((row) => Number(row.tsz_ms) || Infinity));
-      const bFastest = Math.min(...(grouped.get(b) || []).map((row) => Number(row.tsz_ms) || Infinity));
-      if (aFastest !== bFastest) return aFastest - bFastest;
+      const aScore = categoryTszSpeedupScore(a);
+      const bScore = categoryTszSpeedupScore(b);
+      if (aScore !== bScore) return bScore - aScore;
       return categoryTitle(a).localeCompare(categoryTitle(b));
     });
   const visibleFailedResults = failedResults.filter((row) => failedBelongsToMode(row, mode));
+  const chartMaxMs = Math.max(
+    1,
+    ...visibleCategories
+      .flatMap((category) => entriesForCategory(category))
+      .flatMap((row) => [Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0]),
+    ...visibleFailedResults.flatMap((row) => [Number(row.tsz_ms) || 0, Number(row.tsgo_ms) || 0]),
+  );
 
   let html = "";
   for (const category of visibleCategories) {
-    const entries = (grouped.get(category) || []).slice();
+    const entries = entriesForCategory(category);
     const slug = categorySlug(category);
     const meta = categoryMeta(category);
+    const isProject = isProjectCategory(category);
     if (!entries.length) continue;
 
-    if (isExternalLibraryCategory(category)) {
-      const libraryName = libraryNameForCategory(category);
-      const aggregate = buildAggregateBenchmark(entries, libraryName);
-      if (aggregate && !hasProjectRowForLibrary(category, grouped)) {
-        entries.push(aggregate);
-      }
-    }
-
     entries.sort((a, b) => {
-      const aLines = Number(a.lines) || 0;
-      const bLines = Number(b.lines) || 0;
-      if (bLines !== aLines) return bLines - aLines;
+      if (isProject) {
+        return compareByTszSpeedup(a, b);
+      } else {
+        const aLines = Number(a.lines) || 0;
+        const bLines = Number(b.lines) || 0;
+        if (bLines !== aLines) return bLines - aLines;
+      }
       return (String(a.name || "") > String(b.name || "") ? 1 : -1);
     });
-    const maxMs = Math.max(...entries.map((r) => Math.max(r.tsz_ms, r.tsgo_ms)));
-    const isProject = isProjectCategory(category);
     const desc = isProject ? "" : categoryDescription(category);
     const repoLink = meta.repo
       ? ` <a class="bench-category-repo" href="${meta.repo}" target="_blank" rel="noopener noreferrer">${escapeHtml(meta.repoLabel || meta.repo)}</a>`
@@ -1252,9 +1330,11 @@ function generateCharts(data, mode = "projects") {
 
     for (const r of entries) {
       const decorated = decorateRow(r, category, { isAggregate: r.is_aggregate });
-      const tszWidth = Math.max(2, (r.tsz_ms / maxMs) * barMaxWidth);
-      const tsgoWidth = Math.max(2, (r.tsgo_ms / maxMs) * barMaxWidth);
+      const tszWidth = (r.tsz_ms / chartMaxMs) * barMaxWidth;
+      const tsgoWidth = (r.tsgo_ms / chartMaxMs) * barMaxWidth;
       const winnerLabel = formatSpeedupLabel(r.tsz_ms, r.tsgo_ms);
+      const tszLabel = formatDurationMs(r.tsz_ms);
+      const tsgoLabel = formatDurationMs(r.tsgo_ms);
 
       const metaParts = isProject
         ? [`${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`]
@@ -1266,16 +1346,12 @@ function generateCharts(data, mode = "projects") {
     <p class="bench-focus">${escapeHtml(decorated.focus)}</p>
     <div class="bench-bars">
       <div class="bench-bar-row">
-  <span class="bench-bar-label">tsz</span>
-        <div class="bench-bar tsz" style="width: ${tszWidth}px">
-          <span class="bench-bar-value">${formatDurationMs(r.tsz_ms)}</span>
-        </div>
+        <span class="bench-bar-label">tsz</span>
+        ${renderBenchmarkBar("tsz", tszWidth, tszLabel)}
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
-        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px">
-          <span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span>
-        </div>
+        ${renderBenchmarkBar("tsgo", tsgoWidth, tsgoLabel)}
       </div>
       ${winnerLabel ? `<div class="bench-winner">${winnerLabel}</div>` : ""}
     </div>
@@ -1296,12 +1372,11 @@ function generateCharts(data, mode = "projects") {
   <h3 class="bench-category-title" id="failures">${escapeHtml(failedTitle)}</h3>
   <p class="bench-category-desc">${escapeHtml(failedDescription)}</p>
   <div class="bench-chart">\n`;
-    const maxFailMs = Math.max(1, ...visibleFailedResults.flatMap((r) => [Number(r.tsz_ms) || 0, Number(r.tsgo_ms) || 0]));
     for (const r of visibleFailedResults) {
       const category = categoryFor(r.name || "", r.lines);
       const decorated = decorateRow(r, category);
-      const tszWidth = hasTiming(r.tsz_ms) ? Math.max(2, (r.tsz_ms / maxFailMs) * barMaxWidth) : 0;
-      const tsgoWidth = hasTiming(r.tsgo_ms) ? Math.max(2, (r.tsgo_ms / maxFailMs) * barMaxWidth) : 0;
+      const tszWidth = hasTiming(r.tsz_ms) ? (r.tsz_ms / chartMaxMs) * barMaxWidth : 0;
+      const tsgoWidth = hasTiming(r.tsgo_ms) ? (r.tsgo_ms / chartMaxMs) * barMaxWidth : 0;
       const metaParts = [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
       html += `  <div class="bench-row bench-row-error">
     <div class="bench-name"><a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a></div>
@@ -1311,13 +1386,13 @@ function generateCharts(data, mode = "projects") {
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsz</span>
         ${hasTiming(r.tsz_ms)
-          ? `<div class="bench-bar tsz" style="width: ${tszWidth}px"><span class="bench-bar-value">${formatDurationMs(r.tsz_ms)}</span></div>`
+          ? renderBenchmarkBar("tsz", tszWidth, formatDurationMs(r.tsz_ms))
           : `<span class="bench-bar-status">failed</span>`}
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
         ${hasTiming(r.tsgo_ms)
-          ? `<div class="bench-bar tsgo" style="width: ${tsgoWidth}px"><span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span></div>`
+          ? renderBenchmarkBar("tsgo", tsgoWidth, formatDurationMs(r.tsgo_ms))
           : `<span class="bench-bar-status">n/a</span>`}
       </div>
     </div>

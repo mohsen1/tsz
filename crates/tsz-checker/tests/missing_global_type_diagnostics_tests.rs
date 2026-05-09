@@ -2,33 +2,16 @@ use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn check_without_lib(source: &str) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    check_without_lib_with_options(source, CheckerOptions::default())
+}
 
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+fn check_without_lib_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    tsz_checker::test_utils::check_with_options(source, options)
 }
 
 const MINIMAL_CORE_GLOBAL_DECLS: &[(&str, &str)] = &[
@@ -48,6 +31,30 @@ fn check_without_lib_with_minimal_core_globals(source: &str) -> Vec<Diagnostic> 
     check_without_lib_with_minimal_core_globals_except(&[], source)
 }
 
+fn check_without_lib_with_minimal_core_globals_and_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<Diagnostic> {
+    let mut full_source = String::new();
+    for &(_, decl) in MINIMAL_CORE_GLOBAL_DECLS {
+        full_source.push_str(decl);
+        full_source.push('\n');
+    }
+    full_source.push_str(source);
+    check_without_lib_with_options(&full_source, options)
+}
+
+fn check_with_no_lib_and_minimal_core_globals(source: &str) -> Vec<Diagnostic> {
+    check_without_lib_with_minimal_core_globals_and_options(
+        source,
+        CheckerOptions {
+            no_lib: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    )
+}
+
 fn check_without_lib_with_minimal_core_globals_except(
     omitted: &[&str],
     source: &str,
@@ -62,6 +69,24 @@ fn check_without_lib_with_minimal_core_globals_except(
     }
     full_source.push_str(source);
     check_without_lib(&full_source)
+}
+
+fn check_with_named_libs(source: &str, lib_names: &[&str]) -> Vec<Diagnostic> {
+    let lib_files = tsz_checker::test_utils::load_lib_files(lib_names);
+    assert!(
+        !lib_files.is_empty(),
+        "test libs should be available for {lib_names:?}"
+    );
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
 }
 
 #[test]
@@ -105,6 +130,43 @@ fn promise_type_reference_emits_ts2583_with_minimal_core_globals() {
             .iter()
             .any(|d| d.code == 2583 && d.message_text.contains("'Promise'")),
         "Expected TS2583 for Promise type reference without ES2015 libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nolib_mapped_utility_reference_emits_ts2304() {
+    let diagnostics = check_without_lib_with_minimal_core_globals_and_options(
+        r#"
+type Source = {
+  value: string;
+  other: number;
+};
+
+type OnlyValue = Pick<Source, "value">;
+
+const result: OnlyValue = { value: 123 };
+"#,
+        CheckerOptions {
+            no_lib: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let pick_ts2304: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'Pick'"))
+        .collect();
+    assert_eq!(
+        pick_ts2304.len(),
+        1,
+        "Expected TS2304 for missing Pick under noLib, got: {diagnostics:?}"
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected missing Pick to avoid synthesized assignability diagnostics, got: {diagnostics:?}"
     );
 }
 
@@ -163,6 +225,32 @@ fn promise_like_type_reference_emits_ts2304_with_minimal_core_globals() {
             .iter()
             .any(|d| d.code == 2304 && d.message_text.contains("'PromiseLike'")),
         "Expected TS2304 for PromiseLike type reference without libs, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nolib_arraylike_and_promiselike_references_emit_ts2304() {
+    let diagnostics = check_with_no_lib_and_minimal_core_globals(
+        r#"
+declare const a: ArrayLike<string>;
+declare const p: PromiseLike<string>;
+
+a[0].toUpperCase();
+p.then(value => value.toUpperCase());
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'ArrayLike'")),
+        "Expected TS2304 for ArrayLike under noLib, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2304 && d.message_text.contains("'PromiseLike'")),
+        "Expected TS2304 for PromiseLike under noLib, got: {diagnostics:?}"
     );
 }
 
@@ -232,6 +320,53 @@ s.padStart(2);
         "Expected `string.includes`/`padStart` to resolve via the bootstrap \
          fallback when no String interface is registered (no-lib path). Got: \
          {diagnostics:?}"
+    );
+}
+
+#[test]
+fn symbol_description_requires_es2019_symbol_lib() {
+    let es2015_symbol_libs = [
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+    ];
+    let diagnostics = check_with_named_libs(
+        r#"
+declare const s: symbol;
+s.description;
+"#,
+        &es2015_symbol_libs,
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2550
+                && d.message_text.contains("'description'")
+                && d.message_text.contains("'symbol'")
+                && d.message_text.contains("'es2019'")
+        }),
+        "Expected TS2550 for symbol.description with only ES2015 symbol libs, got: {diagnostics:?}"
+    );
+
+    let mut es2019_symbol_libs = es2015_symbol_libs.to_vec();
+    es2019_symbol_libs.push("es2019.symbol.d.ts");
+    let diagnostics = check_with_named_libs(
+        r#"
+declare const s: symbol;
+s.description;
+"#,
+        &es2019_symbol_libs,
+    );
+
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2339 || d.code == 2550)
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "Expected symbol.description to resolve once ES2019 symbol lib is loaded, got: {diagnostics:?}"
     );
 }
 

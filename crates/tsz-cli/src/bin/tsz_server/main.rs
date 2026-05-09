@@ -51,17 +51,62 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Read as IoRead, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use tsz::binder::BinderState;
 use tsz::lib_loader::LibFile;
-use tsz::lsp::position::Position;
+use tsz::lsp::position::{LineMap, Position};
 use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::NodeArena;
+
+fn deserialize_target_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::emitter::ScriptTarget::from_ts_numeric(value).map(|target| target.as_ts_str())
+    })
+}
+
+fn deserialize_module_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::ModuleKind::from_ts_numeric(value).map(|module| module.as_ts_str())
+    })
+}
+
+fn deserialize_tsserver_enum_option<'de, D, F>(
+    deserializer: D,
+    map_numeric: F,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    F: Fn(u32) -> Option<&'static str>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    match value {
+        serde_json::Value::String(value) => Ok(Some(value)),
+        serde_json::Value::Number(number) => {
+            let mapped = number
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .and_then(map_numeric);
+            Ok(Some(
+                mapped.map_or_else(|| number.to_string(), str::to_string),
+            ))
+        }
+        _ => Ok(None),
+    }
+}
 
 // Diagnostic code for "File appears to be binary."
 const TS1490_FILE_APPEARS_TO_BE_BINARY: i32 = 1490;
@@ -370,9 +415,9 @@ struct CheckOptions {
     no_lib: bool,
     #[serde(default)]
     lib: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_target_option")]
     target: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_module_option")]
     module: Option<String>,
     #[serde(default)]
     experimental_decorators: bool,
@@ -394,6 +439,20 @@ struct CheckOptions {
     strict_builtin_iterator_return: Option<bool>,
     #[serde(default)]
     declaration: bool,
+    // Server-protocol checker options that were previously hardcoded to false
+    // when constructing `CheckerOptions`. Wiring them through fixes #3579.
+    #[serde(default)]
+    verbatim_module_syntax: bool,
+    #[serde(default)]
+    erasable_syntax_only: bool,
+    #[serde(default)]
+    allow_importing_ts_extensions: bool,
+    #[serde(default)]
+    rewrite_relative_import_extensions: bool,
+    #[serde(default)]
+    allow_umd_global_access: bool,
+    #[serde(default)]
+    preserve_const_enums: bool,
 }
 
 /// Legacy response to client
@@ -547,6 +606,15 @@ pub(crate) struct Server {
     pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
     /// Completion preference: include class member snippet completions.
     pub(crate) include_completions_with_class_member_snippets: bool,
+    /// User preference: parameter inlay hint mode. tsserver supports `"none"`,
+    /// `"literals"`, and `"all"`. `None` here means the user hasn't called
+    /// `configure` for this preference; in that case the tsserver default
+    /// (`"none"`) applies and parameter hints are suppressed. See #3793.
+    pub(crate) include_inlay_parameter_name_hints: Option<String>,
+    /// User preference: emit `@returns` in JSDoc templates from `docCommentTemplate`.
+    /// `None` means unset by `configure`, in which case the per-request argument
+    /// or the tsserver default (`true`) applies.
+    pub(crate) generate_return_in_doc_template: Option<bool>,
     /// Newline character preference from `configure` formatOptions. Used by
     /// import edits to respect `format.setOption("newLineCharacter", ...)`.
     pub(crate) new_line_character: Option<String>,
@@ -579,6 +647,12 @@ pub(crate) struct Server {
     /// native TypeScript don't pay the spawn cost.
     pub(crate) native_ts_worker:
         Option<std::sync::Mutex<self::handlers_info_alias::NativeTsWorker>>,
+    /// Async tsserver events queued by handlers. Drained by the protocol
+    /// runner after the response for the originating request is written.
+    /// Used by `geterr` / `geterrForProject` to fire `syntaxDiag`,
+    /// `semanticDiag`, `suggestionDiag`, and `requestCompleted` events.
+    /// See #3544.
+    pub(crate) pending_events: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -637,6 +711,8 @@ impl Server {
             auto_import_file_exclude_patterns: Vec::new(),
             auto_import_specifier_exclude_regexes: Vec::new(),
             include_completions_with_class_member_snippets: true,
+            include_inlay_parameter_name_hints: None,
+            generate_return_in_doc_template: None,
             new_line_character: None,
             allow_importing_ts_extensions: false,
             inferred_check_options: CheckOptions::default(),
@@ -649,7 +725,26 @@ impl Server {
             plugin_configs: FxHashMap::default(),
             native_ts_worker: self::handlers_info_alias::NativeTsWorker::spawn()
                 .map(std::sync::Mutex::new),
+            pending_events: Vec::new(),
         })
+    }
+
+    /// Queue a tsserver async event for the protocol runner to write after
+    /// the originating request's response. Body is the `body` payload of
+    /// the event message. See #3544.
+    pub(crate) fn emit_event(&mut self, event_name: &str, body: serde_json::Value) {
+        let seq = self.next_seq();
+        self.pending_events.push(serde_json::json!({
+            "seq": seq,
+            "type": "event",
+            "event": event_name,
+            "body": body,
+        }));
+    }
+
+    /// Drain the queued async events. Called by the protocol runner.
+    pub(crate) fn drain_pending_events(&mut self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut self.pending_events)
     }
 
     const fn next_seq(&mut self) -> u64 {
@@ -667,6 +762,8 @@ impl Server {
         self.auto_import_file_exclude_patterns.clear();
         self.auto_import_specifier_exclude_regexes.clear();
         self.include_completions_with_class_member_snippets = true;
+        self.include_inlay_parameter_name_hints = None;
+        self.generate_return_in_doc_template = None;
         self.new_line_character = None;
         self.allow_importing_ts_extensions = false;
         self.inferred_check_options = CheckOptions::default();
@@ -692,13 +789,17 @@ impl Server {
         &self,
         file_path: &str,
     ) -> Option<(NodeArena, BinderState, NodeIndex, String)> {
-        let raw_content = self
-            .open_files
-            .get(file_path)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(file_path).ok())
-            .or_else(|| Self::read_virtual_harness_path(file_path))?;
-        let content = Self::normalize_fourslash_virtual_content(file_path, &raw_content);
+        // Only disk-loaded fourslash fixtures get `////` normalization: a real
+        // client opening `/fourslash.ts` should see tsc-equivalent behavior
+        // (treat `////` as a comment), not the harness rewrite. See #3799.
+        let content = if let Some(raw) = self.open_files.get(file_path).cloned() {
+            raw
+        } else if let Ok(raw) = std::fs::read_to_string(file_path) {
+            raw
+        } else {
+            let raw = Self::read_virtual_harness_path(file_path)?;
+            Self::normalize_fourslash_virtual_content(file_path, &raw)
+        };
         let mut parser = ParserState::new(file_path.to_string(), content.clone());
         let root = parser.parse_source_file();
         let arena = parser.into_arena();
@@ -803,7 +904,15 @@ impl Server {
         })
     }
 
-    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value.
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// plain `definition` / `typeDefinition` / `findSourceDefinition` commands.
+    ///
+    /// This is the `FileSpanWithContext` shape: `file` plus 1-based
+    /// `start`/`end` line/offset positions, and optional `contextStart`/
+    /// `contextEnd` line/offset positions. Symbol metadata (`kind`, `name`,
+    /// `containerName`, `isLocal`, `isAmbient`, …) belongs to the `-full`
+    /// shape; including it here causes consumers that parse the protocol
+    /// strictly to treat the response as the full shape.
     fn definition_info_to_json(
         info: &tsz::lsp::definition::DefinitionInfo,
         file: &str,
@@ -817,18 +926,68 @@ impl Server {
             "file": out_file,
             "start": Self::lsp_to_tsserver_position(info.location.range.start),
             "end": Self::lsp_to_tsserver_position(info.location.range.end),
+        });
+        if let Some(ref ctx) = info.context_span {
+            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
+            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+        }
+        result
+    }
+
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// `definition-full` / `typeDefinition-full` / `definitionAndBoundSpan-full`
+    /// commands.
+    ///
+    /// This is the `DefinitionInfo` shape: `fileName` plus a numeric
+    /// `textSpan` (`start`/`length`), an optional numeric `contextSpan`,
+    /// the symbol metadata (`kind`, `name`, `containerName`), and the
+    /// `isLocal` / `isAmbient` / `unverified` / `failedAliasResolution`
+    /// flags. The byte-offset positions are computed against `line_map` /
+    /// `source_text`, which the caller is expected to have built for the
+    /// requesting file (mirroring the cross-file handling of
+    /// `references-full`).
+    fn definition_info_to_json_full(
+        info: &tsz::lsp::definition::DefinitionInfo,
+        file: &str,
+        line_map: &LineMap,
+        source_text: &str,
+    ) -> serde_json::Value {
+        let out_file = if info.location.file_path.is_empty() {
+            file.to_string()
+        } else {
+            info.location.file_path.clone()
+        };
+        let span_start = line_map
+            .position_to_offset(info.location.range.start, source_text)
+            .unwrap_or(0);
+        let span_end = line_map
+            .position_to_offset(info.location.range.end, source_text)
+            .unwrap_or(span_start);
+        let mut result = serde_json::json!({
+            "fileName": out_file,
+            "textSpan": {
+                "start": span_start,
+                "length": span_end.saturating_sub(span_start),
+            },
             "kind": info.kind,
             "name": info.name,
             "containerName": info.container_name,
-            "containerKind": info.container_kind,
             "isLocal": info.is_local,
             "isAmbient": info.is_ambient,
             "unverified": false,
             "failedAliasResolution": false,
         });
         if let Some(ref ctx) = info.context_span {
-            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
-            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+            let ctx_start = line_map
+                .position_to_offset(ctx.start, source_text)
+                .unwrap_or(0);
+            let ctx_end = line_map
+                .position_to_offset(ctx.end, source_text)
+                .unwrap_or(ctx_start);
+            result["contextSpan"] = serde_json::json!({
+                "start": ctx_start,
+                "length": ctx_end.saturating_sub(ctx_start),
+            });
         }
         result
     }
@@ -901,29 +1060,30 @@ impl Server {
             "change" => self.handle_change(seq, &request),
             "reset" | "tsz/reset" => self.handle_reset(seq, &request),
             "configure" => self.handle_configure(seq, &request),
-            "quickinfo" => self.handle_quickinfo(seq, &request),
-            "definition"
-            | "typeDefinition"
-            | "definition-full"
-            | "typeDefinition-full"
-            | "findSourceDefinition" => self.handle_definition(seq, &request),
+            "quickinfo" | "quickinfo-full" => self.handle_quickinfo(seq, &request),
+            "definition" | "definition-full" | "findSourceDefinition" => {
+                self.handle_definition(seq, &request)
+            }
+            "typeDefinition" | "typeDefinition-full" => self.handle_type_definition(seq, &request),
             "definitionAndBoundSpan" | "definitionAndBoundSpan-full" => {
                 self.handle_definition_and_bound_span(seq, &request)
             }
             "references" => self.handle_references(seq, &request),
             "references-full" => self.handle_references_full(seq, &request),
-            "completions" | "completionInfo" => self.handle_completions(seq, &request),
+            "completions" | "completionInfo" | "completions-full" => {
+                self.handle_completions(seq, &request)
+            }
             "completionEntryDetails" | "completionEntryDetails-full" => {
                 self.handle_completion_details(seq, &request)
             }
-            "signatureHelp" => self.handle_signature_help(seq, &request),
+            "signatureHelp" | "signatureHelp-full" => self.handle_signature_help(seq, &request),
             "semanticDiagnosticsSync" => self.handle_semantic_diagnostics_sync(seq, &request),
             "syntacticDiagnosticsSync" => self.handle_syntactic_diagnostics_sync(seq, &request),
             "suggestionDiagnosticsSync" => self.handle_suggestion_diagnostics_sync(seq, &request),
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
-            "navtree" => self.handle_navtree(seq, &request),
-            "navbar" => self.handle_navbar(seq, &request),
+            "navtree" | "navtree-full" => self.handle_navtree(seq, &request),
+            "navbar" | "navbar-full" => self.handle_navbar(seq, &request),
             "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
             "rename" | "rename-full" => self.handle_rename(seq, &request),
@@ -935,7 +1095,7 @@ impl Server {
             "getEditsForRefactor" => self.handle_get_edits_for_refactor(seq, &request),
             "organizeImports" => self.handle_organize_imports(seq, &request),
             "getEditsForFileRename" => self.handle_get_edits_for_file_rename(seq, &request),
-            "format" => self.handle_format(seq, &request),
+            "format" | "format-full" => self.handle_format(seq, &request),
             "formatonkey" => self.handle_format_on_key(seq, &request),
             "projectInfo" => self.handle_project_info(seq, &request),
             "compilerOptionsForInferredProjects" => {
@@ -944,21 +1104,26 @@ impl Server {
             "openExternalProject" | "openExternalProjects" | "closeExternalProject" => {
                 self.handle_external_project(seq, &request)
             }
+            "synchronizeProjectList" => self.handle_synchronize_project_list(seq, &request),
             "updateOpen" => self.handle_update_open(seq, &request),
+            "applyChangedToOpenFiles" => self.handle_apply_changed_to_open_files(seq, &request),
+            "encodedSyntacticClassifications-full" => {
+                self.handle_encoded_syntactic_classifications_full(seq, &request)
+            }
             "encodedSemanticClassifications-full" => {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
             }
             "inlayHints" | "provideInlayHints" => self.handle_inlay_hints(seq, &request),
-            "selectionRange" => self.handle_selection_range(seq, &request),
+            "selectionRange" | "selectionRange-full" => self.handle_selection_range(seq, &request),
             "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
             "prepareCallHierarchy" => self.handle_prepare_call_hierarchy(seq, &request),
             "provideCallHierarchyIncomingCalls" | "provideCallHierarchyOutgoingCalls" => {
                 self.handle_call_hierarchy(seq, &request)
             }
             "mapCode" => self.handle_map_code(seq, &request),
-            "fileReferences" => self.handle_file_references(seq, &request),
+            "fileReferences" | "fileReferences-full" => self.handle_file_references(seq, &request),
             "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
-            "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
+            "getOutliningSpans" | "outliningSpans" => self.handle_outlining_spans(seq, &request),
             "brace" => self.handle_brace(seq, &request),
             "tszPerformance" | "performance" => self.handle_tsz_performance(seq, &request),
             "emitOutput" | "emit-output" => self.handle_emit_output(seq, &request),
@@ -987,25 +1152,21 @@ impl Server {
             "uncommentSelection" | "uncommentSelection-full" => {
                 self.handle_uncomment_selection(seq, &request)
             }
-            "getSmartSelectionRange" => self.handle_smart_selection_range(seq, &request),
-            "getSyntacticClassifications" => self.handle_syntactic_classifications(seq, &request),
-            "getSemanticClassifications" => self.handle_semantic_classifications(seq, &request),
             "getCompilerOptionsDiagnostics" => {
                 self.handle_compiler_options_diagnostics(seq, &request)
             }
-            "reload" | "reloadProjects" => self.handle_reload(seq, &request),
+            "reload" => self.handle_reload(seq, &request),
+            "reloadProjects" => self.handle_reload_projects(seq, &request),
             "status" => self.stub_response(
                 seq,
                 &request,
-                Some(serde_json::json!({"version": env!("CARGO_PKG_VERSION")})),
+                Some(serde_json::json!({"version": tsz_cli::help::TSC_VERSION})),
             ),
             "compileOnSaveAffectedFileList" => {
-                self.stub_response(seq, &request, Some(serde_json::json!([])))
+                self.handle_compile_on_save_affected_file_list(seq, &request)
             }
-            "compileOnSaveEmitFile" => {
-                self.stub_response(seq, &request, Some(serde_json::json!(false)))
-            }
-            "saveto" | "watchChange" => self.stub_response(seq, &request, None),
+            "compileOnSaveEmitFile" => self.handle_compile_on_save_emit_file(seq, &request),
+            "saveto" => self.handle_save_to(seq, &request),
             "exit" => TsServerResponse {
                 seq,
                 msg_type: "response".to_string(),
@@ -1029,9 +1190,8 @@ impl Server {
 
     // Stub handlers for protocol commands — return `success: true` with
     // empty/minimal responses for commands whose semantics ARE "no result yet"
-    // (`compileOnSaveAffectedFileList` → `[]`, `compileOnSaveEmitFile` →
-    // `false`, async-acknowledged ones like `geterr`). This is the right
-    // shape when the empty body is a valid answer to the protocol question.
+    // (async-acknowledged ones like `geterr`). This is the right shape when the
+    // empty body is a valid answer to the protocol question.
     pub(crate) fn stub_response(
         &self,
         seq: u64,
@@ -1085,8 +1245,92 @@ impl Server {
 // Brace Matching Helpers
 // =============================================================================
 
+/// Decide whether a `/` at `pos` starts a regular-expression literal rather
+/// than a division operator. Uses the standard lexer heuristic: walk back to
+/// the previous in-code, non-whitespace token; if it is an operator/punctuator
+/// that cannot end an expression, or a keyword that introduces an expression,
+/// or there is no such token, the `/` begins a regex.
+///
+/// `map` reflects bytes already classified by `build_code_map` for
+/// `j < pos`; bytes inside earlier strings/comments are `false` and should be
+/// skipped here.
+fn is_regex_literal_start(bytes: &[u8], map: &[bool], pos: usize) -> bool {
+    let mut j = pos;
+    while j > 0 {
+        j -= 1;
+        let b = bytes[j];
+        if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+            continue;
+        }
+        if !map[j] {
+            // Inside a string/comment/template — skip.
+            continue;
+        }
+        if matches!(
+            b,
+            b'=' | b','
+                | b'('
+                | b'['
+                | b'{'
+                | b';'
+                | b':'
+                | b'?'
+                | b'!'
+                | b'+'
+                | b'-'
+                | b'*'
+                | b'/'
+                | b'%'
+                | b'&'
+                | b'|'
+                | b'^'
+                | b'<'
+                | b'>'
+                | b'~'
+        ) {
+            return true;
+        }
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' {
+            // Walk back to the start of the identifier and decide based on
+            // whether it is a keyword that introduces an expression.
+            let end = j + 1;
+            let mut start = j;
+            while start > 0 {
+                let bb = bytes[start - 1];
+                if (bb.is_ascii_alphanumeric() || bb == b'_' || bb == b'$') && map[start - 1] {
+                    start -= 1;
+                } else {
+                    break;
+                }
+            }
+            return matches!(
+                &bytes[start..end],
+                b"return"
+                    | b"typeof"
+                    | b"delete"
+                    | b"void"
+                    | b"in"
+                    | b"of"
+                    | b"instanceof"
+                    | b"new"
+                    | b"throw"
+                    | b"do"
+                    | b"else"
+                    | b"case"
+                    | b"yield"
+                    | b"await"
+            );
+        }
+        // `)`, `]`, `}`, quotes, digits already handled above as alnum: end
+        // of expression — `/` is division.
+        return false;
+    }
+    // Start of file.
+    true
+}
+
 /// Build a boolean map indicating which byte positions are "in code"
-/// (i.e., not inside a string literal or comment).
+/// (i.e., not inside a string literal, comment, or regex literal).
 fn build_code_map(bytes: &[u8]) -> Vec<bool> {
     let len = bytes.len();
     let mut map = vec![true; len];
@@ -1117,6 +1361,51 @@ fn build_code_map(bytes: &[u8]) -> Vec<bool> {
                         }
                         map[i] = false;
                         i += 1;
+                    }
+                } else if is_regex_literal_start(bytes, &map, i) {
+                    // Regex literal `/.../flags`. Mark its body so brace
+                    // scanning ignores `{` / `}` that appear inside.
+                    map[i] = false;
+                    i += 1;
+                    let mut in_class = false;
+                    while i < len {
+                        match bytes[i] {
+                            b'\\' => {
+                                map[i] = false;
+                                i += 1;
+                                if i < len && bytes[i] != b'\n' {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                            }
+                            b'[' if !in_class => {
+                                in_class = true;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b']' if in_class => {
+                                in_class = false;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b'/' if !in_class => {
+                                map[i] = false;
+                                i += 1;
+                                while i < len && bytes[i].is_ascii_alphabetic() {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                                break;
+                            }
+                            b'\n' => {
+                                // Unterminated regex literal.
+                                break;
+                            }
+                            _ => {
+                                map[i] = false;
+                                i += 1;
+                            }
+                        }
                     }
                 } else {
                     i += 1;
@@ -1377,7 +1666,7 @@ fn find_angle_bracket_match(arena: &NodeArena, source: &str, pos: usize) -> Opti
 // =============================================================================
 
 /// Read a Content-Length framed message from stdin (tsserver protocol)
-fn read_content_length_message(reader: &mut BufReader<std::io::Stdin>) -> Result<Option<String>> {
+fn read_content_length_message<R: BufRead>(reader: &mut R) -> Result<Option<String>> {
     let mut header_line = String::new();
     let bytes_read = reader.read_line(&mut header_line)?;
     if bytes_read == 0 {
@@ -1415,7 +1704,7 @@ fn read_content_length_message(reader: &mut BufReader<std::io::Stdin>) -> Result
 }
 
 /// Write a Content-Length framed message to stdout (tsserver protocol)
-fn write_content_length_message(stdout: &mut std::io::Stdout, message: &str) -> Result<()> {
+fn write_content_length_message<W: Write>(stdout: &mut W, message: &str) -> Result<()> {
     write!(
         stdout,
         "Content-Length: {}\r\n\r\n{}",
@@ -1452,8 +1741,16 @@ fn run_tsserver_protocol(server: &mut Server) -> Result<()> {
     let mut stdin = BufReader::new(std::io::stdin());
     let mut stdout = std::io::stdout();
 
+    run_tsserver_protocol_with_io(server, &mut stdin, &mut stdout)
+}
+
+fn run_tsserver_protocol_with_io<R: BufRead, W: Write>(
+    server: &mut Server,
+    stdin: &mut R,
+    stdout: &mut W,
+) -> Result<()> {
     loop {
-        let message = match read_content_length_message(&mut stdin)? {
+        let message = match read_content_length_message(stdin)? {
             Some(msg) => msg,
             None => break, // EOF
         };
@@ -1475,18 +1772,25 @@ fn run_tsserver_protocol(server: &mut Server) -> Result<()> {
                     body: None,
                 };
                 let json = serde_json::to_string(&error_response)?;
-                write_content_length_message(&mut stdout, &json)?;
+                write_content_length_message(stdout, &json)?;
                 continue;
             }
         };
 
-        let is_exit = request.command == "exit";
+        if request.command == "exit" {
+            break;
+        }
+
         let response = server.handle_tsserver_request(request);
         let json = serde_json::to_string(&response)?;
-        write_content_length_message(&mut stdout, &json)?;
+        write_content_length_message(stdout, &json)?;
 
-        if is_exit {
-            break;
+        // Async events queued by the handler (e.g. `geterr` → `syntaxDiag`
+        // / `semanticDiag` / `suggestionDiag` / `requestCompleted`) write
+        // after the originating response. See #3544.
+        for event in server.drain_pending_events() {
+            let json = serde_json::to_string(&event)?;
+            write_content_length_message(stdout, &json)?;
         }
     }
 

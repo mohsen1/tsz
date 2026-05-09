@@ -23,7 +23,7 @@ use crate::types::{
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
     TypeId, TypeListId, TypeParamInfo,
 };
-use crate::visitors::visitor_predicates::{contains_type_matching, is_primitive_type};
+use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Controls which subtype direction makes a member redundant when simplifying
@@ -66,6 +66,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// the same (check, extends) pair many times across distributed branches and
     /// tail-recursion iterations. Caching avoids redundant structural comparison.
     conditional_subtype_cache: FxHashMap<(TypeId, TypeId), bool>,
+    /// PERF: Cache whether a type contains `infer`.
+    /// Recursive conditionals can revisit the same application-shaped `extends`
+    /// pattern thousands of times while checking whether the application-level
+    /// infer fast path applies.
+    contains_infer_cache: FxHashMap<TypeId, bool>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
     /// When true, flag `depth_exceeded` on Application cycle detection.
@@ -148,6 +153,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
+            contains_infer_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -194,6 +200,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
+            contains_infer_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -321,6 +328,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) {
         self.conditional_subtype_cache
             .insert((check, extends), result);
+    }
+
+    /// PERF: Look up whether a type contains `infer`.
+    #[inline]
+    pub(crate) fn cached_contains_infer(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_infer_cache.get(&type_id).copied()
+    }
+
+    /// PERF: Cache whether a type contains `infer`.
+    #[inline]
+    pub(crate) fn cache_contains_infer(&mut self, type_id: TypeId, result: bool) {
+        self.contains_infer_cache.insert(type_id, result);
     }
 
     /// Check if `no_unchecked_indexed_access` is enabled.
@@ -592,9 +611,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This fixes the "Ref(5)<error>" diagnostic issue where generic types
         // aren't expanded to their underlying function/object types
         // Note: Ref(SymbolRef) was migrated to Lazy(DefId)
+        //
+        // Also: an `Application(UnresolvedTypeName(name), args)` residue from
+        // cross-file lowering can now resolve through the merged binder
+        // graph at evaluation time. Try the resolver before giving up so
+        // qualified names like `util.OmitKeys` (whose lowering pass missed
+        // the imported namespace's def_id) don't permanently strand
+        // downstream consumers on an opaque application.
         let def_id = match base_key {
             TypeData::Lazy(def_id) => Some(def_id),
             TypeData::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
+            TypeData::UnresolvedTypeName(atom) => {
+                let name = self.interner.resolve_atom(atom);
+                self.resolver.resolve_unresolved_type_name(&name)
+            }
             _ => None,
         };
 
@@ -629,12 +659,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
-            let prefer_application_display_alias = matches!(
-                self.resolver.get_def_kind(def_id),
-                Some(crate::def::DefKind::TypeAlias)
-            ) && resolved.is_some_and(|body| {
-                !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
-            });
+            let def_kind = self.resolver.get_def_kind(def_id);
+            let is_type_alias_def = matches!(def_kind, Some(crate::def::DefKind::TypeAlias));
+            let prefer_application_display_alias = is_type_alias_def
+                && resolved.is_some_and(|body| {
+                    !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+                });
 
             tracing::trace!(
                 ?def_id,
@@ -650,20 +680,57 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
+                    // When the resolver returns `unknown` for the alias body,
+                    // the body hasn't been registered yet (e.g. cross-file
+                    // alias whose declaring file is still being processed in
+                    // parallel checking). Substituting an `unknown` body would
+                    // collapse `Foo<Args>` to bare `unknown` and erase its
+                    // structural shape downstream. Bail out and keep the
+                    // original `Application` opaque so later evaluator passes
+                    // (with a populated body) can expand it correctly.
+                    if resolved == TypeId::UNKNOWN {
+                        if let Some(d) = self.def_depth.get_mut(&def_id) {
+                            *d = d.saturating_sub(1);
+                        }
+                        return original_type_id;
+                    }
                     // Pre-expand type arguments that are TypeQuery or Application.
                     // For conditional type bodies with Application extends containing infer,
                     // preserve Application args so the conditional evaluator can match
                     // at the Application level (e.g., Promise<string> vs Promise<infer U>).
-                    let body_is_conditional_with_app_infer =
-                        self.is_conditional_with_application_infer(resolved);
-                    let expanded_args: std::borrow::Cow<'_, [TypeId]> =
-                        if body_is_conditional_with_app_infer {
-                            std::borrow::Cow::Owned(
-                                self.expand_type_args_preserve_applications(&app.args),
-                            )
-                        } else {
-                            self.expand_type_args(&app.args)
-                        };
+                    let arg_preservation = crate::type_queries::classify_body_for_arg_preservation(
+                        self.interner,
+                        resolved,
+                    );
+                    let body_is_conditional = matches!(
+                        self.interner.lookup(resolved),
+                        Some(TypeData::Conditional(_))
+                    );
+                    let expanded_args: std::borrow::Cow<'_, [TypeId]> = if body_is_conditional {
+                        std::borrow::Cow::Owned(
+                            app.args
+                                .iter()
+                                .map(|&arg| {
+                                    if crate::visitor::contains_type_parameters(self.interner, arg)
+                                    {
+                                        arg
+                                    } else {
+                                        self.try_expand_type_arg(arg)
+                                    }
+                                })
+                                .collect(),
+                        )
+                    } else if matches!(
+                        arg_preservation,
+                        crate::type_queries::BodyArgPreservation::ConditionalInfer
+                            | crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+                    ) {
+                        std::borrow::Cow::Owned(
+                            self.expand_type_args_preserve_applications(&app.args),
+                        )
+                    } else {
+                        self.expand_type_args(&app.args)
+                    };
                     let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
                     if let Some(db) = self.query_db
@@ -717,7 +784,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     )
                                 })
                             } else {
-                                is_primitive_type(self.interner, resolved_arg)
+                                Self::is_primitive_or_primitive_union(self.interner, resolved_arg)
                             };
                             if should_passthrough {
                                 if let Some(db) = self.query_db {
@@ -932,9 +999,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //
             // For concrete args: always store (safe, no conflation risk).
             // For generic args: only store when the result is a Conditional or
-            // IndexAccess type. These types are structurally unique per alias
-            // (unlike Mapped/Object types which can collide with built-in aliases
-            // like Record, Partial, Pick, Omit due to interning dedup).
+            // IndexAccess type, plus still-deferred mapped aliases. Deferred mapped
+            // aliases retain the as-written relationship needed for diagnostics like
+            // `Mapped<K>[Remapped<K>]`, while concrete mapped/object reductions keep
+            // using the structural form to avoid repainting shared helper aliases.
             // Note: We use contains_generic_type_parameters_db which excludes
             // `this` types, since `this` is context-dependent and shouldn't
             // cause conflation issues like generic type parameters can.
@@ -969,20 +1037,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(
                             crate::types::TypeData::Conditional(_)
                                 | crate::types::TypeData::IndexAccess(_, _)
+                                | crate::types::TypeData::Mapped(_)
                         )
                     )
                 {
-                    if prefer_application_display_alias
-                        || (self.expand_application_display_alias_args
-                            && matches!(
-                                self.interner.lookup(display_origin),
-                                Some(TypeData::Application(_))
-                            ))
-                    {
-                        self.interner
-                            .store_display_alias_preferring_application(result, display_origin);
-                    } else {
-                        self.interner.store_display_alias(result, display_origin);
+                    let result_is_non_empty_structural = match self.interner.lookup(result) {
+                        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                            let shape = self.interner.object_shape(shape_id);
+                            !shape.properties.is_empty()
+                                || shape.string_index.is_some()
+                                || shape.number_index.is_some()
+                        }
+                        Some(TypeData::Intersection(_)) => true,
+                        _ => false,
+                    };
+                    let skip_type_alias_repaint = is_type_alias_def
+                        && matches!(
+                            self.interner.lookup(display_origin),
+                            Some(TypeData::Application(_))
+                        )
+                        && match (
+                            self.interner.lookup_alloc_order(result),
+                            self.interner.lookup_alloc_order(display_origin),
+                        ) {
+                            (Some(result_order), Some(display_order)) => {
+                                result_order <= display_order
+                            }
+                            _ => result.0 <= display_origin.0,
+                        }
+                        && result_is_non_empty_structural;
+                    if !skip_type_alias_repaint {
+                        if prefer_application_display_alias
+                            || (self.expand_application_display_alias_args
+                                && matches!(
+                                    self.interner.lookup(display_origin),
+                                    Some(TypeData::Application(_))
+                                ))
+                        {
+                            self.interner
+                                .store_display_alias_preferring_application(result, display_origin);
+                        } else {
+                            self.interner.store_display_alias(result, display_origin);
+                        }
                     }
 
                     // If the conditional branch resolved to an intermediate Application
@@ -1219,6 +1315,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let Some(key) = self.interner.lookup(arg) else {
             return arg;
         };
+        if matches!(
+            key,
+            TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Mapped(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::KeyOf(_)
+        ) && crate::contains_this_type(self.interner, arg)
+        {
+            return arg;
+        }
         match key {
             TypeData::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the VALUE type (constructor for classes).
@@ -1457,7 +1565,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let mut evaluated_members = Vec::with_capacity(members.len());
         for &member in members.iter() {
-            evaluated_members.push(self.evaluate_compound_member(member));
+            let evaluated = self.evaluate_compound_member(member);
+            // When an Application/Lazy member fails to reduce and falls back to
+            // `unknown` or to the empty object `{}` (e.g. depth-limit / cycle /
+            // cross-file resolution gap that can't expand the alias body), keep
+            // the original opaque member instead. Letting either propagate
+            // would cause intersection simplification to drop it via
+            // `unknown & T = T` or `{} & T = T` (since `{}` has no
+            // properties), silently erasing the structural shape the
+            // unevaluated alias would contribute once expanded. Preserving
+            // the original Application/Lazy keeps the intersection honest so
+            // downstream passes can see the alias's structural shape.
+            let opaque_orig = Self::is_opaque_under_bypass_eval(self.interner, member);
+            let evaluated_is_empty_object = evaluated != member
+                && crate::visitors::visitor_predicates::is_empty_object_type(
+                    self.interner,
+                    evaluated,
+                );
+            let preserved =
+                if opaque_orig && (evaluated == TypeId::UNKNOWN || evaluated_is_empty_object) {
+                    member
+                } else {
+                    evaluated
+                };
+            evaluated_members.push(preserved);
         }
 
         self.suppress_this_binding = prev_suppress;
@@ -1494,18 +1625,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// Example: `string | T[K]` where `T[K]` evaluates to `string` will become
     /// `string | string`, which then reduces to `string` via the interner's normalization.
-    fn evaluate_union(&mut self, list_id: TypeListId) -> TypeId {
-        let members = self.interner.type_list(list_id);
+    fn evaluate_union(&mut self, type_id: TypeId, list_id: TypeListId) -> TypeId {
+        let canonical_members = self.interner.type_list(list_id);
+        let origin_members = self.interner.get_union_origin(type_id);
+        let members = origin_members
+            .as_deref()
+            .map_or(canonical_members.as_ref(), Vec::as_slice);
         let mut evaluated_members = Vec::with_capacity(members.len());
 
-        for &member in members.iter() {
+        for &member in members {
             evaluated_members.push(self.evaluate_compound_member(member));
         }
 
         // Deep structural simplification using SubtypeChecker
         self.simplify_union_members(&mut evaluated_members);
 
-        self.interner.union(evaluated_members)
+        let result = self.interner.union(evaluated_members.clone());
+        self.interner.store_union_origin(result, evaluated_members);
+        result
     }
 
     /// Evaluate a member of a compound type (union/intersection) while
@@ -1608,7 +1745,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Single-pass early-exit check instead of two separate O(N) scans.
         for &id in members.iter() {
-            if id.is_any() || self.is_complex_type(id) {
+            if id.is_any()
+                || crate::contains_this_type(self.interner, id)
+                || self.is_complex_type(id)
+            {
                 return;
             }
         }
@@ -1680,7 +1820,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // lose those property declarations from the intersection type.
                         // This matters for optional properties: {a: string} <: {b?: number}
                         // but {a: string} & {b?: number} must preserve both properties.
-                        checker.is_subtype_of(members[j], members[i])
+                        //
+                        // Opaque Application/Lazy guard: when bypass_evaluation prevents
+                        // SubtypeChecker from expanding an unreduced Application or Lazy
+                        // member, that member appears empty to the checker. A concrete
+                        // sibling like `{path?: _}` would then trivially "subsume" it and
+                        // get the Application dropped, even though the Application would
+                        // contribute additional union/object members once expanded.
+                        // Skip the drop so `Application(stripPath<U>) & {path?: _}` keeps
+                        // both members and downstream property collection sees the union.
+                        !Self::is_opaque_under_bypass_eval(self.interner, members[i])
+                            && checker.is_subtype_of(members[j], members[i])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                             // Branded-primitive idiom: keep `{}` paired with a widening
                             // primitive intrinsic so `string & {}` (and friends) stay as
@@ -1738,6 +1888,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> bool {
         crate::visitors::visitor_predicates::is_empty_object_type(db, candidate)
             && crate::visitors::visitor_predicates::is_widening_primitive_intrinsic(db, subsuming)
+    }
+
+    /// Returns true when `type_id` is an unreduced `Application` or `Lazy`
+    /// whose structural shape cannot be inspected while `bypass_evaluation`
+    /// is on. Such members must not be dropped from intersections via
+    /// subtype-redundancy: under bypass eval the `SubtypeChecker` treats them
+    /// as empty, so a concrete sibling object can falsely subsume them.
+    fn is_opaque_under_bypass_eval(
+        db: &dyn crate::caches::db::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        matches!(
+            db.lookup(type_id),
+            Some(TypeData::Application(_) | TypeData::Lazy(_))
+        )
+    }
+
+    fn is_primitive_or_primitive_union(
+        db: &dyn crate::caches::db::TypeDatabase,
+        candidate: TypeId,
+    ) -> bool {
+        if crate::visitors::visitor_predicates::is_primitive_type(db, candidate) {
+            return true;
+        }
+        let Some(TypeData::Union(members)) = db.lookup(candidate) else {
+            return false;
+        };
+        db.type_list(members)
+            .iter()
+            .all(|&member| crate::visitors::visitor_predicates::is_primitive_type(db, member))
     }
 
     /// Check whether a union member is a literal that's only "subsumed" by a
@@ -1849,7 +2029,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.visit_string_intrinsic(*kind, *type_arg)
             }
             TypeData::Intersection(list_id) => self.visit_intersection(*list_id),
-            TypeData::Union(list_id) => self.visit_union(*list_id),
+            TypeData::Union(list_id) => self.visit_union(type_id, *list_id),
             TypeData::Array(elem) => self.visit_array(*elem, type_id),
             TypeData::Tuple(tuple_list_id) => self.visit_tuple(*tuple_list_id, type_id),
             TypeData::NoInfer(inner) => {
@@ -2016,6 +2196,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// to avoid exponential blowup with recursive conditional types that
     /// produce tuples.
     fn visit_tuple(&mut self, tuple_list_id: TupleListId, original_type_id: TypeId) -> TypeId {
+        use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+
         let elements = self.interner.tuple_list(tuple_list_id);
 
         // Quick check: does any element need evaluation?
@@ -2028,6 +2210,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let mut result: Vec<TupleElement> = Vec::with_capacity(elements.len());
         let mut changed = false;
+        let mut spread_product = 1usize;
 
         for elem in elements.iter() {
             // Only evaluate element types that are meta-types (IndexAccess,
@@ -2045,6 +2228,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For rest/spread elements, if the evaluated type is a tuple,
             // flatten its elements inline (spreading the inner tuple).
             if elem.rest {
+                if let Some(count) = self.tuple_spread_alternative_count(evaluated) {
+                    spread_product = spread_product.saturating_mul(count);
+                    if spread_product >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                        self.interner.mark_union_too_complex();
+                        return TypeId::ERROR;
+                    }
+                }
+
                 if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
                     for inner_elem in inner_elements.iter() {
@@ -2083,6 +2274,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.interner.tuple(result)
     }
 
+    fn tuple_spread_alternative_count(&self, type_id: TypeId) -> Option<usize> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Tuple(_)) => Some(1),
+            Some(TypeData::Union(list_id)) => Some(self.interner.type_list(list_id).len()),
+            _ => None,
+        }
+    }
+
     /// Check if a type is a meta-type that would benefit from evaluation
     /// inside a tuple element. Excludes type parameters and concrete types
     /// to avoid recursive blowup.
@@ -2108,8 +2307,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Visit a union type: A | B | C
-    fn visit_union(&mut self, list_id: TypeListId) -> TypeId {
-        self.evaluate_union(list_id)
+    fn visit_union(&mut self, type_id: TypeId, list_id: TypeListId) -> TypeId {
+        self.evaluate_union(type_id, list_id)
     }
 
     /// Visit an array type: T[].

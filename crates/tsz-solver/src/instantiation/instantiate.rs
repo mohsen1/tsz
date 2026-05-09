@@ -19,9 +19,38 @@ use crate::types::{
     LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
     TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::cell::RefCell;
 use tsz_common::interner::Atom;
+
+// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS used by
+// `instantiate_type_params_to_constraints`. Mirrors the pool pattern from
+// #4722 / #4790 / #4801.
+thread_local! {
+    static CONSTRAINT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = CONSTRAINT_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    CONSTRAINT_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Mode bit: `substitute_infer = true`.
 const MODE_SUBSTITUTE_INFER: u8 = 0b001;
@@ -366,6 +395,19 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
+    fn is_primitive_or_primitive_union(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if crate::visitors::visitor_predicates::is_primitive_type(interner, type_id) {
+            return true;
+        }
+        let Some(TypeData::Union(members)) = interner.lookup(type_id) else {
+            return false;
+        };
+        interner
+            .type_list(members)
+            .iter()
+            .all(|&member| crate::visitors::visitor_predicates::is_primitive_type(interner, member))
+    }
+
     /// Check whether a mapped template actually depends on the source object's
     /// indexed member type `source_obj[K]`. Array/tuple preservation is only
     /// valid for these homomorphic-style templates; unrelated templates like
@@ -396,67 +438,99 @@ impl<'a> TypeInstantiator<'a> {
     }
 
     /// Instantiate a slice of properties by substituting type IDs.
-    fn instantiate_properties(&mut self, properties: &[PropertyInfo]) -> Vec<PropertyInfo> {
-        properties
-            .iter()
-            .map(|p| PropertyInfo {
-                name: p.name,
-                type_id: self.instantiate(p.type_id),
-                write_type: self.instantiate(p.write_type),
-                optional: p.optional,
-                readonly: p.readonly,
-                is_method: p.is_method,
-                is_class_prototype: p.is_class_prototype,
-                visibility: p.visibility,
-                parent_id: p.parent_id,
-                declaration_order: p.declaration_order,
-                is_string_named: p.is_string_named,
-                single_quoted_name: p.single_quoted_name,
-            })
-            .collect()
+    fn instantiate_properties_if_changed(
+        &mut self,
+        properties: &[PropertyInfo],
+    ) -> Option<Vec<PropertyInfo>> {
+        let mut instantiated: Option<Vec<PropertyInfo>> = None;
+        for (index, property) in properties.iter().enumerate() {
+            let type_id = self.instantiate(property.type_id);
+            let write_type = self.instantiate(property.write_type);
+            if let Some(instantiated) = &mut instantiated {
+                let mut property = property.clone();
+                property.type_id = type_id;
+                property.write_type = write_type;
+                instantiated.push(property);
+            } else if type_id != property.type_id || write_type != property.write_type {
+                let mut changed = Vec::with_capacity(properties.len());
+                changed.extend_from_slice(&properties[..index]);
+                let mut property = property.clone();
+                property.type_id = type_id;
+                property.write_type = write_type;
+                changed.push(property);
+                instantiated = Some(changed);
+            }
+        }
+        instantiated
     }
 
     /// Instantiate an optional index signature.
-    fn instantiate_index_signature(
+    fn instantiate_index_signature_if_changed(
         &mut self,
-        idx: Option<&IndexSignature>,
+        idx: &IndexSignature,
     ) -> Option<IndexSignature> {
-        idx.map(|idx| IndexSignature {
-            key_type: self.instantiate(idx.key_type),
-            value_type: self.instantiate(idx.value_type),
+        let key_type = self.instantiate(idx.key_type);
+        let value_type = self.instantiate(idx.value_type);
+        (key_type != idx.key_type || value_type != idx.value_type).then_some(IndexSignature {
+            key_type,
+            value_type,
             readonly: idx.readonly,
             param_name: idx.param_name,
         })
     }
 
     /// Instantiate type parameter constraints and defaults.
-    fn instantiate_type_params(&mut self, type_params: &[TypeParamInfo]) -> Vec<TypeParamInfo> {
+    fn instantiate_type_params_if_changed(
+        &mut self,
+        type_params: &[TypeParamInfo],
+    ) -> Option<Vec<TypeParamInfo>> {
         let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
         self.preserve_unsubstituted_type_params = true;
-        let instantiated = type_params
-            .iter()
-            .map(|tp| TypeParamInfo {
+
+        let mut instantiated: Option<Vec<TypeParamInfo>> = None;
+        for (index, type_param) in type_params.iter().enumerate() {
+            let constraint = type_param.constraint.map(|c| self.instantiate(c));
+            let default = type_param.default.map(|d| self.instantiate(d));
+            let new_type_param = TypeParamInfo {
                 is_const: false,
-                name: tp.name,
-                constraint: tp.constraint.map(|c| self.instantiate(c)),
-                default: tp.default.map(|d| self.instantiate(d)),
-            })
-            .collect();
+                name: type_param.name,
+                constraint,
+                default,
+            };
+            if let Some(instantiated) = &mut instantiated {
+                instantiated.push(new_type_param);
+            } else if new_type_param != *type_param {
+                let mut changed = Vec::with_capacity(type_params.len());
+                changed.extend_from_slice(&type_params[..index]);
+                changed.push(new_type_param);
+                instantiated = Some(changed);
+            }
+        }
+
         self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
         instantiated
     }
 
     /// Instantiate function/signature parameters.
-    fn instantiate_params(&mut self, params: &[ParamInfo]) -> Vec<ParamInfo> {
-        params
-            .iter()
-            .map(|p| ParamInfo {
-                name: p.name,
-                type_id: self.instantiate(p.type_id),
-                optional: p.optional,
-                rest: p.rest,
-            })
-            .collect()
+    fn instantiate_params_if_changed(&mut self, params: &[ParamInfo]) -> Option<Vec<ParamInfo>> {
+        let mut instantiated: Option<Vec<ParamInfo>> = None;
+        for (index, param) in params.iter().enumerate() {
+            let type_id = self.instantiate(param.type_id);
+            let original = *param;
+            let param = ParamInfo {
+                type_id,
+                ..original
+            };
+            if let Some(instantiated) = &mut instantiated {
+                instantiated.push(param);
+            } else if param != original {
+                let mut changed = Vec::with_capacity(params.len());
+                changed.extend_from_slice(&params[..index]);
+                changed.push(param);
+                instantiated = Some(changed);
+            }
+        }
+        instantiated
     }
 
     /// Enter a shadowing scope for type parameters.
@@ -562,10 +636,14 @@ impl<'a> TypeInstantiator<'a> {
             None => return type_id,
         };
 
+        if Self::is_instantiation_leaf(&key) {
+            return type_id;
+        }
+
         // Mark as visiting (with original ID as placeholder for cycles)
         self.visiting.insert(type_id, type_id);
 
-        let result = self.instantiate_key(&key);
+        let result = self.instantiate_key(type_id, &key);
 
         // Update the cache with the actual result
         self.visiting.insert(type_id, result);
@@ -573,48 +651,100 @@ impl<'a> TypeInstantiator<'a> {
         result
     }
 
+    fn instantiate_type_predicate_if_changed(
+        &mut self,
+        predicate: &TypePredicate,
+    ) -> Option<TypePredicate> {
+        let type_id = predicate.type_id.map(|type_id| self.instantiate(type_id));
+        (type_id != predicate.type_id).then_some(TypePredicate {
+            type_id,
+            ..*predicate
+        })
+    }
+
+    #[inline]
+    const fn is_instantiation_leaf(key: &TypeData) -> bool {
+        matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::UnresolvedTypeName(_)
+                | TypeData::Error
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+        )
+    }
+
     /// Instantiate a call signature.
-    fn instantiate_call_signature(&mut self, sig: &CallSignature) -> CallSignature {
+    fn instantiate_call_signature_if_changed(
+        &mut self,
+        sig: &CallSignature,
+    ) -> Option<CallSignature> {
         let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&sig.type_params);
 
-        let type_params = self.instantiate_type_params(&sig.type_params);
+        let type_params = self.instantiate_type_params_if_changed(&sig.type_params);
         let local_start = self.local_type_params.len();
-        for type_param in &type_params {
+        for type_param in type_params.as_deref().unwrap_or(&sig.type_params) {
             self.local_type_params
                 .push((type_param.name, self.interner.type_param(*type_param)));
         }
         let type_predicate = sig
             .type_predicate
             .as_ref()
-            .map(|predicate| self.instantiate_type_predicate(predicate));
+            .and_then(|predicate| self.instantiate_type_predicate_if_changed(predicate));
         let this_type = sig.this_type.map(|type_id| self.instantiate(type_id));
-        let params = self.instantiate_params(&sig.params);
+        let params = self.instantiate_params_if_changed(&sig.params);
         let return_type = self.instantiate(sig.return_type);
         self.local_type_params.truncate(local_start);
 
         self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
-        CallSignature {
-            type_params,
-            params,
+        let this_changed = this_type != sig.this_type;
+        let return_changed = return_type != sig.return_type;
+        if type_params.is_none()
+            && params.is_none()
+            && type_predicate.is_none()
+            && !this_changed
+            && !return_changed
+        {
+            return None;
+        }
+
+        Some(CallSignature {
+            type_params: type_params.unwrap_or_else(|| sig.type_params.clone()),
+            params: params.unwrap_or_else(|| sig.params.clone()),
             this_type,
             return_type,
-            type_predicate,
+            type_predicate: type_predicate.or(sig.type_predicate),
             is_method: sig.is_method,
-        }
+        })
     }
 
-    fn instantiate_type_predicate(&mut self, predicate: &TypePredicate) -> TypePredicate {
-        TypePredicate {
-            asserts: predicate.asserts,
-            target: predicate.target,
-            type_id: predicate.type_id.map(|type_id| self.instantiate(type_id)),
-            parameter_index: predicate.parameter_index,
+    fn instantiate_call_signatures_if_changed(
+        &mut self,
+        signatures: &[CallSignature],
+    ) -> Option<Vec<CallSignature>> {
+        let mut instantiated: Option<Vec<CallSignature>> = None;
+        for (index, signature) in signatures.iter().enumerate() {
+            let signature = self.instantiate_call_signature_if_changed(signature);
+            if let Some(instantiated) = &mut instantiated {
+                instantiated.push(signature.unwrap_or_else(|| signatures[index].clone()));
+            } else if let Some(signature) = signature {
+                let mut changed = Vec::with_capacity(signatures.len());
+                changed.extend_from_slice(&signatures[..index]);
+                changed.push(signature);
+                instantiated = Some(changed);
+            }
         }
+        instantiated
     }
 
     /// Instantiate a `TypeData`.
-    fn instantiate_key(&mut self, key: &TypeData) -> TypeId {
+    fn instantiate_key(&mut self, type_id: TypeId, key: &TypeData) -> TypeId {
         match key {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
@@ -699,7 +829,11 @@ impl<'a> TypeInstantiator<'a> {
 
             // Union: instantiate all members, skip re-intern if nothing changed
             TypeData::Union(members) => {
-                let members = self.interner.type_list(*members);
+                let canonical_members = self.interner.type_list(*members);
+                let origin_members = self.interner.get_union_origin(type_id);
+                let members = origin_members
+                    .as_deref()
+                    .map_or(canonical_members.as_ref(), Vec::as_slice);
                 let mut changed = false;
                 let instantiated: Vec<TypeId> = members
                     .iter()
@@ -712,7 +846,9 @@ impl<'a> TypeInstantiator<'a> {
                     })
                     .collect();
                 if changed {
-                    self.interner.union(instantiated)
+                    let result = self.interner.union(instantiated.clone());
+                    self.interner.store_union_origin(result, instantiated);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }
@@ -815,9 +951,14 @@ impl<'a> TypeInstantiator<'a> {
                 if self.shallow_this_only && shape.symbol.is_some() {
                     return self.interner.intern(*key);
                 }
-                let instantiated = self.instantiate_properties(&shape.properties);
-                self.interner
-                    .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
+                if let Some(instantiated) =
+                    self.instantiate_properties_if_changed(&shape.properties)
+                {
+                    self.interner
+                        .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
+                } else {
+                    self.interner.intern(*key)
+                }
             }
 
             // Object with index signatures: instantiate all types
@@ -826,18 +967,30 @@ impl<'a> TypeInstantiator<'a> {
                 if self.shallow_this_only && shape.symbol.is_some() {
                     return self.interner.intern(*key);
                 }
-                let instantiated_props = self.instantiate_properties(&shape.properties);
-                let instantiated_string_idx =
-                    self.instantiate_index_signature(shape.string_index.as_ref());
-                let instantiated_number_idx =
-                    self.instantiate_index_signature(shape.number_index.as_ref());
-                self.interner.object_with_index(ObjectShape {
-                    flags: shape.flags,
-                    properties: instantiated_props,
-                    string_index: instantiated_string_idx,
-                    number_index: instantiated_number_idx,
-                    symbol: shape.symbol,
-                })
+                let instantiated_props =
+                    self.instantiate_properties_if_changed(&shape.properties);
+                let instantiated_string_idx = shape
+                    .string_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                let instantiated_number_idx = shape
+                    .number_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                if instantiated_props.is_some()
+                    || instantiated_string_idx.is_some()
+                    || instantiated_number_idx.is_some()
+                {
+                    self.interner.object_with_index(ObjectShape {
+                        flags: shape.flags,
+                        properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
+                        string_index: instantiated_string_idx.or(shape.string_index),
+                        number_index: instantiated_number_idx.or(shape.number_index),
+                        symbol: shape.symbol,
+                    })
+                } else {
+                    self.interner.intern(*key)
+                }
             }
 
             // Function: instantiate params and return type
@@ -896,32 +1049,48 @@ impl<'a> TypeInstantiator<'a> {
                 }
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&shape.type_params);
 
-                let instantiated_type_params = self.instantiate_type_params(&shape.type_params);
+                let instantiated_type_params =
+                    self.instantiate_type_params_if_changed(&shape.type_params);
                 let local_start = self.local_type_params.len();
-                for type_param in &instantiated_type_params {
+                for type_param in instantiated_type_params
+                    .as_deref()
+                    .unwrap_or(&shape.type_params)
+                {
                     self.local_type_params
                         .push((type_param.name, self.interner.type_param(*type_param)));
                 }
                 let type_predicate = shape
                     .type_predicate
                     .as_ref()
-                    .map(|predicate| self.instantiate_type_predicate(predicate));
+                    .and_then(|predicate| self.instantiate_type_predicate_if_changed(predicate));
                 let this_type = shape.this_type.map(|type_id| self.instantiate(type_id));
-                let instantiated_params = self.instantiate_params(&shape.params);
+                let instantiated_params = self.instantiate_params_if_changed(&shape.params);
                 let instantiated_return = self.instantiate(shape.return_type);
                 self.local_type_params.truncate(local_start);
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
-                self.interner.function(FunctionShape {
-                    type_params: instantiated_type_params,
-                    params: instantiated_params,
-                    this_type,
-                    return_type: instantiated_return,
-                    type_predicate,
-                    is_constructor: shape.is_constructor,
-                    is_method: shape.is_method,
-                })
+                let this_changed = this_type != shape.this_type;
+                let return_changed = instantiated_return != shape.return_type;
+                if instantiated_type_params.is_some()
+                    || instantiated_params.is_some()
+                    || type_predicate.is_some()
+                    || this_changed
+                    || return_changed
+                {
+                    self.interner.function(FunctionShape {
+                        type_params: instantiated_type_params
+                            .unwrap_or_else(|| shape.type_params.clone()),
+                        params: instantiated_params.unwrap_or_else(|| shape.params.clone()),
+                        this_type,
+                        return_type: instantiated_return,
+                        type_predicate: type_predicate.or(shape.type_predicate),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    })
+                } else {
+                    self.interner.intern(*key)
+                }
             }
 
             // Callable: instantiate all signatures and properties
@@ -998,27 +1167,41 @@ impl<'a> TypeInstantiator<'a> {
                     }
                     return self.interner.intern(*key);
                 }
-                let instantiated_call: Vec<CallSignature> = shape
-                    .call_signatures
-                    .iter()
-                    .map(|sig| self.instantiate_call_signature(sig))
-                    .collect();
-                let instantiated_construct: Vec<CallSignature> = shape
-                    .construct_signatures
-                    .iter()
-                    .map(|sig| self.instantiate_call_signature(sig))
-                    .collect();
-                let instantiated_props = self.instantiate_properties(&shape.properties);
+                let instantiated_call =
+                    self.instantiate_call_signatures_if_changed(&shape.call_signatures);
+                let instantiated_construct =
+                    self.instantiate_call_signatures_if_changed(&shape.construct_signatures);
+                let instantiated_props =
+                    self.instantiate_properties_if_changed(&shape.properties);
+                let instantiated_string_idx = shape
+                    .string_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                let instantiated_number_idx = shape
+                    .number_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
 
-                self.interner.callable(CallableShape {
-                    call_signatures: instantiated_call,
-                    construct_signatures: instantiated_construct,
-                    properties: instantiated_props,
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol: shape.symbol,
-                    is_abstract: shape.is_abstract,
-                })
+                if instantiated_call.is_some()
+                    || instantiated_construct.is_some()
+                    || instantiated_props.is_some()
+                    || instantiated_string_idx.is_some()
+                    || instantiated_number_idx.is_some()
+                {
+                    self.interner.callable(CallableShape {
+                        call_signatures: instantiated_call
+                            .unwrap_or_else(|| shape.call_signatures.clone()),
+                        construct_signatures: instantiated_construct
+                            .unwrap_or_else(|| shape.construct_signatures.clone()),
+                        properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
+                        string_index: instantiated_string_idx.or(shape.string_index),
+                        number_index: instantiated_number_idx.or(shape.number_index),
+                        symbol: shape.symbol,
+                        is_abstract: shape.is_abstract,
+                    })
+                } else {
+                    self.interner.intern(*key)
+                }
             }
 
             // Conditional: instantiate all parts
@@ -1392,10 +1575,7 @@ impl<'a> TypeInstantiator<'a> {
                     // unions or other compound types (not just at the top level of a type
                     // alias body). Without this, `{ [K in keyof null]: null[K] }` inside
                     // a union evaluates to `{}` instead of `null`.
-                    if crate::visitors::visitor_predicates::is_primitive_type(
-                        self.interner,
-                        resolved,
-                    ) {
+                    if Self::is_primitive_or_primitive_union(self.interner, resolved) {
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
                         return resolved;
                     }
@@ -1817,6 +1997,74 @@ pub fn instantiate_type_cached(
     instantiate_type_with_depth_status(interner, type_id, substitution).0
 }
 
+/// Instantiate every type parameter reachable from `type_id` to its constraint.
+///
+/// This is used as an error-recovery surface after failed overload resolution:
+/// tsc keeps the constructor/call fallback type, but the fallback should expose
+/// constrained key types like `object` rather than raw, unresolved parameters
+/// such as `T` or `K`.
+pub fn instantiate_type_params_to_constraints(db: &dyn QueryDatabase, type_id: TypeId) -> TypeId {
+    let mut substitution = TypeSubstitution::new();
+    with_constraint_visited(|visited| {
+        collect_type_param_constraint_substitutions(
+            db.as_type_database(),
+            type_id,
+            &mut substitution,
+            visited,
+        );
+    });
+    if substitution.is_empty() {
+        type_id
+    } else {
+        instantiate_type_cached(db.as_type_database(), Some(db), type_id, &substitution)
+    }
+}
+
+fn collect_type_param_constraint_substitutions(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &mut TypeSubstitution,
+    visited: &mut FxHashSet<TypeId>,
+) {
+    if type_id.is_intrinsic() || !visited.insert(type_id) {
+        return;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            if let Some(constraint) = info.constraint {
+                substitution.insert(info.name, constraint);
+                collect_type_param_constraint_substitutions(db, constraint, substitution, visited);
+            }
+            if let Some(default) = info.default {
+                collect_type_param_constraint_substitutions(db, default, substitution, visited);
+            }
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            collect_type_param_constraint_substitutions(db, app.base, substitution, visited);
+            for &arg in &app.args {
+                collect_type_param_constraint_substitutions(db, arg, substitution, visited);
+            }
+        }
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            for member in db.type_list(list_id).iter().copied() {
+                collect_type_param_constraint_substitutions(db, member, substitution, visited);
+            }
+        }
+        Some(
+            TypeData::Array(element) | TypeData::ReadonlyType(element) | TypeData::KeyOf(element),
+        ) => {
+            collect_type_param_constraint_substitutions(db, element, substitution, visited);
+        }
+        Some(TypeData::IndexAccess(object, index)) => {
+            collect_type_param_constraint_substitutions(db, object, substitution, visited);
+            collect_type_param_constraint_substitutions(db, index, substitution, visited);
+        }
+        _ => {}
+    }
+}
+
 /// Instantiate a type while preserving unsubstituted type parameters.
 ///
 /// Unlike `instantiate_type`, this does NOT fall back to replacing type
@@ -2041,10 +2289,9 @@ pub fn fill_application_defaults(
     for (i, param) in type_params.iter().enumerate() {
         if i < args.len() {
             result.push(args[i]);
-        } else if let Some(resolved) = subst.get(param.name) {
-            result.push(resolved);
         } else {
-            return None;
+            let resolved = subst.get(param.name)?;
+            result.push(resolved);
         }
     }
     Some(result)

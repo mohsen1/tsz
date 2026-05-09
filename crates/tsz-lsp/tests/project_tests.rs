@@ -2,7 +2,42 @@
 
 use super::*;
 use crate::project::FileRename;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tsz_common::position::LineMap;
+
+struct TempWorkspace {
+    path: PathBuf,
+}
+
+impl TempWorkspace {
+    fn new(name: &str) -> Self {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("tsz-{name}-{suffix}"));
+        std::fs::create_dir_all(&path).expect("create temp workspace");
+        Self { path }
+    }
+}
+
+impl Drop for TempWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn write_file(path: &Path, content: &str) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create parent directory");
+    }
+    std::fs::write(path, content).expect("write test file");
+}
+
+fn slash_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
 
 fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> String {
     let mut result = source.to_string();
@@ -32,6 +67,39 @@ fn range_for_substring(source: &str, line_map: &LineMap, needle: &str) -> Range 
     let start_pos = line_map.offset_to_position(start, source);
     let end_pos = line_map.offset_to_position(end, source);
     Range::new(start_pos, end_pos)
+}
+
+#[test]
+fn discover_files_respects_tsconfig_include_patterns() {
+    let workspace = TempWorkspace::new("lsp-include-patterns");
+    let root = workspace.path.to_string_lossy().to_string();
+    let included = workspace.path.join("src/index.ts");
+    let excluded = workspace.path.join("other/out.ts");
+
+    write_file(
+        &workspace.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "strict": true
+  },
+  "include": ["src/**/*.ts"]
+}
+"#,
+    );
+    write_file(&included, "export const ok: number = 1;\n");
+    write_file(&excluded, "const bad: string = 1;\n");
+
+    let mut project = Project::new();
+    project.load_tsconfig(&root);
+
+    let discovered = project.discover_files(&[root]);
+    let discovered: Vec<_> = discovered
+        .iter()
+        .map(|path| path.replace('\\', "/"))
+        .collect();
+
+    assert!(discovered.contains(&slash_path(&included)));
+    assert!(!discovered.contains(&slash_path(&excluded)));
 }
 
 #[test]
@@ -3254,6 +3322,29 @@ fn test_project_get_linked_editing_ranges_jsx() {
             "Should find 2 linked ranges (opening and closing tag)"
         );
     }
+}
+
+#[test]
+fn test_project_get_linked_editing_ranges_jsx_member_expression() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.tsx".to_string(),
+        "const x = <Foo.Bar>hi</Foo.Bar>;\n".to_string(),
+    );
+
+    let result = project
+        .get_linked_editing_ranges("test.tsx", Position::new(0, 11))
+        .expect("JSX member expression tag names should have linked editing ranges");
+
+    assert_eq!(result.ranges.len(), 2);
+    assert_eq!(result.ranges[0].start, Position::new(0, 11));
+    assert_eq!(result.ranges[0].end, Position::new(0, 18));
+    assert_eq!(result.ranges[1].start, Position::new(0, 23));
+    assert_eq!(result.ranges[1].end, Position::new(0, 30));
+    assert_eq!(
+        result.word_pattern.as_deref(),
+        Some("[a-zA-Z0-9:\\-\\._$]*")
+    );
 }
 
 #[test]

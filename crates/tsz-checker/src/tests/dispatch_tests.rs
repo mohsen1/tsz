@@ -5,6 +5,29 @@ use crate::test_utils::check_source_diagnostics;
 use tsz_common::checker_options::JsxMode;
 
 #[test]
+fn structural_nodes_do_not_poison_expression_dispatch() {
+    let diags = check_source_diagnostics(
+        r#"
+export const value = 1;
+export { value };
+
+const run: () => void = () => {
+    value;
+};
+"#,
+    );
+    assert_eq!(
+        diags.len(),
+        0,
+        "Expected block bodies and named exports to remain structural, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts7006_false_positive_arrow_in_generic_call() {
     // Arrow functions in object literal properties within generic indexed-access
     // calls should receive contextual typing from the inferred type parameter.
@@ -47,6 +70,51 @@ class C5 {
         2,
         "Expected 2 TS2352 for this type assertions, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2352_object_literal_this_property_assertion_uses_class_instance_overlap() {
+    let diags = check_source_diagnostics(
+        r#"
+namespace M {
+    export interface I {
+        works: () => R;
+        alsoWorks: () => R;
+        doesntWork: () => R;
+    }
+
+    export interface R {
+        anything: number;
+        oneI: I;
+    }
+
+    export class C implements I {
+        constructor(public x: number) {}
+        works(): R {
+            return <R>({ anything: 1 });
+        }
+        doesntWork(): R {
+            return { anything: 1, oneI: this };
+        }
+        worksToo(): R {
+            return <R>({ oneI: this });
+        }
+    }
+}
+"#,
+    );
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected one TS2352 for object-literal assertion with non-overlapping `this` property, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        matching[0].message_text.contains("to type 'R'"),
+        "Expected TS2352 target display to preserve `R`, got: {:?}",
+        matching[0].message_text
     );
 }
 
@@ -117,6 +185,29 @@ function f<T>() {
     assert!(
         matching[0].message_text.contains("type 'T[]'"),
         "Expected TS2352 target display to preserve `T[]`, got: {:?}",
+        matching[0]
+    );
+}
+
+#[test]
+fn ts2352_in_overloaded_callback_body_survives_catch_all_resolution() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function foo(a: (x: number) => string[]): typeof a;
+declare function foo(a: any): any;
+const r = foo(<T, U>(x: T) => <U[]>null);
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let matching: Vec<_> = relevant.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected one TS2352 for `null as U[]` inside overloaded callback, got: {relevant:?}"
+    );
+    assert!(
+        matching[0].message_text.contains("type 'U[]'"),
+        "Expected TS2352 target display to preserve `U[]`, got: {:?}",
         matching[0]
     );
 }
@@ -219,6 +310,94 @@ type Cache<QR> = {
 }
 
 #[test]
+fn ts2344_function_type_arg_with_extra_required_param_fails_single_param_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type ArgumentType<T extends (x: any) => any> =
+    T extends (a: infer A) => any ? A : any;
+type Bad = ArgumentType<(x: string, y: string) => number>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(ts2344.len(), 1, "Expected one TS2344, got: {diags:?}");
+    assert!(
+        ts2344[0]
+            .message_text
+            .contains("(x: string, y: string) => number"),
+        "Expected TS2344 to report the function type argument, got: {:?}",
+        ts2344[0]
+    );
+}
+
+#[test]
+fn ts2344_single_constrained_infer_fails_incompatible_true_branch_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type T70<T extends string> = { x: T };
+type T72<T extends number> = { y: T };
+type T73<T> = T extends T72<infer U> ? T70<U> : never;
+"#,
+    );
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(ts2344.len(), 1, "Expected one TS2344, got: {diags:?}");
+    assert!(
+        ts2344[0].message_text.contains("constraint 'string'"),
+        "Expected TS2344 against the true-branch string constraint, got: {:?}",
+        ts2344[0]
+    );
+}
+
+#[test]
+fn typeof_globalthis_does_not_satisfy_arbitrary_required_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type Need<T extends { definitelyMissing: string }> = T;
+type Bad = Need<typeof globalThis>;
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|diag| diag.code == 2344),
+        "Expected TS2344 for typeof globalThis missing required constraint property, got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2635_instantiation_expression_displays_evaluated_indexed_parameter_type() {
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = any;
+const createCacheReducer = <N extends string, QR>(
+    queries: Cache<N, QR>["queries"],
+) => {
+    const queriesMap = {} as QR;
+    const initialState = { queries: queriesMap };
+    return (state = initialState) => state;
+};
+type Cache<N extends string, QR> = {
+    queries: {
+        [QK in keyof QR]: RT<typeof createCacheReducer<QR>>;
+    };
+};
+"#,
+    );
+
+    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
+    let message = &ts2635[0].message_text;
+    assert!(
+        message.contains("queries: { [QK in keyof QR]: any; }"),
+        "Expected TS2635 to display the evaluated indexed-access parameter type, got: {message:?}"
+    );
+    assert!(
+        !message.contains("Lazy("),
+        "TS2635 display must not leak Lazy(...) internals, got: {message:?}"
+    );
+}
+
+#[test]
 fn ts2344_valid_typeof_instantiation_does_not_emit_constraint_diagnostic() {
     // Sanity check: a *successful* typeof-instantiation expression must not
     // trigger TS2344 against a callable constraint. Use a concrete type arg
@@ -234,6 +413,87 @@ type R = RT<typeof createReducer<string>>;
     assert_eq!(
         ts2344, 0,
         "Successful typeof-instantiation must not emit TS2344, got diags: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2344_parenthesized_typeof_instantiation_does_not_emit_constraint_diagnostic() {
+    let diags = check_source_diagnostics(
+        r#"
+type Inst<T extends abstract new (...args: any) => any> = T extends abstract new (...args: any) => infer R ? R : any;
+let Anon = class <out T> {
+    foo(): Inst<(typeof Anon<T>)> {
+        return this;
+    }
+};
+"#,
+    );
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert!(
+        ts2344.is_empty(),
+        "Parenthesized typeof-instantiation should not emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2635_instantiation_expression_filters_union_members_like_tsc() {
+    let diags = check_source_diagnostics(
+        r#"
+function ok(f: (<T>(a: T) => T) | { x: string }) {
+    f<string>;
+}
+function bad(f: (<T>(a: T) => T) | ((a: string, b: number) => string[])) {
+    f<string>;
+}
+"#,
+    );
+
+    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
+    assert!(
+        ts2635[0]
+            .message_text
+            .contains("(a: string, b: number) => string[]"),
+        "Expected TS2635 to report the non-generic function member, got: {:?}",
+        ts2635[0].message_text
+    );
+}
+
+#[test]
+fn typeof_instantiation_validates_call_and_construct_constraints() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+type A<U> = InstanceType<typeof Array<U>>;
+
+declare const g2: {
+    <T extends string>(a: T): T;
+    new <T extends number>(b: T): T;
+}
+
+type T40<U extends string> = typeof g2<U>;
+type T41<U extends number> = typeof g2<U>;
+"#,
+    );
+
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let ts2344: Vec<_> = relevant.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(
+        ts2344.len(),
+        2,
+        "Expected two TS2344 errors, got: {relevant:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|d| d.message_text.contains("constraint 'number'")),
+        "Expected construct constraint diagnostic, got: {ts2344:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|d| d.message_text.contains("constraint 'string'")),
+        "Expected call constraint diagnostic, got: {ts2344:?}"
     );
 }
 
@@ -630,6 +890,25 @@ takes({
 }
 
 #[test]
+fn nested_mapped_application_property_preserves_literal_context() {
+    let diags = check_source_diagnostics(
+        r#"
+type Required<T> = { [K in keyof T]-?: T[K] };
+interface Foo<T> {
+    a: Required<T>;
+}
+const aa: Foo<{ a?: 1; x: 1 }> = { a: { a: 1, x: 1 } };
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected nested Required<T> context to preserve literal property types, got: {diags:?}"
+    );
+}
+
+#[test]
 fn iife_contextual_typing_flows_through_request_path() {
     let diags = check_source_diagnostics(
         r#"
@@ -905,6 +1184,52 @@ takes(lift(function* (a) {
         relevant.len(),
         0,
         "Expected return-context substitution to preserve rest-tuple callback args, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn nested_return_context_rest_tuple_callback_args_are_not_wrapped() {
+    let diags = check_source(
+        r#"
+interface Generator<Y, R, N> {}
+type Covariant<A> = (_: never) => A;
+interface Effect<out A, out E = never, out R = never> {
+    readonly _A: Covariant<A>;
+    readonly _E: Covariant<E>;
+    readonly _R: Covariant<R>;
+}
+
+declare function effectGen<A, E = never, R = never>(
+    body: () => Generator<Effect<A, E, R>, A, never>,
+): Effect<A, E, R>;
+
+declare function effectFn<A, E, R, AEff, Args extends Array<any>>(
+    body: (...args: Args) => Generator<Effect<A, E, R>, AEff, never>,
+): (...args: Args) => Effect<AEff, E, R>;
+
+const foo: Effect<{ fn: (...args: [a: string]) => Effect<void> }> = effectGen(function* () {
+    return {
+        fn: effectFn(function* (a) {
+            a.toUpperCase();
+        }),
+    };
+});
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 7006))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected nested contextual return rest tuple args to stay flat, got: {relevant:?}"
     );
 }
 
@@ -1368,6 +1693,36 @@ const options = { value: null };
 }
 
 #[test]
+fn jsdoc_broken_typedef_body_recovers_alias_as_any() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/** @typedef {U} T */
+/**
+ * @returns {T}
+ */
+function f() {
+    return 1;
+}
+/** @type {T} */
+const x = 3;
+"#,
+    );
+    let ts2304_messages: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304)
+        .map(|d| d.message_text.to_string())
+        .collect();
+    assert!(
+        ts2304_messages.iter().any(|m| m.contains("'U'")),
+        "Expected TS2304 for unresolved typedef body name, got: {diags:?}"
+    );
+    assert!(
+        !ts2304_messages.iter().any(|m| m.contains("'T'")),
+        "Broken typedef body should not make the alias name unresolved, got: {diags:?}"
+    );
+}
+
+#[test]
 fn tagged_template_contextual_typing_flows_through_request_path() {
     let diags = check_source_diagnostics(
         r#"
@@ -1602,6 +1957,147 @@ const result: [string, number] = extractPrimitives({ primitive: "" }, { primitiv
         0,
         "Expected no TS2322 for reverse-mapped tuple inference through conditional template, got: {:?}",
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn generic_tuple_rest_argument_infers_union_from_all_rest_elements() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function f0<T, U>(x: [T, ...U[]]): [T, U];
+f0([1, "hello", true]);
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 when tuple rest inference merges string | boolean, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn reverse_mapped_array_return_rejects_mapped_element_to_type_parameter_array() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Stuff {
+    field: number;
+    anotherField: string;
+}
+function doStuffWithStuffArr<T extends Stuff>(arr: { [K in keyof T & keyof Stuff]: T[K] }[]): T[] {
+    return arr;
+}
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.iter().any(|d| {
+            d.message_text.contains(
+                "Type '{ [K in keyof T & keyof Stuff]: T[K]; }[]' is not assignable to type 'T[]'",
+            )
+        }),
+        "Expected TS2322 for reverse-mapped array return, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn reverse_mapped_dependent_default_uses_inferred_literal_not_constraint() {
+    let diags = check_source_diagnostics(
+        r#"
+type Record<K extends string, T> = { [P in K]: T };
+type StateConfig<TAction extends string> = {
+  entry?: TAction;
+  states?: Record<string, StateConfig<TAction>>;
+};
+declare function createMachine<
+  TConfig extends StateConfig<TAction>,
+  TAction extends string = TConfig["entry"] extends string ? TConfig["entry"] : string,
+>(config: { [K in keyof TConfig & keyof StateConfig<any>]: TConfig[K] }): [TAction, TConfig];
+createMachine({
+  entry: "foo",
+  states: {
+    a: {
+      entry: "bar",
+    },
+  },
+});
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.iter().any(|d| {
+            d.message_text
+                .contains("Type '\"bar\"' is not assignable to type '\"foo\"'")
+        }),
+        "Expected nested entry to be checked against inferred literal \"foo\", got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn reverse_mapped_excess_property_display_matches_nested_and_asserted_branches() {
+    let diags = check_source_diagnostics(
+        r#"
+interface WithNestedProp {
+  prop: string;
+  nested: { prop: string; };
+  other: { prop: string; };
+}
+declare function withNestedProp<T extends WithNestedProp>(props: {[K in keyof T & keyof WithNestedProp]: T[K]}): T;
+withNestedProp({prop: "foo", nested: { prop: "bar" }, other: { prop: "baz" }, extra: 10 });
+
+type IsLiteralString<T extends string> = string extends T ? false : true;
+interface ProvidedActor {
+  src: string;
+  logic: () => unknown;
+}
+type DistributeActors<TActor> = TActor extends { src: infer TSrc } ? { src: TSrc; } : never;
+interface MachineConfig<TActor extends ProvidedActor> {
+  types?: { actors?: TActor; };
+  invoke: IsLiteralString<TActor["src"]> extends true ? DistributeActors<TActor> : { src: string; };
+}
+declare function createXMachine<
+  const TConfig extends MachineConfig<TActor>,
+  TActor extends ProvidedActor = TConfig extends { types: { actors: ProvidedActor} } ? TConfig["types"]["actors"] : ProvidedActor,
+>(config: {[K in keyof MachineConfig<any> & keyof TConfig]: TConfig[K]}): TConfig;
+const child = () => "foo";
+createXMachine({
+  types: {} as {
+    actors: {
+      src: "str";
+      logic: typeof child;
+    };
+  },
+  invoke: {
+    src: "str",
+  },
+  extra: 10
+});
+"#,
+    );
+
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    assert!(
+        ts2353.iter().any(|d| {
+            d.message_text.contains(
+                "type '{ prop: \"foo\"; nested: { prop: string; }; other: { prop: string; }; }'",
+            )
+        }),
+        "Expected anonymous nested object excess display to preserve top literal and structurally widen nested props, got: {:?}",
+        ts2353.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        ts2353.iter().any(|d| {
+            d.message_text.contains(
+                "types: { actors: { src: \"str\"; logic: () => string; }; }; invoke: { readonly src: \"str\"; };",
+            )
+        }),
+        "Expected asserted types branch to strip readonly while invoke remains readonly, got: {:?}",
+        ts2353.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 
@@ -2480,6 +2976,42 @@ const recur = (n: number) => recur(n);
         1,
         "Expected TS7023 for genuine recursive arrow without return annotation, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts7022_ts7023_do_not_fire_for_void_expression_return_operand() {
+    let diags = check_source_diagnostics(
+        r#"
+type HowlErrorCallback = (soundId: number, error: unknown) => void;
+
+interface HowlOptions {
+  onplayerror?: HowlErrorCallback | undefined;
+}
+
+class Howl {
+  constructor(public readonly options: HowlOptions) {}
+  once(name: "unlock", fn: () => void) {
+    console.log(name, fn);
+  }
+}
+
+const instance = new Howl({
+  onplayerror: () => void instance.once("unlock", () => {}),
+});
+"#,
+    );
+    let circularity: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 7022 | 7023))
+        .collect();
+    assert!(
+        circularity.is_empty(),
+        "Expected no TS7022/TS7023 for self-reference under void return expression, got: {:?}",
+        circularity
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
     );
 }
 

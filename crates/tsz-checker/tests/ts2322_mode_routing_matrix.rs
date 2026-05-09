@@ -1,59 +1,16 @@
 //! Focused TS2322 routing matrix tests for checker option combinations.
 
-use std::sync::Arc;
-
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
 use crate::context::CheckerOptions;
-use crate::{CheckerState, diagnostics::diagnostic_codes};
+use crate::diagnostics::diagnostic_codes;
 
 fn compile_with_options(
     source: &str,
     file_name: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let lib_files = Vec::<Arc<LibFile>>::new();
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<crate::context::LibContext> = lib_files
-            .iter()
-            .map(|lib| crate::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
+    crate::test_utils::check_source(source, file_name, options)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
         .collect()
 }
 

@@ -8,6 +8,7 @@
 use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use tsz_common::interner::{Atom, Interner};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -133,6 +134,8 @@ pub struct ScannerState {
     regex_flag_errors: Vec<RegexFlagError>,
     /// General scanner diagnostics (e.g., conflict markers)
     scanner_diagnostics: Vec<ScannerDiagnostic>,
+    /// Whether identifier scanning should admit non-BMP code points.
+    allow_astral_identifier_chars: bool,
     /// Whether to skip trivia (whitespace, comments)
     skip_trivia: bool,
     /// String interner for identifier deduplication
@@ -169,6 +172,7 @@ impl ScannerState {
             token_invalid_separator_is_consecutive: false,
             regex_flag_errors: Vec::new(),
             scanner_diagnostics: Vec::new(),
+            allow_astral_identifier_chars: true,
             skip_trivia,
             interner,
             token_atom: Atom::NONE,
@@ -822,8 +826,15 @@ impl ScannerState {
                         self.pos += 2;
                         while self.pos < self.end {
                             let c = self.char_code_unchecked(self.pos);
+                            // Single-line comments are terminated by any of
+                            // tsc's line-terminator characters: LF, CR,
+                            // U+2028, U+2029. Without U+2028/U+2029 the
+                            // comment would swallow the next source line.
+                            // See https://github.com/mohsen1/tsz/issues/3331.
                             if c == CharacterCodes::LINE_FEED
                                 || c == CharacterCodes::CARRIAGE_RETURN
+                                || c == CharacterCodes::LINE_SEPARATOR
+                                || c == CharacterCodes::PARAGRAPH_SEPARATOR
                             {
                                 break;
                             }
@@ -847,9 +858,7 @@ impl ScannerState {
                                 comment_closed = true;
                                 break;
                             }
-                            if c == CharacterCodes::LINE_FEED
-                                || c == CharacterCodes::CARRIAGE_RETURN
-                            {
+                            if is_line_break(c) {
                                 self.token_flags |= TokenFlags::PrecedingLineBreak as u32;
                             }
                             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
@@ -897,7 +906,7 @@ impl ScannerState {
                 CharacterCodes::HASH => {
                     self.pos += 1;
                     if self.pos < self.end
-                        && is_identifier_start(self.char_code_unchecked(self.pos))
+                        && self.is_identifier_start(self.char_code_unchecked(self.pos))
                     {
                         self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
                         // Check for unicode escapes in the continuation
@@ -913,7 +922,7 @@ impl ScannerState {
                     {
                         // Private identifier starting with unicode escape: #\u0078
                         if let Some(code_point) = self.peek_unicode_escape()
-                            && is_identifier_start(code_point)
+                            && self.is_identifier_start(code_point)
                         {
                             self.scan_private_identifier_with_escapes();
                         } else {
@@ -937,9 +946,14 @@ impl ScannerState {
                     // e.g., \u0041 is 'A', so `let \u0041 = 1;` is valid
                     let escaped_ch = self.peek_unicode_escape();
                     if let Some(code_point) = escaped_ch
-                        && is_identifier_start(code_point)
+                        && self.is_identifier_start(code_point)
                     {
                         self.scan_identifier_with_escapes();
+                        return self.token;
+                    }
+                    if escaped_ch.is_some() {
+                        let _ = self.scan_unicode_escape_value();
+                        self.token = SyntaxKind::Unknown;
                         return self.token;
                     }
                     // Not a valid unicode escape - treat as unknown
@@ -983,7 +997,7 @@ impl ScannerState {
                         self.token = SyntaxKind::WhitespaceTrivia;
                         return self.token;
                     }
-                    if is_identifier_start(ch) {
+                    if self.is_identifier_start(ch) {
                         self.scan_identifier();
                         return self.token;
                     }
@@ -1514,14 +1528,16 @@ impl ScannerState {
             return;
         }
 
-        let numeric_end = self.pos;
         // OPTIMIZATION: Only allocate token_value if number contains separators
         // Plain numbers (no underscores) can use source slice via get_token_value_ref()
         self.set_numeric_token_value(start);
-        if self.check_for_identifier_start_after_numeric_literal(start, has_exponent)
-            && self.token_value.is_empty()
-        {
-            self.token_value = self.substring(start, numeric_end);
+        // When the recovery branch consumed an `n` BigInt suffix on a non-integer
+        // (e.g. `3en`), `check_for_identifier_start_after_numeric_literal` returns
+        // `true` and `self.pos` is now past the `n`. Re-capture `token_value` from
+        // the full consumed span so emit preserves the source spelling, matching
+        // tsc which prints `3en[null];` for `3en[null]` rather than `3e[null];`.
+        if self.check_for_identifier_start_after_numeric_literal(start, has_exponent) {
+            self.token_value = self.substring(start, self.pos);
         }
         self.token = SyntaxKind::NumericLiteral;
     }
@@ -1538,7 +1554,7 @@ impl ScannerState {
         // Only check the raw character code, not unicode escapes.
         // TSC uses `codePointAt(text, pos)` here which reads the literal char,
         // so `\u005F` (backslash) is NOT treated as an identifier start.
-        let starts_identifier = is_identifier_start(self.char_code_unchecked(self.pos));
+        let starts_identifier = self.is_identifier_start(self.char_code_unchecked(self.pos));
 
         if !starts_identifier {
             return false;
@@ -1599,7 +1615,7 @@ impl ScannerState {
 
         if self.char_code_unchecked(self.pos) == CharacterCodes::BACKSLASH {
             if let Some(code_point) = self.peek_unicode_escape() {
-                if is_identifier_start(code_point) {
+                if self.is_identifier_start(code_point) {
                     let _ = self.scan_unicode_escape_value();
                 } else {
                     return;
@@ -1607,7 +1623,7 @@ impl ScannerState {
             } else {
                 return;
             }
-        } else if is_identifier_start(self.char_code_unchecked(self.pos)) {
+        } else if self.is_identifier_start(self.char_code_unchecked(self.pos)) {
             self.pos += self.char_len_at(self.pos);
         } else {
             return;
@@ -1617,14 +1633,14 @@ impl ScannerState {
             let ch = self.char_code_unchecked(self.pos);
             if ch == CharacterCodes::BACKSLASH {
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     let _ = self.scan_unicode_escape_value();
                     continue;
                 }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             self.pos += self.char_len_at(self.pos);
@@ -1722,6 +1738,21 @@ impl ScannerState {
         });
     }
 
+    fn push_invalid_character(&mut self, pos: usize) {
+        if let Some(last) = self.scanner_diagnostics.last()
+            && last.pos == pos
+        {
+            return;
+        }
+        self.scanner_diagnostics.push(ScannerDiagnostic {
+            pos,
+            length: 1,
+            message: diagnostic_messages::INVALID_CHARACTER,
+            code: diagnostic_codes::INVALID_CHARACTER,
+            args: Vec::new(),
+        });
+    }
+
     /// Scan an identifier.
     /// ZERO-ALLOCATION: Identifiers are interned, returning an Atom (u32) for O(1) comparison.
     /// When a unicode escape is encountered mid-identifier, switches to allocation mode.
@@ -1735,16 +1766,19 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Check if this is a unicode escape that produces an identifier part
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     // Switch to allocation mode and continue scanning with escapes
                     self.continue_identifier_with_escapes(start);
                     return;
                 }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
+                }
                 // Invalid escape or not an identifier part - stop here
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
@@ -1777,7 +1811,7 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Check for unicode escape
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     // Consume the escape and add the character
                     if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
@@ -1785,10 +1819,13 @@ impl ScannerState {
                     }
                     continue;
                 }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
+                }
                 // Invalid escape or not an identifier part - stop here
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             if let Some(c) = char::from_u32(ch) {
@@ -1803,8 +1840,9 @@ impl ScannerState {
         self.token_flags |= TokenFlags::UnicodeEscape as u32;
     }
 
-    /// Peek at a unicode escape sequence without advancing the position.
-    /// Returns the code point if the escape is valid (\uXXXX or \u{XXXXX}), None otherwise.
+    /// Peek at a unicode escape sequence in identifier text without advancing
+    /// the position. Returns the code point if the escape is valid
+    /// (`\uXXXX`, or a BMP `\u{XXXXX}`), None otherwise.
     fn peek_unicode_escape(&self) -> Option<u32> {
         // Must start with \u
         if self.pos + 1 >= self.end {
@@ -1825,9 +1863,7 @@ impl ScannerState {
                 return None;
             }
             let hex = &self.source[start..end];
-            u32::from_str_radix(hex, 16)
-                .ok()
-                .filter(|&cp| cp <= 0x0010_FFFF)
+            u32::from_str_radix(hex, 16).ok().filter(|&cp| cp <= 0xFFFF)
         } else {
             // \uXXXX form (exactly 4 hex digits)
             if self.pos + 5 >= self.end {
@@ -1859,16 +1895,19 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Another unicode escape in identifier
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
                         result.push(c);
                     }
                     continue;
                 }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
+                }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             if let Some(c) = char::from_u32(ch) {
@@ -1893,7 +1932,7 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Found a unicode escape in the continuation
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     // Build the decoded value from the start
                     let prefix = self.substring(self.token_start, self.pos);
@@ -1909,7 +1948,7 @@ impl ScannerState {
                         let ch2 = self.char_code_unchecked(self.pos);
                         if ch2 == CharacterCodes::BACKSLASH {
                             if let Some(cp2) = self.peek_unicode_escape()
-                                && is_identifier_part(cp2)
+                                && self.is_identifier_part(cp2)
                             {
                                 if let Some(cp2) = self.scan_unicode_escape_value()
                                     && let Some(c) = char::from_u32(cp2)
@@ -1918,9 +1957,12 @@ impl ScannerState {
                                 }
                                 continue;
                             }
+                            if self.peek_unicode_escape().is_some() {
+                                self.push_invalid_character(self.pos);
+                            }
                             break;
                         }
-                        if !is_identifier_part(ch2) {
+                        if !self.is_identifier_part(ch2) {
                             break;
                         }
                         if let Some(c) = char::from_u32(ch2) {
@@ -1932,9 +1974,12 @@ impl ScannerState {
                     self.token_flags |= TokenFlags::UnicodeEscape as u32;
                     return true;
                 }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
+                }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             self.pos += self.char_len_at(self.pos);
@@ -1959,16 +2004,19 @@ impl ScannerState {
             if ch == CharacterCodes::BACKSLASH {
                 // Another unicode escape in identifier
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_part(code_point)
+                    && self.is_identifier_part(code_point)
                 {
                     if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
                         result.push(c);
                     }
                     continue;
                 }
+                if self.peek_unicode_escape().is_some() {
+                    self.push_invalid_character(self.pos);
+                }
                 break;
             }
-            if !is_identifier_part(ch) {
+            if !self.is_identifier_part(ch) {
                 break;
             }
             if let Some(c) = char::from_u32(ch) {
@@ -2460,36 +2508,98 @@ impl ScannerState {
     #[wasm_bindgen(js_name = scanJsxIdentifier)]
     pub fn scan_jsx_identifier(&mut self) -> SyntaxKind {
         if crate::token_is_identifier_or_keyword(self.token) {
+            let start = self.token_start;
+            let mut decoded = if (self.token_flags & TokenFlags::UnicodeEscape as u32) != 0 {
+                Some(self.get_token_value_ref().to_string())
+            } else {
+                None
+            };
+            let mut extended = false;
             // Continue scanning to include any hyphenated parts.
             // JSX identifiers can be like: foo-bar-baz, class-id, etc.
             // Keywords like `class` can also start JSX attribute names.
             while self.pos < self.end {
                 let ch = self.char_code_unchecked(self.pos);
                 if ch == CharacterCodes::MINUS {
+                    extended = true;
                     // In JSX, hyphens are allowed in identifiers
                     self.pos += 1;
-                    // After hyphen, we need more identifier characters
-                    if self.pos < self.end
-                        && is_identifier_start(self.char_code_unchecked(self.pos))
-                    {
-                        self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
-                        while self.pos < self.end
-                            && is_identifier_part(self.char_code_unchecked(self.pos))
+                    if let Some(text) = decoded.as_mut() {
+                        text.push('-');
+                    }
+                    // After a JSX hyphen, continuation may start with any identifier part.
+                    if self.pos >= self.end {
+                        continue;
+                    }
+                    let part_start = self.char_code_unchecked(self.pos);
+                    if part_start == CharacterCodes::BACKSLASH {
+                        if let Some(code_point) = self.peek_unicode_escape()
+                            && self.is_identifier_part(code_point)
                         {
+                            let text =
+                                decoded.get_or_insert_with(|| self.source[start..self.pos].into());
+                            if let Some(c) =
+                                char::from_u32(self.scan_unicode_escape_value().unwrap_or(0))
+                            {
+                                text.push(c);
+                            }
+                            while self.pos < self.end {
+                                let ch = self.char_code_unchecked(self.pos);
+                                if ch == CharacterCodes::BACKSLASH {
+                                    if let Some(code_point) = self.peek_unicode_escape()
+                                        && self.is_identifier_part(code_point)
+                                    {
+                                        if let Some(c) = char::from_u32(
+                                            self.scan_unicode_escape_value().unwrap_or(0),
+                                        ) {
+                                            text.push(c);
+                                        }
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                if !self.is_identifier_part(ch) {
+                                    break;
+                                }
+                                if let Some(c) = char::from_u32(ch) {
+                                    text.push(c);
+                                }
+                                self.pos += self.char_len_at(self.pos);
+                            }
+                        }
+                    } else if self.is_identifier_part(part_start) {
+                        loop {
+                            let ch = self.char_code_unchecked(self.pos);
+                            if !self.is_identifier_part(ch) {
+                                break;
+                            }
+                            if let Some(text) = decoded.as_mut()
+                                && let Some(c) = char::from_u32(ch)
+                            {
+                                text.push(c);
+                            }
                             self.pos += self.char_len_at(self.pos); // Handle multi-byte UTF-8
+                            if self.pos >= self.end {
+                                break;
+                            }
                         }
                     }
                 } else {
                     break;
                 }
             }
-            // ZERO-ALLOCATION: Intern directly from source slice, clear token_value
-            self.token_atom = self
-                .interner
-                .intern(&self.source[self.token_start..self.pos]);
-            self.token_value.clear();
-            // After extending with hyphens, the token becomes an Identifier
-            self.token = SyntaxKind::Identifier;
+            if extended {
+                if let Some(text) = decoded {
+                    self.token_atom = self.interner.intern(&text);
+                    self.token_flags |= TokenFlags::UnicodeEscape as u32;
+                } else {
+                    // ZERO-ALLOCATION: Intern directly from source slice, clear token_value
+                    self.token_atom = self.interner.intern(&self.source[start..self.pos]);
+                }
+                self.token_value.clear();
+                // After extending with hyphens, the token becomes an Identifier
+                self.token = SyntaxKind::Identifier;
+            }
         }
         self.token
     }
@@ -2663,7 +2773,9 @@ impl ScannerState {
             if let Some(c) = char::from_u32(ch) {
                 result.push(c);
             }
-            self.pos += 1;
+            // Advance by the character's UTF-8 byte length so multi-byte chars
+            // are not re-decoded from a continuation-byte offset.
+            self.pos += self.char_len_at(self.pos);
         }
 
         // Unterminated string
@@ -2698,7 +2810,7 @@ impl ScannerState {
     pub fn re_scan_hash_token(&mut self) -> SyntaxKind {
         if self.token == SyntaxKind::HashToken && self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
-            if is_identifier_start(ch) {
+            if self.is_identifier_start(ch) {
                 // Properly handle multi-byte UTF-8 characters in private identifiers
                 self.pos += self.char_len_at(self.pos);
                 let has_escapes = self.scan_private_identifier_rest();
@@ -2709,7 +2821,7 @@ impl ScannerState {
             } else if ch == CharacterCodes::BACKSLASH {
                 // Unicode escape starting a private identifier: #\u0078
                 if let Some(code_point) = self.peek_unicode_escape()
-                    && is_identifier_start(code_point)
+                    && self.is_identifier_start(code_point)
                 {
                     self.scan_private_identifier_with_escapes();
                 }
@@ -2792,7 +2904,7 @@ impl ScannerState {
         }
 
         // Check for identifier
-        if is_identifier_start(ch) {
+        if self.is_identifier_start(ch) {
             return self.scan_jsdoc_identifier();
         }
 
@@ -2867,7 +2979,7 @@ impl ScannerState {
 
     fn scan_jsdoc_identifier(&mut self) -> SyntaxKind {
         self.pos += self.char_len_at(self.pos);
-        while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
+        while self.pos < self.end && self.is_identifier_part(self.char_code_unchecked(self.pos)) {
             self.pos += self.char_len_at(self.pos);
         }
         self.token_value = self.substring(self.token_start, self.pos);
@@ -3019,6 +3131,21 @@ impl ScannerState {
 // =============================================================================
 
 impl ScannerState {
+    /// Set the ECMAScript language version used by target-sensitive scanning.
+    pub const fn set_language_version(&mut self, language_version: ScriptTarget) {
+        self.allow_astral_identifier_chars = language_version.supports_es2015();
+    }
+
+    #[inline]
+    fn is_identifier_start(&self, ch: u32) -> bool {
+        (self.allow_astral_identifier_chars || ch <= 0xFFFF) && is_identifier_start(ch)
+    }
+
+    #[inline]
+    fn is_identifier_part(&self, ch: u32) -> bool {
+        (self.allow_astral_identifier_chars || ch <= 0xFFFF) && is_identifier_part(ch)
+    }
+
     /// Save the current scanner state for look-ahead.
     #[must_use]
     pub fn save_state(&self) -> ScannerSnapshot {
@@ -3289,12 +3416,8 @@ fn is_identifier_start(ch: u32) -> bool {
             || ch == CharacterCodes::DOLLAR;
     }
 
-    // Unicode path: Use Rust's char::is_alphabetic() which covers:
-    // Lu (Uppercase Letter), Ll (Lowercase Letter), Lt (Titlecase Letter),
-    // Lm (Modifier Letter), Lo (Other Letter), Nl (Letter Number)
-    // This correctly rejects U+00A0 (Whitespace), U+2026 (Punctuation), U+2194 (Symbol)
     if let Some(c) = char::from_u32(ch) {
-        return c.is_alphabetic();
+        return unicode_ident::is_xid_start(c);
     }
 
     false
@@ -3306,21 +3429,22 @@ fn is_identifier_part(ch: u32) -> bool {
         return is_identifier_start(ch) || is_digit(ch);
     }
 
-    // Unicode path: ECMAScript ID_Continue includes: ID_Start + Mn + Mc + Nd + Pc + ZWNJ + ZWJ
-    // We use is_alphabetic() for letters (Lu, Ll, Lt, Lm, Lo, Nl) and a dedicated Nd check
-    // for decimal digits. Note: is_alphanumeric() is too broad — it includes No (Number, other)
-    // like subscript/superscript digits (U+2081 etc.) which are NOT valid in identifiers.
+    // Unicode path: ECMAScript ID_Continue includes ID_Start plus marks,
+    // decimal digits, connector punctuation, ZWNJ, and ZWJ. The unicode-ident
+    // table keeps astral-plane identifier characters valid without admitting
+    // `No` digits such as subscript/superscript numerals.
     if let Some(c) = char::from_u32(ch)
-        && c.is_alphabetic()
+        && unicode_ident::is_xid_continue(c)
     {
-        return true;
-    }
-    if is_unicode_decimal_digit(ch) {
         return true;
     }
 
     // ZWNJ and ZWJ
     if ch == 0x200C || ch == 0x200D {
+        return true;
+    }
+
+    if is_unicode_other_id_continue(ch) {
         return true;
     }
 
@@ -3334,78 +3458,17 @@ fn is_identifier_part(ch: u32) -> bool {
     is_unicode_combining_mark(ch)
 }
 
-/// Check if a character is a Unicode decimal digit (Nd category).
-/// This covers digit characters from various scripts that are valid in
-/// ECMAScript identifiers as `ID_Continue` characters.
-/// Unlike `char::is_numeric()`, this excludes No (Number, other) like
-/// subscript/superscript digits and Nl (Number, letter) like Roman numerals.
-const fn is_unicode_decimal_digit(ch: u32) -> bool {
-    // ASCII digits are handled by the fast path in is_identifier_part
-    // This covers non-ASCII Nd ranges from Unicode
-    matches!(ch,
-        0x0660..=0x0669   // Arabic-Indic Digits
-        | 0x06F0..=0x06F9 // Extended Arabic-Indic Digits
-        | 0x07C0..=0x07C9 // NKo Digits
-        | 0x0966..=0x096F // Devanagari Digits
-        | 0x09E6..=0x09EF // Bengali Digits
-        | 0x0A66..=0x0A6F // Gurmukhi Digits
-        | 0x0AE6..=0x0AEF // Gujarati Digits
-        | 0x0B66..=0x0B6F // Oriya Digits
-        | 0x0BE6..=0x0BEF // Tamil Digits
-        | 0x0C66..=0x0C6F // Telugu Digits
-        | 0x0CE6..=0x0CEF // Kannada Digits
-        | 0x0D66..=0x0D6F // Malayalam Digits
-        | 0x0DE6..=0x0DEF // Sinhala Lith Digits
-        | 0x0E50..=0x0E59 // Thai Digits
-        | 0x0ED0..=0x0ED9 // Lao Digits
-        | 0x0F20..=0x0F29 // Tibetan Digits
-        | 0x1040..=0x1049 // Myanmar Digits
-        | 0x1090..=0x1099 // Myanmar Shan Digits
-        | 0x17E0..=0x17E9 // Khmer Digits
-        | 0x1810..=0x1819 // Mongolian Digits
-        | 0x1946..=0x194F // Limbu Digits
-        | 0x19D0..=0x19D9 // New Tai Lue Digits
-        | 0x1A80..=0x1A89 // Tai Tham Hora Digits
-        | 0x1A90..=0x1A99 // Tai Tham Tham Digits
-        | 0x1B50..=0x1B59 // Balinese Digits
-        | 0x1BB0..=0x1BB9 // Sundanese Digits
-        | 0x1C40..=0x1C49 // Lepcha Digits
-        | 0x1C50..=0x1C59 // Ol Chiki Digits
-        | 0xA620..=0xA629 // Vai Digits
-        | 0xA8D0..=0xA8D9 // Saurashtra Digits
-        | 0xA900..=0xA909 // Kayah Li Digits
-        | 0xA9D0..=0xA9D9 // Javanese Digits
-        | 0xA9F0..=0xA9F9 // Myanmar Tai Laing Digits
-        | 0xAA50..=0xAA59 // Cham Digits
-        | 0xABF0..=0xABF9 // Meetei Mayek Digits
-        | 0xFF10..=0xFF19 // Fullwidth Digits
-        | 0x104A0..=0x104A9 // Osmanya Digits
-        | 0x10D30..=0x10D39 // Hanifi Rohingya Digits
-        | 0x11066..=0x1106F // Brahmi Digits
-        | 0x110F0..=0x110F9 // Sora Sompeng Digits
-        | 0x11136..=0x1113F // Chakma Digits
-        | 0x111D0..=0x111D9 // Sharada Digits
-        | 0x112F0..=0x112F9 // Khudawadi Digits
-        | 0x11450..=0x11459 // Newa Digits
-        | 0x114D0..=0x114D9 // Tirhuta Digits
-        | 0x11650..=0x11659 // Modi Digits
-        | 0x116C0..=0x116C9 // Takri Digits
-        | 0x11730..=0x11739 // Ahom Digits
-        | 0x118E0..=0x118E9 // Warang Citi Digits
-        | 0x11950..=0x11959 // Dives Akuru Digits
-        | 0x11C50..=0x11C59 // Bhaiksuki Digits
-        | 0x11D50..=0x11D59 // Masaram Gondi Digits
-        | 0x11DA0..=0x11DA9 // Gunjala Gondi Digits
-        | 0x11F50..=0x11F59 // Soyombo Digits
-        | 0x16A60..=0x16A69 // Mro Digits
-        | 0x16AC0..=0x16AC9 // Tangsa Digits
-        | 0x16B50..=0x16B59 // Pahawh Hmong Digits
-        | 0x1D7CE..=0x1D7FF // Mathematical Digits (all styles)
-        | 0x1E140..=0x1E149 // Nyiakeng Puachue Hmong Digits
-        | 0x1E2F0..=0x1E2F9 // Wancho Digits
-        | 0x1E4F0..=0x1E4F9 // Nag Mundari Digits
-        | 0x1E950..=0x1E959 // Adlam Digits
-        | 0x1FBF0..=0x1FBF9 // Segmented Digit
+/// Unicode `Other_ID_Continue` code points that ECMAScript admits as
+/// identifier continuation characters even though they are not alphabetic,
+/// decimal digits, join controls, or combining marks.
+const fn is_unicode_other_id_continue(ch: u32) -> bool {
+    matches!(
+        ch,
+        0x00B7 // MIDDLE DOT
+            | 0x0387 // GREEK ANO TELEIA
+            | 0x1369
+            ..=0x1371 // ETHIOPIC DIGIT ONE..THREE
+            | 0x19DA // NEW TAI LUE THAM DIGIT ONE
     )
 }
 
@@ -3542,6 +3605,13 @@ mod tests {
         assert_eq!(tokens[3], (SyntaxKind::Identifier, "$qux".to_string()));
     }
 
+    #[test]
+    fn scan_identifier_with_other_id_continue_middle_dot() {
+        let tokens = scan_all("a·b");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0], (SyntaxKind::Identifier, "a·b".to_string()));
+    }
+
     // ── Keywords ──────────────────────────────────────────────────────
 
     #[test]
@@ -3573,6 +3643,32 @@ mod tests {
         assert_eq!(tokens[4].1, "0b1010");
         assert_eq!(tokens[5].1, "0o777");
         assert_eq!(tokens[6].1, "1_000");
+    }
+
+    #[test]
+    fn scan_bigint_suffix_on_failed_exponent_preserves_full_text() {
+        // Regression for `identifierStartAfterNumericLiteral`: when a numeric
+        // literal has a failed exponent immediately followed by `n` (e.g.
+        // `3en`, `123en`), tsc treats the `n` as a recovered BigInt suffix
+        // and the literal text spans the full `<digits>en` range. Emit must
+        // preserve that source spelling — printing `3e` instead drops the
+        // `n` and produces `3e[null];` where tsc produces `3en[null];`.
+        let tokens = scan_all("3en 123en");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].0, SyntaxKind::NumericLiteral);
+        assert_eq!(tokens[0].1, "3en");
+        assert_eq!(tokens[1].0, SyntaxKind::NumericLiteral);
+        assert_eq!(tokens[1].1, "123en");
+
+        // Sanity: `1ee` is a different shape — the trailing `e` is not an
+        // `n` BigInt suffix, so the scanner resets pos before `e` and the
+        // numeric token is just `1e`. Emit then renders `1e; e;`.
+        let tokens = scan_all("1ee");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].0, SyntaxKind::NumericLiteral);
+        assert_eq!(tokens[0].1, "1e");
+        assert_eq!(tokens[1].0, SyntaxKind::Identifier);
+        assert_eq!(tokens[1].1, "e");
     }
 
     // ── String literals ───────────────────────────────────────────────
@@ -3650,6 +3746,35 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].0, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(tokens[0].1, "hello world");
+    }
+
+    // ── JSX attribute string literals ─────────────────────────────────
+
+    /// Regression for #3977: `scan_jsx_string_literal` advanced by one byte
+    /// after pushing a character, so multi-byte UTF-8 chars were re-decoded
+    /// from a continuation-byte offset and pushed again. The token value of
+    /// `"é"` became `"éé"`, breaking JSX attribute string-literal types.
+    #[test]
+    fn scan_jsx_attribute_value_preserves_non_ascii() {
+        // 2-byte UTF-8 (é = U+00E9, 0xC3 0xA9).
+        let mut s = ScannerState::new("\"é\"".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "é");
+
+        // 3-byte UTF-8 (中 = U+4E2D).
+        let mut s = ScannerState::new("\"中文\"".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "中文");
+
+        // 4-byte UTF-8 (😀 = U+1F600, surrogate-pair scalar).
+        let mut s = ScannerState::new("\"a😀b\"".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "a😀b");
+
+        // Mixed widths and single quotes also exercised by JSX attributes.
+        let mut s = ScannerState::new("'héllo 中 😀'".to_string(), true);
+        assert_eq!(s.scan_jsx_attribute_value(), SyntaxKind::StringLiteral);
+        assert_eq!(s.get_token_value(), "héllo 中 😀");
     }
 
     // ── Punctuation ───────────────────────────────────────────────────
@@ -3803,6 +3928,39 @@ mod tests {
         assert_eq!(tokens[1].1, "b");
     }
 
+    #[test]
+    fn single_line_comment_terminates_at_unicode_line_separator() {
+        let tokens = scan_all("a // comment\u{2028}b");
+        assert_eq!(tokens.len(), 2, "tokens were: {tokens:?}");
+        assert_eq!(tokens[0].1, "a");
+        assert_eq!(tokens[1].1, "b");
+    }
+
+    #[test]
+    fn single_line_comment_terminates_at_unicode_paragraph_separator() {
+        let tokens = scan_all("a // comment\u{2029}b");
+        assert_eq!(tokens.len(), 2, "tokens were: {tokens:?}");
+        assert_eq!(tokens[0].1, "a");
+        assert_eq!(tokens[1].1, "b");
+    }
+
+    #[test]
+    fn directive_comment_does_not_swallow_next_line_via_unicode_line_separator() {
+        let mut scanner =
+            ScannerState::new("// @ts-expect-error\u{2028}const ok = 1;".to_string(), true);
+        assert_eq!(scanner.scan(), SyntaxKind::ConstKeyword);
+        assert!(scanner.has_preceding_line_break());
+    }
+
+    #[test]
+    fn multi_line_comment_unicode_line_separator_sets_preceding_line_break() {
+        let mut scanner = ScannerState::new("a /*\u{2028}*/ b".to_string(), true);
+        scanner.scan(); // "a"
+        assert!(!scanner.has_preceding_line_break());
+        scanner.scan(); // "b"
+        assert!(scanner.has_preceding_line_break());
+    }
+
     // ── Scanner state methods ─────────────────────────────────────────
 
     #[test]
@@ -3938,6 +4096,11 @@ mod tests {
         assert!(is_identifier_part(0x39)); // '9'
         // Letters should be accepted
         assert!(is_identifier_part(0x61)); // 'a'
+        // Other_ID_Continue characters should be accepted
+        assert!(is_identifier_part(0x00B7)); // · MIDDLE DOT
+        assert!(is_identifier_part(0x0387)); // · GREEK ANO TELEIA
+        assert!(is_identifier_part(0x1369)); // ፩ ETHIOPIC DIGIT ONE
+        assert!(is_identifier_part(0x19DA)); // ᧚ NEW TAI LUE THAM DIGIT ONE
     }
 
     #[test]

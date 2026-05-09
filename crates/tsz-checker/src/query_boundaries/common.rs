@@ -1,10 +1,3 @@
-//! Shared type query boundary functions used across multiple boundary modules.
-//!
-//! When a solver query is needed by multiple checker modules, define the
-//! canonical thin-wrapper here and re-export it from the per-module boundary
-//! files. This eliminates duplicate function bodies while preserving the
-//! per-module namespace pattern that callers rely on.
-
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
     TypePredicate,
@@ -25,6 +18,10 @@ pub(crate) use tsz_solver::TypeFormatter;
 pub(crate) use tsz_solver::TypeInstantiator;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
+pub(crate) use tsz_solver::type_queries::{
+    RemappedMappedIndexAccessResult, constraint_allows_mutable_array_like,
+    is_remapped_mapped_index_access, remapped_mapped_index_access_result,
+};
 
 pub(crate) use tsz_solver::AssignabilityChecker;
 #[allow(unused_imports)]
@@ -39,23 +36,26 @@ pub(crate) use tsz_solver::instantiate_generic;
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
+pub(crate) use super::construct_signatures::construct_signatures_for_type;
+
 /// Re-export of the solver's property access result type.
 ///
 /// Wraps `tsz_solver::operations::property::PropertyAccessResult`.
 /// This is the result enum returned by property access evaluation in the solver.
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 
+/// Re-export of the solver's call resolution result type.
+///
+/// Wraps `tsz_solver::CallResult`.
+/// This is the result enum returned by call/new expression resolution.
+pub(crate) use tsz_solver::CallResult;
 /// Re-export of the solver's type substitution mapping.
 ///
 /// Wraps `tsz_solver::TypeSubstitution`.
 /// Used to build type parameter -> type argument mappings for instantiation.
 pub(crate) use tsz_solver::TypeSubstitution;
 
-/// Re-export of the solver's call resolution result type.
-///
-/// Wraps `tsz_solver::CallResult`.
-/// This is the result enum returned by call/new expression resolution.
-pub(crate) use tsz_solver::CallResult;
+pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 
 pub(crate) fn instantiate_type(
     db: &dyn QueryDatabase,
@@ -382,13 +382,6 @@ pub(crate) fn is_generic_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> 
     }
 }
 
-pub(crate) fn construct_signatures_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<Vec<CallSignature>> {
-    tsz_solver::type_queries::get_construct_signatures(db, type_id)
-}
-
 pub(crate) fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_generic_type(db, type_id)
 }
@@ -444,6 +437,10 @@ pub(crate) fn type_has_displayable_name(db: &dyn TypeDatabase, type_id: TypeId) 
         return db.get_display_alias(type_id).is_some();
     }
     db.lookup(type_id).is_some()
+}
+
+pub(crate) fn type_id_is_known_to_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id.is_intrinsic() || type_id.is_error() || db.lookup(type_id).is_some()
 }
 
 pub(crate) fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

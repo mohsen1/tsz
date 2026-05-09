@@ -1106,12 +1106,20 @@ pub fn load_lib_files_for_binding_strict(
 /// The binders used during program construction are mutated while merging lib symbols into
 /// user-file binders. Checker-facing lib contexts and lib-file checks need fresh binder state
 /// so declaration merging and semantic lookups run against clean lib binders.
+///
+/// The clone re-parses and re-binds every lib file (parse+bind is the heavy step in
+/// `LibFile::from_source`). With ~40 lib files in the full ES2020+DOM lib set, doing
+/// this sequentially leaves all but one core idle. Run the parse+bind across rayon's
+/// global pool, mirroring `load_lib_files_for_binding_strict`. Output order matches
+/// input order via rayon's order-preserving `collect`.
 #[must_use]
 pub fn clone_lib_files_for_checker(
     lib_files: &[Arc<lib_loader::LibFile>],
 ) -> Vec<Arc<lib_loader::LibFile>> {
-    lib_files
-        .iter()
+    #[cfg(not(target_arch = "wasm32"))]
+    ensure_rayon_global_pool();
+
+    maybe_parallel_iter!(lib_files)
         .map(|lib| {
             let source = lib
                 .arena
@@ -1126,11 +1134,22 @@ pub fn clone_lib_files_for_checker(
 }
 
 /// Parse and bind a single lib file, returning a `LibFile` or error.
+///
+/// When `TSZ_LIB_CACHE=1` is set, this consults the disk-backed snapshot
+/// cache before parsing. On a hit the parsed arena and bound state are
+/// loaded from disk (skipping both parse and bind). On a miss the
+/// parse + bind result is written back. See
+/// `crates/tsz-core/src/parallel/lib_snapshot.rs` and
+/// `docs/plan/PERFORMANCE_PLAN.md`.
 fn parse_and_bind_lib_file(
     file_name: String,
     source_text: String,
 ) -> Result<Arc<lib_loader::LibFile>> {
-    let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+    if let Some(cached) = super::lib_snapshot::try_load(&file_name, &source_text) {
+        return Ok(cached);
+    }
+
+    let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
     let source_file_idx = lib_parser.parse_source_file();
     let diagnostics = lib_parser.get_diagnostics();
     if !diagnostics.is_empty() {
@@ -1149,12 +1168,23 @@ fn parse_and_bind_lib_file(
 
     let arena = Arc::new(lib_parser.into_arena());
     let binder = Arc::new(lib_binder);
-    Ok(Arc::new(lib_loader::LibFile::new(
-        file_name,
+    let lib = Arc::new(lib_loader::LibFile::new(
+        file_name.clone(),
         arena,
         binder,
         source_file_idx,
-    )))
+    ));
+
+    if let Err(err) = super::lib_snapshot::try_store(&file_name, &source_text, &lib) {
+        tracing::debug!(
+            target: "wasm::lib_snapshot",
+            file = %file_name,
+            error = %err,
+            "lib snapshot write failed (compilation continues normally)",
+        );
+    }
+
+    Ok(lib)
 }
 
 /// Phase 1 helper with pre-loaded file cache. Uses embedded lib contents
@@ -1342,10 +1372,26 @@ pub fn parse_and_bind_parallel_with_libs(
     files: Vec<(String, String)>,
     lib_files: &[Arc<lib_loader::LibFile>],
 ) -> Vec<BindResult> {
+    parse_and_bind_parallel_with_libs_and_target(files, lib_files, ScriptTarget::default())
+}
+
+/// Parse and bind multiple files in parallel with lib contexts and a compiler target.
+pub fn parse_and_bind_parallel_with_libs_and_target(
+    files: Vec<(String, String)>,
+    lib_files: &[Arc<lib_loader::LibFile>],
+    language_version: ScriptTarget,
+) -> Vec<BindResult> {
     if files.len() <= 1 {
         return files
             .into_iter()
-            .map(|(file_name, source_text)| bind_file_with_libs(file_name, source_text, lib_files))
+            .map(|(file_name, source_text)| {
+                bind_file_with_libs_with_language_version(
+                    file_name,
+                    source_text,
+                    lib_files,
+                    language_version,
+                )
+            })
             .collect();
     }
 
@@ -1353,14 +1399,22 @@ pub fn parse_and_bind_parallel_with_libs(
     ensure_rayon_global_pool();
 
     maybe_parallel_into!(files)
-        .map(|(file_name, source_text)| bind_file_with_libs(file_name, source_text, lib_files))
+        .map(|(file_name, source_text)| {
+            bind_file_with_libs_with_language_version(
+                file_name,
+                source_text,
+                lib_files,
+                language_version,
+            )
+        })
         .collect()
 }
 
-fn bind_file_with_libs(
+fn bind_file_with_libs_with_language_version(
     file_name: String,
     source_text: String,
     lib_files: &[Arc<lib_loader::LibFile>],
+    language_version: ScriptTarget,
 ) -> BindResult {
     // Skip parsing .json files - they should not be parsed as TypeScript.
     // JSON module imports should be resolved during module resolution and
@@ -1370,7 +1424,8 @@ fn bind_file_with_libs(
     }
 
     // Parse
-    let mut parser = ParserState::new(file_name.clone(), source_text);
+    let mut parser =
+        ParserState::new_with_language_version(file_name.clone(), source_text, language_version);
     let source_file = parser.parse_source_file();
 
     let (arena, parse_diagnostics) = parser.into_parts();
@@ -4163,10 +4218,235 @@ pub struct FileCheckResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+fn resolve_export_in_program_file(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_idx: usize,
+    export_name: &str,
+    visited: &mut FxHashSet<usize>,
+) -> Option<(SymbolId, usize)> {
+    if !visited.insert(file_idx) {
+        return None;
+    }
+
+    let file_name = program.files.get(file_idx)?.file_name.as_str();
+
+    if let Some(exports) = program.module_exports.get(file_name)
+        && let Some(sym_id) = exports.get(export_name)
+    {
+        return Some((sym_id, file_idx));
+    }
+
+    if let Some(reexports) = program.reexports.get(file_name)
+        && let Some((source_module, original_name)) = reexports.get(export_name)
+    {
+        let name = original_name.as_deref().unwrap_or(export_name);
+        if let Some(&source_idx) = resolved_module_paths.get(&(file_idx, source_module.clone()))
+            && let Some(result) = resolve_export_in_program_file(
+                program,
+                resolved_module_paths,
+                source_idx,
+                name,
+                visited,
+            )
+        {
+            return Some(result);
+        }
+    }
+
+    if let Some(source_modules) = program.wildcard_reexports.get(file_name) {
+        for source_module in source_modules {
+            if let Some(&source_idx) = resolved_module_paths.get(&(file_idx, source_module.clone()))
+                && let Some(result) = resolve_export_in_program_file(
+                    program,
+                    resolved_module_paths,
+                    source_idx,
+                    export_name,
+                    visited,
+                )
+            {
+                return Some(result);
+            }
+        }
+    }
+
+    None
+}
+
+fn declaration_name_span_for_ts2567(arena: &NodeArena, decl_idx: NodeIndex) -> Option<(u32, u32)> {
+    let node = arena.get(decl_idx)?;
+    let name_idx = if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+        arena.get_class(node).map(|class| class.name)
+    } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+        arena.get_interface(node).map(|interface| interface.name)
+    } else if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+        arena.get_function(node).map(|function| function.name)
+    } else {
+        None
+    }?;
+    let name_node = arena.get(name_idx)?;
+    Some((name_node.pos, name_node.end - name_node.pos))
+}
+
+pub fn collect_reexported_module_augmentation_enum_conflict_diagnostics(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) -> Vec<Diagnostic> {
+    use crate::checker::diagnostics::{diagnostic_codes, diagnostic_messages};
+    use tsz_binder::symbol_flags;
+
+    let mut diagnostics = Vec::new();
+
+    for (augment_file_idx, file) in program.files.iter().enumerate() {
+        for (module_specifier, augmentations) in file.module_augmentations.iter() {
+            let Some(&target_file_idx) =
+                resolved_module_paths.get(&(augment_file_idx, module_specifier.clone()))
+            else {
+                continue;
+            };
+
+            for augmentation in augmentations {
+                let arena = augmentation.arena.as_deref().unwrap_or(file.arena.as_ref());
+                let Some(enum_node) = arena.get(augmentation.node) else {
+                    continue;
+                };
+                if enum_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                    continue;
+                }
+                let Some(enum_decl) = arena.get_enum(enum_node) else {
+                    continue;
+                };
+
+                let Some((existing_sym_id, owner_idx)) = resolve_export_in_program_file(
+                    program,
+                    resolved_module_paths,
+                    target_file_idx,
+                    augmentation.name.as_str(),
+                    &mut FxHashSet::default(),
+                ) else {
+                    continue;
+                };
+                let Some(existing_symbol) = program.symbols.get(existing_sym_id) else {
+                    continue;
+                };
+                let allowed = (existing_symbol.flags
+                    & (symbol_flags::REGULAR_ENUM
+                        | symbol_flags::CONST_ENUM
+                        | symbol_flags::MODULE))
+                    != 0;
+                if allowed {
+                    continue;
+                }
+
+                let Some(enum_name_node) = arena.get(enum_decl.name) else {
+                    continue;
+                };
+                let message = diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string();
+                diagnostics.push(Diagnostic::error(
+                    file.file_name.clone(),
+                    enum_name_node.pos,
+                    enum_name_node.end - enum_name_node.pos,
+                    message.clone(),
+                    diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                ));
+
+                let decl_file_idx = if existing_symbol.decl_file_idx != u32::MAX {
+                    existing_symbol.decl_file_idx as usize
+                } else {
+                    owner_idx
+                };
+                let Some(decl_file) = program.files.get(decl_file_idx) else {
+                    continue;
+                };
+                let Some((pos, len)) = existing_symbol.declarations.iter().find_map(|&decl_idx| {
+                    declaration_name_span_for_ts2567(&decl_file.arena, decl_idx)
+                }) else {
+                    continue;
+                };
+                diagnostics.push(Diagnostic::error(
+                    decl_file.file_name.clone(),
+                    pos,
+                    len,
+                    message,
+                    diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                ));
+            }
+        }
+    }
+
+    diagnostics
+}
+
+fn add_reexported_module_augmentation_enum_conflict_diagnostics(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_results: &mut [FileCheckResult],
+) {
+    use crate::checker::diagnostics::diagnostic_codes;
+
+    let file_result_by_name: FxHashMap<String, usize> = file_results
+        .iter()
+        .enumerate()
+        .map(|(idx, result)| (result.file_name.clone(), idx))
+        .collect();
+
+    let mut rerouted = Vec::new();
+    for result in file_results.iter_mut() {
+        let current_file = result.file_name.clone();
+        result.diagnostics.retain(|diag| {
+            if diag.code
+                == diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS
+                && diag.file != current_file
+                && let Some(&target_idx) = file_result_by_name.get(&diag.file)
+            {
+                rerouted.push((target_idx, diag.clone()));
+                return false;
+            }
+            true
+        });
+    }
+    for (target_idx, diag) in rerouted {
+        file_results[target_idx].diagnostics.push(diag);
+    }
+
+    let mut seen: FxHashSet<(String, u32, u32)> = file_results
+        .iter()
+        .flat_map(|result| {
+            result
+                .diagnostics
+                .iter()
+                .map(|diag| (result.file_name.clone(), diag.start, diag.code))
+        })
+        .collect();
+
+    for diag in collect_reexported_module_augmentation_enum_conflict_diagnostics(
+        program,
+        resolved_module_paths,
+    ) {
+        if let Some(&result_idx) = file_result_by_name.get(&diag.file) {
+            let key = (
+                diag.file.clone(),
+                diag.start,
+                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+            );
+            if seen.insert(key) {
+                file_results[result_idx].diagnostics.push(diag);
+            }
+        }
+    }
+
+    for result in file_results {
+        result
+            .diagnostics
+            .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+    }
+}
+
 fn collect_lib_interface_node_symbols(
     arena: &NodeArena,
     statements: &[NodeIndex],
     globals: &SymbolTable,
+    fallback_node_symbols: &FxHashMap<u32, SymbolId>,
     affected_interfaces: &FxHashSet<String>,
     node_symbols: &mut FxHashMap<u32, SymbolId>,
 ) {
@@ -4179,7 +4459,9 @@ fn collect_lib_interface_node_symbols(
             if let Some(interface) = arena.get_interface(stmt_node)
                 && let Some(name) = arena.get_identifier_at(interface.name)
                 && affected_interfaces.contains(&name.escaped_text)
-                && let Some(sym_id) = globals.get(&name.escaped_text)
+                && let Some(sym_id) = globals
+                    .get(&name.escaped_text)
+                    .or_else(|| fallback_node_symbols.get(&stmt_idx.0).copied())
             {
                 node_symbols.insert(stmt_idx.0, sym_id);
                 node_symbols.insert(interface.name.0, sym_id);
@@ -4209,7 +4491,9 @@ fn collect_lib_interface_node_symbols(
                                     type_idx
                                 };
                             if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
-                                && let Some(base_sym_id) = globals.get(&base_name)
+                                && let Some(base_sym_id) = globals
+                                    .get(&base_name)
+                                    .or_else(|| fallback_node_symbols.get(&expr_idx.0).copied())
                             {
                                 node_symbols.insert(expr_idx.0, base_sym_id);
                             }
@@ -4246,6 +4530,7 @@ fn collect_lib_interface_node_symbols(
             arena,
             &inner.nodes,
             globals,
+            fallback_node_symbols,
             affected_interfaces,
             node_symbols,
         );
@@ -4329,6 +4614,25 @@ fn collect_direct_base_names(
     names
 }
 
+fn interface_declaration_has_merge_surface(arena: &NodeArena, stmt_idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(stmt_idx) else {
+        return false;
+    };
+    let Some(interface) = arena.get_interface(node) else {
+        return false;
+    };
+
+    !interface.members.nodes.is_empty()
+        || interface
+            .type_parameters
+            .as_ref()
+            .is_some_and(|type_params| !type_params.nodes.is_empty())
+        || interface
+            .heritage_clauses
+            .as_ref()
+            .is_some_and(|heritage| !heritage.nodes.is_empty())
+}
+
 fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<String> {
     let mut seeds = FxHashSet::default();
 
@@ -4337,14 +4641,28 @@ fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<Str
             && let Some(source_file) = file.arena.get_source_file_at(file.source_file)
         {
             for &stmt_idx in &source_file.statements.nodes {
-                if let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx) {
+                if interface_declaration_has_merge_surface(file.arena.as_ref(), stmt_idx)
+                    && let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx)
+                {
                     seeds.insert(name);
                 }
             }
         }
 
-        for name in file.global_augmentations.keys() {
-            seeds.insert(name.clone());
+        for (name, augmentations) in file.global_augmentations.iter() {
+            let affects_interface = augmentations.iter().any(|augmentation| {
+                if (augmentation.flags & crate::binder::symbol_flags::INTERFACE) == 0 {
+                    return true;
+                }
+                let arena = augmentation
+                    .arena
+                    .as_deref()
+                    .unwrap_or_else(|| file.arena.as_ref());
+                interface_declaration_has_merge_surface(arena, augmentation.node)
+            });
+            if affects_interface {
+                seeds.insert(name.clone());
+            }
         }
     }
 
@@ -4712,6 +5030,7 @@ fn build_lib_bound_file_for_interface_checks(
             lib_file.arena.as_ref(),
             &source_file.statements.nodes,
             &program.globals,
+            lib_file.binder.node_symbols.as_ref(),
             affected_interfaces,
             &mut node_symbols,
         );
@@ -5474,6 +5793,12 @@ pub fn check_files_parallel(
                 }),
         );
     }
+
+    add_reexported_module_augmentation_enum_conflict_diagnostics(
+        program,
+        resolved_module_paths.as_ref(),
+        &mut file_results,
+    );
 
     let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
 

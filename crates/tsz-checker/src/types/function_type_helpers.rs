@@ -55,10 +55,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_jsdoc_return_type(&mut self, jsdoc: &str) -> Option<TypeId> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
-            else {
+            let Some(rest) = Self::strip_jsdoc_return_tag_prefix(trimmed) else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -72,7 +69,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             // Skip type predicates — handled separately
-            if type_expr.contains(" is ") || type_expr.starts_with("asserts ") {
+            if Self::jsdoc_returns_type_predicate_from_type_expr(type_expr).is_some() {
                 return None;
             }
             return self.resolve_jsdoc_reference(type_expr);
@@ -183,8 +180,12 @@ impl<'a> CheckerState<'a> {
             if self.body_has_arguments_reference(access.expression) {
                 return true;
             }
-            // Element access: also check the argument (e.g. arguments[0])
-            if self.body_has_arguments_reference(access.name_or_argument) {
+            // Element access: also check the index expression (e.g. obj[arguments]).
+            // Property names like `holder.arguments` are not references to the
+            // function's implicit `arguments` object.
+            if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && self.body_has_arguments_reference(access.name_or_argument)
+            {
                 return true;
             }
         } else if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
@@ -595,10 +596,12 @@ impl<'a> CheckerState<'a> {
             );
         } else {
             // TS1064: For ES6+ targets, the return type must be Promise<T>
-            let inner_type = self
+            let type_name = self
                 .promise_like_return_type_argument(return_type)
-                .unwrap_or(TypeId::VOID);
-            let type_name = self.format_type(inner_type);
+                .map_or_else(
+                    || self.format_type(return_type),
+                    |inner| self.format_type(inner),
+                );
             self.error_at_node(
                 type_annotation,
                 &format_message(
@@ -629,7 +632,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let trimmed = ret_type_str.trim();
-        if trimmed.starts_with("Promise") || trimmed.starts_with("PromiseLike") {
+        if Self::jsdoc_return_type_is_exact_promise_reference(trimmed)
+            && self.jsdoc_promise_name_resolves_to_global(func_idx)
+        {
             return;
         }
 
@@ -705,6 +710,63 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn jsdoc_promise_name_resolves_to_global(&self, func_idx: NodeIndex) -> bool {
+        if self.jsdoc_has_prior_promise_typedef(func_idx) {
+            return false;
+        }
+
+        for sym_id in self
+            .ctx
+            .binder
+            .current_scope
+            .get("Promise")
+            .into_iter()
+            .chain(self.ctx.binder.file_locals.get("Promise"))
+        {
+            if self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                !self.symbol_has_standard_lib_origin(sym_id)
+                    && symbol.escaped_name.as_str() == "Promise"
+            }) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn jsdoc_has_prior_promise_typedef(&self, func_idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(func_idx) else {
+            return false;
+        };
+        let Some(func_node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+
+        sf.comments.iter().any(|comment| {
+            comment.end <= func_node.pos
+                && tsz_common::comments::is_jsdoc_comment(comment, &sf.text)
+                && Self::jsdoc_comment_declares_promise_typedef(
+                    &sf.text[comment.pos as usize..comment.end as usize],
+                )
+        })
+    }
+
+    fn jsdoc_comment_declares_promise_typedef(comment: &str) -> bool {
+        comment.contains("@typedef")
+            && comment.split_whitespace().any(|token| {
+                token.trim_matches(|c: char| {
+                    matches!(c, '*' | '/' | '{' | '}' | '(' | ')' | '[' | ']' | ',')
+                }) == "Promise"
+            })
+    }
+
+    fn jsdoc_return_type_is_exact_promise_reference(trimmed: &str) -> bool {
+        let Some(rest) = trimmed.strip_prefix("Promise") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        rest.is_empty() || rest.starts_with('<') || rest.starts_with(".<")
+    }
+
     /// Check if a type is a type alias application that resolves to Promise.
     ///
     /// For example, `type PromiseAlias<T> = Promise<T>; async function f(): PromiseAlias<void>`
@@ -768,6 +830,7 @@ impl<'a> CheckerState<'a> {
                             && let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
                         {
                             body_symbol.escaped_name == "Promise"
+                                && self.symbol_has_standard_lib_origin(body_sym_id)
                         } else {
                             false
                         }

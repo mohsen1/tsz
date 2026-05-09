@@ -312,6 +312,7 @@ fn test_variance_invariant_explicit_write_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -922,6 +923,62 @@ fn test_variance_template_literal_covariant() {
         variance.is_covariant(),
         "Template literal type span should be covariant"
     );
+    assert!(
+        variance.rejection_unreliable(),
+        "Template literal stringification can make failed argument variance checks structurally valid"
+    );
+}
+
+#[test]
+fn test_variance_object_property_template_literal_marks_unreliable() {
+    // type AGen<T> = { field: `a${T}` }
+    // T appears inside a template literal nested in a property — variance must
+    // still be marked REJECTION_UNRELIABLE so a failed covariant check (e.g.
+    // AGen<number> vs AGen<string>) falls through to structural comparison
+    // instead of being conclusively rejected. tsc treats `a${number}` as a
+    // structural subtype of `a${string}`.
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+    let field_atom = interner.intern_string("field");
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(t_param),
+    ]);
+    let obj = interner.object(vec![PropertyInfo::readonly(field_atom, template)]);
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, obj, t_atom);
+
+    assert!(
+        variance.is_covariant(),
+        "Property holding template literal interpolation should remain covariant"
+    );
+    assert!(
+        variance.rejection_unreliable(),
+        "Property-wrapped template literal must propagate REJECTION_UNRELIABLE so variance failures fall through to structural comparison"
+    );
+}
+
+#[test]
+fn test_variance_object_property_template_literal_unreliable_alt_param_name() {
+    // Same shape but with parameter spelled `K` instead of `T` — proves the
+    // rule is structural, not name-based.
+    let interner = create_interner();
+    let k_param = intern_type_param(&interner, "K");
+    let field_atom = interner.intern_string("field");
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(k_param),
+    ]);
+    let obj = interner.object(vec![PropertyInfo::readonly(field_atom, template)]);
+
+    let k_atom = interner.intern_string("K");
+    let variance = compute_variance(&interner, obj, k_atom);
+
+    assert!(variance.is_covariant());
+    assert!(variance.rejection_unreliable());
 }
 
 // =============================================================================
@@ -1524,5 +1581,102 @@ fn test_variance_mixed_direct_and_callback_method_param_is_reliable() {
     assert!(
         !variance.rejection_unreliable(),
         "A strict (callback) occurrence should clear REJECTION_UNRELIABLE set by sibling direct method params"
+    );
+}
+
+#[test]
+fn test_variance_merged_promise_like_overloads_is_covariant() {
+    // Mimics the variance contribution of a declaration-merged
+    // `Promise<T>` interface: a callable shape with two method-style
+    // `then` overloads, each using T inside a callback parameter.
+    //
+    // Shape (conceptual):
+    //   {
+    //     then(onfulfilled: (value: T) => any): any;   // lib overload
+    //     then(cb: (x: T) => any): any;                // user overload
+    //   }
+    //
+    // Both occurrences of T are inside non-method callbacks nested under
+    // method-bivariant parameters. Each leaf occurrence is a strict
+    // covariant signal (double-contravariant = covariant), so the merged
+    // variance must be COVARIANT and reliable, with no
+    // REJECTION_UNRELIABLE bit. This locks in tsz's variance computation
+    // for the Promise pattern after declaration merging — the path
+    // exercised by `tests/cases/compiler/promisesWithConstraints.ts`.
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+
+    let make_callback_with_t = |param_name: &str| {
+        interner.function(FunctionShape {
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string(param_name)),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::ANY,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+
+    let lib_then_sig = CallSignature {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("onfulfilled")),
+            type_id: make_callback_with_t("value"),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_method: true,
+    };
+    let user_then_sig = CallSignature {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("cb")),
+            type_id: make_callback_with_t("x"),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_method: true,
+    };
+
+    let then_callable = interner.callable(CallableShape {
+        call_signatures: vec![lib_then_sig, user_then_sig],
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+    let body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("then"),
+        then_callable,
+    )]);
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, body, t_atom);
+
+    assert!(
+        variance.is_covariant(),
+        "Merged Promise-like interface with multiple `then` overloads should be COVARIANT in T (got {variance:?})"
+    );
+    assert!(
+        !variance.is_contravariant(),
+        "T does not appear in any contravariant-only position"
+    );
+    assert!(
+        !variance.rejection_unreliable(),
+        "Strict callback occurrences pin the variance signal — REJECTION_UNRELIABLE must be cleared"
     );
 }

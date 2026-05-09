@@ -530,6 +530,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
         args: &[NodeIndex],
+        contextual_type: Option<TypeId>,
     ) -> bool {
         let return_type_params: FxHashSet<_> =
             common::collect_referenced_types(self.ctx.types, shape.return_type)
@@ -538,6 +539,22 @@ impl<'a> CheckerState<'a> {
                 .collect();
 
         if return_type_params.is_empty() {
+            return false;
+        }
+
+        let has_bare_return_param_argument = shape.params.iter().any(|param| {
+            common::type_param_info(self.ctx.types, param.type_id)
+                .is_some_and(|info| return_type_params.contains(&info.name))
+        });
+        if has_bare_return_param_argument
+            && let Some(contextual_type) = contextual_type
+            && self.contextual_return_type_specializes_wrapped_params(
+                shape.return_type,
+                contextual_type,
+                &return_type_params,
+                &mut FxHashSet::default(),
+            )
+        {
             return false;
         }
 
@@ -552,6 +569,14 @@ impl<'a> CheckerState<'a> {
             };
 
             if self.expression_needs_contextual_signature_instantiation(arg_idx, Some(param_type)) {
+                continue;
+            }
+
+            if self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    || node.kind == syntax_kind_ext::NEW_EXPRESSION
+            }) && call_checker::get_contextual_signature(self.ctx.types, param_type).is_some()
+            {
                 continue;
             }
 
@@ -580,6 +605,168 @@ impl<'a> CheckerState<'a> {
             }) {
                 return true;
             }
+        }
+
+        false
+    }
+
+    fn contextual_signature_after_evaluation(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<tsz_solver::FunctionShape> {
+        if let Some(shape) = call_checker::get_contextual_signature(self.ctx.types, type_id) {
+            return Some(shape);
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        if evaluated != type_id {
+            if let Some(shape) = call_checker::get_contextual_signature(self.ctx.types, evaluated) {
+                return Some(shape);
+            }
+
+            let evaluated_application = self.evaluate_application_type(evaluated);
+            if evaluated_application != evaluated
+                && let Some(shape) =
+                    call_checker::get_contextual_signature(self.ctx.types, evaluated_application)
+            {
+                return Some(shape);
+            }
+        }
+
+        let evaluated_application = self.evaluate_application_type(type_id);
+        if evaluated_application != type_id {
+            return call_checker::get_contextual_signature(self.ctx.types, evaluated_application);
+        }
+
+        None
+    }
+
+    pub(crate) fn contextual_return_type_specializes_wrapped_params(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::interner::Atom>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> bool {
+        if matches!(target, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || !visited.insert((source, target))
+        {
+            return false;
+        }
+
+        if let Some(info) = common::type_param_info(self.ctx.types, source) {
+            return tracked_type_params.contains(&info.name);
+        }
+
+        if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
+            common::application_info(self.ctx.types, source),
+            common::application_info(self.ctx.types, target),
+        ) && source_base == target_base
+            && source_args.len() == target_args.len()
+        {
+            return source_args
+                .iter()
+                .zip(target_args.iter())
+                .any(|(&source_arg, &target_arg)| {
+                    self.contextual_return_type_specializes_wrapped_params(
+                        source_arg,
+                        target_arg,
+                        tracked_type_params,
+                        visited,
+                    )
+                });
+        }
+
+        let source_signature = self.contextual_signature_after_evaluation(source);
+        let target_signature = self.contextual_signature_after_evaluation(target);
+        if let (Some(source_shape), Some(target_shape)) = (source_signature, target_signature)
+            && source_shape.params.len() <= target_shape.params.len()
+        {
+            let params_specialize = source_shape
+                .params
+                .iter()
+                .zip(target_shape.params.iter())
+                .any(|(source_param, target_param)| {
+                    self.contextual_return_type_specializes_wrapped_params(
+                        source_param.type_id,
+                        target_param.type_id,
+                        tracked_type_params,
+                        visited,
+                    )
+                });
+            if params_specialize
+                || self.contextual_return_type_specializes_wrapped_params(
+                    source_shape.return_type,
+                    target_shape.return_type,
+                    tracked_type_params,
+                    visited,
+                )
+            {
+                return true;
+            }
+        }
+
+        if let (Some(source_elem), Some(target_elem)) = (
+            common::array_element_type(self.ctx.types, source),
+            common::array_element_type(self.ctx.types, target),
+        ) {
+            return self.contextual_return_type_specializes_wrapped_params(
+                source_elem,
+                target_elem,
+                tracked_type_params,
+                visited,
+            );
+        }
+
+        if let (Some(source_elems), Some(target_elems)) = (
+            common::tuple_elements(self.ctx.types, source),
+            common::tuple_elements(self.ctx.types, target),
+        ) && source_elems.len() == target_elems.len()
+        {
+            return source_elems.iter().zip(target_elems.iter()).any(
+                |(source_elem, target_elem)| {
+                    self.contextual_return_type_specializes_wrapped_params(
+                        source_elem.type_id,
+                        target_elem.type_id,
+                        tracked_type_params,
+                        visited,
+                    )
+                },
+            );
+        }
+
+        if let (Some(source_shape), Some(target_shape)) = (
+            common::object_shape_for_type(self.ctx.types, source),
+            common::object_shape_for_type(self.ctx.types, target),
+        ) {
+            for source_prop in &source_shape.properties {
+                let Some(target_prop) = target_shape
+                    .properties
+                    .iter()
+                    .find(|prop| prop.name == source_prop.name)
+                else {
+                    continue;
+                };
+                if self.contextual_return_type_specializes_wrapped_params(
+                    source_prop.type_id,
+                    target_prop.type_id,
+                    tracked_type_params,
+                    visited,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        let source_eval = self.evaluate_application_type(source);
+        let target_eval = self.evaluate_application_type(target);
+        if source_eval != source || target_eval != target {
+            return self.contextual_return_type_specializes_wrapped_params(
+                source_eval,
+                target_eval,
+                tracked_type_params,
+                visited,
+            );
         }
 
         false
@@ -798,6 +985,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn suppress_initializer_contextual_type_for_generic_call(
         &mut self,
         idx: NodeIndex,
+        contextual_type: TypeId,
     ) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -854,6 +1042,15 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        if crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            callee_type_for_context,
+        )
+        .is_some_and(|callable| callable.call_signatures.len() > 1)
+        {
+            return false;
+        }
+
         if shape.type_params.is_empty() {
             return false;
         }
@@ -875,7 +1072,11 @@ impl<'a> CheckerState<'a> {
         if return_is_bare_type_param {
             return false;
         }
-        self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args)
+        self.suppress_generic_return_context_for_direct_arg_overlap(
+            &shape,
+            args,
+            Some(contextual_type),
+        )
     }
 
     /// Whether a node is a direct literal expression (numeric/string/boolean/bigint/null
@@ -960,6 +1161,39 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    pub(crate) fn explicit_generic_function_has_fully_annotated_signature(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|params| params.nodes.is_empty())
+            || func.type_annotation.is_none()
+        {
+            return false;
+        }
+        func.parameters.nodes.iter().all(|param_idx| {
+            self.ctx
+                .arena
+                .get(*param_idx)
+                .and_then(|param| self.ctx.arena.get_parameter(param))
+                .is_some_and(|param| param.type_annotation.is_some())
+        })
     }
 
     pub(crate) fn expression_needs_contextual_signature_instantiation(

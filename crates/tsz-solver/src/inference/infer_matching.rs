@@ -17,6 +17,7 @@ use crate::types::{
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
     TypeId, TypeListId, Variance,
 };
+use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
@@ -188,6 +189,35 @@ impl<'a> InferenceContext<'a> {
             // Tuple types: recurse into elements
             (Some(TypeData::Tuple(source_elems)), Some(TypeData::Tuple(target_elems))) => {
                 self.infer_tuples(source_elems, target_elems, priority)?;
+            }
+
+            // Array source against single-rest variadic tuple target `[...T]`
+            // where `T` is itself a type parameter being inferred: the variadic
+            // tuple is structurally equivalent to its rest element, so infer
+            // the source array against that type parameter. This is the case
+            // tsc handles for parameters like `(t: [...T]) => ...` called with
+            // an array argument — tsc infers `T = sourceArray`. Without this
+            // rule, `T` falls back to its constraint (`unknown[]`) and the
+            // assignability check then reports the constraint in the
+            // diagnostic. The rest element must be a type parameter (i.e. an
+            // inference variable); for concrete-array rest elements like
+            // `[...string[]]` there is nothing to infer, and for nested
+            // structural rest types we want the regular structural recursion
+            // to apply, not this single-rest reduction.
+            (Some(TypeData::Array(_)), Some(TypeData::Tuple(target_elems))) => {
+                let target_list = self.interner.tuple_list(target_elems);
+                if target_list.len() == 1 && target_list[0].rest {
+                    let rest_type = target_list[0].type_id;
+                    let rest_is_inference_param = match self.interner.lookup(rest_type) {
+                        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+                            self.find_type_param(info.name).is_some()
+                        }
+                        _ => false,
+                    };
+                    if rest_is_inference_param {
+                        self.infer_from_types(source, rest_type, priority)?;
+                    }
+                }
             }
 
             // Union types: try to infer against each member
@@ -394,6 +424,30 @@ impl<'a> InferenceContext<'a> {
                 }
             }
 
+            // Extract Inference Improvement (TypeScript issue #25065): when the
+            // target is a distributive conditional `T extends U ? T : Y` whose
+            // check_type and true_type are the same naked type parameter we are
+            // currently inferring, infer the source against that type parameter
+            // directly. This mirrors tsc's behaviour for `Extract<T, U>` and
+            // similar Extract-like aliases used in parameter positions.
+            //
+            // Without this rule the conditional target falls through with no
+            // candidate, so K is left to its constraint default and the
+            // diagnostic surface ends up reporting the constraint instead of
+            // the instantiated `Extract<K, U>` (e.g. `keyof T` instead of
+            // `never`).
+            (_, Some(TypeData::Conditional(cond_id))) => {
+                let cond = self.interner.get_conditional(cond_id);
+                if cond.is_distributive
+                    && cond.check_type == cond.true_type
+                    && let Some(TypeData::TypeParameter(ref param_info)) =
+                        self.interner.lookup(cond.check_type)
+                    && self.find_type_param(param_info.name).is_some()
+                {
+                    self.infer_from_types(source, cond.check_type, priority)?;
+                }
+            }
+
             // If we can't match structurally, that's okay - it might mean the types are incompatible
             // The Checker will handle this with proper error reporting
             _ => {
@@ -497,8 +551,7 @@ impl<'a> InferenceContext<'a> {
                     for p in &source_shape.properties {
                         // Skip symbol-keyed properties — they are not reachable via
                         // a string index and must not pollute string-index inference.
-                        let prop_name_str = self.interner.resolve_atom(p.name);
-                        if prop_name_str.starts_with("__unique_") {
+                        if p.is_symbol_named {
                             continue;
                         }
                         // For optional properties, strip `undefined` from optionality
@@ -618,7 +671,7 @@ impl<'a> InferenceContext<'a> {
         let string_named_props: Vec<_> = source
             .properties
             .iter()
-            .filter(|p| !self.interner.resolve_atom(p.name).starts_with("__unique_"))
+            .filter(|p| !p.is_symbol_named)
             .collect();
 
         if !string_named_props.is_empty() {
@@ -663,13 +716,32 @@ impl<'a> InferenceContext<'a> {
             // candidate for the homomorphic type parameter. This handles cases
             // like `{ [K in keyof T]: Reducer<T[K], A> }` matched against
             // `{ counter1: Reducer<number> }` → T = { counter1: number }.
+            //
+            // Carry the source property's `declaration_order` onto each
+            // candidate property so the diagnostic printer renders the
+            // inferred T in the source's declared member order (matching
+            // tsc's `getTypeFromInference`). Without this, candidate
+            // properties default to `declaration_order = 0`, which the
+            // interner overwrites using the atom-id-sorted insertion
+            // index — producing a name-hash order that doesn't match tsc.
             if let Some(var) = homomorphic_var
                 && let Some(props) = self.reverse_mapped_properties.remove(&var)
                 && !props.is_empty()
             {
+                let source_decl_order: FxHashMap<Atom, u32> = source
+                    .properties
+                    .iter()
+                    .map(|p| (p.name, p.declaration_order))
+                    .collect();
                 let obj_props: Vec<PropertyInfo> = props
                     .into_iter()
-                    .map(|(name, type_id)| PropertyInfo::new(name, type_id))
+                    .map(|(name, type_id)| {
+                        let mut prop = PropertyInfo::new(name, type_id);
+                        if let Some(&order) = source_decl_order.get(&name) {
+                            prop.declaration_order = order;
+                        }
+                        prop
+                    })
                     .collect();
                 let obj_type = self.interner.object(obj_props);
                 self.add_candidate(var, obj_type, InferencePriority::HomomorphicMappedType);
@@ -1115,10 +1187,18 @@ impl<'a> InferenceContext<'a> {
         for target_sig in &target.call_signatures {
             for source_sig in &source.call_signatures {
                 if source_sig.params.len() == target_sig.params.len() {
+                    let was_contra = self.in_contra_mode;
+                    self.in_contra_mode = true;
                     for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
                     {
-                        self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+                        let result =
+                            self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+                        if result.is_err() {
+                            self.in_contra_mode = was_contra;
+                            return result;
+                        }
                     }
+                    self.in_contra_mode = was_contra;
                     self.infer_from_types(
                         source_sig.return_type,
                         target_sig.return_type,
@@ -1133,10 +1213,18 @@ impl<'a> InferenceContext<'a> {
         for target_sig in &target.construct_signatures {
             for source_sig in &source.construct_signatures {
                 if source_sig.params.len() == target_sig.params.len() {
+                    let was_contra = self.in_contra_mode;
+                    self.in_contra_mode = true;
                     for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
                     {
-                        self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+                        let result =
+                            self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+                        if result.is_err() {
+                            self.in_contra_mode = was_contra;
+                            return result;
+                        }
                     }
+                    self.in_contra_mode = was_contra;
                     self.infer_from_types(
                         source_sig.return_type,
                         target_sig.return_type,
@@ -1181,9 +1269,16 @@ impl<'a> InferenceContext<'a> {
     ) -> Result<(), InferenceError> {
         let source = self.interner.function_shape(source_func);
         // Parameters are contravariant
+        let was_contra = self.in_contra_mode;
+        self.in_contra_mode = true;
         for (s_param, t_param) in source.params.iter().zip(target_sig.params.iter()) {
-            self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+            let result = self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+            if result.is_err() {
+                self.in_contra_mode = was_contra;
+                return result;
+            }
         }
+        self.in_contra_mode = was_contra;
         // Return type is covariant
         self.infer_from_types(source.return_type, target_sig.return_type, priority)?;
         Ok(())
@@ -1199,9 +1294,16 @@ impl<'a> InferenceContext<'a> {
     ) -> Result<(), InferenceError> {
         let target = self.interner.function_shape(target_func);
         // Parameters are contravariant
+        let was_contra = self.in_contra_mode;
+        self.in_contra_mode = true;
         for (s_param, t_param) in source_sig.params.iter().zip(target.params.iter()) {
-            self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+            let result = self.infer_from_types(t_param.type_id, s_param.type_id, priority);
+            if result.is_err() {
+                self.in_contra_mode = was_contra;
+                return result;
+            }
         }
+        self.in_contra_mode = was_contra;
         // Return type is covariant
         self.infer_from_types(source_sig.return_type, target.return_type, priority)?;
         Ok(())
@@ -1616,6 +1718,31 @@ impl<'a> InferenceContext<'a> {
                 )?;
             }
             return Ok(());
+        }
+
+        if let Some(TypeData::TemplateLiteral(source_template)) = source_key {
+            let source_spans = self.interner.template_list(*source_template);
+            if source_spans.len() == spans.len() {
+                let source_spans: Vec<TemplateSpan> = source_spans.iter().cloned().collect();
+                let target_spans: Vec<TemplateSpan> = spans.iter().cloned().collect();
+                let mut matched = true;
+                for (source_span, target_span) in source_spans.iter().zip(target_spans.iter()) {
+                    match (source_span, target_span) {
+                        (TemplateSpan::Text(source_text), TemplateSpan::Text(target_text))
+                            if source_text == target_text => {}
+                        (TemplateSpan::Type(source_type), TemplateSpan::Type(target_type)) => {
+                            self.infer_from_types(*source_type, *target_type, priority)?;
+                        }
+                        _ => {
+                            matched = false;
+                            break;
+                        }
+                    }
+                }
+                if matched {
+                    return Ok(());
+                }
+            }
         }
 
         // For literal string types, perform the actual pattern matching

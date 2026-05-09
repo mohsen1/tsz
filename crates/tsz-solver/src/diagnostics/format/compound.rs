@@ -39,11 +39,21 @@ impl<'a> TypeFormatter<'a> {
             return format!("{{ {}; }}", parts.join("; "));
         }
 
+        let is_string_apparent_member_list = parts
+            .first()
+            .is_some_and(|part| part.starts_with("toString:"))
+            && parts
+                .iter()
+                .any(|part| part.starts_with("[Symbol.iterator]"));
         // Keep at most this many leading members before the omitted-count marker.
-        const MAX_HEAD_PARTS: usize = 17;
+        let max_head_parts = if is_string_apparent_member_list {
+            1
+        } else {
+            17
+        };
         // Soft budget for head text. Long member signatures (for example,
         // `toLocaleString` overloads) reduce the number of retained heads.
-        const MAX_HEAD_CHARS: usize = 300;
+        const MAX_HEAD_CHARS: usize = 380;
 
         let total = parts.len();
         let tail_index = parts
@@ -61,7 +71,7 @@ impl<'a> TypeFormatter<'a> {
         let mut used_chars = 0usize;
 
         for (idx, part) in parts.iter().enumerate().take(tail_index) {
-            if head_count >= MAX_HEAD_PARTS {
+            if head_count >= max_head_parts {
                 break;
             }
             let part_cost = if head_count == 0 {
@@ -473,7 +483,7 @@ impl<'a> TypeFormatter<'a> {
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
                 "{ro}[{key_name}: string]: {}",
-                self.format(idx.value_type)
+                self.format_index_signature_value(idx.value_type)
             ));
         }
         if let Some(ref idx) = shape.number_index {
@@ -484,7 +494,7 @@ impl<'a> TypeFormatter<'a> {
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
                 "{ro}[{key_name}: number]: {}",
-                self.format(idx.value_type)
+                self.format_index_signature_value(idx.value_type)
             ));
         }
         // Sort properties by declaration_order for display (preserves source order)
@@ -498,6 +508,14 @@ impl<'a> TypeFormatter<'a> {
         }
 
         self.format_object_parts(parts)
+    }
+
+    fn format_index_signature_value(&mut self, value_type: TypeId) -> String {
+        let previous_skip = self.skip_intersection_display_alias;
+        self.skip_intersection_display_alias = true;
+        let result = self.format(value_type).into_owned();
+        self.skip_intersection_display_alias = previous_skip;
+        result
     }
 
     pub(super) fn format_union(&mut self, members: &[TypeId]) -> String {
@@ -520,25 +538,38 @@ impl<'a> TypeFormatter<'a> {
         // match source declaration order. Display-time sorting fixes this for diagnostics.
         //
         // Sorting rules:
-        // - Tier 0/1 (builtins/user types with source): sort by source position.
-        // - Tier 2 (anonymous objects without source): preserve declaration order.
-        //   The previous "sort tier-2 objects by property count" heuristic matched
-        //   tsc's output for some `{} | { a: number }`-style unions but reordered
-        //   legitimate discriminated-union displays (e.g. TS2353/TS2322 messages)
-        //   where tsc preserves declaration order of the anonymous members.
+        // - Tier 0/1 (builtins/user types with source): sort by source position
+        //   and place at the front of the union display.
+        // - Tier 2 (anonymous objects, literal types without a source pos): keep
+        //   their relative declaration order and place AFTER tier 0/1.
+        //
+        // The split-then-sort approach matches tsc's display preference of
+        // showing named/built-in types before anonymous/literal members
+        // (e.g. `Refrigerator | "foo"` rather than `"foo" | Refrigerator`),
+        // while still preserving discriminated-union order for anonymous
+        // object members where tsc keeps declaration order.
         if let Some(def_store) = self.def_store {
             let positions: Vec<_> = ordered
                 .iter()
                 .map(|&m| self.get_source_position_for_type(m, def_store))
                 .collect();
 
-            let all_tier_0_or_1 = positions.iter().all(|&(tier, _, _)| tier < 2);
-
-            if all_tier_0_or_1 {
-                let mut pairs: Vec<_> = ordered.iter().copied().zip(positions).collect();
-                pairs.sort_by_key(|&(_, pos)| pos);
-                ordered = pairs.into_iter().map(|(id, _)| id).collect();
+            let mut named: Vec<(TypeId, (u32, u32, u32))> = Vec::new();
+            let mut anonymous: Vec<TypeId> = Vec::new();
+            for (&id, &pos) in ordered.iter().zip(&positions) {
+                if pos.0 < 2 {
+                    named.push((id, pos));
+                } else {
+                    anonymous.push(id);
+                }
             }
+            named.sort_by_key(|&(_, pos)| pos);
+
+            ordered = named
+                .into_iter()
+                .map(|(id, _)| id)
+                .chain(anonymous)
+                .collect();
         }
 
         if has_null {
@@ -554,8 +585,33 @@ impl<'a> TypeFormatter<'a> {
             ordered = normalized;
         }
 
+        // tsc's `typeof` operator produces a fixed eight-element string
+        // literal union; when the diagnostic surface displays that exact
+        // union, tsc renders it in JS-spec order regardless of how the
+        // interner pre-sorted the union members. Without this carve-out,
+        // the global literal-id allocation order can put `"symbol"` ahead
+        // of `"string"`, leaking the interner's history into TS2367
+        // overlap diagnostics.
+        if let Some(reordered) = self.reorder_typeof_result_union_in_canonical_order(&ordered) {
+            ordered = reordered;
+        }
+
         if let Some(collapsed) = self.collapse_same_enum_members_for_display(&ordered) {
             return collapsed;
+        }
+
+        // Drop synthetic `"__unique_<n>"` string-literal members. These come
+        // from `keyof` over interfaces with unique-symbol-keyed properties:
+        // tsc renders the union without the synthetic atom (e.g. `"first" |
+        // "second"` instead of `"first" | "second" | "__unique_3006"`). Only
+        // strip when at least one non-synthetic string literal remains so we
+        // don't reduce a union to nothing.
+        let synthetic_unique_count = ordered
+            .iter()
+            .filter(|&&m| self.is_synthetic_unique_atom_string_literal(m))
+            .count();
+        if synthetic_unique_count > 0 && synthetic_unique_count < ordered.len() {
+            ordered.retain(|&m| !self.is_synthetic_unique_atom_string_literal(m));
         }
 
         if ordered.len() > self.max_union_members {
@@ -576,7 +632,63 @@ impl<'a> TypeFormatter<'a> {
         // tsc shows `Foo.Yep | Bar.Yep` instead of `Yep | Yep` when two different
         // types share the same name in different namespaces.
         let disambiguated = self.disambiguate_union_member_names(&ordered, formatted);
-        disambiguated.join(" | ")
+        // If qualification couldn't break a tie (or slots were already
+        // identical), tsc collapses the duplicates to a single member.
+        // Mirror that — `Symbol | Symbol` should display as just `Symbol`.
+        let mut deduped: Vec<String> = Vec::with_capacity(disambiguated.len());
+        let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        for name in disambiguated {
+            if seen.insert(name.clone()) {
+                deduped.push(name);
+            }
+        }
+        deduped.join(" | ")
+    }
+
+    /// When the union members exactly match the eight string literals that
+    /// the JavaScript `typeof` operator can produce, return them in tsc's
+    /// canonical display order. Otherwise return `None` so the caller
+    /// keeps the input order untouched.
+    ///
+    /// Detected purely by string-literal value equality on the closed
+    /// `typeof` result vocabulary — this set is fixed by the JS spec, not
+    /// a user-chosen identifier, so the check is structural rather than
+    /// a printer-output-driven decision.
+    fn reorder_typeof_result_union_in_canonical_order(
+        &self,
+        members: &[TypeId],
+    ) -> Option<Vec<TypeId>> {
+        const TYPEOF_RESULT_ORDER: [&str; 8] = [
+            "string",
+            "number",
+            "bigint",
+            "boolean",
+            "symbol",
+            "undefined",
+            "object",
+            "function",
+        ];
+        if members.len() != TYPEOF_RESULT_ORDER.len() {
+            return None;
+        }
+        let mut found: [Option<TypeId>; 8] = [None; 8];
+        for &member in members {
+            let Some(crate::types::TypeData::Literal(crate::types::LiteralValue::String(atom))) =
+                self.interner.lookup(member)
+            else {
+                return None;
+            };
+            let value = self.interner.resolve_atom(atom);
+            let idx = TYPEOF_RESULT_ORDER
+                .iter()
+                .position(|&v| v == value.as_str())?;
+            if found[idx].is_some() {
+                return None;
+            }
+            found[idx] = Some(member);
+        }
+        let reordered: Vec<TypeId> = found.into_iter().collect::<Option<Vec<_>>>()?;
+        Some(reordered)
     }
 
     fn remove_redundant_intersection_displays(
@@ -995,6 +1107,19 @@ impl<'a> TypeFormatter<'a> {
     /// Format a union member, parenthesizing types that need disambiguation.
     /// TSC parenthesizes intersection types `(A & B) | (C & D)`, function types
     /// `(() => string) | (() => number)`, and constructor types in union positions.
+    /// True when `id` is a string literal whose atom is one of the
+    /// synthetic `__unique_<n>` placeholders for unique-symbol keys.
+    fn is_synthetic_unique_atom_string_literal(&self, id: TypeId) -> bool {
+        let Some(TypeData::Literal(LiteralValue::String(atom))) = self.interner.lookup(id) else {
+            return false;
+        };
+        let s = self.interner.resolve_atom(atom);
+        let Some(suffix) = s.strip_prefix("__unique_") else {
+            return false;
+        };
+        !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+    }
+
     fn format_union_member(&mut self, id: TypeId) -> String {
         if let Some(enum_name) = self.short_enum_name_for_union_display(id) {
             return enum_name;
@@ -1002,7 +1127,8 @@ impl<'a> TypeFormatter<'a> {
 
         let formatted = self.format(id);
         let needs_parens = match self.interner.lookup(id) {
-            Some(TypeData::Intersection(_) | TypeData::Function(_)) => true,
+            Some(TypeData::Intersection(_)) => !formatted.starts_with("NonNullable<"),
+            Some(TypeData::Function(_)) => true,
             Some(TypeData::Callable(_)) => {
                 formatted.starts_with('(')
                     || formatted.starts_with("new ")
@@ -1259,6 +1385,10 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_intersection(&mut self, members: &[TypeId]) -> String {
+        if let Some(display) = self.format_non_nullable_type_parameter_intersection(members) {
+            return display;
+        }
+
         // Preserve the member order as stored in the TypeListId.
         // For intersections containing Lazy types (type parameters, type aliases),
         // normalize_intersection skips sorting and preserves source/declaration order.
@@ -1276,6 +1406,41 @@ impl<'a> TypeFormatter<'a> {
             .map(|&m| self.format_intersection_member(m))
             .collect();
         formatted.join(" & ")
+    }
+
+    fn format_non_nullable_type_parameter_intersection(
+        &mut self,
+        members: &[TypeId],
+    ) -> Option<String> {
+        if members.len() != 2 {
+            return None;
+        }
+
+        let is_empty_object = |id| {
+            matches!(
+                self.interner.lookup(id),
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id))
+                    if {
+                        let shape = self.interner.object_shape(shape_id);
+                        shape.properties.is_empty()
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                    }
+            )
+        };
+        let is_type_parameter_like = |id| {
+            matches!(
+                self.interner.lookup(id),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            )
+        };
+
+        let type_param = match members {
+            [left, right] if is_type_parameter_like(*left) && is_empty_object(*right) => *left,
+            [left, right] if is_empty_object(*left) && is_type_parameter_like(*right) => *right,
+            _ => return None,
+        };
+        Some(format!("NonNullable<{}>", self.format(type_param)))
     }
 
     pub(super) fn format_intersection_with_display(
@@ -1375,12 +1540,20 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_tuple(&mut self, elements: &[TupleElement]) -> String {
-        // Normalize: a tuple with a single rest element `[...T[]]` displays as `T[]`
-        // to match tsc's display behavior.  Named rest elements (`[...urls: string[]]`)
-        // are also simplified because the label is irrelevant in type display.
+        // Normalize: a tuple with a single concrete rest element `[...T[]]`
+        // displays as `T[]` to match tsc's display behavior. Type-parameter
+        // spreads must keep their tuple wrapper (`[...T]`) so diagnostics can
+        // distinguish the mutable tuple view from the bare type parameter `T`.
         if elements.len() == 1 && elements[0].rest {
-            let inner = self.format(elements[0].type_id);
-            return inner.into_owned();
+            if matches!(
+                self.interner.lookup(elements[0].type_id),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ) {
+                // Fall through to normal tuple formatting.
+            } else {
+                let inner = self.format(elements[0].type_id);
+                return inner.into_owned();
+            }
         }
         // Format each element's type independently, then apply namespace
         // disambiguation across elements whose display names collide —
@@ -1415,6 +1588,10 @@ impl<'a> TypeFormatter<'a> {
             })
             .collect();
         format!("[{}]", formatted.join(", "))
+    }
+
+    pub fn format_tuple_elements_for_diagnostic(&mut self, elements: &[TupleElement]) -> String {
+        self.format_tuple(elements)
     }
 
     pub(super) fn format_function(&mut self, shape: &FunctionShape) -> String {
@@ -1577,9 +1754,16 @@ impl<'a> TypeFormatter<'a> {
             "{} extends {} ? {} : {}",
             self.format(cond.check_type),
             extends_type,
-            self.format(cond.true_type),
-            self.format(cond.false_type)
+            self.format_conditional_branch(cond.true_type),
+            self.format_conditional_branch(cond.false_type)
         )
+    }
+
+    fn format_conditional_branch(&mut self, type_id: TypeId) -> String {
+        if let Some(TypeData::Infer(info)) = self.interner.lookup(type_id) {
+            return self.atom(info.name).to_string();
+        }
+        self.format(type_id).into_owned()
     }
 
     pub(super) fn format_mapped(&mut self, mapped: &MappedType) -> String {
@@ -1663,27 +1847,109 @@ impl<'a> TypeFormatter<'a> {
         ))
     }
 
-    pub(super) fn format_template_literal(&mut self, spans: &[TemplateSpan]) -> String {
-        let mut result = String::from("`");
+    fn template_literal_spans_for_interpolation_display(
+        &self,
+        type_id: TypeId,
+    ) -> Option<Vec<TemplateSpan>> {
+        if let Some(TypeData::TemplateLiteral(spans_id)) = self.interner.lookup(type_id) {
+            return Some(
+                self.interner
+                    .template_list(spans_id)
+                    .iter()
+                    .cloned()
+                    .collect(),
+            );
+        }
+
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let def_store = self.def_store?;
+        let def = def_store.get(def_id)?;
+        if def.kind != crate::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = def.body?;
+        let TypeData::TemplateLiteral(spans_id) = self.interner.lookup(body)? else {
+            return None;
+        };
+        Some(
+            self.interner
+                .template_list(spans_id)
+                .iter()
+                .cloned()
+                .collect(),
+        )
+    }
+
+    fn push_template_literal_text(result: &mut String, text: &str) {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+        result.push_str(&escaped);
+    }
+
+    fn push_template_literal_interpolation(&mut self, result: &mut String, type_id: TypeId) {
+        if let Some(nested) = self.template_literal_spans_for_interpolation_display(type_id) {
+            self.push_template_literal_spans(result, &nested);
+            return;
+        }
+
+        if let Some(TypeData::Literal(literal)) = self.interner.lookup(type_id) {
+            match literal {
+                LiteralValue::String(atom) | LiteralValue::BigInt(atom) => {
+                    let text = self.atom(atom);
+                    Self::push_template_literal_text(result, &text);
+                }
+                LiteralValue::Number(number) => {
+                    let text =
+                        crate::relations::subtype::rules::literals::format_number_for_template(
+                            number.0,
+                        );
+                    Self::push_template_literal_text(result, &text);
+                }
+                LiteralValue::Boolean(value) => {
+                    result.push_str(if value { "true" } else { "false" });
+                }
+            }
+            return;
+        }
+
+        let formatted = self.format(type_id);
+        let formatted = formatted.as_ref();
+        if formatted.len() >= 2
+            && formatted.starts_with('"')
+            && formatted.ends_with('"')
+            && !formatted[1..formatted.len() - 1].contains('"')
+        {
+            Self::push_template_literal_text(result, &formatted[1..formatted.len() - 1]);
+            return;
+        }
+
+        result.push_str("${");
+        result.push_str(formatted);
+        result.push('}');
+    }
+
+    fn push_template_literal_spans(&mut self, result: &mut String, spans: &[TemplateSpan]) {
         for span in spans {
             match span {
                 TemplateSpan::Text(text) => {
                     let text = self.atom(*text);
-                    // Escape special characters consistently with string literals
-                    let escaped = text
-                        .replace('\\', "\\\\")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r")
-                        .replace('\t', "\\t");
-                    result.push_str(&escaped);
+                    Self::push_template_literal_text(result, &text);
                 }
                 TemplateSpan::Type(type_id) => {
-                    result.push_str("${");
-                    result.push_str(&self.format(*type_id));
-                    result.push('}');
+                    self.push_template_literal_interpolation(result, *type_id);
                 }
             }
         }
+    }
+
+    pub(super) fn format_template_literal(&mut self, spans: &[TemplateSpan]) -> String {
+        let mut result = String::from("`");
+        self.push_template_literal_spans(&mut result, spans);
         result.push('`');
         result
     }
@@ -1801,17 +2067,24 @@ impl<'a> TypeFormatter<'a> {
         // false matches.
         //
         // Exception: for empty anonymous shapes (`{}`), skip the fallback
-        // when the matched def is a type alias. Any alias whose body reduces
-        // to `{}` (e.g., `type T52 = T50<unknown>`) would otherwise repaint
-        // every user-written `{}` annotation with the alias name; tsc shows
-        // the literal `{}` in that case. Lib interfaces do not have empty
-        // shapes, so the guard never hides them.
+        // when the matched def's name would repaint the universal empty
+        // shape:
+        //   - a type alias whose body reduces to `{}`
+        //     (e.g., `type T52 = T50<unknown>`),
+        //   - a generic interface or class whose own shape registration was
+        //     created with empty properties (e.g., `Promise<T>` registered
+        //     before its body was populated).
+        // In all of these, every user-written `{}` annotation would otherwise
+        // pick up the unrelated def name. tsc shows the literal `{}`.
         if let Some(def_store) = self.def_store
             && let Some(def_id) = def_store.find_def_by_shape(shape)
             && let Some(def) = def_store.get(def_id)
         {
             use crate::def::DefKind;
-            let skip_for_empty_alias = shape_is_empty_anonymous && def.kind == DefKind::TypeAlias;
+            let skip_for_empty_alias = shape_is_empty_anonymous
+                && (def.kind == DefKind::TypeAlias
+                    || (matches!(def.kind, DefKind::Interface | DefKind::Class)
+                        && !def.type_params.is_empty()));
             if !skip_for_empty_alias {
                 return Some(self.format_def_name(&def));
             }
@@ -2098,7 +2371,7 @@ impl<'a> TypeFormatter<'a> {
     /// - Tier 0: Builtins/intrinsics (always first)
     /// - Tier 1: User-defined types with source info (sorted by file, then position)
     /// - Tier 2: Types without source info (preserve original order by returning sentinel)
-    fn get_source_position_for_type(
+    pub(super) fn get_source_position_for_type(
         &self,
         type_id: TypeId,
         def_store: &crate::def::DefinitionStore,
@@ -2130,10 +2403,44 @@ impl<'a> TypeFormatter<'a> {
             return (1, file_id, span_start);
         }
 
-        // Try Application - generic instantiation, get base type's position
+        // Try Application - generic instantiation. Use the MAX position of the
+        // base and the type arguments so that types like `Container<Cover>`
+        // (modeled as `Application(Container, [Cover])`) sort with their
+        // user-defined element type rather than with a built-in/lib base.
         if let Some(TypeData::Application(app_id)) = &data {
             let app = self.interner.type_application(*app_id);
-            return self.get_source_position_for_type(app.base, def_store);
+            let mut best = self.get_source_position_for_type(app.base, def_store);
+            for &arg in &app.args {
+                let candidate = self.get_source_position_for_type(arg, def_store);
+                if candidate > best {
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+
+        // Try Array - structural shorthand for `Array<T>`. Use the element's
+        // position +1 so the array form sorts with its element but always
+        // immediately after it. This keeps `Cover | Cover[]` displays in
+        // source declaration order (and the canonical interner ordering of
+        // the union doesn't matter because the element vs. array tie-break
+        // is decided by this offset).
+        if let Some(TypeData::Array(elem)) = &data {
+            let (tier, file, span) = self.get_source_position_for_type(*elem, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
+            return (tier, file, span.saturating_add(1));
+        }
+
+        // Try ReadonlyType - `readonly T[]` modifier wrapping an inner type.
+        // Use the inner type's position +1 for the same reason.
+        if let Some(TypeData::ReadonlyType(inner)) = &data {
+            let (tier, file, span) = self.get_source_position_for_type(*inner, def_store);
+            if tier == 0 {
+                return (tier, file, span.saturating_add(100));
+            }
+            return (tier, file, span.saturating_add(1));
         }
 
         // Try Enum

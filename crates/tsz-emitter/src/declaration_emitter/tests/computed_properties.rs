@@ -131,6 +131,28 @@ export type Remap<T> = {
 }
 
 #[test]
+fn test_mapped_type_as_clause_after_indexed_access_constraint() {
+    let output = emit_dts(
+        r#"
+export function makeCompleteLookupMapping<T extends ReadonlyArray<any>, Attr extends keyof T[number]>(ops: T, attr: Attr): {
+    [Item in T[number] as Item[Attr]]: Item;
+} {
+    return null as any;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("[Item in T[number] as Item[Attr]]: Item;"),
+        "Expected indexed-access mapped constraint to keep one key-remapping `as`: {output}"
+    );
+    assert!(
+        !output.contains("as as"),
+        "Did not expect duplicate `as` in mapped type: {output}"
+    );
+}
+
+#[test]
 fn test_override_modifier_stripped_in_dts() {
     // tsc strips `override` from class members in .d.ts output —
     // it is not part of the declaration surface.
@@ -403,6 +425,35 @@ namespace M {
     assert!(
         output.contains("export {};"),
         "Expected 'export {{}};' scope marker in namespace with mixed exports: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_non_exported_function_used_by_exported_object_emits_scope_marker() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace foo {
+    function bar(): void {}
+    export const obj = { bar };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("function bar(): void;"),
+        "Expected non-exported function referenced by exported object literal to be emitted: {output}"
+    );
+    assert!(
+        output.contains("export const obj:"),
+        "Expected exported object literal to retain export keyword: {output}"
+    );
+    assert!(
+        output.contains("bar: typeof bar;"),
+        "Expected object member to reference the preserved function: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected namespace scope marker when exported object references local function: {output}"
     );
 }
 

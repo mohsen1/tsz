@@ -327,11 +327,16 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                self.error_at_node_msg(
-                    error_node,
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    &[&export_name],
-                );
+                let code = if self
+                    .declaration_symbol_flags(self.ctx.arena, decl_idx)
+                    .is_some_and(|flags| {
+                        (flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    }) {
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
+                } else {
+                    diagnostic_codes::DUPLICATE_IDENTIFIER
+                };
+                self.error_at_node_msg(error_node, code, &[&export_name]);
             }
         }
 
@@ -408,11 +413,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                self.error_at_node_msg(
-                    spec_idx,
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    &[&export_name],
-                );
+                let code = if conflict_decls.iter().any(|(_, flags, _, _, _)| {
+                    (*flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                }) {
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
+                } else {
+                    diagnostic_codes::DUPLICATE_IDENTIFIER
+                };
+                self.error_at_node_msg(spec_idx, code, &[&export_name]);
             }
         }
 
@@ -1014,9 +1022,28 @@ impl<'a> CheckerState<'a> {
                 let comment_start = pos + 2;
                 if let Some(end_offset) = scan_text[comment_start..].find("*/") {
                     let comment_body = &scan_text[comment_start..comment_start + end_offset];
-                    if let Some(idx) = comment_body.find("@jsxImportSource") {
-                        let after = &comment_body[idx + "@jsxImportSource".len()..];
-                        let pkg: String = after
+                    // Only honor `@jsxImportSource` when followed by a pragma
+                    // boundary (whitespace / EOF), so fake tags like
+                    // `@jsxImportSourcex preact` are ignored.
+                    let mut start = 0usize;
+                    let mut after_idx: Option<usize> = None;
+                    while let Some(rel) = comment_body[start..].find("@jsxImportSource") {
+                        let abs = start + rel;
+                        let after = abs + "@jsxImportSource".len();
+                        let body_bytes = comment_body.as_bytes();
+                        if after >= body_bytes.len()
+                            || (body_bytes[after] as char).is_ascii_whitespace()
+                        {
+                            after_idx = Some(after);
+                            break;
+                        }
+                        start = after;
+                        if start >= comment_body.len() {
+                            break;
+                        }
+                    }
+                    if let Some(after) = after_idx {
+                        let pkg: String = comment_body[after..]
                             .trim_start()
                             .chars()
                             .take_while(|c| {
@@ -1069,7 +1096,7 @@ impl<'a> CheckerState<'a> {
         Some(format!("@types/{module_root}"))
     }
 
-    pub(super) fn resolve_jsx_runtime_export_fallback(
+    pub(crate) fn resolve_jsx_runtime_export_fallback(
         &self,
         runtime_module: &str,
     ) -> Option<tsz_binder::SymbolId> {
@@ -1530,11 +1557,12 @@ impl<'a> CheckerState<'a> {
     /// Check for declarations that conflict with built-in global identifiers (TS2397).
     ///
     /// TypeScript protects the built-in global names `undefined` and `globalThis`
-    /// from being redeclared:
-    /// - `var undefined = null;` → TS2397 (value declaration of `undefined`)
-    /// - `namespace globalThis {}` → TS2397 (in non-module/script files)
-    /// - `var globalThis;` → TS2397 (in non-module/script files)
+    /// from being redeclared in script (non-module) files:
+    /// - `var undefined = null;` → TS2397 (script file only)
+    /// - `namespace globalThis {}` → TS2397 (script file only)
+    /// - `var globalThis;` → TS2397 (script file only)
     ///
+    /// In external modules both names are module-scoped and do not conflict.
     /// Type declarations (interfaces, type aliases, etc.) named `undefined` are
     /// allowed — `checkTypeNameIsReserved` handles those separately.
     pub(crate) fn check_built_in_global_identifier_conflicts(&mut self) {
@@ -1567,10 +1595,10 @@ impl<'a> CheckerState<'a> {
                 {
                     continue;
                 }
-                // In module files, `namespace undefined` doesn't conflict with the
-                // global `undefined` — it's module-scoped.  tsc only emits TS2397
-                // for namespace `undefined` in global (non-module) scripts.
-                if is_external_module && node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // In module files, any declaration of `undefined` is module-scoped
+                // and does not conflict with the global `undefined`.  tsc only emits
+                // TS2397 for declarations of `undefined` in script (non-module) files.
+                if is_external_module {
                     continue;
                 }
                 let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);

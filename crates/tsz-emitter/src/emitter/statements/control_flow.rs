@@ -5,6 +5,11 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+struct RecoveredSwitchClass {
+    header: String,
+    inline_body: Option<String>,
+}
+
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_if_statement(&mut self, node: &Node) {
         let Some(if_stmt) = self.arena.get_if_statement(node) else {
@@ -340,6 +345,15 @@ impl<'a> Printer<'a> {
         // Check if the for-of initializer has object rest that needs ES2018 lowering.
         if self.ctx.needs_es2018_lowering
             && !self.ctx.target_es5
+            && let Some(pattern_idx) =
+                self.for_of_assignment_initializer_has_object_rest(for_in_of.initializer)
+        {
+            self.emit_for_of_assignment_with_rest_lowering(node, for_in_of, pattern_idx);
+            return;
+        }
+
+        if self.ctx.needs_es2018_lowering
+            && !self.ctx.target_es5
             && let Some(rest_info) = self.for_of_has_object_rest(for_in_of.initializer)
         {
             self.emit_for_of_with_rest_lowering(node, for_in_of, rest_info);
@@ -397,6 +411,18 @@ impl<'a> Printer<'a> {
         Some((keyword.to_string(), decl.name))
     }
 
+    fn for_of_assignment_initializer_has_object_rest(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        self.assignment_pattern_has_object_rest(initializer)
+            .then_some(initializer)
+    }
+
     /// Emit a for-of with object rest lowering.
     fn emit_for_of_with_rest_lowering(
         &mut self,
@@ -432,6 +458,52 @@ impl<'a> Printer<'a> {
         self.write_line();
 
         // Emit the original body statements
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            if body_node.kind == syntax_kind_ext::BLOCK {
+                if let Some(block) = self.arena.get_block(body_node) {
+                    for &stmt in &block.statements.nodes {
+                        self.emit(stmt);
+                        self.write_line();
+                    }
+                }
+            } else {
+                self.emit(for_in_of.statement);
+                self.write_line();
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    fn emit_for_of_assignment_with_rest_lowering(
+        &mut self,
+        node: &Node,
+        for_in_of: &tsz_parser::parser::node::ForInOfData,
+        pattern_idx: NodeIndex,
+    ) {
+        let temp = self.get_temp_var_name();
+
+        self.write("for ");
+        if for_in_of.await_modifier {
+            self.write("await ");
+        }
+        self.write("(let ");
+        self.write(&temp);
+        self.write(" of ");
+        self.emit(for_in_of.expression);
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            self.map_closing_paren_backward(node.pos, body_node.pos);
+        }
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        self.write("(");
+        self.emit_assignment_object_rest_destructuring_from_source(pattern_idx, &temp);
+        self.write(");");
+        self.write_line();
+
         if let Some(body_node) = self.arena.get(for_in_of.statement) {
             if body_node.kind == syntax_kind_ext::BLOCK {
                 if let Some(block) = self.arena.get_block(body_node) {
@@ -710,6 +782,9 @@ impl<'a> Printer<'a> {
             }
             self.write("finally ");
             self.emit(try_stmt.finally_block);
+        } else if try_stmt.catch_clause.is_none() {
+            self.write_line();
+            self.write("finally { }");
         }
     }
 
@@ -826,14 +901,23 @@ impl<'a> Printer<'a> {
         self.write(") ");
         // case_block is a NodeIndex pointing to a CaseBlock node
         self.emit(switch.case_block);
-        if let Some(class_name) =
+        if let Some(recovered_class) =
             self.recovered_class_after_unterminated_empty_switch(node, switch.case_block)
         {
             self.write_line();
             self.write("class ");
-            self.write(&class_name);
+            self.write(&recovered_class.header);
             self.write(" {");
             self.write_line();
+            if let Some(body) = recovered_class.inline_body {
+                self.increase_indent();
+                self.write(&body);
+                if !body.ends_with(';') {
+                    self.write(";");
+                }
+                self.decrease_indent();
+                self.write_line();
+            }
             self.write("}");
         }
     }
@@ -842,7 +926,7 @@ impl<'a> Printer<'a> {
         &self,
         node: &Node,
         case_block_idx: NodeIndex,
-    ) -> Option<String> {
+    ) -> Option<RecoveredSwitchClass> {
         let case_block_node = self.arena.get(case_block_idx)?;
         let case_block = self.arena.blocks.get(case_block_node.data_index as usize)?;
         if !case_block.statements.nodes.is_empty() {
@@ -862,8 +946,32 @@ impl<'a> Printer<'a> {
                 .chars()
                 .take_while(|&ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
                 .collect();
-            if !name.is_empty() && rest[name.len()..].trim_start().starts_with('{') {
-                return Some(name);
+            if name.is_empty() {
+                continue;
+            }
+
+            if rest[name.len()..].trim_start().starts_with('{') {
+                return Some(RecoveredSwitchClass {
+                    header: name,
+                    inline_body: None,
+                });
+            }
+
+            let Some(open_brace) = rest.find('{') else {
+                continue;
+            };
+            let Some(close_brace) = rest[open_brace + 1..].rfind('}') else {
+                continue;
+            };
+            let header = rest[..open_brace].trim_end().to_string();
+            let inline_body = rest[open_brace + 1..open_brace + 1 + close_brace]
+                .trim()
+                .to_string();
+            if !header.is_empty() && !inline_body.is_empty() {
+                return Some(RecoveredSwitchClass {
+                    header,
+                    inline_body: Some(inline_body),
+                });
             }
         }
         None
@@ -1611,7 +1719,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if a statement list contains any `using`/`await using` declarations.
-    pub(super) fn block_has_using_declarations(&self, statements: &NodeList) -> bool {
+    pub(in crate::emitter) fn block_has_using_declarations(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;

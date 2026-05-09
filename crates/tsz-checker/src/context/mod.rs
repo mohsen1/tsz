@@ -23,6 +23,7 @@ mod constructors;
 mod core;
 mod cross_file_query;
 mod def_mapping;
+mod import_conflicts;
 mod parse_health;
 pub use parse_health::ParseHealth;
 mod import_extension_flags;
@@ -51,14 +52,15 @@ use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
 use tsz_solver::def::{DefId, DefinitionStore};
+use tsz_solver::{PropertyInfo, TypeId};
 
 // Re-export CheckerOptions and ScriptTarget from tsz-common
 use tsz_binder::{BinderState, ModuleAugmentation};
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -66,30 +68,8 @@ use tsz_parser::parser::node::NodeArena;
 /// nested namespace exports). Matches `MAX_INSTANTIATION_DEPTH` (50).
 pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
 
-/// Pre-built global index of all declared/ambient module names across all binders.
-///
-/// Separates exact module names (O(1) `HashSet` lookup) from wildcard patterns
-/// (small linear scan). Built once in `set_all_binders` and shared via `Arc`.
-#[derive(Debug, Default)]
-pub struct GlobalDeclaredModules {
-    /// Exact module names from `declared_modules`, `shorthand_ambient_modules`,
-    /// and `module_exports` keys (normalized: quotes stripped).
-    pub exact: FxHashSet<String>,
-    /// Wildcard patterns (e.g., `*.css`, `*/theme`) that require glob matching.
-    pub patterns: Vec<String>,
-}
-
-impl GlobalDeclaredModules {
-    /// Build from pre-computed skeleton sets.
-    ///
-    /// `skeleton_exact` and `skeleton_patterns` come from
-    /// `SkeletonIndex::build_declared_module_sets()`. The patterns must already
-    /// be sorted and deduplicated (the skeleton builder guarantees this).
-    #[must_use]
-    pub const fn from_skeleton(exact: FxHashSet<String>, patterns: Vec<String>) -> Self {
-        Self { exact, patterns }
-    }
-}
+mod global_declared_modules;
+pub use global_declared_modules::GlobalDeclaredModules;
 
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]
@@ -155,6 +135,42 @@ pub struct PendingImplicitAnyVar {
     pub name_node: NodeIndex,
     /// Which deferred implicit-any behavior applies to this declaration.
     pub kind: PendingImplicitAnyKind,
+}
+
+/// In-progress object literal initializer for a variable declaration.
+///
+/// TypeScript allows later property initializers to reference earlier properties
+/// through the variable being initialized, e.g.
+/// `const keys = { all: ["x"] as const, list: () => [...keys.all] }`.
+/// The full variable type is not available while the object literal is being
+/// checked, so this stack exposes only properties that have already been
+/// processed for the exact active literal.
+#[derive(Clone, Debug)]
+pub struct PartialObjectLiteralInitializer {
+    pub variable_symbol: SymbolId,
+    pub object_literal: NodeIndex,
+    pub properties: FxHashMap<Atom, PropertyInfo>,
+}
+
+impl PartialObjectLiteralInitializer {
+    #[must_use]
+    pub fn new(variable_symbol: SymbolId, object_literal: NodeIndex) -> Self {
+        Self {
+            variable_symbol,
+            object_literal,
+            properties: FxHashMap::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ObjectLiteralTracking {
+    /// Raw object-literal property diagnostic target, keyed by property element for TS2322/TS2345 display recovery.
+    pub property_diag_targets: FxHashMap<NodeIndex, TypeId>,
+    /// Contextual target type for an object literal, keyed by literal node for per-property diagnostic recovery.
+    pub contextual_targets: FxHashMap<NodeIndex, TypeId>,
+    /// Stack of in-progress object literal variable initializers.
+    pub partial_initializers: Vec<PartialObjectLiteralInitializer>,
 }
 
 /// Persistent cache for type checking results across LSP queries.
@@ -244,6 +260,20 @@ pub struct DestructuredBindingInfo {
     pub(crate) is_rest: bool,
 }
 
+/// Name-resolution diagnostic counters that must stay coordinated.
+#[derive(Debug, Default)]
+pub struct NameResolutionDiagnostics {
+    /// Count of name resolution attempts (TS2304/TS2552) to limit spelling suggestions.
+    /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
+    pub spelling_suggestions_emitted: Cell<u32>,
+
+    /// Node indices for which a name resolution failure (TS2304/TS2552) has already
+    /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
+    /// when the same type reference is resolved multiple times (e.g., due to
+    /// re-evaluation in generic/contextual typing contexts).
+    pub reported_nodes: FxHashSet<NodeIndex>,
+}
+
 /// Shared state for type checking.
 pub struct CheckerContext<'a> {
     /// The `NodeArena` containing the AST.
@@ -275,6 +305,13 @@ pub struct CheckerContext<'a> {
     /// checker should consume that context and avoid ad-hoc module-existence inference.
     pub report_unresolved_imports: bool,
 
+    /// Whether leading conformance-style source comments may override compiler options.
+    ///
+    /// TypeScript source files can contain comments like `// @strict: false` in
+    /// the conformance suite, but those are not user-facing source directives.
+    /// Normal CLI/LSP/project checking must leave compiler options unchanged.
+    pub allow_source_file_test_pragmas: bool,
+
     /// Whether the current file is an ESM module (per-file determination).
     /// In Node16/NodeNext, `.js`/`.ts` files may be ESM based on the nearest
     /// `package.json` `"type": "module"` field. Set by the driver from module resolver.
@@ -289,15 +326,8 @@ pub struct CheckerContext<'a> {
     /// Tracking the current computed property name node for TS2467
     pub checking_computed_property_name: Option<NodeIndex>,
 
-    /// Count of name resolution attempts (TS2304/TS2552) to limit spelling suggestions.
-    /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
-    pub spelling_suggestions_emitted: std::cell::Cell<u32>,
-
-    /// Node indices for which a name resolution failure (TS2304/TS2552) has already
-    /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
-    /// when the same type reference is resolved multiple times (e.g., due to
-    /// re-evaluation in generic/contextual typing contexts).
-    pub name_resolution_reported_nodes: FxHashSet<NodeIndex>,
+    /// Name-resolution diagnostic counters and dedupe state.
+    pub name_resolution_diagnostics: NameResolutionDiagnostics,
 
     /// `TypeId`s that represent interfaces extending arrays/tuples.
     /// Used to suppress false TS2559 (weak type) violations for these types,
@@ -334,13 +364,36 @@ pub struct CheckerContext<'a> {
     /// Keyed by (`namespace_name`, `member_name`) and stores both hits and misses.
     /// This avoids repeatedly rescanning all binders for hot qualified React lookups
     /// like `React.Component`, `React.ComponentClass`, `React.ReactNode`, etc.
-    pub namespace_member_resolution_cache: RefCell<FxHashMap<(String, String), Option<SymbolId>>>,
+    pub namespace_member_resolution_cache: RefCell<NamespaceMemberResolutionCache>,
+
+    /// Per-checker cache for named exports resolved through `export=`.
+    /// Misses are cached only for lookups that enter without alias-cycle state.
+    pub export_equals_named_cache: RefCell<ExportEqualsNamedCache>,
+
+    /// Per-checker cache for nested namespace candidates found through namespace exports.
+    /// Keyed by `namespace_name` and stores the candidate nested namespace symbols with
+    /// their owning file index. This avoids rescanning every binder when resolving many
+    /// different members from the same nested namespace.
+    pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
+
+    /// Per-checker cache for same-name symbol candidates across the current binder
+    /// and all cross-file binders.
+    pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
+
+    /// True once `nested_namespace_candidates_cache` has been populated for every
+    /// nested namespace export name visible across all binders.
+    pub nested_namespace_candidates_cache_complete: Cell<bool>,
 
     /// Per-checker cache for text-based entity-name resolution used by lowering.
     /// Keyed by names like `React.ReactNode` / `JSX.Element` and stores both
     /// hits and misses to avoid repeatedly walking the same symbol graph during
     /// declaration-file interface/type lowering.
     pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
+
+    /// Per-checker cache for cross-file namespace export resolution.
+    /// Keyed by the requesting file and module specifier because relative
+    /// specifiers are resolved from the current file.
+    pub namespace_exports_cache: RefCell<NamespaceExportsCache>,
 
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
@@ -365,11 +418,8 @@ pub struct CheckerContext<'a> {
     /// Request-aware cache for audited non-empty request paths only.
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
 
-    /// Raw object-literal property diagnostic target, keyed by property element for TS2322/TS2345 display recovery.
-    pub object_literal_property_diag_targets: FxHashMap<NodeIndex, TypeId>,
-
-    /// Contextual target type for an object literal, keyed by literal node for per-property diagnostic recovery.
-    pub object_literal_contextual_targets: FxHashMap<NodeIndex, TypeId>,
+    /// Object-literal diagnostic recovery and active initializer state.
+    pub object_literal_tracking: ObjectLiteralTracking,
 
     /// Internal counters for request-aware cache usage and cache-clear churn.
     pub request_cache_counters: RequestCacheCounters,
@@ -509,14 +559,14 @@ pub struct CheckerContext<'a> {
     /// When a type is defined in a module file, the formatter qualifies its name
     /// as `import("specifier").TypeName` to match tsc's behavior.
     /// Built from the arena's `source_files` during checker construction.
-    pub module_specifiers: FxHashMap<u32, String>,
+    pub module_specifiers: Arc<FxHashMap<u32, String>>,
 
     /// Maps `file_id` -> module specifier preserving any directory prefix,
     /// used by diagnostic cross-module disambiguation. tsc's diagnostic output
     /// uses the project-relative path (e.g. `src/library-a/index`) rather
     /// than the basename so that two files sharing the same basename can be
     /// told apart in `import("<path>").X` messages.
-    pub module_path_specifiers: FxHashMap<u32, String>,
+    pub module_path_specifiers: Arc<FxHashMap<u32, String>>,
 
     /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
@@ -670,6 +720,11 @@ pub struct CheckerContext<'a> {
     pub diagnostics: Vec<Diagnostic>,
     /// Set of already-emitted diagnostics (start, code) for deduplication.
     pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// Call-expression nodes that resolved to TS2769 during the current
+    /// speculative context. Used so overload resolution can reject outer
+    /// candidates whose callback bodies contain a failed nested overload even
+    /// when the nested diagnostic is rolled back or suppressed for recovery.
+    pub no_overload_call_nodes: FxHashSet<u32>,
     /// Callback return-type TS2322 diagnostics that were emitted during
     /// function body checking but may be pruned by arg collection filters.
     /// Stored separately so they can be restored after pruning and used to
@@ -682,6 +737,10 @@ pub struct CheckerContext<'a> {
     /// expression evaluation but lost when call-resolution speculation rolls
     /// back the main diagnostics vector. Flushed once per top-level statement.
     pub deferred_truthiness_diagnostics: Vec<Diagnostic>,
+    /// Deferred TS7006 diagnostics for callback parameters on excess object
+    /// literal properties. These are produced only after EPC proves the
+    /// contextual property invalid, and must survive speculative rollback.
+    pub deferred_excess_property_implicit_any_diagnostics: Vec<Diagnostic>,
 
     // --- Recursion Guards ---
     /// Stack of symbols being resolved.
@@ -710,6 +769,11 @@ pub struct CheckerContext<'a> {
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
     pub class_constructor_resolution_set: FxHashSet<SymbolId>,
+    /// O(1) lookup set for JSDoc `@enum` annotation resolution. Without this
+    /// guard, `/** @enum {E} */ const E = { ... }` recurses through name
+    /// resolution → `resolve_jsdoc_symbol_type(E)` → `@enum` annotation lookup
+    /// → name resolution again, overflowing the stack (#3767).
+    pub jsdoc_enum_resolution_set: FxHashSet<SymbolId>,
     /// Classes/interfaces with circular inheritance (TS2506/TS2310). Used to
     /// fix the return type of `new` on circular generic classes: tsc returns
     /// `C<unknown>` instead of the raw `C<T>`.
@@ -815,6 +879,11 @@ pub struct CheckerContext<'a> {
     /// Whether we are currently evaluating the LHS of a destructuring assignment.
     /// Used to suppress TS1117 (duplicate property) checks in object patterns.
     pub in_destructuring_target: bool,
+
+    /// Whether a non-literal array destructuring initializer is being recomputed
+    /// for iterability diagnostics. In that path, nested overload failures affect
+    /// the initializer type and should survive contextual argument rollback.
+    pub preserve_destructuring_initializer_overload_diagnostics: bool,
 
     /// Whether to skip flow narrowing when computing types.
     /// Used in assignment target type resolution to get declared types instead of narrowed types.
@@ -1680,6 +1749,7 @@ impl ProjectEnv {
                     Default::default(),
                 ),
                 patterns: Vec::new(),
+                pattern_set: None,
             })
         };
         let arena_to_file_idx: FxHashMap<usize, usize> = self
@@ -1817,6 +1887,7 @@ impl ProjectEnv {
         if let Some(mut dm) = declared_modules {
             dm.patterns.sort();
             dm.patterns.dedup();
+            dm.finalize();
             self.skeleton_declared_modules = Some(Arc::new(dm));
         }
 

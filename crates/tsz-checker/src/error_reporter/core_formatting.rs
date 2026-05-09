@@ -1,9 +1,4 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
-//!
-//! Contains assignability message formatting, enum name display,
-//! missing property detection, and AST anchor resolution.
-//!
-//! Extracted from `core.rs` to keep module size manageable.
 
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::node::NodeAccess;
@@ -16,10 +11,10 @@ impl<'a> CheckerState<'a> {
             .ctx
             .create_diagnostic_type_formatter()
             .with_display_properties()
+            .with_expand_scalar_mapped_alias_applications()
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
-
     fn format_type_diagnostic_widened_for_assignability_display(
         &mut self,
         type_id: TypeId,
@@ -27,36 +22,19 @@ impl<'a> CheckerState<'a> {
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
+            .with_expand_scalar_mapped_alias_applications()
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
 
-    /// Format an Intersection type that has an Application `display_alias`, showing the
-    /// structural intersection form (not the application alias). Matches tsc's behavior
-    /// for branded primitive types in assignability messages: e.g., `Brand<T>` displayed
-    /// as `Number & { __brand: T }` with widened member types and capitalized primitives.
-    fn format_intersection_expanding_application_alias(&mut self, type_id: TypeId) -> String {
+    pub(crate) fn format_type_for_property_receiver_message(&mut self, type_id: TypeId) -> String {
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
-            .with_skip_application_alias_for_intersections()
-            .with_capitalize_primitive_intersection_members()
-            .with_preserve_optional_parameter_surface_syntax(false);
+            .with_skip_application_alias_names()
+            .with_expand_scalar_mapped_alias_applications()
+            .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
-    }
-
-    /// Returns true if the intersection type at `type_id` has at least one
-    /// primitive member (number, string, or boolean). Used to distinguish
-    /// branded primitive intersections (e.g. `number & { __brand: T }`) from
-    /// intersections of only non-primitive types (e.g. `ClassAlias & FnAlias`).
-    fn intersection_has_primitive_member(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::intersection_members(self.ctx.types, type_id).is_some_and(
-            |members| {
-                members
-                    .iter()
-                    .any(|&m| m == TypeId::NUMBER || m == TypeId::STRING || m == TypeId::BOOLEAN)
-            },
-        )
     }
 
     pub(crate) fn truncate_property_receiver_display(display: String) -> String {
@@ -65,6 +43,10 @@ impl<'a> CheckerState<'a> {
         if display.len() <= MAX_PROPERTY_RECEIVER_DISPLAY_CHARS || !should_truncate {
             return display;
         }
+        let display =
+            super::property_receiver_formatting::elide_long_property_receiver_object_literals(
+                display,
+            );
         if display.starts_with("merge<") {
             let mut truncated: String = display
                 .chars()
@@ -84,6 +66,7 @@ impl<'a> CheckerState<'a> {
             .with_def_store(&self.ctx.definition_store)
             .with_diagnostic_mode()
             .with_long_property_receiver_display()
+            .with_skip_application_alias_names()
             .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
             .format(ty)
             .into_owned()
@@ -219,10 +202,7 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::TypeFormatter::with_symbols(state.ctx.types, &state.ctx.binder.symbols)
                     .with_def_store(&state.ctx.definition_store)
                     .with_diagnostic_mode()
-                    // Match tsc: optional parameters in assignability messages
-                    // display as `(a?: T)`, not `(a?: T | undefined)`. The `?`
-                    // already implies `| undefined`; tsc only writes the union
-                    // form when the source explicitly types the param that way.
+                    // Match tsc: optional parameters display as `(a?: T)`.
                     .with_preserve_optional_parameter_surface_syntax(true)
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks)
                     .with_exact_optional_property_types(
@@ -276,6 +256,17 @@ impl<'a> CheckerState<'a> {
             && def.type_params.is_empty()
         {
             if let Some(body) = def.body {
+                if crate::query_boundaries::common::is_type_query_type(self.ctx.types, body)
+                    || self.type_alias_definition_body_is_type_query(&def)
+                {
+                    let evaluated = self.evaluate_type_with_env(ty);
+                    if evaluated != ty && evaluated != TypeId::ERROR {
+                        return self
+                            .format_type_diagnostic_for_assignability_display_skipping_type_alias(
+                                evaluated, def_id,
+                            );
+                    }
+                }
                 // Only expand computed bodies. For generic function type aliases like
                 // `type bar = <U>(source: ...) => void`, tsc shows the alias name.
                 if self.ctx.definition_store.is_computed_body(body) {
@@ -368,6 +359,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluated = self.evaluate_type_for_assignability(ty);
+        if let Some(display) = self.application_backed_primitive_intersection_display(ty, evaluated)
+        {
+            return display;
+        }
         let use_eval = self.should_use_evaluated_assignability_display(ty, evaluated);
         if use_eval {
             return self.format_type_for_assignability_message(evaluated);
@@ -419,25 +414,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Application-backed primitive Intersection: when an Application (e.g.
-        // `Brand<T>`) evaluates to an Intersection that contains at least one
-        // primitive member (number/string/boolean), tsc always shows the structural
-        // intersection form with capitalized primitives and widened member types.
-        // e.g. `Brand<{ view: 0; }>` → `Number & { __brand: { view: number; }; }`
-        //
-        // Intersections of only non-primitive types (e.g. `ClassAlias & FnAlias`)
-        // should still show the Application alias name.
-        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, display_ty)
-            && self
-                .ctx
-                .types
-                .get_display_alias(display_ty)
-                .is_some_and(|alias| {
-                    crate::query_boundaries::common::is_generic_application(self.ctx.types, alias)
-                })
-            && self.intersection_has_primitive_member(display_ty)
+        if let Some(display) =
+            self.application_backed_primitive_intersection_display(display_ty, display_ty)
         {
-            return self.format_intersection_expanding_application_alias(display_ty);
+            return display;
         }
 
         if is_generic_callable(self, display_ty)
@@ -476,10 +456,6 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_type_diagnostic_for_assignability_display(display_ty)
         };
-        // Preserve generic instantiations for nominal class instance names when possible.
-        // First check if the solver has a display_alias (Application type) for the
-        // original type or the display type. If so, format that directly instead
-        // of guessing type args from properties.
         if !formatted.contains('<')
             && let Some(shape) =
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, display_ty)
@@ -599,7 +575,8 @@ impl<'a> CheckerState<'a> {
                                     .filter(|prop| predicate(prop))
                                     .filter_map(|prop| {
                                         let name = types.resolve_atom_ref(prop.name).to_string();
-                                        if name.starts_with("__private_brand_") {
+                                        if tsz_solver::utils::is_synthetic_private_brand_name(&name)
+                                        {
                                             None
                                         } else {
                                             Some((name, resolve_candidate_type(prop)))
@@ -652,6 +629,11 @@ impl<'a> CheckerState<'a> {
         {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
+        formatted = self.normalize_assignability_union_display_order(formatted);
+        // tsc renders `Array<T>` / `ReadonlyArray<T>` as `T[]` / `readonly T[]`
+        // in assignability messages; mirror that at the boundary so callers
+        // that bypass the annotation-text path still pick it up.
+        formatted = Self::normalize_array_generic_to_shorthand(&formatted);
         self.normalize_template_placeholder_spacing_for_display(&formatted)
     }
 
@@ -987,6 +969,12 @@ impl<'a> CheckerState<'a> {
         other: TypeId,
         strip_top_level_nullish: bool,
     ) -> String {
+        if let Some(collapsed) =
+            self.collapsed_anonymous_object_intersection_for_assignability_display(ty)
+        {
+            return self.format_collapsed_object_for_assignability_display(collapsed);
+        }
+
         if self.target_preserves_literal_surface(other) {
             return self.format_type_diagnostic_for_assignability_display(ty);
         }
@@ -1000,6 +988,9 @@ impl<'a> CheckerState<'a> {
 
         if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
             return enum_name;
+        }
+        if let Some(display) = self.constrained_variadic_tuple_parameter_display(ty, other) {
+            return display;
         }
         if let Some(type_name) = self.format_class_constructor_name_for_assignment(ty, other) {
             return type_name;
@@ -1467,6 +1458,89 @@ impl<'a> CheckerState<'a> {
         best_candidate.map(|s| format!("\"{s}\""))
     }
 
+    pub(in crate::error_reporter) fn format_ts2820_target_display(
+        &mut self,
+        target: TypeId,
+        evaluated_target: TypeId,
+        target_str: &str,
+    ) -> String {
+        let expanded_target_str = self.format_type_diagnostic(evaluated_target);
+        if expanded_target_str == target_str {
+            return target_str.to_string();
+        }
+
+        if target_str.contains('<') || self.ts2820_target_contains_alias_surface(target) {
+            Self::widen_numeric_member_literals_in_display_text(target_str)
+        } else {
+            expanded_target_str
+        }
+    }
+
+    fn widen_numeric_member_literals_in_display_text(display: &str) -> String {
+        let bytes = display.as_bytes();
+        let mut out = String::with_capacity(display.len());
+        let mut i = 0usize;
+        let is_boundary = |b: u8| {
+            matches!(
+                b,
+                b';' | b',' | b'}' | b'>' | b')' | b'|' | b'&' | b']' | b' '
+            )
+        };
+        while i < bytes.len() {
+            if i + 2 < bytes.len() && bytes[i] == b':' && bytes[i + 1] == b' ' {
+                out.push(':');
+                out.push(' ');
+                i += 2;
+
+                let mut j = i;
+                if j < bytes.len() && bytes[j] == b'-' {
+                    j += 1;
+                }
+                let mut saw_digit = false;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                    saw_digit = true;
+                }
+                if j < bytes.len() && bytes[j] == b'.' {
+                    j += 1;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() {
+                        j += 1;
+                        saw_digit = true;
+                    }
+                }
+                if saw_digit && (j >= bytes.len() || is_boundary(bytes[j])) {
+                    out.push_str("number");
+                    i = j;
+                    continue;
+                }
+            }
+
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
+    }
+
+    fn ts2820_target_contains_alias_surface(&self, target: TypeId) -> bool {
+        if self.ctx.types.get_display_alias(target).is_some()
+            || self.lookup_type_alias_name_for_display(target).is_some()
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target).or_else(|| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+            })
+        {
+            return members
+                .iter()
+                .any(|&member| self.ts2820_target_contains_alias_surface(member));
+        }
+
+        false
+    }
+
     pub(super) fn first_nonpublic_constructor_param_property(
         &mut self,
         ty: TypeId,
@@ -1807,6 +1881,14 @@ impl<'a> CheckerState<'a> {
         // Only use the alias for non-generic type aliases.  Generic aliases
         // need type argument display (e.g., B<string> not B).
         if !def.type_params.is_empty() {
+            return None;
+        }
+        // `type T = typeof value` aliases display as the resolved value type
+        // in assignment diagnostics. Do not repaint that resolved body as `T`.
+        if def.body.is_some_and(|body| {
+            crate::query_boundaries::common::is_type_query_type(self.ctx.types, body)
+        }) || self.type_alias_definition_body_is_type_query(&def)
+        {
             return None;
         }
         // Skip aliases whose body was computed by intersection reduction or

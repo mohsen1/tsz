@@ -437,6 +437,9 @@ impl<'a> InferenceContext<'a> {
             && !upper_bounds.is_empty();
 
         let declared_constraint = self.declared_constraints.get(&root).copied();
+        let declared_constraint_preserves_literals =
+            self.literal_preserving_declared_constraints.contains(&root);
+        let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
 
         let result = if !candidates.is_empty() {
             // Covariant candidates exist: use union/BCT (matches tsc's getInferredType)
@@ -445,6 +448,8 @@ impl<'a> InferenceContext<'a> {
                 is_const,
                 &upper_bounds,
                 declared_constraint,
+                declared_constraint_preserves_literals,
+                skip_literal_widening,
             );
             if !concrete_contra_candidates.is_empty() {
                 // Match tsc's getInferredType: when both co- and contra-variant
@@ -540,6 +545,8 @@ impl<'a> InferenceContext<'a> {
         is_const: bool,
         upper_bounds: &[TypeId],
         declared_constraint: Option<TypeId>,
+        declared_constraint_preserves_literals: bool,
+        skip_literal_widening: bool,
     ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
         if filtered.is_empty() {
@@ -565,6 +572,8 @@ impl<'a> InferenceContext<'a> {
         // e.g., `<T>(value: T): Box<T>` is contextually typed as `Box<boolean>`.
         let preserve_literals = is_const
             || self.constraint_implies_literals(upper_bounds)
+            || declared_constraint_preserves_literals
+            || declared_constraint.is_some_and(|c| self.type_implies_literals(c))
             || declared_constraint.is_some_and(|c| self.declared_constraint_is_primitive(c))
             || declared_constraint.is_some_and(|c| {
                 self.constraint_contains_type_param_with_primitive_constraint(c, 0)
@@ -581,7 +590,11 @@ impl<'a> InferenceContext<'a> {
         // This distinction is critical: for `foo<T>(n: {x: T, y: T}, m: T)` called as
         // `foo({x: 3, y: ""}, 4)`, tsc infers T = number (first candidate wins),
         // NOT T = number | string (union). The string property then gets TS2322.
-        let candidate_types: Vec<TypeId> = if is_const {
+        let const_applies_readonly_assertion = is_const
+            && !declared_constraint.is_some_and(|constraint| {
+                crate::type_queries::constraint_allows_mutable_array_like(self.interner, constraint)
+            });
+        let candidate_types: Vec<TypeId> = if const_applies_readonly_assertion {
             filtered_no_never
                 .iter()
                 .map(|c| widening::apply_const_assertion(self.interner, c.type_id))
@@ -629,7 +642,15 @@ impl<'a> InferenceContext<'a> {
             // sameMap(candidates, getWidenedLiteralType)). This ensures the tournament
             // operates on widened types (number, string) not literals (3, "").
             let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
-            let should_widen = !preserve_literals && !is_const && !has_non_fresh;
+            // Mirror tsc's `widenLiteralTypes` gate in `getCovariantInference`:
+            // when the type parameter is at top level in the return type AND has
+            // not yet been fixed, fresh literal candidates are NOT widened during
+            // the contextual-type substitution. This preserves literals like `U=1`
+            // for the Round 2 deferred-callback contextual type, so that
+            // `(a: T) => U` becomes `(a: number) => 1` (matching tsc) rather than
+            // `(a: number) => number`.
+            let should_widen =
+                !preserve_literals && !is_const && !has_non_fresh && !skip_literal_widening;
             let widened_candidates: Vec<TypeId> = candidate_types
                 .iter()
                 .map(|&ty| {
@@ -681,11 +702,12 @@ impl<'a> InferenceContext<'a> {
         // non-fresh candidate (e.g., from a type annotation) survives BCT, its
         // literal types should be preserved.
         let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
-        let resolved = if !preserve_literals && !is_const && !has_non_fresh {
-            self.widen_resolved_inference(resolved)
-        } else {
-            resolved
-        };
+        let resolved =
+            if !preserve_literals && !is_const && !has_non_fresh && !skip_literal_widening {
+                self.widen_resolved_inference(resolved)
+            } else {
+                resolved
+            };
         // Deep-widen the resolved type when it is an object literal containing
         // fresh literals. TSC calls getWidenedType() in getInferredType() for this.
         // E.g., { c: false } → { c: boolean }.
@@ -938,6 +960,17 @@ impl<'a> InferenceContext<'a> {
                     .properties
                     .iter()
                     .any(|prop| self.type_implies_literals(prop.type_id))
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                app.args.iter().any(|&arg| self.type_implies_literals(arg))
+            }
+            Some(TypeData::Array(elem)) => self.type_implies_literals(elem),
+            Some(TypeData::Tuple(list_id)) => {
+                let elems = self.interner.tuple_list(list_id);
+                elems
+                    .iter()
+                    .any(|elem| self.type_implies_literals(elem.type_id))
             }
             _ => false,
         }
@@ -1706,6 +1739,8 @@ impl<'a> InferenceContext<'a> {
             // can drive inference instead.
             let is_const = self.is_var_const(root);
             let dc = self.declared_constraints.get(&root).copied();
+            let dc_preserves_literals =
+                self.literal_preserving_declared_constraints.contains(&root);
             let mut candidates = info.candidates.clone();
             if !info.upper_bounds.is_empty() {
                 let has_informative_upper_bound = info
@@ -1745,9 +1780,16 @@ impl<'a> InferenceContext<'a> {
             {
                 concrete_contra_candidates.retain(|c| c.priority <= best_cov_priority);
             }
+            let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
             let result = if !candidates.is_empty() {
-                let covariant_result =
-                    self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc);
+                let covariant_result = self.resolve_from_candidates(
+                    &candidates,
+                    is_const,
+                    &info.upper_bounds,
+                    dc,
+                    dc_preserves_literals,
+                    skip_literal_widening,
+                );
                 // (TypeParameter filtering already done above)
                 if !concrete_contra_candidates.is_empty() {
                     // Match tsc's getInferredType: prefer covariant ONLY IF it's
@@ -1865,11 +1907,17 @@ impl<'a> InferenceContext<'a> {
                     if !info.candidates.is_empty() {
                         let is_const = self.is_var_const(root);
                         let dc = self.declared_constraints.get(&root).copied();
+                        let dc_preserves_literals =
+                            self.literal_preserving_declared_constraints.contains(&root);
+                        let skip_literal_widening =
+                            self.top_level_in_return_type_unfixed.contains(&root);
                         let covariant_result = self.resolve_from_candidates(
                             &info.candidates,
                             is_const,
                             &info.upper_bounds,
                             dc,
+                            dc_preserves_literals,
+                            skip_literal_widening,
                         );
                         if !info.contra_candidates.is_empty() {
                             let covariant_is_uninformative = matches!(

@@ -148,9 +148,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // PERF: Cache predicate results for extends_type once per iteration.
             // type_contains_infer is called up to 5 times and contains_type_parameters
             // at least once, each creating fresh FxHashSet/FxHashMap allocations.
-            let extends_has_infer = self.type_contains_infer(extends_type);
+            let extends_has_infer = self.type_contains_infer(extends_type)
+                || self.type_contains_infer(cond.extends_type);
             let extends_has_type_params =
-                crate::visitor::contains_type_parameters(self.interner(), extends_type);
+                crate::visitor::contains_type_parameters(self.interner(), extends_type)
+                    || crate::visitor::contains_type_parameters(self.interner(), cond.extends_type);
 
             if cond.is_distributive && check_type == TypeId::NEVER {
                 return TypeId::NEVER;
@@ -255,6 +257,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 _ => check_type,
             };
 
+            if extends_has_infer
+                && (self.type_is_generic_tuple(cond.check_type)
+                    || crate::contains_this_type(self.interner(), cond.check_type))
+            {
+                return self.interner().conditional(*cond);
+            }
+
             // PERF: Single lookup for array/tuple extends patterns with infer
             match self.interner().lookup(extends_unwrapped) {
                 Some(TypeData::Array(ext_elem)) => {
@@ -296,10 +305,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.evaluate(cond.false_type);
                 }
 
-                // Simplification: T extends T ? X : Y → X
-                // A type parameter always extends itself, so the conditional always takes
-                // the true branch.
-                if check_type == extends_type {
+                if cond.is_distributive
+                    && check_type == extends_type
+                    && cond.true_type == cond.check_type
+                    && cond.false_type == TypeId::NEVER
+                {
+                    return check_type;
+                }
+
+                if !cond.is_distributive && check_type == extends_type {
                     return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
                 }
 
@@ -307,7 +321,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // try to infer from the constraint. This handles cases like:
                 // R extends Reducer<infer S, any> ? S : never
                 // where R is constrained to Reducer<any, any>
-                if extends_has_infer && let Some(constraint) = param.constraint {
+                if !cond.is_distributive
+                    && extends_has_infer
+                    && let Some(constraint) = param.constraint
+                {
                     let mut checker =
                         SubtypeChecker::with_resolver(self.interner(), self.resolver());
                     checker.allow_bivariant_rest = true;
@@ -390,8 +407,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // (Step 3). Taking the shortcut would return unbound infer types.
             // e.g., `Synthetic<number,number> extends Synthetic<T, infer V> ? V : never`
             //   Both sides evaluate to the same empty object, but V must be bound to number.
-            if check_type == extends_type && !self.type_contains_infer(cond.extends_type) {
+            if check_type == extends_type
+                && !self.type_contains_infer(cond.extends_type)
+                && !self.type_is_compound_generic(cond.extends_type)
+            {
                 return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
+            }
+
+            if !extends_has_infer
+                && check_type == extends_type
+                && self.type_is_compound_generic(cond.extends_type)
+            {
+                let true_type = self.evaluate(cond.true_type);
+                let false_type = self.evaluate(cond.false_type);
+                return self.interner().conditional(ConditionalType {
+                    check_type,
+                    extends_type: cond.extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: cond.is_distributive,
+                });
             }
 
             // Step 2b: Non-naked compound type parameter deferral.
@@ -407,7 +442,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //
             // Only defer when extends_type has no infer patterns (those need pattern
             // matching first — Step 3 handles them with its own deferral logic).
-            if !extends_has_infer && self.type_is_compound_generic(cond.check_type) {
+            if !extends_has_infer
+                && (self.type_is_compound_generic(cond.check_type)
+                    || (self.type_is_generic_tuple(cond.check_type)
+                        && self.type_contains_never(cond.extends_type))
+                    || (self.type_is_generic_tuple(cond.check_type)
+                        && self.type_has_nested_generic_tuple(cond.extends_type)))
+            {
                 return self.interner().conditional(*cond);
             }
 
@@ -433,6 +474,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(TypeData::Conditional(_))
                 )
                 && crate::visitor::contains_type_parameters(self.interner(), check_type)
+            {
+                let true_type = self.evaluate(cond.true_type);
+                let false_type = self.evaluate(cond.false_type);
+                return self.interner().conditional(ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: cond.is_distributive,
+                });
+            }
+
+            if !extends_has_infer
+                && extends_has_type_params
+                && crate::visitor::contains_type_parameters(self.interner(), cond.check_type)
+                && self
+                    .resolve_generic_constraint(cond.check_type)
+                    .is_none_or(|constraint| constraint == cond.check_type)
             {
                 let true_type = self.evaluate(cond.true_type);
                 let false_type = self.evaluate(cond.false_type);
@@ -514,10 +573,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // If the constraint matches, defer — the actual type may match differently once
                 // instantiated.
                 if crate::visitor::contains_type_parameters(self.interner(), check_type) {
+                    let mut checked_concrete_constraint = false;
                     let constraint = self.resolve_generic_constraint(check_type);
                     if let Some(constraint) = constraint
                         && constraint != check_type
                     {
+                        checked_concrete_constraint = true;
                         let mut bindings2 = FxHashMap::default();
                         let mut visited2 = FxHashSet::default();
                         let mut checker2 =
@@ -539,6 +600,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 self.substitute_infer(cond.true_type, &bindings2);
                             return self.evaluate(substituted_true);
                         }
+                    }
+
+                    if !checked_concrete_constraint {
+                        return self.interner().conditional(ConditionalType {
+                            check_type,
+                            extends_type,
+                            true_type: cond.true_type,
+                            false_type: cond.false_type,
+                            is_distributive: cond.is_distributive,
+                        });
                     }
                 }
 
@@ -1397,6 +1468,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         prop_name: Atom,
         optional: bool,
     ) -> Option<TypeId> {
+        if source == TypeId::OBJECT {
+            return optional.then_some(TypeId::UNDEFINED);
+        }
+
         if let Some(query_db) = self.query_db() {
             let prop_name_str = self.interner().resolve_atom_ref(prop_name);
             return match query_db.resolve_property_access(source, &prop_name_str) {
@@ -1642,7 +1717,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         };
 
-        if !self.type_contains_infer(cond.extends_type) {
+        let contains_infer =
+            if let Some(contains_infer) = self.cached_contains_infer(cond.extends_type) {
+                contains_infer
+            } else {
+                let contains_infer = self.type_contains_infer(cond.extends_type);
+                self.cache_contains_infer(cond.extends_type, contains_infer);
+                contains_infer
+            };
+        if !contains_infer {
             return None;
         }
 
@@ -1774,14 +1857,62 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Check if a type is or contains a generic reference (Lazy/TypeParameter/Recursive).
-    /// Recurses into nested `IndexAccess` to handle cases like `T[K1][K2]`.
+    fn type_is_generic_tuple(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Tuple(list_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        let elements = self.interner().tuple_list(list_id);
+        elements
+            .iter()
+            .any(|element| Self::is_generic_ref(self.interner(), element.type_id))
+    }
+
+    fn type_contains_never(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::NEVER || type_id.is_intrinsic() {
+            return type_id == TypeId::NEVER;
+        }
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Tuple(list_id)) => self
+                .interner()
+                .tuple_list(list_id)
+                .iter()
+                .any(|element| self.type_contains_never(element.type_id)),
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner()
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.type_contains_never(member)),
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.type_contains_never(inner)
+            }
+            _ => false,
+        }
+    }
+
+    fn type_has_nested_generic_tuple(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Tuple(list_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        self.interner().tuple_list(list_id).iter().any(|element| {
+            matches!(self.interner().lookup(element.type_id), Some(TypeData::Tuple(inner_id)) if self
+                .interner()
+                .tuple_list(inner_id)
+                .iter()
+                .any(|inner| Self::is_generic_ref(self.interner(), inner.type_id)))
+        })
+    }
+
     fn is_generic_ref(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
         match db.lookup(type_id) {
-            Some(TypeData::Lazy(_) | TypeData::TypeParameter(_) | TypeData::Recursive(_)) => true,
+            Some(
+                TypeData::Lazy(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::Recursive(_),
+            ) => true,
             Some(TypeData::IndexAccess(obj, idx)) => {
                 Self::is_generic_ref(db, obj) || Self::is_generic_ref(db, idx)
             }

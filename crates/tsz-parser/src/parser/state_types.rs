@@ -6,6 +6,15 @@ use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    fn prefix_nullable_type_suggestion(suggested: &str) -> String {
+        let suggested = suggested.trim_end_matches('?');
+        match suggested {
+            "any" | "unknown" | "never" | "void" => suggested.to_string(),
+            "null" | "undefined" => "null | undefined".to_string(),
+            _ => format!("{suggested} | null | undefined"),
+        }
+    }
+
     pub(crate) fn finish_type_member_container_close_brace(&mut self) -> u32 {
         if self.deferred_type_member_close_braces > 0 && self.is_token(SyntaxKind::CloseBraceToken)
         {
@@ -179,7 +188,21 @@ impl ParserState {
 
                 self.next_token(); // consume 'is'
                 let type_node = self.parse_type();
-                let end_pos = self.token_end();
+                // The inner type already captured its own end before the
+                // scanner advanced past it; calling `token_end()` here
+                // would reflect the *next* token (e.g. `=>` in
+                // `(x): x is string => …`), so the TYPE_PREDICATE's
+                // source span would overshoot into the surrounding
+                // syntax and leak `=>` into emit-side source-slice
+                // helpers (`call_expression_declared_return_type_text`
+                // observed `x is string =>`, then re-emitted that into
+                // d.ts as `… => x is string =>;`).  Anchor on the
+                // inner type instead.
+                let end_pos = self
+                    .arena
+                    .get(type_node)
+                    .map(|n| n.end)
+                    .unwrap_or_else(|| self.token_end());
 
                 return self.arena.add_type_predicate(
                     syntax_kind_ext::TYPE_PREDICATE,
@@ -458,12 +481,7 @@ impl ParserState {
             } else {
                 (self.token_pos(), String::from("T"))
             };
-            // Simplify the suggestion for types that absorb null/undefined.
-            // TSC suggests just the type name when adding | null | undefined is redundant.
-            let suggestion = match suggested.as_str() {
-                "any" => "any".to_string(),
-                _ => format!("{suggested} | null | undefined"),
-            };
+            let suggestion = Self::prefix_nullable_type_suggestion(&suggested);
             let msg = format!(
                 "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggestion}'?"
             );
@@ -641,8 +659,12 @@ impl ParserState {
         }
 
         // When `new:` consumed the return type already, ignore any further
-        // `: T` suffix (it would be a stray annotation).
+        // `: T` suffix (it would be a stray annotation), but still consume it
+        // so it cannot cascade into the outer parser.
         let type_annotation = if is_constructor {
+            if self.parse_optional(SyntaxKind::ColonToken) {
+                let _ = self.parse_type();
+            }
             constructor_return_type
         } else if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
@@ -1130,6 +1152,7 @@ impl ParserState {
             // consumed as a JSDoc nullable.
             let saved_flags = self.context_flags;
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+            self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
             let element_type = self.parse_type();
             self.context_flags = saved_flags;
             let rest_end = self.token_end();
@@ -1147,6 +1170,24 @@ impl ParserState {
             // rest so the type displays as `[...?T]` in declaration emit.
             if self.parse_optional(SyntaxKind::QuestionToken) {
                 let end_pos = self.token_end();
+                let (diag_start, suggestion) = if let Some(node) = self.arena.get(element_type) {
+                    (
+                        node.pos,
+                        self.scanner
+                            .source_slice(node.pos as usize, node.end as usize)
+                            .to_string(),
+                    )
+                } else {
+                    (start_pos, String::from("T"))
+                };
+                self.parse_error_at(
+                    diag_start,
+                    end_pos.saturating_sub(diag_start),
+                    &format!(
+                        "'?' at the end of a type is not valid TypeScript syntax. Did you mean to write '{suggestion} | undefined'?"
+                    ),
+                    tsz_common::diagnostics::diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
+                );
                 return self.arena.add_wrapped_type(
                     syntax_kind_ext::OPTIONAL_TYPE,
                     start_pos,
@@ -1193,6 +1234,7 @@ impl ParserState {
         // consumed as JSDoc nullable (TS17019) — it should be the optional marker instead.
         let saved_flags = self.context_flags;
         self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
         let type_node = self.parse_type();
         self.context_flags = saved_flags;
 
@@ -1248,7 +1290,11 @@ impl ParserState {
 
         let type_node = if self.is_token(SyntaxKind::DotDotDotToken) {
             self.next_token();
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+            self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
             let element_type = self.parse_type();
+            self.context_flags = saved_flags;
             let rest_end = self.token_end();
             self.arena.add_wrapped_type(
                 syntax_kind_ext::REST_TYPE,
@@ -1259,7 +1305,12 @@ impl ParserState {
                 },
             )
         } else {
-            self.parse_type()
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
+            self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+            let type_node = self.parse_type();
+            self.context_flags = saved_flags;
+            type_node
         };
 
         if self.parse_optional(SyntaxKind::QuestionToken) {
@@ -1289,6 +1340,13 @@ impl ParserState {
             elements.push(element);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.can_token_start_type() || self.is_token(SyntaxKind::DotDotDotToken) {
+                    self.parse_error_at_current_token(
+                        "',' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                    continue;
+                }
                 break;
             }
         }
@@ -2270,6 +2328,7 @@ impl ParserState {
         self.parse_expected_less_than();
 
         let mut args = Vec::new();
+        let mut has_trailing_comma = false;
 
         // Check for empty type argument list: <>
         // TypeScript reports TS1099: "Type argument list cannot be empty"
@@ -2289,11 +2348,16 @@ impl ParserState {
                 if !self.parse_optional(SyntaxKind::CommaToken) {
                     break;
                 }
+                if self.is_greater_than_or_compound() {
+                    has_trailing_comma = true;
+                }
             }
         }
 
         self.parse_expected_greater_than();
-        self.make_node_list(args)
+        let mut list = self.make_node_list(args);
+        list.has_trailing_comma = has_trailing_comma;
+        list
     }
 
     fn parse_type_argument_in_type_arguments(&mut self) -> NodeIndex {
@@ -2365,11 +2429,7 @@ impl ParserState {
         // For `?T?` (both prefix and postfix `?`) the inner_type span now
         // covers `T?` because postfix-? widens to a `T | null` UNION_TYPE.
         // The suggestion text should still reference just `T`, matching tsc.
-        let suggested_trimmed = suggested.trim_end_matches('?');
-        let suggestion = match suggested_trimmed {
-            "any" => "any".to_string(),
-            _ => format!("{suggested_trimmed} | null | undefined"),
-        };
+        let suggestion = Self::prefix_nullable_type_suggestion(&suggested);
         let msg = format!(
             "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggestion}'?"
         );

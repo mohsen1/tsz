@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if self.source_file_has_esm_syntax() {
+        if self.current_source_file_has_esm_syntax() {
             return false;
         }
 
@@ -135,23 +135,14 @@ impl<'a> CheckerState<'a> {
 
         // Check for `exports` identifier (unbound)
         if target_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(target_node)
-                && ident.escaped_text == "exports"
-            {
-                return true;
-            }
-            return false;
+            return self.is_unshadowed_commonjs_exports_identifier(target_idx);
         }
 
         // Check for `module.exports` property access
         if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(target_node)
         {
-            let is_module = self
-                .ctx
-                .arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|ident| ident.escaped_text == "module");
+            let is_module = self.is_unshadowed_commonjs_module_identifier(access.expression);
             let is_exports = self
                 .ctx
                 .arena
@@ -170,7 +161,7 @@ impl<'a> CheckerState<'a> {
     /// against the inferred type. Without this, `exports.apply = undefined` followed
     /// by `exports.apply = function() {}` would emit false TS2322.
     pub(crate) fn is_commonjs_exports_property_declaration(&self, target_idx: NodeIndex) -> bool {
-        if !self.is_js_file() {
+        if !self.is_js_file() || self.current_source_file_has_esm_syntax() {
             return false;
         }
 
@@ -449,11 +440,7 @@ impl<'a> CheckerState<'a> {
 
         // Direct `exports` identifier
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text == "exports");
+            return self.is_unshadowed_commonjs_exports_identifier(idx);
         }
 
         // Property access: check for `module.exports` or recurse
@@ -461,11 +448,7 @@ impl<'a> CheckerState<'a> {
             && let Some(access) = self.ctx.arena.get_access_expr(node)
         {
             // Check for `module.exports`
-            let is_module = self
-                .ctx
-                .arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|ident| ident.escaped_text == "module");
+            let is_module = self.is_unshadowed_commonjs_module_identifier(access.expression);
             let is_exports = self
                 .ctx
                 .arena
@@ -820,17 +803,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
-        let direct_export_type = surface
-            .direct_export_type
-            .unwrap_or_else(|| self.get_type_of_node(access.expression));
-        if crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
-            self.ctx.types,
-            direct_export_type,
-        ) {
-            return false;
-        }
-
         let prop_name = match target_node.kind {
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
                 .ctx
@@ -846,30 +818,32 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
+        if self
+            .current_file_commonjs_direct_write_rhs(target_idx)
+            .is_some_and(|rhs| self.current_file_commonjs_write_rhs_is_undefined_like(rhs))
+            && surface.has_commonjs_exports
+            && !surface.has_named_export(&prop_name, self.ctx.types)
+            && self
+                .current_file_commonjs_late_bound_named_export_type(&prop_name, target_node.pos)
+                .is_none()
+        {
+            let namespace_type = self.current_file_commonjs_module_exports_namespace_type();
+            self.error_property_not_exist_at(&prop_name, namespace_type, access.name_or_argument);
+            return true;
+        }
+
+        let direct_export_type = surface
+            .direct_export_type
+            .unwrap_or_else(|| self.get_type_of_node(access.expression));
+        if crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+            self.ctx.types,
+            direct_export_type,
+        ) {
+            return false;
+        }
+
         self.error_property_not_exist_at(&prop_name, direct_export_type, access.name_or_argument);
         true
-    }
-
-    fn source_file_has_esm_syntax(&self) -> bool {
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        for &stmt_idx in &source_file.statements.nodes {
-            if stmt_idx.is_none() {
-                continue;
-            }
-            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            match stmt.kind {
-                syntax_kind_ext::IMPORT_DECLARATION
-                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                | syntax_kind_ext::EXPORT_DECLARATION
-                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
-                _ => {}
-            }
-        }
-        false
     }
 }

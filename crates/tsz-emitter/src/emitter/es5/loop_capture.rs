@@ -91,6 +91,7 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
                                     } else {
                                         &mut info.var_decl_names
                                     },
+                                    !is_block_scoped,
                                 );
                             }
                         }
@@ -168,6 +169,7 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
                             } else {
                                 &mut info.var_decl_names
                             },
+                            !is_block_scoped,
                         );
                     }
                 }
@@ -220,7 +222,12 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
 }
 
 /// Collect identifier names from a binding pattern or identifier
-fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, names: &mut Vec<String>) {
+fn collect_binding_names(
+    arena: &NodeArena,
+    name_idx: NodeIndex,
+    names: &mut Vec<String>,
+    allow_duplicates: bool,
+) {
     let Some(name_node) = arena.get(name_idx) else {
         return;
     };
@@ -228,7 +235,7 @@ fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, names: &mut Vec
     if name_node.is_identifier() {
         if let Some(ident) = arena.get_identifier(name_node) {
             let text = arena.resolve_identifier_text(ident).to_string();
-            if !names.contains(&text) {
+            if allow_duplicates || !names.contains(&text) {
                 names.push(text);
             }
         }
@@ -240,7 +247,7 @@ fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, names: &mut Vec
             if let Some(elem_node) = arena.get(elem_idx)
                 && let Some(elem) = arena.get_binding_element(elem_node)
             {
-                collect_binding_names(arena, elem.name, names);
+                collect_binding_names(arena, elem.name, names, allow_duplicates);
             }
         }
     }
@@ -297,7 +304,7 @@ impl<'a> Printer<'a> {
             if let Some(decl_node) = self.arena.get(decl_idx)
                 && let Some(decl) = self.arena.get_variable_declaration(decl_node)
             {
-                collect_binding_names(self.arena, decl.name, &mut vars);
+                collect_binding_names(self.arena, decl.name, &mut vars, false);
             }
         }
         vars
@@ -332,7 +339,7 @@ impl<'a> Printer<'a> {
             if let Some(decl_node) = self.arena.get(decl_idx)
                 && let Some(decl) = self.arena.get_variable_declaration(decl_node)
             {
-                collect_binding_names(self.arena, decl.name, &mut vars);
+                collect_binding_names(self.arena, decl.name, &mut vars, false);
             }
         }
         vars
@@ -528,9 +535,27 @@ impl<'a> Printer<'a> {
         self.write(") {");
         self.write_line();
         self.increase_indent();
+        let block_scoped_temp_byte_offset = self.writer.len();
+        let block_scoped_temp_line = self.writer.current_line();
 
         // Emit the body statements inside the IIFE
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
+
+        if !self.block_scoped_private_temps.is_empty() {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let temp_decls = self
+                .block_scoped_private_temps
+                .iter()
+                .map(|temp| format!("{temp} = void 0"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.writer.insert_line_at(
+                block_scoped_temp_byte_offset,
+                block_scoped_temp_line,
+                &format!("{indent}var {temp_decls};"),
+            );
+            self.block_scoped_private_temps.clear();
+        }
 
         self.decrease_indent();
         self.write("};");
@@ -785,5 +810,54 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(initializer);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emitter::{Printer, PrinterOptions};
+    use tsz_common::ScriptTarget;
+    use tsz_parser::ParserState;
+
+    #[test]
+    fn do_loop_capture_renames_body_let_that_shadows_parameter() {
+        let source = "function use(v: number) {}\n\
+function foo(x: number) {\n\
+  var v = 1;\n\
+  do {\n\
+    let x = v;\n\
+    var v;\n\
+    var v = 2;\n\
+    () => x + v;\n\
+  } while (false);\n\
+\n\
+  use(v);\n\
+}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var x_1 = v;"),
+            "Loop IIFE body let should be renamed when it shadows a parameter.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return x_1 + v;"),
+            "Captured arrow should reference the renamed body let.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var v, v;"),
+            "Loop body var hoist should preserve duplicate var declarations.\nOutput:\n{output}"
+        );
     }
 }

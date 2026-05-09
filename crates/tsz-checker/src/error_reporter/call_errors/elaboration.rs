@@ -11,6 +11,16 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn present_callable_property_target_display_type(&self, target_type: TypeId) -> TypeId {
+        let stripped =
+            crate::query_boundaries::common::remove_undefined(self.ctx.types, target_type);
+        if stripped != target_type && self.stripped_property_context_is_callable(stripped) {
+            stripped
+        } else {
+            target_type
+        }
+    }
+
     pub(in crate::error_reporter::call_errors) fn contextual_keyof_parameter_display(
         &mut self,
         param_type: TypeId,
@@ -39,8 +49,8 @@ impl<'a> CheckerState<'a> {
                     if candidate_keyof == TypeId::ERROR {
                         continue;
                     }
-                    // `keyof null`, `keyof undefined`, `keyof void`, and
-                    // `keyof never` all reduce to `never`. tsc displays the
+                    // `keyof null`, `keyof undefined`, and `keyof void` all
+                    // reduce to `never`. tsc displays the
                     // reduced form; falling back to "keyof null" loses
                     // fingerprint parity (unknownControlFlow.ts ff1).
                     if candidate_keyof == TypeId::NEVER {
@@ -284,9 +294,19 @@ impl<'a> CheckerState<'a> {
         let Some(raw_param) = self.raw_param_for_argument_index(sig, arg_pos) else {
             return;
         };
-        if query_common::type_application(self.ctx.types, raw_param.type_id).is_none() {
-            return;
-        }
+        let mut from_type_param_constraint = false;
+        let candidate_source_type =
+            if query_common::type_application(self.ctx.types, raw_param.type_id).is_some() {
+                raw_param.type_id
+            } else if let Some(type_param) =
+                query_common::type_param_info(self.ctx.types, raw_param.type_id)
+                && let Some(constraint) = type_param.constraint
+            {
+                from_type_param_constraint = true;
+                constraint
+            } else {
+                return;
+            };
 
         let mut substitution = query_common::TypeSubstitution::new();
         for tp in &sig.type_params {
@@ -297,16 +317,27 @@ impl<'a> CheckerState<'a> {
         }
 
         let candidate =
-            query_common::instantiate_type(self.ctx.types, raw_param.type_id, &substitution);
+            query_common::instantiate_type(self.ctx.types, candidate_source_type, &substitution);
         let evaluated_candidate = self.evaluate_type_for_assignability(candidate);
         let matches_evaluated = evaluated_candidate == evaluated_param
             || (self.is_assignable_to(evaluated_candidate, evaluated_param)
                 && self.is_assignable_to(evaluated_param, evaluated_candidate));
-        if !matches_evaluated {
+        if !(matches_evaluated
+            || from_type_param_constraint
+                && query_common::object_shape_for_type(self.ctx.types, evaluated_candidate)
+                    .is_some())
+        {
             return;
         }
 
-        let candidate_display = self.format_type_diagnostic(candidate);
+        let candidate_display = if evaluated_candidate != candidate
+            && evaluated_candidate != TypeId::ERROR
+            && !query_common::contains_type_parameters(self.ctx.types, evaluated_candidate)
+        {
+            self.format_type_for_assignability_message(evaluated_candidate)
+        } else {
+            self.format_type_diagnostic(candidate)
+        };
         if display
             .as_ref()
             .is_some_and(|existing| existing != &candidate_display)
@@ -365,16 +396,15 @@ impl<'a> CheckerState<'a> {
                 Some(query_common::LiteralValue::Number(_))
             )
         };
-        let candidate_display_type =
-            if query_common::type_application(self.ctx.types, raw_constraint).is_some()
-                && evaluated_constraint != raw_constraint
-                && evaluated_constraint != TypeId::ERROR
-                && evaluated_number_literal_union
-            {
-                evaluated_constraint
-            } else {
-                raw_constraint
-            };
+        let candidate_display_type = if evaluated_constraint != raw_constraint
+            && evaluated_constraint != TypeId::ERROR
+            && (evaluated_number_literal_union
+                || !query_common::contains_type_parameters(self.ctx.types, evaluated_constraint))
+        {
+            evaluated_constraint
+        } else {
+            raw_constraint
+        };
         let candidate = self.format_type_for_assignability_message(candidate_display_type);
         if display
             .as_ref()
@@ -533,6 +563,20 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        if let Some(node) = self.ctx.arena.get(expr_idx)
+            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let source_type = self
+                .ctx
+                .node_types
+                .get(&expr_idx.0)
+                .copied()
+                .unwrap_or_else(|| self.elaboration_source_expression_type(expr_idx));
+            if query_common::is_remapped_mapped_index_access(self.ctx.types, source_type) {
+                return false;
+            }
+        }
+
         if let Some(node) = self.ctx.arena.get(expr_idx)
             && node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && self.assignment_source_is_return_expression(source_idx)
@@ -851,7 +895,19 @@ impl<'a> CheckerState<'a> {
                 // E.g.: `const f: (a: number) => string = (a) => a + 1`
                 // → TS2322 at `a + 1` with "Type 'number' is not assignable to type 'string'."
                 let display_target = self.evaluate_type_with_env(expected_return_type);
-                self.error_type_not_assignable_at_with_anchor(body_type, display_target, func.body);
+                if self.array_elaboration_widening_required_for_display(body_type, display_target) {
+                    self.error_type_not_assignable_at_with_widened_source_display(
+                        body_type,
+                        display_target,
+                        func.body,
+                    );
+                } else {
+                    self.error_type_not_assignable_at_with_anchor(
+                        body_type,
+                        display_target,
+                        func.body,
+                    );
+                }
                 true
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
@@ -1038,6 +1094,12 @@ impl<'a> CheckerState<'a> {
             return Some(shape.return_type);
         }
 
+        if let Some(signatures) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, ty)
+        {
+            return signatures.first().map(|sig| sig.return_type);
+        }
+
         if let Some(shape) = callable_shape_for_type(self.ctx.types, ty) {
             return shape.call_signatures.first().map(|sig| sig.return_type);
         }
@@ -1150,9 +1212,11 @@ impl<'a> CheckerState<'a> {
         // `Type '"name"' is not assignable to type '"name"'`.
         let mapped_surface_names =
             self.generic_mapped_receiver_explicit_property_names(effective_param_type);
-        if self.target_has_missing_required_properties_from_source(&obj, effective_param_type)
-            && mapped_surface_names.is_empty()
-            && !self.target_has_named_property_for_any_source_prop(arg_idx, effective_param_type)
+        if self.target_has_missing_required_properties_from_source(
+            &obj,
+            source_type,
+            effective_param_type,
+        ) && mapped_surface_names.is_empty()
         {
             return false;
         }
@@ -1369,7 +1433,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
-            let source_prop_type = if !is_function_value
+            let source_prop_type = if is_computed_property
+                && !is_function_value
+                && let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx)
+            {
+                literal_type
+            } else if !is_function_value
                 && cached_prop_type != TypeId::ERROR
                 && cached_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
@@ -1444,12 +1513,17 @@ impl<'a> CheckerState<'a> {
                     && !self.is_assignable_to(duplicate_source_for_check, target_prop_type)
                 {
                     let source_prop_type_for_diagnostic =
-                        self.widen_function_like_call_source(duplicate_source_for_check);
+                        crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
+                            self.ctx.types,
+                            self.widen_function_like_call_source(duplicate_source_for_check),
+                        );
                     let target_for_diag = if target_prop_type != target_prop_type_for_diagnostic {
                         target_prop_type_for_diagnostic
                     } else {
                         target_prop_type
                     };
+                    let target_for_diag =
+                        self.present_callable_property_target_display_type(target_for_diag);
                     if let Some(&first_name_idx) = first_named_property_name_idx.get(&prop_name)
                         && first_name_idx != prop_name_idx
                         && emitted_duplicate_primary.insert(prop_name.clone())
@@ -1477,7 +1551,10 @@ impl<'a> CheckerState<'a> {
                 && !self.is_assignable_to(effective_source_prop, target_prop_type)
             {
                 let source_prop_type_for_diagnostic =
-                    self.widen_function_like_call_source(effective_source_prop);
+                    crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
+                        self.ctx.types,
+                        self.widen_function_like_call_source(effective_source_prop),
+                    );
                 // Use the diagnostic target type if available (for optional properties),
                 // otherwise use the effective target type
                 let target_for_diag = if overall_target_is_union {
@@ -1490,6 +1567,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     target_prop_type_for_diagnostic
                 };
+                let target_for_diag =
+                    self.present_callable_property_target_display_type(target_for_diag);
                 if duplicate_named_properties.contains(&prop_name) {
                     if let Some(&first_name_idx) = first_named_property_name_idx.get(&prop_name)
                         && first_name_idx != prop_name_idx
@@ -1675,7 +1754,8 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check if the property value type is assignable to the target property type
-            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+            let prop_assignable = self.is_assignable_to(source_prop_type, target_prop_type);
+            if !prop_assignable {
                 if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
                     elaborated = true;
                     continue;
@@ -1703,16 +1783,16 @@ impl<'a> CheckerState<'a> {
                         })
                     {
                         let src_str = self.format_type_diagnostic(literal_source_type);
-                        let tgt_str = self.format_type_diagnostic(target_prop_type_for_diagnostic);
-                        let expanded_tgt_str = self.format_type_diagnostic(evaluated_target);
-                        let display_target = if expanded_tgt_str != tgt_str {
-                            &expanded_tgt_str
-                        } else {
-                            &tgt_str
-                        };
+                        let tgt_str = self
+                            .format_type_for_assignability_message(target_prop_type_for_diagnostic);
+                        let display_target = self.format_ts2820_target_display(
+                            target_prop_type_for_diagnostic,
+                            evaluated_target,
+                            &tgt_str,
+                        );
                         let msg = format_message(
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-                            &[&src_str, display_target, &suggestion],
+                            &[&src_str, &display_target, &suggestion],
                         );
                         let anchor_idx = self.resolve_diagnostic_anchor_node(
                             prop_name_idx,
@@ -1838,6 +1918,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 elaborated = true;
+            } else if self.emit_polymorphic_this_property_assignment_error(
+                source_prop_type,
+                target_prop_type,
+                prop_name_idx,
+            ) {
+                elaborated = true;
+                continue;
             }
         }
 
@@ -1888,13 +1975,25 @@ impl<'a> CheckerState<'a> {
     fn target_has_missing_required_properties_from_source(
         &mut self,
         obj: &tsz_parser::parser::node::LiteralExprData,
+        source_type: TypeId,
         target_type: TypeId,
     ) -> bool {
-        // Collect source property names from the object literal
+        // Collect source property names from the object literal.
         let mut source_prop_names = std::collections::HashSet::new();
         for &elem_idx in &obj.elements.nodes {
             if let Some(prop_name) = self.object_literal_property_name_from_elem(elem_idx) {
                 source_prop_names.insert(prop_name);
+            }
+        }
+        // Spreads contribute properties that are not represented as named AST
+        // elements. Include the synthesized source shape so `{ ...m, title:
+        // undefined }` is not treated as missing `yearReleased` from `m`.
+        let source_type = self.evaluate_type_for_assignability(source_type);
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_type)
+        {
+            for prop in &shape.properties {
+                source_prop_names.insert(self.ctx.types.resolve_atom(prop.name).to_string());
             }
         }
 
@@ -2190,7 +2289,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_assignable_to(elem_type, target_element_type) {
-                if !skip_deep_elaboration
+                let widen_source_display = self.array_elaboration_widening_required_for_display(
+                    elem_type,
+                    target_element_type,
+                );
+
+                if !widen_source_display
+                    && !skip_deep_elaboration
                     && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
                 {
                     elaborated = true;
@@ -2218,11 +2323,19 @@ impl<'a> CheckerState<'a> {
                     target_element_type,
                     self.ctx.file_name
                 );
-                self.error_type_not_assignable_at_with_anchor(
-                    elem_type,
-                    display_target_element_type,
-                    elem_idx,
-                );
+                if widen_source_display {
+                    self.error_type_not_assignable_at_with_widened_source_display(
+                        elem_type,
+                        display_target_element_type,
+                        elem_idx,
+                    );
+                } else {
+                    self.error_type_not_assignable_at_with_anchor(
+                        elem_type,
+                        display_target_element_type,
+                        elem_idx,
+                    );
+                }
                 elaborated = true;
             }
         }

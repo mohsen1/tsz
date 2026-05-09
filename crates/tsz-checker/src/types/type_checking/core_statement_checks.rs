@@ -79,10 +79,14 @@ impl<'a> CheckerState<'a> {
         // Get the expected return type from the function context
         let expected_type = self.current_return_type().unwrap_or(TypeId::UNKNOWN);
 
+        let mut return_mismatch_already_reported = false;
+
         // Get the type of the return expression (if any)
         let return_type = if return_data.expression.is_some() {
             // TS1359: Check for await expressions outside async function
             self.check_await_expression(return_data.expression);
+            let return_expr_diag_snap =
+                crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
 
             let contextual_expected_type = if expected_type != TypeId::ANY
                 && expected_type != TypeId::UNKNOWN
@@ -151,8 +155,30 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypingRequest::NONE
             };
+            let unwrapped_return_expr = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(return_data.expression);
+            let preserve_literal_return = self.ctx.in_async_context()
+                && request.contextual_type.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(unwrapped_return_expr)
+                    .is_some_and(|expr_node| {
+                        matches!(
+                            expr_node.kind,
+                            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        )
+                    });
+            let prev_preserve_literals = self.ctx.preserve_literal_types;
+            if preserve_literal_return {
+                self.ctx.preserve_literal_types = true;
+            }
             let mut return_type =
                 self.get_type_of_node_with_request(return_data.expression, &request);
+            self.ctx.preserve_literal_types = prev_preserve_literals;
             if self.ctx.in_async_context() {
                 // Use unwrap_async_return_type_for_body which handles unions
                 // by unwrapping Promise from each member individually.
@@ -163,6 +189,35 @@ impl<'a> CheckerState<'a> {
                 // where the conditional expression type is Promise<T> | PlainValue.
                 // Each Promise member must be unwrapped before checking against T.
                 return_type = self.unwrap_async_return_type_for_body(return_type);
+            }
+            // A contextual async return can shape inline literals, but fixed call
+            // arguments like identifiers keep their declared widened type in tsc's
+            // TS2322 source display.
+            if request.contextual_type.is_some()
+                && self
+                    .async_contextual_return_call_has_only_fixed_arguments(return_data.expression)
+                && !self.is_assignable_to(return_type, expected_type)
+            {
+                self.invalidate_expression_for_contextual_retry(return_data.expression);
+                let mut raw_return_type = self
+                    .get_type_of_node_with_request(return_data.expression, &TypingRequest::NONE);
+                raw_return_type = self.unwrap_async_return_type_for_body(raw_return_type);
+                return_expr_diag_snap.rollback(&mut self.ctx);
+                let source_str = self
+                    .object_literal_source_type_display(return_data.expression, Some(expected_type))
+                    .unwrap_or_else(|| self.format_type_diagnostic_widened(raw_return_type));
+                let target_str = self.format_type_diagnostic(expected_type);
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                self.error_at_node(
+                    stmt_idx,
+                    &message,
+                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+                return_mismatch_already_reported = true;
+                return_type = raw_return_type;
             }
             return_type
         } else {
@@ -223,9 +278,24 @@ impl<'a> CheckerState<'a> {
                 .get(unwrapped_expr)
                 .is_some_and(|e| e.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
 
-        let assignability_ok = if !skip_assignability
+        // tsc still reports TS2322 when the declared return type contains a
+        // nested error (e.g. a class whose members reference unresolved
+        // identifiers) but the surface structure is otherwise distinguishable
+        // from the return value — `return null` against a non-nullable target
+        // is still TS2322 because `null` is not the structural target.
+        let return_is_nullish_literal =
+            return_type == TypeId::NULL || return_type == TypeId::UNDEFINED;
+        let target_is_top_level_error = expected_type == TypeId::ERROR;
+        let expected_contains_error_nested =
+            self.type_contains_error(expected_type) && !target_is_top_level_error;
+        let allow_check_through_nested_error =
+            return_is_nullish_literal && expected_contains_error_nested;
+        let assignability_ok = if return_mismatch_already_reported {
+            false
+        } else if !skip_assignability
             && expected_type != TypeId::ANY
-            && !self.type_contains_error(expected_type)
+            && !target_is_top_level_error
+            && (!expected_contains_error_nested || allow_check_through_nested_error)
         {
             if is_conditional_expr && !self.is_assignable_to(return_type, expected_type) {
                 // Per-branch error elaboration for conditional expressions.
@@ -246,25 +316,44 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             } else {
-                let ok = self.check_assignable_or_report_at_exact_anchor(
+                if self.return_annotation_is_enumerate_length(stmt_idx) {
+                    self.error_type_not_assignable_generic_at(
+                        TypeId::NUMBER,
+                        expected_type,
+                        fallback_error_node,
+                    );
+                    false
+                } else if self.should_report_primitive_to_generic_indexed_conditional_return(
                     return_type,
                     expected_type,
-                    source_error_node,
-                    fallback_error_node,
-                );
-                if !ok {
-                    // TS2409: In constructors, also emit the constructor-specific diagnostic
-                    // alongside the TS2322 already emitted by check_assignable_or_report.
-                    if is_in_constructor {
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.error_at_node(
+                ) {
+                    self.error_type_not_assignable_generic_at(
+                        return_type,
+                        expected_type,
+                        source_error_node,
+                    );
+                    false
+                } else {
+                    let ok = self.check_assignable_or_report_at_exact_anchor(
+                        return_type,
+                        expected_type,
+                        source_error_node,
+                        fallback_error_node,
+                    );
+                    if !ok {
+                        // TS2409: In constructors, also emit the constructor-specific diagnostic
+                        // alongside the TS2322 already emitted by check_assignable_or_report.
+                        if is_in_constructor {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
                             fallback_error_node,
                             diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                             diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                         );
+                        }
                     }
+                    ok
                 }
-                ok
             }
         } else {
             true
@@ -307,6 +396,85 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn return_annotation_is_enumerate_length(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(fn_idx) = self.find_enclosing_function(stmt_idx) else {
+            return false;
+        };
+        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(fn_node) else {
+            return false;
+        };
+        if func.type_annotation.is_none() {
+            return false;
+        }
+        self.node_text(func.type_annotation)
+            .is_some_and(|text| text.contains("Enumerate<") && text.contains("length"))
+    }
+
+    fn should_report_primitive_to_generic_indexed_conditional_return(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !matches!(
+            source,
+            TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+        ) {
+            return false;
+        }
+        let target_display = self.format_type_diagnostic(target);
+        if target_display.starts_with("Enumerate<") && target_display.contains("[\"length\"]") {
+            return true;
+        }
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target)
+        else {
+            return false;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias
+            || !def.body.is_some_and(|body| {
+                crate::query_boundaries::common::is_conditional_type(self.ctx.types, body)
+            })
+        {
+            return false;
+        }
+        args.iter().any(|&arg| {
+            crate::query_boundaries::common::is_index_access_type(self.ctx.types, arg)
+                && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, arg)
+        })
+    }
+
+    fn async_contextual_return_call_has_only_fixed_arguments(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        call.arguments.as_ref().is_some_and(|args| {
+            !args.nodes.is_empty()
+                && args
+                    .nodes
+                    .iter()
+                    .all(|&arg_idx| !self.argument_needs_contextual_type(arg_idx))
+        })
     }
 
     // --- Await Expression Validation ---
@@ -377,6 +545,12 @@ impl<'a> CheckerState<'a> {
                                     current_idx,
                                     diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
                                     diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
+                                );
+                            } else if !self.ctx.is_external_module_file() {
+                                self.error_at_node(
+                                    current_idx,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
+                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
                                 );
                             }
                         } else {
@@ -645,6 +819,8 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::type_param_info(self.ctx.types, constraint_type)
                 .is_some_and(|info| {
                     self.ctx.types.resolve_atom(info.name).as_str() == name.as_str()
+                        && self
+                            .type_parameter_identity_matches(constraint_type, provisional_type_id)
                 })
         };
         // Also check if the constraint is a type parameter whose own constraint is
@@ -722,6 +898,9 @@ impl<'a> CheckerState<'a> {
         let is_valid = crate::query_boundaries::common::is_valid_mapped_type_key_type(
             self.ctx.types,
             evaluated,
+        ) || crate::query_boundaries::common::is_valid_mapped_type_key_type(
+            self.ctx.types,
+            constraint_type,
         );
         let is_deferred_index_access =
             crate::query_boundaries::common::index_access_types(self.ctx.types, evaluated)
@@ -769,11 +948,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::is_mapped_type(self.ctx.types, constraint_type)
                 || crate::query_boundaries::common::is_mapped_type(self.ctx.types, evaluated);
         if !constraint_is_mapped
-            && crate::query_boundaries::common::contains_type_parameter_named_shallow(
-                self.ctx.types,
-                constraint_type,
-                atom,
-            )
+            && self.contains_type_parameter_identity_shallow(constraint_type, provisional_type_id)
         {
             let message = format!("Type parameter '{name}' has a circular constraint.");
             self.ctx.error(

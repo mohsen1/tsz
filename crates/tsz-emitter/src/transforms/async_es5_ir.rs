@@ -69,6 +69,8 @@ pub struct AsyncTransformState {
     pub has_await: bool,
     /// Whether the body references `arguments` (needs `var arguments_1 = arguments;`)
     pub captures_arguments: bool,
+    /// Generated name used for captured `arguments` references.
+    pub arguments_capture_name: String,
 }
 
 enum SuspendedAssignmentTarget {
@@ -82,11 +84,12 @@ impl AsyncTransformState {
     }
 
     /// Reset for a new async function
-    pub const fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.label_counter = 0;
         self.in_async_body = false;
         self.has_await = false;
         self.captures_arguments = false;
+        self.arguments_capture_name.clear();
     }
 
     /// Get the next label number
@@ -148,6 +151,7 @@ pub struct AsyncES5Transformer<'a> {
     temp_var_counter: Cell<u32>,
     lexical_this_capture: Cell<bool>,
     capture_this_references: Cell<bool>,
+    loop_exit_placeholder_counter: Cell<u32>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -162,6 +166,7 @@ impl<'a> AsyncES5Transformer<'a> {
             temp_var_counter: Cell::new(0),
             lexical_this_capture: Cell::new(false),
             capture_this_references: Cell::new(false),
+            loop_exit_placeholder_counter: Cell::new(0),
         }
     }
 
@@ -185,6 +190,16 @@ impl<'a> AsyncES5Transformer<'a> {
         self.capture_this_references.set(capture);
     }
 
+    fn reset_loop_exit_placeholders(&self) {
+        self.loop_exit_placeholder_counter.set(0);
+    }
+
+    fn next_loop_exit_placeholder(&self) -> u32 {
+        let counter = self.loop_exit_placeholder_counter.get();
+        self.loop_exit_placeholder_counter.set(counter + 1);
+        u32::MAX - counter
+    }
+
     pub(super) fn generate_hoisted_temp(&self) -> String {
         let counter = self.temp_var_counter.get();
         let name = if counter < 26 {
@@ -202,6 +217,213 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    fn emit_arguments_capture_decl(&self, body: &mut Vec<IRNode>) {
+        if self.state.captures_arguments {
+            body.push(IRNode::VarDecl {
+                name: self.state.arguments_capture_name.clone().into(),
+                initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
+            });
+        }
+    }
+
+    fn fresh_arguments_capture_name(&self, body_idx: NodeIndex, params: &[String]) -> String {
+        let mut binding_names = params.to_vec();
+        self.collect_body_binding_names(body_idx, &mut binding_names);
+
+        let mut suffix = 1usize;
+        loop {
+            let candidate = format!("arguments_{suffix}");
+            if !binding_names.iter().any(|name| name == &candidate) {
+                return candidate;
+            }
+            suffix += 1;
+        }
+    }
+
+    fn collect_parameter_binding_names(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+        names: &mut Vec<String>,
+    ) {
+        for &param_idx in &params.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.collect_binding_name(param.name, names);
+        }
+    }
+
+    fn collect_body_binding_names(&self, idx: NodeIndex, names: &mut Vec<String>) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        if let Some(source_file) = self.arena.get_source_file(node) {
+            for &stmt_idx in &source_file.statements.nodes {
+                self.collect_body_binding_names(stmt_idx, names);
+            }
+            return;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                if let Some(block) = self.arena.get_block(node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.collect_body_binding_names(stmt_idx, names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                || k == syntax_kind_ext::VARIABLE_DECLARATION =>
+            {
+                self.collect_variable_binding_names(idx, names);
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    self.collect_binding_name(func.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.arena.get_class(node) {
+                    self.collect_binding_name(class.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_data) = self.arena.get_enum(node) {
+                    self.collect_binding_name(enum_data.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = self.arena.get_module(node) {
+                    self.collect_binding_name(module.name, names);
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(node) {
+                    self.collect_body_binding_names(if_stmt.then_statement, names);
+                    self.collect_body_binding_names(if_stmt.else_statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.collect_variable_binding_names(loop_data.initializer, names);
+                    self.collect_body_binding_names(loop_data.statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                if let Some(for_in_of) = self.arena.get_for_in_of(node) {
+                    self.collect_variable_binding_names(for_in_of.initializer, names);
+                    self.collect_body_binding_names(for_in_of.statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.arena.get_try(node) {
+                    self.collect_body_binding_names(try_stmt.try_block, names);
+                    self.collect_body_binding_names(try_stmt.catch_clause, names);
+                    self.collect_body_binding_names(try_stmt.finally_block, names);
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
+                    self.collect_variable_binding_names(catch_clause.variable_declaration, names);
+                    self.collect_body_binding_names(catch_clause.block, names);
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_stmt) = self.arena.get_switch(node) {
+                    self.collect_body_binding_names(switch_stmt.case_block, names);
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(node) {
+                    for &stmt_idx in &clause.statements.nodes {
+                        self.collect_body_binding_names(stmt_idx, names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.collect_body_binding_names(labeled.statement, names);
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_stmt) = self.arena.get_with_statement(node) {
+                    self.collect_body_binding_names(with_stmt.then_statement, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_variable_binding_names(&self, idx: NodeIndex, names: &mut Vec<String>) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(decl) = self.arena.get_variable_declaration(node) {
+                self.collect_binding_name(decl.name, names);
+            }
+            return;
+        }
+
+        if let Some(var_data) = self.arena.get_variable(node) {
+            for &decl_idx in &var_data.declarations.nodes {
+                self.collect_variable_binding_names(decl_idx, names);
+            }
+        }
+    }
+
+    fn collect_binding_name(&self, name_idx: NodeIndex, names: &mut Vec<String>) {
+        if name_idx.is_none() {
+            return;
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.is_identifier() {
+            if let Some(name) = crate::transforms::emit_utils::identifier_text(self.arena, name_idx)
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
+            return;
+        }
+
+        match name_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+                    for &elem_idx in &pattern.elements.nodes {
+                        self.collect_binding_name(elem_idx, names);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::BINDING_ELEMENT => {
+                if let Some(elem) = self.arena.get_binding_element(name_node) {
+                    self.collect_binding_name(elem.name, names);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Get the helpers needed after transformation
@@ -224,7 +446,7 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     /// Take the helpers needed (consumes the transformer)
-    pub const fn take_helpers_needed(self) -> HelpersNeeded {
+    pub fn take_helpers_needed(self) -> HelpersNeeded {
         self.helpers_needed
     }
 
@@ -233,6 +455,7 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Returns an `IRNode::AwaiterCall` with a nested `IRNode::GeneratorBody`
     pub fn transform_async_function(&mut self, func_idx: NodeIndex) -> IRNode {
         self.state.reset();
+        self.reset_loop_exit_placeholders();
         self.helpers_needed.awaiter = true;
         self.helpers_needed.generator = true;
 
@@ -244,6 +467,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let (
             name,
             params,
+            param_binding_names,
             body_idx,
             await_default_param_name,
             recover_await_default,
@@ -260,6 +484,8 @@ impl<'a> AsyncES5Transformer<'a> {
                     ))
                 };
                 let params = self.collect_parameters(&func.parameters);
+                let mut param_binding_names = Vec::new();
+                self.collect_parameter_binding_names(&func.parameters, &mut param_binding_names);
                 let await_default_param_name =
                     self.first_await_default_param_name(&func.parameters);
                 let recover_await_default =
@@ -274,6 +500,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 (
                     name,
                     params,
+                    param_binding_names,
                     func.body,
                     await_default_param_name,
                     recover_await_default,
@@ -294,6 +521,10 @@ impl<'a> AsyncES5Transformer<'a> {
         let captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
         self.state.captures_arguments = captures_arguments;
+        if captures_arguments {
+            self.state.arguments_capture_name =
+                self.fresh_arguments_capture_name(body_idx, &param_binding_names);
+        }
 
         if recover_await_default {
             let mut generated = String::new();
@@ -388,6 +619,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
         if let Some(func_name) = name {
             let mut body = hoisted_decls;
+            self.emit_arguments_capture_decl(&mut body);
             body.push(awaiter_call);
             IRNode::FunctionDecl {
                 name: func_name.into(),
@@ -398,6 +630,7 @@ impl<'a> AsyncES5Transformer<'a> {
             }
         } else {
             let mut body = hoisted_decls;
+            self.emit_arguments_capture_decl(&mut body);
             body.push(awaiter_call);
             IRNode::FunctionExpr {
                 name: None,
@@ -411,13 +644,15 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub fn transform_generator_function(&mut self, func_idx: NodeIndex) -> IRNode {
         self.state.reset();
+        self.reset_loop_exit_placeholders();
         self.generator_mode = true;
         self.helpers_needed.generator = true;
         let Some(node) = self.arena.get(func_idx) else {
             self.generator_mode = false;
             return IRNode::Undefined;
         };
-        let (name, params, body_idx) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        let (name, params, param_binding_names, body_idx) = if node.kind
+            == syntax_kind_ext::FUNCTION_DECLARATION
             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
         {
             if let Some(func) = self.arena.get_function(node) {
@@ -429,7 +664,9 @@ impl<'a> AsyncES5Transformer<'a> {
                     ))
                 };
                 let params = self.collect_parameters(&func.parameters);
-                (name, params, func.body)
+                let mut param_binding_names = Vec::new();
+                self.collect_parameter_binding_names(&func.parameters, &mut param_binding_names);
+                (name, params, param_binding_names, func.body)
             } else {
                 self.generator_mode = false;
                 return IRNode::Undefined;
@@ -442,20 +679,27 @@ impl<'a> AsyncES5Transformer<'a> {
         self.state.has_await = has_yield;
         self.state.captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        if self.state.captures_arguments {
+            self.state.arguments_capture_name =
+                self.fresh_arguments_capture_name(body_idx, &param_binding_names);
+        }
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
         let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
-        let hoisted_vars = hoisted_var_groups.into_iter().flatten();
         let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
         let mut body = Vec::new();
-        for var_name in hoisted_vars {
-            body.push(IRNode::VarDecl {
-                name: var_name.into(),
-                initializer: None,
-            });
+        for group in hoisted_var_groups {
+            let declarations = group
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            body.push(IRNode::VarDeclList(declarations));
         }
         if self.state.captures_arguments {
             body.push(IRNode::VarDecl {
-                name: "arguments_1".to_string().into(),
+                name: self.state.arguments_capture_name.clone().into(),
                 initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
             });
         }
@@ -514,6 +758,7 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Transform just the generator body (for use by the wrapper)
     pub fn transform_generator_body(&mut self, body_idx: NodeIndex, has_await: bool) -> IRNode {
         self.state.reset();
+        self.reset_loop_exit_placeholders();
         self.state.has_await = has_await;
         self.helpers_needed.generator = true;
 
@@ -521,6 +766,9 @@ impl<'a> AsyncES5Transformer<'a> {
         // (the caller is responsible for emitting `var arguments_1 = arguments;`)
         self.state.captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        if self.state.captures_arguments && self.state.arguments_capture_name.is_empty() {
+            self.state.arguments_capture_name = self.fresh_arguments_capture_name(body_idx, &[]);
+        }
 
         self.build_generator_body(body_idx, has_await, &[])
     }
@@ -579,6 +827,17 @@ impl<'a> AsyncES5Transformer<'a> {
             cases.push(IRGeneratorCase {
                 label: current_label,
                 statements: current_statements,
+            });
+        } else if !cases.is_empty() {
+            cases.push(IRGeneratorCase {
+                label: current_label,
+                statements: vec![IRNode::ReturnStatement(Some(Box::new(
+                    IRNode::GeneratorOp {
+                        opcode: opcodes::RETURN,
+                        value: None,
+                        comment: Some("return".to_string().into()),
+                    },
+                )))],
             });
         } else if cases.is_empty() {
             // Empty async body - still need a return case
@@ -809,6 +1068,26 @@ impl<'a> AsyncES5Transformer<'a> {
                 self.process_if_statement_in_async(idx, cases, current_statements, current_label);
             }
 
+            k if k == syntax_kind_ext::WHILE_STATEMENT => {
+                self.process_while_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
+            k if k == syntax_kind_ext::FOR_STATEMENT => {
+                if !self.process_captured_for_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(self.statement_to_ir(idx));
+                }
+            }
+
             k if k == syntax_kind_ext::THROW_STATEMENT => {
                 if let Some(throw_data) = self.arena.get_return_statement(node) {
                     if self.contains_await_recursive(throw_data.expression) {
@@ -841,6 +1120,15 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::TRY_STATEMENT => {
                 self.process_try_statement_in_async(idx, cases, current_statements, current_label);
+            }
+
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                self.process_labeled_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
             }
 
             _ => {
@@ -1492,6 +1780,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let class_ir = class_transformer.transform_class_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
             body,
+            super_param,
             weakmap_decls,
             weakmap_inits,
             deferred_static_blocks,
@@ -1503,7 +1792,9 @@ impl<'a> AsyncES5Transformer<'a> {
         Some(ES5ClassFactoryParts {
             factory: IRNode::FunctionExpr {
                 name: None,
-                parameters: vec![IRParam::new("_super")],
+                parameters: vec![IRParam::new(
+                    super_param.as_deref().unwrap_or("_super").to_string(),
+                )],
                 body,
                 is_expression_body: false,
                 body_source_range: None,
@@ -1640,6 +1931,390 @@ impl<'a> AsyncES5Transformer<'a> {
             });
         }
         *current_label = end_label;
+    }
+
+    /// Process a while statement inside an async function body.
+    ///
+    /// `await` in the body must be lifted into generator cases before the loop
+    /// body is emitted. A raw `while` statement around `await` would otherwise
+    /// leave invalid `await` syntax inside the ES5 generator callback.
+    fn process_while_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return;
+        };
+
+        let condition_has_await = self.contains_await_recursive(loop_data.condition);
+        let body_has_await = self.contains_await_recursive(loop_data.statement);
+
+        if !body_has_await || condition_has_await {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let loop_label = *current_label;
+        let exit_placeholder = self.next_loop_exit_placeholder();
+        let condition = self.expression_to_ir(loop_data.condition);
+
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".to_string().into(),
+                operand: Box::new(condition),
+            }),
+            target_label: exit_placeholder,
+        });
+
+        self.process_block_or_statement_in_async(
+            loop_data.statement,
+            cases,
+            current_statements,
+            current_label,
+        );
+
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::BREAK,
+                value: Some(Box::new(IRNode::NumericLiteral(
+                    loop_label.to_string().into(),
+                ))),
+                comment: Some("break".to_string().into()),
+            },
+        ))));
+
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        let exit_label = self.state.next_label();
+        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        *current_label = exit_label;
+    }
+
+    fn process_captured_for_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return false;
+        };
+        if !self.loop_needs_async_capture(idx) {
+            return false;
+        }
+
+        let Some((loop_var, init_text)) =
+            self.simple_for_loop_var_initializer(loop_data.initializer)
+        else {
+            return false;
+        };
+
+        let loop_suffix = self.async_captured_for_loop_ordinal(idx);
+        let loop_fn = format!("_loop_{loop_suffix}");
+        let state_name = self.captured_for_loop_state_name(idx);
+        let condition = self.ir_text(self.expression_to_ir(loop_data.condition));
+        let incrementor = self.ir_text(self.expression_to_ir(loop_data.incrementor));
+        let inner_body = self.captured_for_loop_inner_generator(loop_data.statement, &state_name);
+
+        current_statements.push(IRNode::VarDecl {
+            name: loop_fn.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::Raw(
+            format!(
+                "{loop_fn} = function ({loop_var}) {{\n                        return __generator(this, function (_b) {{\n                            switch (_b.label) {{\n{inner_body}                            }}\n                        }});\n                    }};"
+            )
+            .into(),
+        ));
+        current_statements.push(IRNode::VarDecl {
+            name: loop_var.clone().into(),
+            initializer: None,
+        });
+        if let Some(state_name) = &state_name {
+            current_statements.push(IRNode::VarDecl {
+                name: state_name.clone().into(),
+                initializer: None,
+            });
+        }
+        current_statements.push(IRNode::Raw(format!("{loop_var} = {init_text};").into()));
+        current_statements.push(IRNode::Raw(
+            format!("_a.label = {};", self.state.label_counter).into(),
+        ));
+
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        let condition_label = self.state.next_label();
+        *current_label = condition_label;
+        let after_yield_label = self.state.next_label();
+        let increment_label = self.state.next_label();
+        let exit_label = self.state.next_label();
+
+        current_statements.push(IRNode::Raw(
+            format!("if (!({condition})) return [3 /*break*/, {exit_label}];").into(),
+        ));
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::YIELD_STAR,
+                value: Some(Box::new(IRNode::CallExpr {
+                    callee: Box::new(IRNode::Identifier(loop_fn.into())),
+                    arguments: vec![IRNode::Identifier(loop_var.into())],
+                })),
+                comment: Some("yield*".to_string().into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: condition_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        if let Some(state_name) = &state_name {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
+                left: Box::new(IRNode::Identifier(state_name.clone().into())),
+                operator: "=".to_string().into(),
+                right: Box::new(IRNode::GeneratorSent),
+            })));
+            if self.captured_for_loop_has_break(loop_data.statement) {
+                current_statements.push(IRNode::Raw(format!(
+                    "if ({state_name} === \"break\")\n                        return [3 /*break*/, {exit_label}];"
+                ).into()));
+            }
+            if self.captured_for_loop_has_value_return(loop_data.statement) {
+                current_statements.push(IRNode::Raw(format!(
+                    "if (typeof {state_name} === \"object\")\n                        return [2 /*return*/, {state_name}.value];"
+                ).into()));
+            }
+        } else {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+        }
+        current_statements.push(IRNode::Raw(format!("_a.label = {increment_label};").into()));
+        cases.push(IRGeneratorCase {
+            label: after_yield_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        current_statements.push(IRNode::Raw(format!("{incrementor};").into()));
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::BREAK,
+                value: Some(Box::new(IRNode::NumericLiteral(
+                    condition_label.to_string().into(),
+                ))),
+                comment: Some("break".to_string().into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: increment_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = exit_label;
+        true
+    }
+
+    fn loop_needs_async_capture(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return false;
+        };
+        if !self.contains_await_recursive(loop_data.statement) {
+            return false;
+        }
+        let loop_vars = crate::transforms::block_scoping_es5::collect_loop_vars(
+            self.arena,
+            loop_data.initializer,
+        );
+        if loop_vars.is_empty() {
+            return false;
+        }
+        crate::transforms::block_scoping_es5::analyze_loop_capture(
+            self.arena,
+            loop_data.statement,
+            &loop_vars,
+        )
+        .needs_capture
+    }
+
+    fn async_captured_for_loop_ordinal(&self, idx: NodeIndex) -> usize {
+        let Some(current) = self.arena.get(idx) else {
+            return 1;
+        };
+        self.arena
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, node)| {
+                node.pos <= current.pos
+                    && node.kind == syntax_kind_ext::FOR_STATEMENT
+                    && self.loop_needs_async_capture(NodeIndex(*i as u32))
+            })
+            .count()
+    }
+
+    fn captured_for_loop_state_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        let loop_data = self.arena.get_loop(node)?;
+        if !self.captured_for_loop_has_break(loop_data.statement)
+            && !self.captured_for_loop_has_value_return(loop_data.statement)
+        {
+            return None;
+        }
+        let current = self.arena.get(idx)?;
+        let ordinal = self
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, node)| {
+                node.pos <= current.pos
+                    && node.kind == syntax_kind_ext::FOR_STATEMENT
+                    && self.loop_needs_async_capture(NodeIndex(*i as u32))
+                    && self.arena.get_loop(node).is_some_and(|loop_data| {
+                        self.captured_for_loop_has_break(loop_data.statement)
+                            || self.captured_for_loop_has_value_return(loop_data.statement)
+                    })
+            })
+            .count();
+        Some(format!("state_{ordinal}"))
+    }
+
+    fn simple_for_loop_var_initializer(&self, initializer: NodeIndex) -> Option<(String, String)> {
+        let init_node = self.arena.get(initializer)?;
+        let var_list = self.arena.get_variable(init_node)?;
+        let decl_idx = *var_list.declarations.nodes.first()?;
+        let decl = self.arena.get_variable_declaration_at(decl_idx)?;
+        Some((
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, decl.name),
+            self.ir_text(self.expression_to_ir(decl.initializer)),
+        ))
+    }
+
+    fn captured_for_loop_inner_generator(
+        &mut self,
+        body: NodeIndex,
+        state_name: &Option<String>,
+    ) -> String {
+        let mut lines = Vec::new();
+        lines.push("                                case 0: return [4 /*yield*/, 1];".to_string());
+        lines.push("                                case 1:".to_string());
+        lines.push("                                    _b.sent();".to_string());
+
+        if let Some(block_node) = self.arena.get(body)
+            && let Some(block) = self.arena.get_block(block_node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                    if let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
+                        && self.is_suspension_expression(expr_stmt.expression)
+                    {
+                        continue;
+                    }
+                    lines.push(format!(
+                        "                                    {}",
+                        self.ir_text(self.statement_to_ir(stmt_idx))
+                    ));
+                } else if stmt_node.kind == syntax_kind_ext::BREAK_STATEMENT {
+                    lines.push(
+                        "                                    return [2 /*return*/, \"break\"];"
+                            .to_string(),
+                    );
+                } else if stmt_node.kind == syntax_kind_ext::CONTINUE_STATEMENT {
+                    lines.push(
+                        "                                    return [2 /*return*/, \"continue\"];"
+                            .to_string(),
+                    );
+                } else if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                    if let Some(ret) = self.arena.get_return_statement(stmt_node) {
+                        let value = self.ir_text(self.expression_to_ir(ret.expression));
+                        lines.push(format!(
+                            "                                    return [2 /*return*/, {{ value: {value} }}];"
+                        ));
+                    }
+                }
+            }
+        }
+
+        if state_name.is_none() && !self.captured_for_loop_has_continue(body) {
+            lines.push("                                    return [2 /*return*/];".to_string());
+        }
+        lines.join("\n") + "\n"
+    }
+
+    fn captured_for_loop_has_break(&self, body: NodeIndex) -> bool {
+        self.block_contains_statement_kind(body, syntax_kind_ext::BREAK_STATEMENT)
+    }
+
+    fn captured_for_loop_has_continue(&self, body: NodeIndex) -> bool {
+        self.block_contains_statement_kind(body, syntax_kind_ext::CONTINUE_STATEMENT)
+    }
+
+    fn captured_for_loop_has_value_return(&self, body: NodeIndex) -> bool {
+        self.block_contains_statement_kind(body, syntax_kind_ext::RETURN_STATEMENT)
+    }
+
+    fn block_contains_statement_kind(&self, body: NodeIndex, kind: u16) -> bool {
+        let Some(block_node) = self.arena.get(body) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            return false;
+        };
+        block.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena
+                .get(stmt_idx)
+                .is_some_and(|stmt_node| stmt_node.kind == kind)
+        })
+    }
+
+    fn ir_text(&self, ir: IRNode) -> String {
+        crate::transforms::ir_printer::IRPrinter::emit_to_string(&ir)
+    }
+
+    fn patch_if_break_target(
+        cases: &mut [IRGeneratorCase],
+        placeholder_label: u32,
+        target_label: u32,
+    ) {
+        for case in cases {
+            for statement in &mut case.statements {
+                Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
+            }
+        }
+    }
+
+    const fn patch_if_break_target_in_node(
+        node: &mut IRNode,
+        placeholder_label: u32,
+        target_label: u32,
+    ) {
+        if let IRNode::IfBreak {
+            target_label: candidate,
+            ..
+        } = node
+            && *candidate == placeholder_label
+        {
+            *candidate = target_label;
+        }
     }
 
     /// Process a try/catch/finally statement inside an async function body.
@@ -1818,6 +2493,79 @@ impl<'a> AsyncES5Transformer<'a> {
             });
         }
         *current_label = end_label;
+    }
+
+    fn process_labeled_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(labeled) = self.arena.get_labeled_statement(node) else {
+            return;
+        };
+
+        if !self.contains_await_recursive(labeled.statement) {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let label =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, labeled.label);
+
+        let Some(statement_node) = self.arena.get(labeled.statement) else {
+            return;
+        };
+        if statement_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(statement_node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                if self.is_break_to_label(stmt_idx, &label) {
+                    let end_label = self.state.next_label();
+                    current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                        IRNode::GeneratorOp {
+                            opcode: opcodes::BREAK,
+                            value: Some(Box::new(IRNode::NumericLiteral(
+                                end_label.to_string().into(),
+                            ))),
+                            comment: Some("break".to_string().into()),
+                        },
+                    ))));
+                    cases.push(IRGeneratorCase {
+                        label: *current_label,
+                        statements: std::mem::take(current_statements),
+                    });
+                    *current_label = end_label;
+                    return;
+                }
+
+                self.process_async_statement(stmt_idx, cases, current_statements, current_label);
+            }
+        } else {
+            self.process_async_statement(
+                labeled.statement,
+                cases,
+                current_statements,
+                current_label,
+            );
+        }
+    }
+
+    fn is_break_to_label(&self, stmt_idx: NodeIndex, label: &str) -> bool {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BREAK_STATEMENT {
+            return false;
+        }
+        let Some(jump) = self.arena.get_jump_data(node) else {
+            return false;
+        };
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, jump.label) == label
     }
 
     /// Get the catch variable name from a variable declaration index

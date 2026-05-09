@@ -120,8 +120,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // TS1212/TS1213/TS1214: Reserved word used as parameter name in strict mode
-            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
+            let has_recovery_error_after_name =
+                (self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty())
+                    && self.ctx.all_parse_error_positions.iter().any(|&pos| {
+                        pos >= name_node.end && pos <= param_node.end.max(name_node.end)
+                    });
+
+            // TS1212/TS1213/TS1214: Reserved word used as parameter name in strict mode.
+            // Suppress when parser recovery has already reported a syntax error inside
+            // this malformed parameter after the apparent name, e.g.
+            // `constructor(public @dec p: number)` where tsc reports only TS1005.
+            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text)
+                && !has_recovery_error_after_name
+            {
+                if self.rest_parameter_name_is_recovery_artifact(param_idx, param.name) {
+                    continue;
+                }
                 self.emit_strict_mode_reserved_word_error(
                     param.name,
                     &ident.escaped_text,
@@ -175,6 +189,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn rest_parameter_name_is_recovery_artifact(
+        &self,
+        param_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+            return false;
+        };
+        if !param.dot_dot_dot_token {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        self.ctx
+            .syntax_parse_error_positions
+            .iter()
+            .any(|&pos| pos > name_node.end && pos < param_node.end)
     }
 
     /// Check type parameter names for strict-mode reserved words (TS1212/TS1213/TS1214).
@@ -1240,12 +1277,17 @@ impl<'a> CheckerState<'a> {
                 // Fall back to assignability for custom array subclasses (e.g.,
                 // `CoolArray<T> extends Array<T>` which is structurally array-like
                 // but not recognized by classify_array_like as a raw Array/Tuple).
-                if !self.is_array_like_type(declared_type) {
+                let array_check_type = resolved;
+                if !self.is_array_like_type(declared_type)
+                    && !self.is_array_like_type(array_check_type)
+                {
                     let factory = self.ctx.types.factory();
                     let any_array = factory.array(TypeId::ANY);
                     let readonly_any_array = factory.readonly_type(any_array);
 
-                    if !self.is_assignable_to(declared_type, readonly_any_array) {
+                    if !self.is_assignable_to(declared_type, readonly_any_array)
+                        && !self.is_assignable_to(array_check_type, readonly_any_array)
+                    {
                         // tsc anchors TS2370 at the parameter (including the
                         // `...` token) rather than at its type annotation or
                         // name.  Use the param node's start position with the
@@ -1293,8 +1335,67 @@ impl<'a> CheckerState<'a> {
 // =============================================================================
 
 #[cfg(test)]
+mod strict_parameter_name_tests {
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    fn checker_codes_with_parse_health(source: &str) -> Vec<u32> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let parse_diagnostics = parser.get_diagnostics().to_vec();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.has_parse_errors = !parse_diagnostics.is_empty();
+        checker.ctx.has_syntax_parse_errors = !parse_diagnostics.is_empty();
+        checker.ctx.syntax_parse_error_positions =
+            parse_diagnostics.iter().map(|diag| diag.start).collect();
+        checker.ctx.all_parse_error_positions =
+            parse_diagnostics.iter().map(|diag| diag.start).collect();
+
+        checker.check_source_file(root);
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|diag| diag.code)
+            .collect()
+    }
+
+    #[test]
+    fn recovered_rest_parameter_modifier_suppresses_class_strict_reserved_name() {
+        let codes = checker_codes_with_parse_health(
+            "class C {
+                 constructor(...public rest: string[]) {}
+             }",
+        );
+        assert!(
+            !codes.contains(&1213),
+            "recovered `...public rest` should not cascade into TS1213: {codes:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod binding_pattern_defaults_tests {
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::state::CheckerState;
     use crate::test_utils::{check_js_source_diagnostics, check_source_codes};
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
 
     /// Positive test: arrow function default correctly typed via contextual type.
     /// `v => v.toString()` returns string, matching `(x: number) => string`.
@@ -1478,6 +1579,51 @@ mod binding_pattern_defaults_tests {
             ts2339_count >= 3,
             "Constructor binding pattern with missing properties should \
              emit TS2339 for x1, x2, x3 (>=3 occurrences). Got codes: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn misplaced_decorator_after_parameter_property_modifier_suppresses_ts1213() {
+        let source = "declare var dec: any;
+             class C {
+                 constructor(public @dec p: number) {}
+             }";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let parse_diagnostics = parser.get_diagnostics().to_vec();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions {
+                experimental_decorators: true,
+                ..CheckerOptions::default()
+            },
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.ctx.has_parse_errors = !parse_diagnostics.is_empty();
+        checker.ctx.all_parse_error_positions =
+            parse_diagnostics.iter().map(|diag| diag.start).collect();
+        checker.check_source_file(root);
+
+        let codes: Vec<u32> = parse_diagnostics
+            .iter()
+            .map(|diag| diag.code)
+            .chain(checker.ctx.diagnostics.iter().map(|diag| diag.code))
+            .collect();
+        assert!(
+            codes.contains(&1005),
+            "Expected misplaced parameter decorator to keep TS1005, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&1213),
+            "Expected no TS1213 reserved-word cascade for recovered parameter, got: {codes:?}"
         );
     }
 }

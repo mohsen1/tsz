@@ -10,7 +10,7 @@ use super::{
 use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::*;
 use crate::span::Span;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Returns true when an exports/imports pattern key literally ends with a
 /// TypeScript source extension. This mirrors tsc's `resolvedUsingTsExtension`
@@ -21,6 +21,60 @@ use std::path::{Path, PathBuf};
 /// situation TS2877 warns about.
 pub(super) fn key_ends_with_ts_extension(key: &str) -> bool {
     key.ends_with(".ts") || key.ends_with(".tsx") || key.ends_with(".mts") || key.ends_with(".cts")
+}
+
+fn package_relative_target_path(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    if !is_valid_relative_package_target(target) {
+        return None;
+    }
+    let rest = target.strip_prefix("./")?;
+    Some(package_dir.join(rest))
+}
+
+/// Returns true when a relative `exports`/`imports` target string is a valid
+/// per-package relative path per Node.js `PACKAGE_TARGET_RESOLVE`.
+///
+/// A valid relative target:
+/// - Starts with `"./"`.
+/// - Contains no `..` path segment (cannot escape the package root).
+/// - Contains no `node_modules` path segment.
+///
+/// This is applied AFTER wildcard substitution so that `*` substitutions
+/// cannot smuggle in `..` or `node_modules` either.
+pub(super) fn is_valid_relative_package_target(target: &str) -> bool {
+    if !target.starts_with("./") {
+        return false;
+    }
+    let path = Path::new(target);
+    !path.components().any(|component| match component {
+        Component::ParentDir | Component::RootDir | Component::Prefix(_) => true,
+        Component::Normal(segment) => segment == "node_modules",
+        _ => false,
+    })
+}
+
+/// Returns true when an `imports` target is a valid bare-package specifier
+/// per Node.js `PACKAGE_IMPORTS_RESOLVE`.
+///
+/// A bare specifier must not be empty, must not be absolute (Unix `/...`,
+/// Windows backslash, or `<drive>:...`), and must not look relative
+/// (`./` / `../`). Bare specifiers are otherwise unrestricted here — full
+/// validation happens when the package is resolved.
+pub(super) fn is_valid_bare_imports_target(target: &str) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    if target.starts_with('/') || target.starts_with('\\') {
+        return false;
+    }
+    if target.starts_with("./") || target.starts_with("../") {
+        return false;
+    }
+    let bytes = target.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        return false;
+    }
+    true
 }
 
 impl ModuleResolver {
@@ -45,48 +99,52 @@ impl ModuleResolver {
             {
                 let conditions = self.get_export_conditions(importing_module_kind);
 
-                if let Some((target, resolved_using_ts_extension)) =
-                    self.resolve_imports_subpath(imports, specifier, &conditions)
+                for (target, resolved_using_ts_extension) in
+                    self.resolve_imports_subpath_candidates(imports, specifier, &conditions)
                 {
-                    // Per Node.js PACKAGE_IMPORTS_RESOLVE spec:
-                    // If the target is a bare specifier (not starting with "./" or "/"),
-                    // it should be resolved as a package (PACKAGE_RESOLVE), not as a
-                    // relative path. This supports self-referencing imports like
-                    // "#type": "package" where the imports field maps to a package name.
-                    if !target.starts_with("./") && !target.starts_with('/') {
-                        return self
-                            .resolve_bare_specifier(
-                                &target,
-                                &current,
-                                containing_file,
-                                specifier_span,
-                                importing_module_kind,
-                            )
-                            .map_err(|e| match e {
-                                ResolutionFailure::NotFound { span, .. }
-                                | ResolutionFailure::AmbiguousProjectRoot { span, .. } => {
-                                    ResolutionFailure::NotFound {
-                                        specifier: specifier.to_string(),
-                                        containing_file: containing_file.to_string(),
-                                        span,
-                                    }
-                                }
-                                other => other,
+                    // Per Node.js PACKAGE_IMPORTS_RESOLVE spec, the resolved
+                    // (post-substitution) target must either be a relative
+                    // path within the package (`./...`) or a bare package
+                    // specifier. Absolute paths and parent escapes are
+                    // invalid targets and must not resolve.
+                    if target.starts_with("./") {
+                        let Some(resolved_path) = package_relative_target_path(&current, &target)
+                        else {
+                            continue;
+                        };
+                        if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
+                            return Ok(ResolvedModule {
+                                resolved_path: resolved.clone(),
+                                resolved_using_ts_extension,
+                                is_external: false,
+                                package_name: package_json.name.clone(),
+                                original_specifier: specifier.to_string(),
+                                extension: ModuleExtension::from_path(&resolved),
                             });
+                        }
+                        continue;
                     }
 
-                    // Resolve the target as a relative path
-                    let resolved_path = current.join(target.trim_start_matches("./"));
+                    if !is_valid_bare_imports_target(&target) {
+                        continue;
+                    }
 
-                    if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
-                        return Ok(ResolvedModule {
-                            resolved_path: resolved.clone(),
-                            resolved_using_ts_extension,
-                            is_external: false,
-                            package_name: package_json.name.clone(),
-                            original_specifier: specifier.to_string(),
-                            extension: ModuleExtension::from_path(&resolved),
-                        });
+                    // Bare specifier: resolve as a package (PACKAGE_RESOLVE),
+                    // supporting self-referencing imports like
+                    // `"#type": "some-package"`.
+                    match self.resolve_bare_specifier(
+                        &target,
+                        &current,
+                        containing_file,
+                        specifier_span,
+                        importing_module_kind,
+                    ) {
+                        Ok(resolved) => return Ok(resolved),
+                        Err(
+                            ResolutionFailure::NotFound { .. }
+                            | ResolutionFailure::AmbiguousProjectRoot { .. },
+                        ) => continue,
+                        Err(other) => return Err(other),
                     }
                 }
             }
@@ -105,30 +163,27 @@ impl ModuleResolver {
         })
     }
 
-    /// Resolve imports field subpath (similar to exports but with # prefix).
+    /// Resolve imports field subpath into ordered target candidates.
     ///
-    /// Returns `(resolved_target, resolved_using_ts_extension)`.
-    ///
-    /// `resolved_using_ts_extension` mirrors tsc's behavior: it is `true` when
-    /// the literal pattern key (the package author's declared mapping) ends in
-    /// a TypeScript source extension. It is **not** sufficient for the wildcard
-    /// substitution to end in `.ts` — that just preserves the user's `.ts`
-    /// through the substitution, which means Node would try to load a `.ts`
-    /// file at runtime (the situation TS2877 warns about).
-    pub(super) fn resolve_imports_subpath(
+    /// Array targets remain as ordered candidates so filesystem/package
+    /// resolution can try later fallbacks when earlier targets are missing.
+    fn resolve_imports_subpath_candidates(
         &self,
         imports: &rustc_hash::FxHashMap<String, PackageExports>,
         specifier: &str,
         conditions: &[String],
-    ) -> Option<(String, bool)> {
+    ) -> Vec<(String, bool)> {
         // Try exact match first.
         // Keys containing '*' are pattern keys and must not be treated as exact matches.
         if let Some((key, value)) = imports.get_key_value(specifier)
             && !key.contains('*')
         {
             let resolved_using_ts_extension = key_ends_with_ts_extension(key);
-            return Self::resolve_export_target_to_string(value, conditions)
-                .map(|target| (target, resolved_using_ts_extension));
+            return self
+                .resolve_export_targets_to_strings(value, conditions)
+                .into_iter()
+                .map(|target| (target, resolved_using_ts_extension))
+                .collect();
         }
 
         // Try pattern matching (e.g., "#utils/*")
@@ -147,72 +202,78 @@ impl ModuleResolver {
             }
         }
 
-        if let Some((_, pattern, wildcard, value)) = best_match
-            && let Some(target) = Self::resolve_export_target_to_string(value, conditions)
-        {
+        if let Some((_, pattern, wildcard, value)) = best_match {
             let resolved_using_ts_extension = key_ends_with_ts_extension(pattern);
             let is_directory_match = pattern.ends_with('/') && !pattern.contains('*');
-            return Some((
-                apply_wildcard_substitution(&target, &wildcard, is_directory_match),
-                resolved_using_ts_extension,
-            ));
+            return self
+                .resolve_export_targets_to_strings(value, conditions)
+                .into_iter()
+                .map(|target| {
+                    (
+                        apply_wildcard_substitution(&target, &wildcard, is_directory_match),
+                        resolved_using_ts_extension,
+                    )
+                })
+                .collect();
         }
 
-        None
+        Vec::new()
     }
 
     pub(super) fn is_invalid_package_import_specifier(specifier: &str) -> bool {
         specifier == "#" || specifier.starts_with("#/")
     }
 
-    /// Resolve an export/import value to a string path
-    pub(super) fn resolve_export_target_to_string(
+    /// Resolve an export/import value to ordered string path candidates.
+    ///
+    /// Conditional keys are matched via [`Self::condition_key_matches`], which
+    /// honors versioned `types@<range>` keys the same way the
+    /// `package.json#exports` resolver does. This keeps the imports and
+    /// exports paths aligned on conditional matching.
+    fn resolve_export_targets_to_strings(
+        &self,
         value: &PackageExports,
         conditions: &[String],
-    ) -> Option<String> {
+    ) -> Vec<String> {
         match value {
-            PackageExports::String(s) => Some(s.clone()),
+            PackageExports::String(s) => vec![s.clone()],
             PackageExports::Conditional(cond_entries) => {
                 // Iterate condition map entries in JSON key order
+                let mut results = Vec::new();
                 for (key, nested) in cond_entries {
-                    if conditions.iter().any(|c| c == key) {
+                    if self.condition_key_matches(key, conditions) {
                         if matches!(nested, PackageExports::Null) {
-                            return None;
+                            return Vec::new();
                         }
-                        if let Some(result) =
-                            Self::resolve_export_target_to_string(nested, conditions)
-                        {
-                            return Some(result);
-                        }
+                        results.extend(self.resolve_export_targets_to_strings(nested, conditions));
                     }
                 }
-                None
+                results
             }
             PackageExports::Array(elements) => {
-                // Array of fallback targets — try each element in order
+                // Array of fallback targets — preserve order so the caller can
+                // probe each syntactically applicable target.
+                let mut results = Vec::new();
                 for element in elements {
-                    if let Some(result) = Self::resolve_export_target_to_string(element, conditions)
-                    {
-                        return Some(result);
-                    }
+                    results.extend(self.resolve_export_targets_to_strings(element, conditions));
                 }
-                None
+                results
             }
-            PackageExports::Map(_) | PackageExports::Null => None, // Subpath maps not valid here
+            PackageExports::Map(_) | PackageExports::Null => Vec::new(), // Subpath maps not valid here
         }
     }
 
     /// Get export conditions based on resolution kind and module kind
     ///
     /// Returns conditions in priority order for conditional exports resolution.
-    /// The order follows TypeScript's algorithm:
+    /// The order follows TypeScript 6.0's algorithm:
     /// 1. Custom conditions from tsconfig (prepended to defaults)
     /// 2. "types" - TypeScript always checks this first
-    /// 3. Platform condition ("node" for Node.js, "browser" for bundler)
+    /// 3. Platform condition: "node" for Node-targeted resolution kinds. tsc
+    ///    does NOT add "browser" by default for `bundler` mode — `browser`
+    ///    must be opted into via `customConditions`.
     /// 4. Primary module condition based on importing file ("import" for ESM, "require" for CJS)
     /// 5. "default" - fallback for unmatched conditions
-    /// 6. Opposite module condition as fallback (allows ESM-first packages to work with CJS imports)
-    /// 7. Additional platform fallbacks
     pub(super) fn get_export_conditions(
         &self,
         importing_module_kind: ImportingModuleKind,
@@ -227,13 +288,12 @@ impl ModuleResolver {
         // TypeScript always checks "types" first
         conditions.push("types".to_string());
 
-        // Add platform condition: Node modes get "node", bundler uses "browser".
+        // Add platform condition: only Node-targeted resolution kinds get "node".
+        // Bundler mode does NOT default to "browser" — that must be opted in via
+        // `customConditions` (matches tsc 6.0).
         match self.resolution_kind {
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 conditions.push("node".to_string());
-            }
-            ModuleResolutionKind::Bundler => {
-                conditions.push("browser".to_string());
             }
             _ => {}
         }
@@ -293,7 +353,7 @@ impl ModuleResolver {
         match exports {
             PackageExports::String(s) => {
                 if subpath == "." {
-                    let resolved = package_dir.join(s.trim_start_matches("./"));
+                    let resolved = package_relative_target_path(package_dir, s)?;
                     if let Some(r) = self.try_export_target(&resolved) {
                         return Some((r, false));
                     }
@@ -399,7 +459,7 @@ impl ModuleResolver {
     ) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
-                let resolved = package_dir.join(s.trim_start_matches("./"));
+                let resolved = package_relative_target_path(package_dir, s)?;
                 self.try_export_target(&resolved)
             }
             PackageExports::Conditional(cond_entries) => {

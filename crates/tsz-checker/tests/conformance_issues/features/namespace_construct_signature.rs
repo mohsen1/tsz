@@ -831,6 +831,11 @@ const t2 = /** @satisfies T1 */ ({ a: 1 });
         4,
         "Expected only the four parse-shaped TS1005 diagnostics for malformed @satisfies tags.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.0 == 2304).count(),
+        0,
+        "Did not expect TS2304 for visible typedef names in malformed @satisfies tags.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -1356,7 +1361,7 @@ c.p + c.q;
         relevant
             .iter()
             .all(|(_, message)| message.contains("Property 'q' does not exist on type 'C'.")),
-        "Expected TS2339 for missing constructor property. Actual diagnostics: {relevant:#?}"
+        "Expected TS2339 for missing constructor property assignment and access. Actual diagnostics: {relevant:#?}"
     );
     assert!(
         !has_error(&relevant, 18048),

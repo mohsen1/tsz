@@ -171,14 +171,19 @@ pub fn look_ahead_is_import_equals(
         // is name, then `from` keyword + string).
         // But `import type from = require(...)` → import-equals (type is modifier,
         // `from` is name, `=` is not `,`/`from`).
+        // `defer` has no import-equals form (only `type` is consumed as an
+        // import-equals modifier), so `import defer from = require(...)` must route
+        // to import-declaration — tsc parses it as `defer` modifier + `from` name and
+        // emits a single `'from' expected.` at the `=`.
         if next2 == SyntaxKind::FromKeyword {
             let next3 = scanner.scan();
             scanner.restore_state(snapshot);
-            if next3 == SyntaxKind::EqualsToken {
+            if next3 == SyntaxKind::EqualsToken && next1 == SyntaxKind::TypeKeyword {
                 // `import type from =` → type-only import-equals with `from` as name
                 return true;
             }
-            // `import type from "mod"` or `import type from , ...` → import-declaration
+            // `import type from "mod"` / `import type from , ...` /
+            // `import defer from = ...` → import-declaration
             return false;
         }
         // `import type/defer <identifier> ...` where identifier is not `from`

@@ -888,6 +888,50 @@ function f(opts: { x?: string }) {
     );
 }
 
+#[test]
+fn union_valued_assignment_reduces_declared_union() {
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
+        r#"
+declare const choose: boolean;
+let value: 0 | 1 | 2;
+value = choose ? 0 : 1;
+const narrowed: 0 | 1 = value;
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Union-valued assignment should reduce the declared union, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn assignment_pattern_default_order_reduces_union_after_non_empty_rhs() {
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
+        r#"
+{
+    let a: 0 | 1 = 0;
+    let b: 0 | 1 | 8 | 9;
+    [{ [(a = 1)]: b } = [9, a] as const] = [[9, 8] as const];
+    const bb: 0 | 8 = b;
+}
+{
+    let a: 0 | 1 = 1;
+    let b: 0 | 1 | 8 | 9;
+    [{ [a]: b } = [a = 0, 9] as const] = [[8, 9] as const];
+    const bb: 0 | 8 = b;
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Assignment pattern order should reduce b to the default/source union, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // Phase 2: Nested destructuring with defaults in type-checking validation
 // =============================================================================

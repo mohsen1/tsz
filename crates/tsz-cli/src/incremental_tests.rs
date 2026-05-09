@@ -128,11 +128,32 @@ fn test_default_build_info_path() {
     let config = Path::new("/project/tsconfig.json");
 
     // Without outDir
-    let path = default_build_info_path(config, None);
+    let path = default_build_info_path(config, None, None);
     assert_eq!(path, PathBuf::from("/project/tsconfig.tsbuildinfo"));
 
-    // With outDir
-    let path = default_build_info_path(config, Some(Path::new("/project/dist")));
+    // With outDir, no rootDir
+    let path = default_build_info_path(config, Some(Path::new("/project/dist")), None);
+    assert_eq!(path, PathBuf::from("/project/dist/tsconfig.tsbuildinfo"));
+
+    // With outDir AND rootDir: tsc resolves outDir + rel(rootDir, configExtless),
+    // which collapses back outside outDir whenever the config sits above rootDir.
+    // See https://github.com/mohsen1/tsz/issues/3821 — repro: rootDir=src,
+    // outDir=dist, expected path is /project/tsconfig.tsbuildinfo.
+    let path = default_build_info_path(
+        config,
+        Some(Path::new("/project/dist")),
+        Some(Path::new("/project/src")),
+    );
+    assert_eq!(path, PathBuf::from("/project/tsconfig.tsbuildinfo"));
+
+    // Config inside rootDir: relative path has no `..`, so the buildinfo lands
+    // under outDir mirroring the config's position.
+    let nested_config = Path::new("/project/src/tsconfig.json");
+    let path = default_build_info_path(
+        nested_config,
+        Some(Path::new("/project/dist")),
+        Some(Path::new("/project/src")),
+    );
     assert_eq!(path, PathBuf::from("/project/dist/tsconfig.tsbuildinfo"));
 }
 

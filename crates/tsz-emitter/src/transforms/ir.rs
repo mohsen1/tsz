@@ -204,6 +204,17 @@ pub enum IRNode {
         body: Box<Self>,
     },
 
+    /// For-in / for-of statement: `for (init <kind> expr) <body>`. Used by
+    /// the ES5 class transform to recurse the body through the
+    /// derived-constructor `_this` substitution (issue #3539). `kind` is
+    /// `"in"`, `"of"`, or `"await of"`.
+    ForInOfStatement {
+        kind: Cow<'static, str>,
+        initializer: Box<Self>,
+        expression: Box<Self>,
+        body: Box<Self>,
+    },
+
     /// While statement: `while (cond) { body }`
     WhileStatement {
         condition: Box<Self>,
@@ -260,6 +271,7 @@ pub enum IRNode {
     ES5ClassIIFE {
         name: Cow<'static, str>,
         base_class: Option<Box<Self>>,
+        super_param: Option<Cow<'static, str>>,
         body: Vec<Self>,
         /// `WeakMap` declarations for private fields (before the IIFE)
         weakmap_decls: Vec<String>,
@@ -270,13 +282,23 @@ pub enum IRNode {
         /// Static block IIFEs deferred to after the class IIFE
         /// (used when the class has no non-block static members)
         deferred_static_blocks: Vec<Self>,
+        /// Class alias name to emit outside the IIFE for use by the deferred
+        /// static block IIFEs. When set, the printer emits
+        /// `var <alias>;` before the class declaration and
+        /// `<alias> = <name>;` after the class IIFE and before the deferred
+        /// blocks, so blocks that reference `this` (rewritten to the alias)
+        /// can resolve it. Issue #3967.
+        deferred_block_class_alias: Option<String>,
     },
 
     /// Static block IIFE: `(function () { ...statements... })();`
     StaticBlockIIFE { statements: Vec<Self> },
 
     /// __extends helper call: `__extends(ClassName, _super);`
-    ExtendsHelper { class_name: Cow<'static, str> },
+    ExtendsHelper {
+        class_name: Cow<'static, str>,
+        super_name: Cow<'static, str>,
+    },
 
     /// ES5 class expression application:
     /// `/** @class */ (_a.apply(void 0, [(Base)]))`
@@ -502,6 +524,8 @@ pub enum IRNode {
         /// being indented as regular statements. This prevents double-indentation when a
         /// namespace IIFE follows a class/enum/function in a parent namespace body.
         skip_sequence_indent: bool,
+        /// Same-line comment after the namespace declaration closing brace.
+        trailing_comment: Option<Cow<'static, str>>,
     },
 
     /// Namespace export: `NS.foo = ...;`

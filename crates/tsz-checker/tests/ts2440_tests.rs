@@ -138,6 +138,129 @@ namespace s {
     );
 }
 
+#[test]
+fn duplicate_import_equals_type_then_namespace_uses_later_value_alias() {
+    let source = r#"
+namespace Z {
+    export namespace M {
+        export function bar() {
+            return "";
+        }
+    }
+    export interface I {}
+}
+namespace A.M {
+    import M = Z.I;
+    import M = Z.M;
+    M.bar();
+}
+"#;
+    let diagnostics = get_diagnostics(source);
+    let ts2300_count = diagnostics.iter().filter(|diag| diag.0 == 2300).count();
+
+    assert_eq!(
+        ts2300_count, 2,
+        "Should emit TS2300 on both duplicate import aliases. Got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.0 == 2693),
+        "Later value-bearing import alias should prevent TS2693 at M.bar(). Got: {diagnostics:?}"
+    );
+}
+
+// =========================================================================
+// Regression: import-equals to a value (e.g. enum member) merging with a
+// same-named local type alias must still emit TS2440. The binder merges the
+// import alias and the type alias into a single symbol (ALIAS | TYPE_ALIAS),
+// so the conflict cannot be detected by walking other-named symbols.
+//
+// Conformance reproducer: importedEnumMemberMergedWithExportedAliasIsError.ts
+// =========================================================================
+
+#[test]
+fn test_import_equals_value_target_conflicts_with_local_type_alias() {
+    // The import alias and the type alias bind to *separate* symbols (the
+    // binder's type-alias path explicitly creates a new TYPE_ALIAS symbol
+    // when an existing ALIAS occupies the slot). The TS2440 conflict check
+    // must therefore find the type-alias symbol via `find_all_by_name` and
+    // recognise it as a same-scope conflict — it must NOT skip it because
+    // the type alias declaration owns its own (type-parameter) scope.
+    let source = r#"
+namespace N {
+    export var X = 1;
+}
+import X = N.X;
+export type X = number;
+"#;
+    assert!(
+        has_error_with_code(source, 2440),
+        "Should emit TS2440 when import-equals (value) shares a name with a local type alias. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_import_equals_value_target_emits_ts2395_for_mixed_export_partner() {
+    // The binder splits the import alias and type alias into two symbols
+    // (linked via `alias_partners`). tsc treats them as a merged declaration,
+    // so a non-exported import paired with an exported type alias must emit
+    // TS2395 on each declaration's name node.
+    let source = r#"
+namespace N {
+    export var X = 1;
+}
+import X = N.X;
+export type X = number;
+"#;
+    let diags = get_diagnostics(source);
+    let count_2395 = diags.iter().filter(|(c, _)| *c == 2395).count();
+    assert!(
+        count_2395 >= 2,
+        "Expected ≥2 TS2395 diagnostics (one per partnered decl), got {count_2395}. All: {diags:?}"
+    );
+}
+
+#[test]
+fn test_import_equals_value_target_no_ts2395_when_all_exported() {
+    // When both halves of the partnership are exported, there is no
+    // export-mismatch and TS2395 must not fire.
+    let source = r#"
+namespace N {
+    export var X = 1;
+}
+export import X = N.X;
+export type X = number;
+"#;
+    let diags = get_diagnostics(source);
+    let count_2395 = diags.iter().filter(|(c, _)| *c == 2395).count();
+    assert_eq!(
+        count_2395, 0,
+        "Should not emit TS2395 when all partnered decls are exported. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_import_equals_enum_member_target_conflicts_with_type_alias_choice_invariant() {
+    // Verify the invariant doesn't depend on the user-chosen alias name —
+    // the rule is structural, not name-based.
+    for (alias_name, type_name) in [("EnumA", "EnumA"), ("Foo", "Foo"), ("XYZ", "XYZ")] {
+        let source = format!(
+            r#"
+namespace Outer {{
+    export enum E {{ A, B }}
+}}
+import {alias_name} = Outer.E.A;
+export type {type_name} = [string] | [string, number];
+"#
+        );
+        assert!(
+            has_error_with_code(&source, 2440),
+            "Should emit TS2440 for alias '{alias_name}' merging with same-named type. Got: {:?}",
+            get_diagnostics(&source)
+        );
+    }
+}
+
 // =========================================================================
 // No false positive: module augmentation declarations
 // =========================================================================

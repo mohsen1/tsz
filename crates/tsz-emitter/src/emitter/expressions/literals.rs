@@ -437,6 +437,21 @@ impl<'a> Printer<'a> {
         };
 
         if obj.elements.nodes.is_empty() {
+            if let Some((open_brace_end, close_brace_pos)) =
+                self.empty_object_literal_comment_range(node)
+            {
+                self.write("{");
+                self.write_line();
+                self.increase_indent();
+                let wrote_newline =
+                    self.emit_unemitted_comments_between(open_brace_end, close_brace_pos);
+                if !wrote_newline {
+                    self.write_line();
+                }
+                self.decrease_indent();
+                self.write("}");
+                return;
+            }
             self.write("{}");
             return;
         }
@@ -474,6 +489,10 @@ impl<'a> Printer<'a> {
             if has_spread && target_num < es2018_num {
                 // Target is ES2015/ES2016/ES2017: lower to Object.assign()
                 self.emit_object_literal_with_object_assign(&emitted_properties);
+                if self.object_spread_has_recovered_trailing_empty_object(node, &emitted_properties)
+                {
+                    self.write(", {}");
+                }
                 return;
             }
         }
@@ -825,6 +844,29 @@ impl<'a> Printer<'a> {
             }
             self.decrease_indent();
             self.write("}");
+        }
+    }
+
+    fn empty_object_literal_comment_range(&self, node: &Node) -> Option<(u32, u32)> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = std::cmp::min(node.pos as usize, bytes.len());
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        if start >= end {
+            return None;
+        }
+
+        let open = bytes[start..end].iter().position(|&b| b == b'{')? + start;
+        let close = bytes[start..end].iter().rposition(|&b| b == b'}')? + start;
+        if open >= close {
+            return None;
+        }
+
+        let inner = &text[open + 1..close];
+        if inner.contains("//") || inner.contains("/*") {
+            Some(((open + 1) as u32, close as u32))
+        } else {
+            None
         }
     }
 
@@ -1217,6 +1259,39 @@ impl<'a> Printer<'a> {
             self.emit_expression(spread.expression);
         }
     }
+
+    fn object_spread_has_recovered_trailing_empty_object(
+        &self,
+        node: &Node,
+        elements: &[NodeIndex],
+    ) -> bool {
+        if elements.len() != 1 {
+            return false;
+        }
+        let Some(spread_node) = self.arena.get(elements[0]) else {
+            return false;
+        };
+        if spread_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT {
+            return false;
+        }
+        let Some(spread) = self.arena.get_spread(spread_node) else {
+            return false;
+        };
+        let Some(source) = self.source_text else {
+            return false;
+        };
+        let start = std::cmp::min(
+            self.arena
+                .get(spread.expression)
+                .map_or(spread_node.end, |expr| expr.end) as usize,
+            source.len(),
+        );
+        let end = std::cmp::min(node.end as usize, source.len());
+        if start >= end {
+            return false;
+        }
+        source[start..end].trim_start().starts_with('{')
+    }
 }
 
 #[cfg(test)]
@@ -1305,6 +1380,25 @@ mod tests {
         assert!(
             output.contains("x: 1,"),
             "Trailing comma should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Comment-only empty object literals should not collapse to `{}`.
+    #[test]
+    fn empty_object_literal_with_inner_comment_preserved() {
+        let source = "var o = {\n    value: {\n        // keep\n    },\n};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("{\n        // keep\n    }"),
+            "Comment-only empty object literal should keep its multiline body.\nOutput:\n{output}"
         );
     }
 

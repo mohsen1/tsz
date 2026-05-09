@@ -7,42 +7,23 @@
 
 mod access_semantics;
 mod expando;
+mod iterator_methods;
 
 #[cfg(test)]
 mod tests {
     use crate::context::CheckerOptions;
-    use crate::query_boundaries::type_construction::TypeInterner;
-    use crate::state::CheckerState;
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let types = TypeInterner::new();
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
+        crate::test_utils::check_with_options(
+            source,
             CheckerOptions {
                 no_property_access_from_index_signature: true,
                 ..CheckerOptions::default()
             },
-        );
-
-        checker.check_source_file(root);
-
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .map(|d| (d.code, d.message_text.clone()))
-            .collect()
+        )
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
     }
 
     #[test]

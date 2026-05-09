@@ -33,15 +33,10 @@ impl<'a> CheckerState<'a> {
             // Compiler-provided intrinsic type aliases (e.g., `type BuiltinIteratorReturn = intrinsic`)
             // cannot be resolved from their body—the `intrinsic` keyword has no type semantics
             // on its own. Intercept known intrinsic names and resolve them directly.
-            // No lib_contexts guard needed: BuiltinIteratorReturn is a compiler-defined name
-            // and cross-arena child contexts may not carry lib_contexts forward.
-            if escaped_name == "BuiltinIteratorReturn" {
-                let ty = if self.ctx.compiler_options.strict_builtin_iterator_return {
-                    TypeId::UNDEFINED
-                } else {
-                    TypeId::ANY
-                };
-                return (ty, Vec::new());
+            if escaped_name == "BuiltinIteratorReturn"
+                && self.is_compiler_builtin_iterator_return_alias(sym_id, declarations)
+            {
+                return (self.builtin_iterator_return_intrinsic_type(), Vec::new());
             }
             // When a type alias name collides with a global value declaration
             // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
@@ -172,7 +167,15 @@ impl<'a> CheckerState<'a> {
                         decl_arena,
                         type_alias.type_node,
                     );
-                    let mut alias_type = self.get_type_from_type_node(type_alias.type_node);
+                    let mut alias_type = if self.alias_ast_is_deferred(sym_id)
+                        && self.alias_ast_refs_symbol_or_resolution_chain_alias(
+                            type_alias.type_node,
+                            sym_id,
+                        ) {
+                        crate::TypeNodeChecker::new(&mut self.ctx).check(type_alias.type_node)
+                    } else {
+                        self.get_type_from_type_node(type_alias.type_node)
+                    };
                     // Resolve TypeQuery references with flow narrowing while type
                     // parameters are still in scope. This prevents false TS2304
                     // errors for type params used as type arguments in typeof
@@ -256,8 +259,11 @@ impl<'a> CheckerState<'a> {
                     !params.is_empty() && self.is_simple_type_reference(type_alias.type_node);
                 let is_non_generic_mapped_cycle = params.is_empty()
                     && self.is_non_generic_mapped_type_circular(sym_id, type_alias.type_node);
+                let is_jsx_runtime_bridge_alias = self
+                    .is_jsx_import_source_runtime_bridge_alias(decl_arena, type_alias.type_node);
                 let is_circular = circularity_eligible
                     && !generic_self_ref
+                    && !is_jsx_runtime_bridge_alias
                     && (self.is_direct_circular_reference(
                         sym_id,
                         alias_type,
@@ -323,6 +329,14 @@ impl<'a> CheckerState<'a> {
                             type_alias.name,
                             &message,
                             diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                        );
+                    }
+                    if is_non_generic_mapped_cycle {
+                        self.report_instantiated_type_alias_mapped_constraint_cycles(
+                            sym_id,
+                            &params,
+                            &[],
+                            sym_id,
                         );
                     }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -894,6 +908,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order,
                                     is_string_named: false,
+                                    is_symbol_named: false,
                                     single_quoted_name: false,
                                 });
                             }
@@ -920,6 +935,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
+                                    is_symbol_named: false,
                                     single_quoted_name: false,
                                 });
                             }
@@ -1219,7 +1235,13 @@ impl<'a> CheckerState<'a> {
                                 {
                                     continue;
                                 }
-                                let mut prop_type = self.get_type_of_symbol(export_sym_id);
+                                let mut prop_type = self
+                                    .namespace_default_reexport_property_type(
+                                        module_name,
+                                        declaring_file_idx,
+                                        name,
+                                    )
+                                    .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id));
 
                                 // Rule #44: Apply module augmentations to each exported type
                                 prop_type =
@@ -1243,6 +1265,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order,
                                     is_string_named: false,
+                                    is_symbol_named: false,
                                     single_quoted_name: false,
                                 });
                             }
@@ -1279,6 +1302,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
+                                    is_symbol_named: false,
                                     single_quoted_name: false,
                                 });
                             }
@@ -1309,6 +1333,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
+                                    is_symbol_named: false,
                                     single_quoted_name: false,
                                 });
                             }
@@ -1381,6 +1406,7 @@ impl<'a> CheckerState<'a> {
                                         parent_id: None,
                                         declaration_order: 1,
                                         is_string_named: false,
+                                        is_symbol_named: false,
                                         single_quoted_name: false,
                                     });
                                 }
@@ -1503,8 +1529,10 @@ impl<'a> CheckerState<'a> {
                         .module_namespace_resolution_set
                         .insert(module_name.to_string());
 
-                    if let Some(exports_table) = self.resolve_effective_module_exports(module_name)
-                    {
+                    if let Some(exports_table) = self.resolve_effective_module_exports_from_file(
+                        module_name,
+                        Some(self.ctx.current_file_idx),
+                    ) {
                         let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
                         if exports_table.has("export=")
                             && let Some(export_eq_sym) = exports_table.get("export=")
@@ -1550,11 +1578,44 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                                 declaration_order,
                                 is_string_named: false,
+                                is_symbol_named: false,
                                 single_quoted_name: false,
                             });
                         }
                         Self::normalize_namespace_export_declaration_order(&mut props);
                         let module_type = factory.object(props);
+                        self.ctx.namespace_module_names.insert(
+                            module_type,
+                            self.imported_namespace_display_module_name(module_name),
+                        );
+                        self.ctx.module_namespace_resolution_set.remove(module_name);
+                        return (module_type, Vec::new());
+                    }
+
+                    if is_node_esm_importing_cjs
+                        && let Some(default_sym_id) = self.resolve_cross_file_export_from_file(
+                            module_name,
+                            "default",
+                            Some(self.ctx.current_file_idx),
+                        )
+                    {
+                        use tsz_solver::PropertyInfo;
+                        let default_type = self.get_type_of_symbol(default_sym_id);
+                        let module_type = factory.object(vec![PropertyInfo {
+                            name: self.ctx.types.intern_string("default"),
+                            type_id: default_type,
+                            write_type: default_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: 1,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        }]);
                         self.ctx.namespace_module_names.insert(
                             module_type,
                             self.imported_namespace_display_module_name(module_name),
@@ -1827,6 +1888,7 @@ impl<'a> CheckerState<'a> {
                                         parent_id: None,
                                         declaration_order,
                                         is_string_named: false,
+                                        is_symbol_named: false,
                                         single_quoted_name: false,
                                     });
                                 }
@@ -1855,10 +1917,11 @@ impl<'a> CheckerState<'a> {
                             if let Some(prop_type) = found_via_export_equals_type {
                                 return (prop_type, Vec::new());
                             }
-                            // When the alias is declared by an IMPORT_SPECIFIER
-                            // (`import { X } from "mod"`), `check_imported_members`
-                            // is the canonical site for TS2305 — it knows about
-                            // resolution-mode overrides and anchors at the imported
+                            // When the alias is declared by an import/export
+                            // specifier (`import { X } from "mod"` or
+                            // `export { X } from "mod"`), declaration checking is
+                            // the canonical site for TS2305 — it knows about
+                            // resolution-mode overrides and anchors at the source
                             // identifier. Skipping here avoids:
                             //   1. False positives when the override resolves the
                             //      name via the alternate condition (e.g. `import
@@ -1867,15 +1930,24 @@ impl<'a> CheckerState<'a> {
                             //   2. Duplicate diagnostics anchored on the IMPORT_SPECIFIER
                             //      node (covering the `type` keyword + identifier)
                             //      alongside the canonical anchor on the identifier.
+                            // Re-export aliases have the same shape: binder ALIAS
+                            // symbols don't carry the declaration's resolution-mode,
+                            // so this generic type-resolution path can report a
+                            // false TS2305 at position 0 while validating
+                            // `export type { X } from "pkg" with { ... }`.
                             // ALIAS symbols don't carry `value_declaration`, so the
-                            // pre-existing `value_decl == IMPORT_SPECIFIER` guard
+                            // pre-existing `value_decl == *_SPECIFIER` guard
                             // never fires for them. Inspect `declarations` instead.
-                            let import_specifier_decl = declarations.iter().copied().find(|&decl| {
+                            let specifier_alias_decl = declarations.iter().copied().find(|&decl| {
                                 self.ctx.arena.get(decl).is_some_and(|node| {
-                                    node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
+                                    matches!(
+                                        node.kind,
+                                        tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
+                                            | tsz_parser::parser::syntax_kind_ext::EXPORT_SPECIFIER
+                                    )
                                 })
                             });
-                            if import_specifier_decl.is_some() {
+                            if specifier_alias_decl.is_some() {
                                 return (TypeId::ERROR, Vec::new());
                             }
                             self.emit_no_exported_member_error(

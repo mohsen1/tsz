@@ -9,39 +9,10 @@
 //! as `Omit<T, "method" | "getter" | "setter" | <explicit destructured>>`.
 //! The K order is methods first, then accessors in source declaration order.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_common::checker_options::CheckerOptions;
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn checker_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let file_name = "test.ts";
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let options = CheckerOptions::default();
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 fn ts2339_messages(diags: &[(u32, String)]) -> Vec<String> {
@@ -150,5 +121,45 @@ function destructure<T extends I>(x: T) {
     assert!(
         msgs.is_empty(),
         "No TS2339 expected when constraint has no prototype members. Got: {msgs:?}"
+    );
+}
+
+#[test]
+fn rest_from_class_this_uses_omit_display_for_missing_rest_properties() {
+    let source = r#"
+class A {
+    constructor(public publicProp: string) {}
+    get getter(): number { return 1; }
+    set setter(_v: number) {}
+    method(): void {}
+
+    test() {
+        const { publicProp: _, ...rest } = this;
+        rest.publicProp;
+        rest.method;
+    }
+}
+"#;
+    let diags = checker_diagnostics(source);
+    let msgs = ts2339_messages(&diags);
+    assert!(
+        msgs.iter().any(|m| {
+            m.contains("Property 'publicProp' does not exist on type 'Omit<this,")
+                && m.contains("\"method\"")
+                && m.contains("\"getter\"")
+                && m.contains("\"setter\"")
+                && m.contains("\"publicProp\"")
+        }),
+        "Expected direct-this rest diagnostic to use Omit<this, ...>. Got: {msgs:?}"
+    );
+    assert!(
+        msgs.iter().any(|m| {
+            m.contains("Property 'method' does not exist on type 'Omit<this,")
+                && m.contains("\"method\"")
+                && m.contains("\"getter\"")
+                && m.contains("\"setter\"")
+                && m.contains("\"publicProp\"")
+        }),
+        "Expected prototype-member diagnostic to use Omit<this, ...>. Got: {msgs:?}"
     );
 }

@@ -1,6 +1,8 @@
 //! Computed symbol type analysis: `compute_type_of_symbol`, contextual literal types,
 //! and private property access checking.
 
+mod builtin_iterator_return_alias;
+mod jsx_runtime_bridge;
 mod type_alias_variable_alias;
 
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};
@@ -62,6 +64,96 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .map(|(name, sym_id, _)| (name, sym_id))
             .collect()
+    }
+
+    pub(crate) fn node_esm_cjs_default_import_namespace_type(
+        &mut self,
+        module_name: &str,
+    ) -> Option<TypeId> {
+        if !self.ctx.compiler_options.module.is_node_module()
+            || self.ctx.file_is_esm != Some(true)
+            || self.module_is_esm(module_name)
+        {
+            return None;
+        }
+
+        if let Some(exports_table) = self.resolve_effective_module_exports_from_file(
+            module_name,
+            Some(self.ctx.current_file_idx),
+        ) {
+            // For CJS modules using `export = X`, an ESM `import x from 'cjs'`
+            // resolves to the type of X directly — the bare `module.exports`
+            // value — not a synthesized namespace wrapper. This matches tsc:
+            // CJS without an `__esModule` marker treats the whole
+            // `module.exports` as the default, and `export = X` sets
+            // `module.exports = X`. See
+            // `nodeNextEsmImportsOfPackagesWithExtensionlessMains.ts`.
+            if let Some(export_equals_sym_id) = exports_table.get("export=") {
+                return Some(self.get_type_of_symbol(export_equals_sym_id));
+            }
+
+            let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
+            let mut props = Vec::new();
+            for &(name, export_sym_id) in &ordered_exports {
+                if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id) {
+                    continue;
+                }
+                let prop_type = self.get_type_of_symbol(export_sym_id);
+                props.push(PropertyInfo {
+                    name: self.ctx.types.intern_string(name),
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: if name == "default" {
+                        1
+                    } else {
+                        props.len() as u32 + 2
+                    },
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                });
+            }
+            Self::normalize_namespace_export_declaration_order(&mut props);
+            let module_type = self.ctx.types.factory().object(props);
+            self.ctx.namespace_module_names.insert(
+                module_type,
+                self.imported_namespace_display_module_name(module_name),
+            );
+            return Some(module_type);
+        }
+
+        let default_sym_id = self.resolve_cross_file_export_from_file(
+            module_name,
+            "default",
+            Some(self.ctx.current_file_idx),
+        )?;
+        let default_type = self.get_type_of_symbol(default_sym_id);
+        let module_type = self.ctx.types.factory().object(vec![PropertyInfo {
+            name: self.ctx.types.intern_string("default"),
+            type_id: default_type,
+            write_type: default_type,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+            is_symbol_named: false,
+            single_quoted_name: false,
+        }]);
+        self.ctx.namespace_module_names.insert(
+            module_type,
+            self.imported_namespace_display_module_name(module_name),
+        );
+        Some(module_type)
     }
 
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
@@ -155,6 +247,280 @@ impl<'a> CheckerState<'a> {
         }
         prop_type
     }
+
+    pub(crate) fn namespace_default_reexport_property_type(
+        &mut self,
+        module_name: &str,
+        declaring_file_idx: Option<usize>,
+        export_name: &str,
+    ) -> Option<TypeId> {
+        let namespace_from = declaring_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let namespace_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(namespace_from, module_name)
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        let namespace_binder = self.ctx.get_binder_for_file(namespace_file_idx)?;
+        let namespace_file_name = self
+            .ctx
+            .get_arena_for_file(namespace_file_idx as u32)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())?;
+        let reexports = self
+            .ctx
+            .reexports_for_file(namespace_binder, &namespace_file_name)?;
+        let (source_module, original_name) = reexports.get(export_name)?;
+        let source_module = source_module.clone();
+        let original_name = original_name.clone();
+        let imported_name = original_name.as_deref().unwrap_or(export_name);
+        if imported_name != "default" {
+            return None;
+        }
+
+        self.default_import_namespace_object_type_from_file(&source_module, namespace_file_idx)
+    }
+
+    fn default_import_namespace_object_type_from_file(
+        &mut self,
+        module_name: &str,
+        source_file_idx: usize,
+    ) -> Option<TypeId> {
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_name)
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        let target_is_esm = self.source_file_idx_is_esm_module(target_file_idx);
+        let source_is_esm = self.source_file_idx_is_esm_module(source_file_idx);
+
+        let exports_table =
+            self.resolve_effective_module_exports_from_file(module_name, Some(source_file_idx))?;
+        let is_node_esm_importing_cjs =
+            self.ctx.compiler_options.module.is_node_module() && source_is_esm && !target_is_esm;
+        let has_export_equals = exports_table.has("export=");
+        if !(is_node_esm_importing_cjs
+            || has_export_equals && self.ctx.allow_synthetic_default_imports())
+        {
+            return None;
+        }
+
+        let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
+        let mut props = Vec::new();
+        for &(name, export_sym_id) in &ordered_exports {
+            if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id)
+                || self.is_type_only_export_symbol(export_sym_id)
+                || self.is_export_from_type_only_wildcard(module_name, name)
+                || self.export_symbol_has_no_value(export_sym_id)
+                || self.is_export_type_only_from_file(module_name, name, Some(source_file_idx))
+            {
+                continue;
+            }
+
+            let mut prop_type = self.get_type_of_symbol(export_sym_id);
+            prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+            let name_atom = self.ctx.types.intern_string(name);
+            props.push(PropertyInfo {
+                name: name_atom,
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: if name == "default" {
+                    1
+                } else {
+                    props.len() as u32 + 2
+                },
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            });
+        }
+
+        if has_export_equals && let Some(export_equals_sym_id) = exports_table.get("export=") {
+            let export_equals_type = self.get_type_of_symbol(export_equals_sym_id);
+            let default_atom = self.ctx.types.intern_string("default");
+            if let Some(existing_default) = props.iter_mut().find(|p| p.name == default_atom) {
+                existing_default.type_id = export_equals_type;
+                existing_default.write_type = export_equals_type;
+                existing_default.optional = false;
+                existing_default.readonly = false;
+            } else {
+                props.push(PropertyInfo {
+                    name: default_atom,
+                    type_id: export_equals_type,
+                    write_type: export_equals_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 1,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                });
+            }
+        }
+
+        if props.is_empty() {
+            return None;
+        }
+
+        Self::normalize_namespace_export_declaration_order(&mut props);
+        let module_type = self.ctx.types.factory().object(props);
+        self.ctx.namespace_module_names.insert(
+            module_type,
+            self.imported_namespace_display_module_name(module_name),
+        );
+        Some(module_type)
+    }
+
+    fn source_file_idx_is_esm_module(&self, file_idx: usize) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+        if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
+            return true;
+        }
+        if file_name.ends_with(".cjs") || file_name.ends_with(".cts") {
+            return false;
+        }
+        if self.source_file_idx_is_js_with_esm_syntax(file_idx) {
+            return true;
+        }
+        self.lookup_file_is_esm(file_name).unwrap_or(false)
+    }
+
+    pub(crate) fn self_namespace_import_object_type(
+        &mut self,
+        module_name: &str,
+        declaring_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let from_file_idx = declaring_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(from_file_idx, module_name)
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        if target_file_idx != self.ctx.current_file_idx {
+            return None;
+        }
+        if !self.namespace_has_default_interop_reexport(module_name, Some(from_file_idx)) {
+            return None;
+        }
+
+        let exports_table =
+            self.resolve_effective_module_exports_from_file(module_name, Some(from_file_idx))?;
+        let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
+        let mut props = Vec::new();
+        for &(name, export_sym_id) in &ordered_exports {
+            if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id)
+                || self.is_type_only_export_symbol(export_sym_id)
+                || self.is_export_from_type_only_wildcard(module_name, name)
+                || self.export_symbol_has_no_value(export_sym_id)
+                || self.is_export_type_only_from_file(module_name, name, Some(from_file_idx))
+            {
+                continue;
+            }
+
+            let mut prop_type = self
+                .namespace_default_reexport_property_type(module_name, Some(from_file_idx), name)
+                .unwrap_or_else(|| {
+                    self.namespace_import_export_property_type(module_name, export_sym_id)
+                });
+            prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+            props.push(PropertyInfo {
+                name: self.ctx.types.intern_string(name),
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: if name == "default" {
+                    1
+                } else {
+                    props.len() as u32 + 2
+                },
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            });
+        }
+
+        if props.is_empty() {
+            return None;
+        }
+
+        Self::normalize_namespace_export_declaration_order(&mut props);
+        let namespace_type = self.ctx.types.factory().object(props);
+        self.ctx.namespace_module_names.insert(
+            namespace_type,
+            self.imported_namespace_display_module_name(module_name),
+        );
+        Some(namespace_type)
+    }
+
+    fn namespace_has_default_interop_reexport(
+        &mut self,
+        module_name: &str,
+        declaring_file_idx: Option<usize>,
+    ) -> bool {
+        let namespace_from = declaring_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let Some(namespace_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(namespace_from, module_name)
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+        let Some(namespace_binder) = self.ctx.get_binder_for_file(namespace_file_idx) else {
+            return false;
+        };
+        let Some(namespace_file_name) = self
+            .ctx
+            .get_arena_for_file(namespace_file_idx as u32)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return false;
+        };
+        let Some(reexports) = self
+            .ctx
+            .reexports_for_file(namespace_binder, &namespace_file_name)
+            .cloned()
+        else {
+            return false;
+        };
+
+        reexports
+            .iter()
+            .any(|(exported_name, (source_module, original_name))| {
+                let imported_name = original_name.as_deref().unwrap_or(exported_name);
+                if imported_name != "default" {
+                    return false;
+                }
+                if self.ctx.compiler_options.module.is_node_module()
+                    && self.source_file_idx_is_esm_module(namespace_file_idx)
+                {
+                    return true;
+                }
+                self.default_import_namespace_object_type_from_file(
+                    source_module,
+                    namespace_file_idx,
+                )
+                .is_some()
+            })
+    }
+
     pub(crate) fn append_export_equals_import_type_namespace_props(
         &mut self,
         module_name: &str,
@@ -265,8 +631,52 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
+        }
+    }
+
+    /// Merge value-side property exports from a CommonJS module's JS export
+    /// surface into a typeof-import namespace `props` list. Supplements the
+    /// binder's `module_exports` table for files where the binder records only
+    /// an `export=` (or nothing at all) for `module.exports = { … }`-style
+    /// object-literal exports, so `typeof import("./mod").foo` can find `foo`
+    /// as a value member instead of falsely emitting TS2694.
+    ///
+    /// Existing props (added from the binder's exports table or
+    /// [`append_export_equals_import_type_namespace_props`]) take precedence —
+    /// this only fills in names that are not already present.
+    pub(crate) fn merge_js_export_surface_into_typeof_import_namespace_props(
+        &mut self,
+        module_name: &str,
+        declaring_file_idx: Option<usize>,
+        props: &mut Vec<PropertyInfo>,
+    ) {
+        let Some(js_surface) =
+            self.resolve_js_export_surface_for_module(module_name, declaring_file_idx)
+        else {
+            return;
+        };
+        for prop in js_surface.named_exports {
+            let prop_name_atom = self.ctx.types.resolve_atom_ref(prop.name);
+            let prop_name = prop_name_atom.as_ref();
+            if prop_name == "export=" {
+                continue;
+            }
+            if props
+                .iter()
+                .any(|p| self.ctx.types.resolve_atom_ref(p.name).as_ref() == prop_name)
+            {
+                continue;
+            }
+            let mut new_prop = prop.clone();
+            new_prop.declaration_order = if prop_name == "default" {
+                1
+            } else {
+                (props.len() as u32) + 2
+            };
+            props.push(new_prop);
         }
     }
 
@@ -280,7 +690,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Counts every
+        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Counts every
         // entry to type-of-symbol computation; PR 1 uses this against
         // unique-SymbolId estimates to characterize recomputation.
         tsz_common::perf_counters::inc(
@@ -339,6 +749,27 @@ impl<'a> CheckerState<'a> {
         file = self.ctx.file_name.as_str(),
         "compute_type_of_symbol: resolved symbol"
         );
+        if flags & symbol_flags::ALIAS != 0
+            && import_name.as_deref() == Some("default")
+            && let Some(module_spec) = import_module.as_deref()
+            && let Some(module_type) = self.node_esm_cjs_default_import_namespace_type(module_spec)
+        {
+            return (module_type, Vec::new());
+        }
+
+        if flags & symbol_flags::ALIAS != 0
+            && import_name.as_deref() == Some("*")
+            && let Some(module_spec) = import_module.as_deref()
+            && let Some(namespace_type) = self.self_namespace_import_object_type(
+                module_spec,
+                self.ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .or(Some(self.ctx.current_file_idx)),
+            )
+        {
+            return (namespace_type, Vec::new());
+        }
+
         if (flags & symbol_flags::ALIAS) != 0
             && let Some(ref module_spec) = import_module
             && let Some(imported_name) = import_name.as_deref()
@@ -1089,6 +1520,17 @@ impl<'a> CheckerState<'a> {
                         .cloned()
                         .or_else(|| self.ctx.get_def_type_params(def_id))
                 };
+                let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                    self.const_array_to_enum_object_type_query(expr_name_idx)
+                        .or_else(|| self.const_object_member_literal_type_query(expr_name_idx))
+                        .or_else(|| {
+                            self.ctx
+                                .node_types
+                                .get(&expr_name_idx.0)
+                                .copied()
+                                .filter(|&ty| ty != TypeId::ERROR)
+                        })
+                };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
                     namespace_prefix
                         .as_ref()
@@ -1112,7 +1554,8 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
-                .with_name_def_id_resolver(&name_resolver);
+                .with_name_def_id_resolver(&name_resolver)
+                .with_type_query_override(&type_query_override);
                 let mut interface_type =
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
 
@@ -1212,6 +1655,7 @@ mod tests {
             parent_id: None,
             declaration_order,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }
     }

@@ -89,12 +89,19 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .filter(|decl| decl.file_idx == current_file_idx)
             {
-                let has_conflict = type_values_by_name.get(&decl.name).is_some_and(|others| {
+                let local_conflict = type_values_by_name.get(&decl.name).is_some_and(|others| {
                     others.iter().any(|other| {
                         other.file_idx == current_file_idx
                             || (decl.is_global_script_decl && other.is_global_script_decl)
                     })
                 });
+                // Issue #3133: a JSDoc `@typedef` in a global-script JS file
+                // collides with lib globals like `Object`, `Array`, `Promise`.
+                // tsc surfaces TS2300 for those collisions; tsz historically
+                // only checked local class/CommonJS value declarations.
+                let lib_conflict =
+                    decl.is_global_script_decl && self.ctx.has_name_in_lib(&decl.name);
+                let has_conflict = local_conflict || lib_conflict;
                 if !has_conflict {
                     continue;
                 }
@@ -401,11 +408,81 @@ impl<'a> CheckerState<'a> {
     }
 
     fn find_jsdoc_typedef_name_offset(comment_text: &str, name: &str) -> Option<usize> {
-        let typedef_idx = comment_text.find("@typedef")?;
-        let after_typedef = typedef_idx + "@typedef".len();
-        let rest = &comment_text[after_typedef..];
-        let name_offset = rest.find(name)?;
-        Some(after_typedef + name_offset)
+        Self::jsdoc_typedef_tag_spans(comment_text)
+            .into_iter()
+            .find_map(|(typedef_idx, segment_end)| {
+                let after_typedef = typedef_idx + "@typedef".len();
+                let rest = &comment_text[after_typedef..segment_end];
+                rest.find(name)
+                    .map(|name_offset| after_typedef + name_offset)
+            })
+    }
+
+    fn jsdoc_typedef_tag_spans(comment_text: &str) -> Vec<(usize, usize)> {
+        let typedef_offsets = Self::jsdoc_tag_offsets(comment_text, "typedef");
+        typedef_offsets
+            .iter()
+            .enumerate()
+            .map(|(idx, &start)| {
+                let end = typedef_offsets
+                    .get(idx + 1)
+                    .copied()
+                    .unwrap_or(comment_text.len());
+                (start, end)
+            })
+            .collect()
+    }
+
+    fn jsdoc_typedef_has_inline_type(comment_text: &str, typedef_pos: usize) -> bool {
+        let after_typedef = typedef_pos + "@typedef".len();
+        comment_text[after_typedef..].trim_start().starts_with('{')
+    }
+
+    fn jsdoc_typedef_segment_has_child_type_tag(segment_text: &str) -> bool {
+        let before_template = Self::jsdoc_tag_offset(segment_text, "template")
+            .map(|template_pos| &segment_text[..template_pos])
+            .unwrap_or(segment_text);
+        ["property", "prop", "type", "member"]
+            .iter()
+            .any(|tag| Self::jsdoc_tag_offset(before_template, tag).is_some())
+    }
+
+    fn jsdoc_type_tag_duplicate_anchor(comment_text: &str, type_tag_pos: usize) -> (usize, u32) {
+        let after = type_tag_pos + "@type".len();
+        let tag_text = &comment_text[after..];
+        let anchor_offset = if let Some(brace_rel) = tag_text.find('{') {
+            let mut depth = 0i32;
+            let mut end = None;
+            for (i, ch) in tag_text[brace_rel..].char_indices() {
+                if ch == '{' {
+                    depth += 1;
+                } else if ch == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(brace_rel + i + 1);
+                        break;
+                    }
+                }
+            }
+            end.map(|e| after + e)
+        } else {
+            None
+        };
+        anchor_offset.map_or((type_tag_pos, "@type".len() as u32), |offset| (offset, 0))
+    }
+
+    fn jsdoc_typedef_missing_type_name_span(
+        comment_text: &str,
+        typedef_pos: usize,
+        segment_end: usize,
+    ) -> (usize, usize) {
+        let after_typedef = typedef_pos + "@typedef".len();
+        let rest = &comment_text[after_typedef..segment_end];
+        let name_start = after_typedef + rest.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+        let name_len = comment_text[name_start..segment_end]
+            .find(|c: char| c.is_whitespace() || c == '*' || c == '/')
+            .unwrap_or(segment_end - name_start);
+        (name_start, name_len)
     }
 
     fn jsdoc_typedef_is_import_alias(info: &crate::jsdoc::types::JsdocTypedefInfo) -> bool {
@@ -425,18 +502,30 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref() {
-            return !is_external_module_by_file
-                .get(&source_file.file_name)
-                .copied()
-                .unwrap_or(false);
+        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref()
+            && let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
+        {
+            return !is_external_module;
         }
 
-        self.ctx
+        if self
+            .ctx
             .all_binders
             .as_ref()
             .and_then(|binders| binders.get(file_idx))
-            .is_none_or(|binder| !binder.is_external_module())
+            .is_some_and(|binder| binder.is_external_module())
+        {
+            return false;
+        }
+
+        !source_file.statements.nodes.iter().any(|&stmt_idx| {
+            arena.get(stmt_idx).is_some_and(|stmt| {
+                stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            })
+        })
     }
 
     /// TS8033: Check all JSDoc comments for `@typedef` with multiple `@type` tags.
@@ -460,58 +549,18 @@ impl<'a> CheckerState<'a> {
 
             let comment_text = comment.get_text(source_text);
 
-            // Check if this comment contains @typedef
-            if !comment_text.contains("@typedef") {
-                continue;
-            }
-
-            // Count @type tags (not @typedef or @typeParam etc.)
-            let mut type_tag_count = 0u32;
-            for (match_pos, _) in comment_text.match_indices("@type") {
-                let after = match_pos + "@type".len();
-                // Ensure @type is not a prefix of @typedef, @typeParam, etc.
-                if after < comment_text.len() {
-                    let next_ch = comment_text[after..].chars().next().unwrap_or('\0');
-                    if next_ch.is_ascii_alphanumeric() || next_ch == 'P' {
-                        // Likely @typedef or @typeParam — skip
-                        continue;
-                    }
-                }
-                type_tag_count += 1;
-                if type_tag_count >= 2 {
+            for (segment_start, segment_end) in Self::jsdoc_typedef_tag_spans(comment_text) {
+                let segment_text = &comment_text[segment_start..segment_end];
+                let type_tag_offsets = Self::jsdoc_tag_offsets(segment_text, "type");
+                for type_tag_offset in type_tag_offsets.into_iter().skip(1) {
                     // tsc anchors TS8033 at the current token *after* parsing
-                    // the second `@type {...}` argument — i.e. just past the
-                    // closing `}` of that tag. Mirror that: find the `{...}`
-                    // block that follows this `@type` and anchor the
-                    // diagnostic at the position just past `}`.
-                    let tag_text = &comment_text[after..];
-                    let anchor_offset = if let Some(brace_rel) = tag_text.find('{') {
-                        // Match the closing `}` that balances this `{`,
-                        // respecting nesting so `@type {{ ... }}` works too.
-                        let mut depth = 0i32;
-                        let mut end = None;
-                        for (i, ch) in tag_text[brace_rel..].char_indices() {
-                            if ch == '{' {
-                                depth += 1;
-                            } else if ch == '}' {
-                                depth -= 1;
-                                if depth == 0 {
-                                    end = Some(brace_rel + i + 1);
-                                    break;
-                                }
-                            }
-                        }
-                        end.map(|e| after + e)
-                    } else {
-                        None
-                    };
-                    let (error_pos, error_len) = if let Some(end_off) = anchor_offset {
-                        (comment.pos + end_off as u32, 0u32)
-                    } else {
-                        (comment.pos + match_pos as u32, "@type".len() as u32)
-                    };
+                    // the duplicate `@type {...}` argument, i.e. just past
+                    // the closing `}` of that tag.
+                    let type_tag_pos = segment_start + type_tag_offset;
+                    let (anchor_offset, error_len) =
+                        Self::jsdoc_type_tag_duplicate_anchor(comment_text, type_tag_pos);
                     self.ctx.error(
-                        error_pos,
+                        comment.pos + anchor_offset as u32,
                         error_len,
                         diagnostic_messages::A_JSDOC_TYPEDEF_COMMENT_MAY_NOT_CONTAIN_MULTIPLE_TYPE_TAGS
                             .to_string(),
@@ -544,60 +593,21 @@ impl<'a> CheckerState<'a> {
 
             let comment_text = comment.get_text(source_text);
 
-            // Find @typedef tag
-            let Some(typedef_pos) = comment_text.find("@typedef") else {
-                continue;
-            };
-
-            let after_typedef = typedef_pos + "@typedef".len();
-            let rest = &comment_text[after_typedef..];
-
-            // Check if there's a type annotation: @typedef {SomeType} Name
-            let trimmed = rest.trim_start();
-            let has_type = trimmed.starts_with('{');
-
-            let mut has_property = false;
-            let mut after_this_typedef = false;
-            for raw_line in comment_text.lines() {
-                let mut line = raw_line
-                    .trim()
-                    .trim_start_matches("/**")
-                    .trim_start_matches("/*")
-                    .trim_start_matches('*')
-                    .trim();
-                line = line.trim_end_matches("*/").trim();
-                if line.starts_with("@typedef") {
-                    after_this_typedef = true;
-                    continue;
-                }
-                if !after_this_typedef {
-                    continue;
-                }
-                if line.starts_with("@template") {
-                    break;
-                }
-                if line.starts_with("@property")
-                    || line.starts_with("@prop ")
-                    || line.starts_with("@prop{")
-                    || line.starts_with("@type ")
-                    || line.starts_with("@type{")
-                    || line.starts_with("@member ") && !line.starts_with("@memberOf")
-                    || line.starts_with("@member{") && !line.starts_with("@memberof")
+            for (typedef_pos, segment_end) in Self::jsdoc_typedef_tag_spans(comment_text) {
+                let after_typedef = typedef_pos + "@typedef".len();
+                let segment_text = &comment_text[after_typedef..segment_end];
+                if Self::jsdoc_typedef_has_inline_type(comment_text, typedef_pos)
+                    || Self::jsdoc_typedef_segment_has_child_type_tag(segment_text)
                 {
-                    has_property = true;
-                    break;
+                    continue;
                 }
-            }
 
-            if !has_type && !has_property {
                 // Emit TS8021 at the typedef name position (TSC points at the name, not @typedef)
-                let name_start =
-                    after_typedef + rest.find(|c: char| !c.is_whitespace()).unwrap_or(0);
-                let name_end = name_start
-                    + comment_text[name_start..]
-                        .find(|c: char| c.is_whitespace() || c == '*' || c == '/')
-                        .unwrap_or(comment_text.len() - name_start);
-                let name_len = name_end - name_start;
+                let (name_start, name_len) = Self::jsdoc_typedef_missing_type_name_span(
+                    comment_text,
+                    typedef_pos,
+                    segment_end,
+                );
                 let error_pos = comment.pos + name_start as u32;
                 let error_len = if name_len > 0 {
                     name_len as u32
@@ -1099,22 +1109,120 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let content = get_jsdoc_content(comment, &source_text);
-
-            // TS1109: Check for malformed @import tags (bare @import or missing module specifier)
+            let end = (comment.end as usize).min(source_text.len());
+            let comment_text = &source_text[comment.pos as usize..end];
+            for (type_expr, offset_in_comment) in Self::jsdoc_param_return_type_spans(comment_text)
             {
-                let comment_text = &source_text
-                    [comment.pos as usize..(comment.end as usize).min(source_text.len())];
-                let mut search_from = 0;
-                while let Some(idx) = comment_text[search_from..].find("@import") {
-                    let abs_idx = search_from + idx;
-                    let after_import = abs_idx + "@import".len();
-                    if after_import < comment_text.len() {
-                        let next = comment_text.as_bytes()[after_import];
-                        if next.is_ascii_alphanumeric() || next == b'_' {
-                            search_from = after_import;
+                self.validate_jsdoc_param_namespace_member_errors(
+                    &type_expr,
+                    comment.pos,
+                    offset_in_comment,
+                );
+                let line_start = comment_text[..offset_in_comment]
+                    .rfind('\n')
+                    .map_or(0, |idx| idx + 1);
+                // Single-line JSDoc (`/** @param {T} y */`) needs the
+                // `/**` prefix stripped before tag detection works;
+                // multi-line JSDoc lines start with `* …` and need the
+                // existing `*` strip. Apply both unconditionally —
+                // `trim_start_matches` is a no-op when the prefix is
+                // absent.
+                let line = comment_text[line_start..]
+                    .trim_start()
+                    .trim_start_matches("/**")
+                    .trim_start_matches('*')
+                    .trim_start();
+                let is_param_tag = Self::strip_jsdoc_tag_prefix(line, "param").is_some();
+                let is_return_tag = Self::strip_jsdoc_return_tag_prefix(line).is_some();
+                if !is_param_tag && !is_return_tag {
+                    continue;
+                }
+                let simple_expr = type_expr
+                    .trim()
+                    .trim_start_matches('!')
+                    .trim_end_matches('=')
+                    .trim();
+                if self
+                    .resolve_jsdoc_implicit_any_builtin_type(simple_expr)
+                    .is_some()
+                    || crate::types_domain::queries::lib_resolution::keyword_name_to_type_id(
+                        simple_expr,
+                    )
+                    .is_some()
+                    || self.source_file_declares_jsdoc_template(simple_expr)
+                    || Self::parse_jsdoc_typedefs(&source_text)
+                        .iter()
+                        .any(|(name, _)| name == simple_expr)
+                {
+                    continue;
+                }
+                let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                let unresolved_type = self
+                    .resolve_jsdoc_type_str(simple_expr)
+                    .is_none_or(|ty| self.jsdoc_resolved_type_is_unresolved(simple_expr, ty));
+                self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+                if Self::is_simple_type_name(simple_expr) && unresolved_type {
+                    if let Some(angle_idx) = Self::find_top_level_char(simple_expr, '<')
+                        && simple_expr.ends_with('>')
+                    {
+                        let raw_base_name = simple_expr[..angle_idx].trim();
+                        let base_name = raw_base_name.strip_suffix('.').unwrap_or(raw_base_name);
+                        let base_is_known = self
+                            .jsdoc_generic_base_suppresses_full_name_error(base_name)
+                            || Self::parse_jsdoc_typedefs(&source_text)
+                                .iter()
+                                .any(|(name, _)| name == base_name);
+                        if base_is_known {
                             continue;
                         }
                     }
+                    // Suppress the generic "Cannot find name" emitter for
+                    // qualified names whose root is a (possibly aliased)
+                    // namespace, module, or import alias. tsc owns these
+                    // diagnostics through namespace-member resolution — it
+                    // either accepts the reference silently (valid export) or
+                    // emits the namespace-specific TS2694 ("Namespace 'X' has
+                    // no exported member 'Y'"). Emitting TS2304/TS2552
+                    // "Cannot find name 's.X'" here would conflict with both
+                    // outcomes.
+                    if let Some(dot_idx) = simple_expr.find('.') {
+                        let root_name = simple_expr[..dot_idx].trim();
+                        if self.jsdoc_qualified_root_is_namespace_or_alias(root_name) {
+                            continue;
+                        }
+                    }
+                    self.emit_jsdoc_cannot_find_name(
+                        simple_expr,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                    );
+                } else if !Self::is_simple_type_name(simple_expr) {
+                    let template_params: Vec<String> = Self::jsdoc_template_type_params(&content)
+                        .into_iter()
+                        .map(|(name, _is_const)| name)
+                        .collect();
+                    let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                    self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                    self.report_jsdoc_unresolved_inner_type_leaves(
+                        simple_expr,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                        &template_params,
+                    );
+                    self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+                }
+            }
+
+            // TS1109: Check for malformed @import tags (bare @import or missing module specifier)
+            {
+                let mut search_from = 0;
+                while let Some(idx) = Self::jsdoc_tag_offset(&comment_text[search_from..], "import")
+                {
+                    let abs_idx = search_from + idx;
+                    let after_import = abs_idx + "@import".len();
                     let rest_full = &comment_text[after_import..];
                     let next_tag = rest_full
                         .lines()
@@ -1532,27 +1640,13 @@ impl<'a> CheckerState<'a> {
                     if !Self::is_simple_type_name(expr) {
                         continue;
                     }
-                    // A recursive generic JSDoc alias can fail to resolve as a whole while
-                    // its base name is valid (for example `ReadonlyArray<Json>` while
-                    // resolving `Json`). In that case the expression is not an unknown name.
-                    if let Some(angle_idx) = Self::find_top_level_char(expr, '<')
-                        && expr.ends_with('>')
-                    {
-                        let base_name = expr[..angle_idx].trim();
-                        if Self::is_simple_type_name(base_name)
-                            && self.resolve_jsdoc_type_str(base_name).is_some()
-                        {
-                            continue;
-                        }
-                    }
-                    if self.resolve_jsdoc_type_str(expr).is_none() {
-                        self.emit_jsdoc_cannot_find_name(
-                            expr,
-                            comment.pos,
-                            comment.end,
-                            &source_text,
-                        );
-                    }
+                    self.validate_jsdoc_typedef_body_expr(
+                        expr,
+                        &template_names,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                    );
                 }
             }
         }
@@ -1589,6 +1683,9 @@ impl<'a> CheckerState<'a> {
                     .find(expr)
                     .map(|offset| comment.pos + offset as u32)
                     .unwrap_or(comment.pos);
+                if self.report_jsdoc_backtick_import_type_error(expr, type_expr_start) {
+                    continue;
+                }
                 self.report_jsdoc_param_generic_instantiation_errors(expr, type_expr_start);
 
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
@@ -1596,9 +1693,7 @@ impl<'a> CheckerState<'a> {
                 let resolved = self.resolve_jsdoc_type_str(expr);
                 self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 let unresolved = resolved.is_none()
-                    || resolved.is_some_and(|ty| {
-                        ty == tsz_solver::TypeId::ERROR || ty == tsz_solver::TypeId::UNKNOWN
-                    });
+                    || resolved.is_some_and(|ty| self.jsdoc_resolved_type_is_unresolved(expr, ty));
 
                 if let Some((module_specifier, _segments)) =
                     Self::parse_jsdoc_typeof_import_query(expr)
@@ -1696,6 +1791,21 @@ impl<'a> CheckerState<'a> {
                         && matches!(expr, "exports" | "module" | "require" | "global"));
                 if !skip_cannot_find_name {
                     self.emit_jsdoc_cannot_find_name(expr, comment.pos, comment.end, &source_text);
+                } else if !Self::is_simple_type_name(expr) && !expr.is_empty() {
+                    let template_params: Vec<String> = Self::jsdoc_template_type_params(&content)
+                        .into_iter()
+                        .map(|(name, _is_const)| name)
+                        .collect();
+                    let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                    self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                    self.report_jsdoc_unresolved_inner_type_leaves(
+                        expr,
+                        comment.pos,
+                        comment.end,
+                        &source_text,
+                        &template_params,
+                    );
+                    self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
                 }
             }
         }
@@ -1797,6 +1907,31 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn report_jsdoc_backtick_import_type_error(
+        &mut self,
+        type_expr: &str,
+        type_expr_start: u32,
+    ) -> bool {
+        let Some(offset) = Self::jsdoc_backtick_import_argument_offset(type_expr) else {
+            return false;
+        };
+        let start = type_expr_start + offset as u32;
+        if self.ctx.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == crate::diagnostics::diagnostic_codes::STRING_LITERAL_EXPECTED
+                && diagnostic.file == self.ctx.file_name
+                && diagnostic.start == start
+        }) {
+            return true;
+        }
+        self.error_at_position(
+            start,
+            1,
+            crate::diagnostics::diagnostic_messages::STRING_LITERAL_EXPECTED,
+            crate::diagnostics::diagnostic_codes::STRING_LITERAL_EXPECTED,
+        );
+        true
+    }
+
     /// Emit TS2304 "Cannot find name 'X'" or TS2552 "Did you mean 'Y'?" for an
     /// unresolvable JSDoc type reference. Locates the name within the comment text
     /// range for precise error positioning, then attempts spelling suggestions
@@ -1835,12 +1970,24 @@ impl<'a> CheckerState<'a> {
 
         // Try spelling suggestions (e.g. "sting" → "string") to emit TS2552
         // instead of plain TS2304, matching tsc behavior.
-        if self.ctx.spelling_suggestions_emitted.get() < 10
+        if self
+            .ctx
+            .name_resolution_diagnostics
+            .spelling_suggestions_emitted
+            .get()
+            < 10
             && let Some(suggestion) = self.find_jsdoc_type_spelling_suggestion(name)
         {
             self.ctx
+                .name_resolution_diagnostics
                 .spelling_suggestions_emitted
-                .set(self.ctx.spelling_suggestions_emitted.get() + 1);
+                .set(
+                    self.ctx
+                        .name_resolution_diagnostics
+                        .spelling_suggestions_emitted
+                        .get()
+                        + 1,
+                );
             let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
             self.error_at_position(
                 start,
@@ -1852,6 +1999,120 @@ impl<'a> CheckerState<'a> {
         }
 
         self.error_cannot_find_name_at_position(name, start, length);
+    }
+
+    /// Validate a JSDoc `@typedef` body type expression for unresolvable
+    /// names (TS2304). Recurses into nested generic arguments so that
+    /// `@typedef {Record<string, Array<Missing>>} T` reports `Missing`,
+    /// matching tsc's per-identifier diagnostic instead of treating
+    /// `Array<Missing>` as one opaque missing name.
+    ///
+    /// `expr` is expected to already be trimmed and to satisfy
+    /// `is_simple_type_name` — the caller filters out function types,
+    /// object literals, and unions before reaching here.
+    fn validate_jsdoc_typedef_body_expr(
+        &mut self,
+        expr: &str,
+        template_names: &[String],
+        comment_pos: u32,
+        comment_end: u32,
+        source_text: &str,
+    ) {
+        if expr.is_empty() || !Self::is_simple_type_name(expr) {
+            return;
+        }
+        if template_names.iter().any(|t| t == expr) {
+            return;
+        }
+        // Forward / recursive references like
+        // `@typedef {ReadonlyArray<Json>} JsonArray` declared above the
+        // `@typedef Json` itself can fail point-in-time resolution while
+        // still being valid. Skip when a visible `@typedef Name` matches
+        // — text-based, so it is immune to typedef resolution
+        // re-entrancy. Cross-file typedefs are visible only from global
+        // scripts; typedefs inside external modules require imports.
+        if self.jsdoc_typedef_named_visible(expr) {
+            return;
+        }
+
+        // Generic shape: `Name<arg, arg, ...>`. Recurse into each inner
+        // arg when the base resolves; otherwise the unresolvable name is
+        // the base, not the whole expression. Issue #3137.
+        if let Some(angle_idx) = Self::find_top_level_char(expr, '<')
+            && expr.ends_with('>')
+        {
+            // JSDoc allows `Object.<K, V>` / `Array.<T>` (dot-generic
+            // form) — the trailing `.` is part of the syntax, not part
+            // of the base name. Strip it before resolution so the base
+            // looks up `Object`, `Array`, etc.
+            let raw_base = expr[..angle_idx].trim();
+            let base_name = raw_base.strip_suffix('.').unwrap_or(raw_base);
+            let args_str = &expr[angle_idx + 1..expr.len() - 1];
+            if self.jsdoc_generic_base_suppresses_full_name_error(base_name) {
+                for arg in Self::split_type_args_respecting_nesting(args_str) {
+                    self.validate_jsdoc_typedef_body_expr(
+                        arg.trim(),
+                        template_names,
+                        comment_pos,
+                        comment_end,
+                        source_text,
+                    );
+                }
+                return;
+            }
+            // Base name does not resolve. tsc reports the missing
+            // identifier at the base, not the whole generic application.
+            if !template_names.iter().any(|t| t == base_name)
+                && !self.jsdoc_typedef_named_visible(base_name)
+            {
+                self.emit_jsdoc_cannot_find_name(base_name, comment_pos, comment_end, source_text);
+            }
+            // Still recurse into args — `Bogus<Missing>` should also
+            // surface `Missing` if it would have, matching tsc's
+            // multi-error JSDoc diagnostics.
+            for arg in Self::split_type_args_respecting_nesting(args_str) {
+                self.validate_jsdoc_typedef_body_expr(
+                    arg.trim(),
+                    template_names,
+                    comment_pos,
+                    comment_end,
+                    source_text,
+                );
+            }
+            return;
+        }
+
+        if self.resolve_jsdoc_type_str(expr).is_some() {
+            return;
+        }
+        self.emit_jsdoc_cannot_find_name(expr, comment_pos, comment_end, source_text);
+    }
+
+    /// Whether a JSDoc `@typedef Name` matching `name` is visible from
+    /// the current file's resolution context. Used to skip TS2304 for
+    /// forward/recursive references that resolve correctly once all
+    /// JSDoc is processed.
+    fn jsdoc_typedef_named_visible(&self, name: &str) -> bool {
+        if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+            for (file_idx, arena) in arenas.iter().enumerate() {
+                if file_idx != self.ctx.current_file_idx
+                    && !self.jsdoc_file_is_global_script(file_idx)
+                {
+                    continue;
+                }
+                for sf in arena.source_files.iter() {
+                    if Self::source_file_has_jsdoc_typedef_named(sf, name) {
+                        return true;
+                    }
+                }
+            }
+        }
+        for sf in self.ctx.arena.source_files.iter() {
+            if Self::source_file_has_jsdoc_typedef_named(sf, name) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check whether a JSDoc type expression is a simple identifier name
@@ -1877,6 +2138,35 @@ impl<'a> CheckerState<'a> {
         }
         true
     }
+
+    fn jsdoc_generic_base_suppresses_full_name_error(&mut self, base_name: &str) -> bool {
+        if !Self::is_simple_type_name(base_name) {
+            return false;
+        }
+        if self.resolve_jsdoc_type_str(base_name).is_some() {
+            return true;
+        }
+        self.jsdoc_generic_base_is_known_function_value(base_name)
+    }
+
+    fn jsdoc_generic_base_is_known_function_value(&self, base_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(base_name)
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::FUNCTION))
+        {
+            return true;
+        }
+
+        self.resolve_identifier_symbol_from_all_binders(base_name, |_, symbol| {
+            symbol.has_any_flags(symbol_flags::FUNCTION)
+        })
+        .is_some()
+    }
 }
 
 // =============================================================================
@@ -1885,7 +2175,6 @@ impl<'a> CheckerState<'a> {
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn report_malformed_jsdoc_satisfies_tags(&mut self, idx: NodeIndex) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_common::comments::is_jsdoc_comment;
 
         if !self.ctx.should_resolve_jsdoc() {
@@ -1902,22 +2191,7 @@ impl<'a> CheckerState<'a> {
             self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)
             && let Some(comment) = comments.iter().find(|c| c.pos == jsdoc_start)
         {
-            for (open_pos, close_pos) in
-                Self::malformed_jsdoc_satisfies_positions(source_text, comment.pos, comment.end)
-            {
-                self.ctx.error(
-                    open_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["{"]),
-                    diagnostic_codes::EXPECTED,
-                );
-                self.ctx.error(
-                    close_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["}"]),
-                    diagnostic_codes::EXPECTED,
-                );
-            }
+            self.emit_malformed_jsdoc_satisfies_diagnostics(source_text, comment.pos, comment.end);
         }
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1940,22 +2214,46 @@ impl<'a> CheckerState<'a> {
                 .find(|c| c.pos == pos)
                 .filter(|c| is_jsdoc_comment(c, source_text))
         {
-            for (open_pos, close_pos) in
-                Self::malformed_jsdoc_satisfies_positions(source_text, comment.pos, comment.end)
-            {
-                self.ctx.error(
-                    open_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["{"]),
-                    diagnostic_codes::EXPECTED,
-                );
-                self.ctx.error(
-                    close_pos,
-                    0,
-                    format_message(diagnostic_messages::EXPECTED, &["}"]),
-                    diagnostic_codes::EXPECTED,
-                );
+            self.emit_malformed_jsdoc_satisfies_diagnostics(source_text, comment.pos, comment.end);
+        }
+    }
+
+    fn emit_malformed_jsdoc_satisfies_diagnostics(
+        &mut self,
+        source_text: &str,
+        comment_pos: u32,
+        comment_end: u32,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        for (name_pos, name_len, name) in
+            Self::malformed_jsdoc_satisfies_unexpected_names(source_text, comment_pos, comment_end)
+        {
+            if self.resolve_jsdoc_type_str(&name).is_some() {
+                continue;
             }
+            self.ctx.error(
+                name_pos,
+                name_len,
+                format_message(diagnostic_messages::CANNOT_FIND_NAME, &[&name]),
+                diagnostic_codes::CANNOT_FIND_NAME,
+            );
+        }
+        for (open_pos, close_pos) in
+            Self::malformed_jsdoc_satisfies_positions(source_text, comment_pos, comment_end)
+        {
+            self.ctx.error(
+                open_pos,
+                0,
+                format_message(diagnostic_messages::EXPECTED, &["{"]),
+                diagnostic_codes::EXPECTED,
+            );
+            self.ctx.error(
+                close_pos,
+                0,
+                format_message(diagnostic_messages::EXPECTED, &["}"]),
+                diagnostic_codes::EXPECTED,
+            );
         }
     }
 
@@ -2043,14 +2341,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsdoc_satisfies_keyword_positions(jsdoc: &str, jsdoc_start: u32) -> Vec<u32> {
-        let mut positions = Vec::new();
-        let mut search_from = 0usize;
-        while let Some(rel) = jsdoc[search_from..].find("@satisfies") {
-            let absolute = search_from + rel;
-            positions.push(jsdoc_start + absolute as u32 + 1);
-            search_from = absolute + "@satisfies".len();
-        }
-        positions
+        Self::jsdoc_tag_offsets(jsdoc, "satisfies")
+            .into_iter()
+            .map(|absolute| jsdoc_start + absolute as u32 + 1)
+            .collect()
     }
 
     fn emit_duplicate_jsdoc_satisfies_positions(&mut self, positions: &[u32]) {
@@ -2082,15 +2376,8 @@ impl<'a> CheckerState<'a> {
         for raw_line in comment_text.split_inclusive('\n') {
             let line = raw_line.trim_end_matches('\n').trim_end_matches('\r');
             let trimmed = line.trim().trim_start_matches('*').trim();
-            let is_param_or_return = trimmed.starts_with("@param ")
-                || trimmed.starts_with("@param\t")
-                || trimmed.starts_with("@param{")
-                || trimmed.starts_with("@returns ")
-                || trimmed.starts_with("@returns\t")
-                || trimmed.starts_with("@returns{")
-                || trimmed.starts_with("@return ")
-                || trimmed.starts_with("@return\t")
-                || trimmed.starts_with("@return{");
+            let is_param_or_return = Self::strip_jsdoc_tag_prefix(trimmed, "param").is_some()
+                || Self::strip_jsdoc_return_tag_prefix(trimmed).is_some();
             if is_param_or_return && let Some(open_pos_in_line) = line.find('{') {
                 let after_open = &line[open_pos_in_line + 1..];
                 if let Some(close_rel) = after_open.find('}') {
@@ -2117,6 +2404,65 @@ impl<'a> CheckerState<'a> {
         results
     }
 
+    fn jsdoc_param_return_type_spans(comment_text: &str) -> Vec<(String, usize)> {
+        let mut results = Vec::new();
+        let mut line_offset = 0usize;
+        for raw_line in comment_text.split_inclusive('\n') {
+            let line = raw_line.trim_end_matches('\n').trim_end_matches('\r');
+            // Strip both single-line (`/** … */`) and multi-line (`* …`)
+            // JSDoc framing so single-line JSDoc tags like
+            // `/** @param {T} y */` are recognised. Without the `/**` /
+            // `*/` strip, the per-line `@param` detection below missed
+            // every single-line JSDoc, leaking diagnostics like #3506.
+            let trimmed = line
+                .trim()
+                .trim_start_matches("/**")
+                .trim_start_matches('*')
+                .trim_end_matches("*/")
+                .trim();
+            let is_param_or_return = trimmed.starts_with("@param ")
+                || trimmed.starts_with("@param\t")
+                || trimmed.starts_with("@param{")
+                || trimmed.starts_with("@returns ")
+                || trimmed.starts_with("@returns\t")
+                || trimmed.starts_with("@returns{")
+                || trimmed.starts_with("@return ")
+                || trimmed.starts_with("@return\t")
+                || trimmed.starts_with("@return{");
+            if is_param_or_return && let Some(open_pos_in_line) = line.find('{') {
+                let after_open = &line[open_pos_in_line + 1..];
+                // Balance nested braces so `@param {{ a: T }} obj` extracts
+                // the full `{ a: T }` body, not just `{ a: T`.
+                let mut depth = 1usize;
+                let mut close_rel = None;
+                for (i, ch) in after_open.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close_rel = Some(i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(close_rel) = close_rel {
+                    let raw_type = &after_open[..close_rel];
+                    let type_expr = raw_type.trim();
+                    if !type_expr.is_empty() {
+                        let ws_before = raw_type.len().saturating_sub(raw_type.trim_start().len());
+                        let type_expr_offset = line_offset + open_pos_in_line + 1 + ws_before;
+                        results.push((type_expr.to_string(), type_expr_offset));
+                    }
+                }
+            }
+            line_offset += raw_line.len();
+        }
+        results
+    }
+
     fn malformed_jsdoc_satisfies_positions(
         source_text: &str,
         comment_pos: u32,
@@ -2124,9 +2470,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(u32, u32)> {
         let raw = &source_text[comment_pos as usize..comment_end as usize];
         let mut result = Vec::new();
-        let mut search_from = 0usize;
-        while let Some(rel) = raw[search_from..].find("@satisfies") {
-            let tag_start = search_from + rel;
+        for tag_start in Self::jsdoc_tag_offsets(raw, "satisfies") {
             let after_tag = tag_start + "@satisfies".len();
             let ws_trimmed = raw[after_tag..].trim_start_matches(char::is_whitespace);
             let skipped = raw[after_tag..].len() - ws_trimmed.len();
@@ -2135,7 +2479,46 @@ impl<'a> CheckerState<'a> {
                 let close_pos = comment_end.saturating_sub(2);
                 result.push((open_pos, close_pos));
             }
-            search_from = after_tag;
+        }
+        result
+    }
+
+    fn malformed_jsdoc_satisfies_unexpected_names(
+        source_text: &str,
+        comment_pos: u32,
+        comment_end: u32,
+    ) -> Vec<(u32, u32, String)> {
+        let raw = &source_text[comment_pos as usize..comment_end as usize];
+        let mut result = Vec::new();
+        for tag_start in Self::jsdoc_tag_offsets(raw, "satisfies") {
+            let after_tag = tag_start + "@satisfies".len();
+            let ws_trimmed = raw[after_tag..].trim_start_matches(char::is_whitespace);
+            let skipped = raw[after_tag..].len() - ws_trimmed.len();
+            if ws_trimmed.starts_with('{') {
+                continue;
+            }
+
+            let name_start = after_tag + skipped;
+            let mut name_end = name_start;
+            for (offset, ch) in raw[name_start..].char_indices() {
+                let is_first = offset == 0;
+                let is_name_char = if is_first {
+                    ch.is_ascii_alphabetic() || ch == '_' || ch == '$'
+                } else {
+                    ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+                };
+                if !is_name_char {
+                    break;
+                }
+                name_end = name_start + offset + ch.len_utf8();
+            }
+            if name_end > name_start {
+                result.push((
+                    comment_pos + name_start as u32,
+                    (name_end - name_start) as u32,
+                    raw[name_start..name_end].to_string(),
+                ));
+            }
         }
         result
     }

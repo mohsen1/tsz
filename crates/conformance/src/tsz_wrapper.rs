@@ -75,6 +75,7 @@ fn has_source_strictness_pragmas_without_strict(text: &str) -> bool {
 ///
 /// `original_extension` is the file extension of the original test file (e.g. "tsx"),
 /// used when there are no `@Filename` directives so the single-file test preserves its extension.
+#[allow(dead_code)]
 pub fn prepare_test_dir(
     content: &str,
     filenames: &[(String, String)],
@@ -82,6 +83,42 @@ pub fn prepare_test_dir(
     original_extension: Option<&str>,
     key_order: &[String],
     expected_error_codes: Option<&[u32]>,
+) -> anyhow::Result<PreparedTest> {
+    prepare_test_dir_with_lib_dir(
+        content,
+        filenames,
+        options,
+        original_extension,
+        key_order,
+        expected_error_codes,
+        None,
+    )
+}
+
+/// Derive the TypeScript harness `tests/lib` directory from a conformance
+/// `tests/cases` directory.
+pub fn tests_lib_dir_for_cases_dir(test_dir: &Path) -> std::path::PathBuf {
+    let test_dir = test_dir
+        .canonicalize()
+        .unwrap_or_else(|_| test_dir.to_path_buf());
+    if test_dir.file_name().is_some_and(|name| name == "cases") {
+        if let Some(tests_dir) = test_dir.parent() {
+            return tests_dir.join("lib");
+        }
+    }
+    std::path::PathBuf::from("TypeScript/tests/lib")
+}
+
+/// Prepare a test directory, using an explicit TypeScript harness lib directory
+/// for `/.lib/...` references when the caller knows the source test root.
+pub fn prepare_test_dir_with_lib_dir(
+    content: &str,
+    filenames: &[(String, String)],
+    options: &HashMap<String, String>,
+    original_extension: Option<&str>,
+    key_order: &[String],
+    expected_error_codes: Option<&[u32]>,
+    ts_tests_lib_dir: Option<&Path>,
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
 
@@ -118,7 +155,8 @@ pub fn prepare_test_dir(
             .all(|(name, _)| is_windows_absolute_path(name));
 
     // Path to TypeScript test harness lib files (for /.lib/ references)
-    let ts_tests_lib_dir = std::path::Path::new("TypeScript/tests/lib");
+    let fallback_ts_tests_lib_dir = std::path::PathBuf::from("TypeScript/tests/lib");
+    let ts_tests_lib_dir = ts_tests_lib_dir.unwrap_or(fallback_ts_tests_lib_dir.as_path());
 
     if filenames.is_empty() {
         let stripped_content = strip_directive_comments(content);
@@ -1001,6 +1039,9 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
 
     if message.starts_with("Cannot find a tsconfig.json file at the specified directory:") {
         return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
+    }
+    if message.starts_with("The specified path does not exist:") {
+        return "The specified path does not exist: ''.".to_string();
     }
     if message.starts_with("tsconfig not found at ") {
         return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();

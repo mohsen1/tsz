@@ -244,6 +244,7 @@ switch (x.kind) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let member_b = types.object(vec![PropertyInfo {
@@ -258,6 +259,7 @@ switch (x.kind) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -356,6 +358,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -370,6 +373,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -386,6 +390,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -400,6 +405,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -520,6 +526,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -534,6 +541,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -551,6 +559,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -565,6 +574,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -582,6 +592,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -596,6 +607,7 @@ switch (true) {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -650,6 +662,7 @@ if (x instanceof Foo) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let union = types.union(vec![TypeId::STRING, obj_type]);
@@ -703,6 +716,7 @@ if ("a" in x) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
@@ -717,6 +731,7 @@ if ("a" in x) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
@@ -770,6 +785,7 @@ if ("a" in x) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
@@ -784,6 +800,7 @@ if ("a" in x) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
@@ -837,6 +854,7 @@ if (#a in x) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let type_b = types.object(vec![PropertyInfo {
@@ -851,6 +869,7 @@ if (#a in x) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let union = types.union(vec![type_a, type_b]);
@@ -1398,7 +1417,6 @@ x;
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_array_destructuring_assignment_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1443,7 +1461,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_object_destructuring_assignment_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1488,7 +1505,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_array_destructuring_default_initializer_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1533,7 +1549,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_object_destructuring_alias_default_initializer_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1578,7 +1593,6 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_object_destructuring_alias_assignment_clears_narrowing() {
     let source = r#"
 let x: string | number;
@@ -1620,6 +1634,72 @@ if (typeof x === "string") {
     // After destructuring with assignment, type is widened to primitive (number)
     // This matches TypeScript's verified behavior
     assert_eq!(narrowed_after, TypeId::NUMBER);
+}
+
+#[test]
+fn test_destructuring_assignment_widens_literals_for_exact_assignment_diagnostics() {
+    let source = r#"
+function arrayAssignment() {
+  let x: string | number = "s";
+  if (typeof x === "string") {
+    [x] = [1];
+    const exact: 1 = x;
+  }
+}
+
+function objectAssignment() {
+  let x: string | number = "s";
+  if (typeof x === "string") {
+    ({ x } = { x: 1 });
+    const exact: 1 = x;
+  }
+}
+
+function objectAlias() {
+  let x: string | number = "s";
+  if (typeof x === "string") {
+    ({ y: x } = { y: 1 });
+    const exact: 1 = x;
+  }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "expected TS2322 for each exact literal assignment after destructuring writes, got: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        ts2322.iter().all(|diag| diag
+            .message_text
+            .contains("Type 'number' is not assignable to type '1'")),
+        "expected destructuring writes to widen literal 1 to number, got: {ts2322:?}"
+    );
 }
 
 #[test]
@@ -3338,6 +3418,73 @@ function f(e: E): number {
     );
 }
 
+#[test]
+fn test_static_condition_branch_does_not_report_unreachable_exhaustive_switch() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+function f1(x: 1 | 2): string {
+    if (!!true) {
+        switch (x) {
+            case 1: return "a";
+            case 2: return "b";
+        }
+        x;  // Unreachable
+    }
+    else {
+        throw 0;
+    }
+}
+
+enum E { A, B }
+
+function g(e: E): number {
+    if (!true)
+        return -1;
+    else
+        switch (e) {
+            case E.A: return 0;
+            case E.B: return 1;
+        }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts7027: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7027)
+        .collect();
+    let expected_start = source.find("x;  // Unreachable").expect("expected x tail") as u32;
+    assert_eq!(
+        ts7027.len(),
+        1,
+        "only the reachable post-switch tail should report TS7027; diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert_eq!(
+        ts7027[0].start, expected_start,
+        "TS7027 should anchor at the post-switch tail"
+    );
+}
+
 /// Exhaustive enum switch assignments should satisfy definite-assignment checks.
 #[test]
 fn test_ts2454_not_emitted_for_exhaustive_enum_switch_assignment() {
@@ -4659,6 +4806,62 @@ function f12() {
     assert!(
         ts18048_errors.is_empty(),
         "Expected no TS18048 for 'let foo narrowed past last assignment' but got {}: {:?}",
+        ts18048_errors.len(),
+        ts18048_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_parameter_early_return_narrowing_preserved_in_closure() {
+    use tsz_common::checker_options::CheckerOptions;
+
+    let source = r#"
+type Params = { required_error?: string } | undefined;
+type ErrorMap = (
+    issue: { code: string },
+    ctx: { data: unknown; defaultError: string }
+) => { message: string };
+
+function process(params: Params) {
+    if (!params) return {};
+    const customMap: ErrorMap = (iss, ctx) => {
+        if (iss.code !== "invalid_type") return { message: ctx.defaultError };
+        if (typeof ctx.data === "undefined" && params.required_error)
+            return { message: params.required_error };
+        return { message: ctx.defaultError };
+    };
+    return customMap;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let interner = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let mut state = CheckerState::new(arena, &binder, &interner, "test.ts".to_string(), options);
+    state.check_source_file(root);
+
+    let ts18048_errors: Vec<_> = state
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18048)
+        .collect();
+    assert!(
+        ts18048_errors.is_empty(),
+        "Expected no TS18048 for early-return narrowed parameter in closure, got {}: {:?}",
         ts18048_errors.len(),
         ts18048_errors
             .iter()

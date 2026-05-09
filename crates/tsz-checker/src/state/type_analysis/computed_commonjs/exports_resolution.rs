@@ -108,6 +108,82 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
+    pub(crate) fn commonjs_export_assignment_expression_value_type(
+        &mut self,
+        module_specifier: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let source_file_idx = source_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))?;
+
+        if target_file_idx == self.ctx.current_file_idx {
+            let expr_idx = self.export_assignment_expression_in_current_arena()?;
+            let ty = self.get_type_of_node(expr_idx);
+            return (ty != TypeId::UNKNOWN && ty != TypeId::ERROR).then_some(ty);
+        }
+
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+        let target_arena = all_arenas.get(target_file_idx)?;
+        let target_binder = all_binders.get(target_file_idx)?;
+        let source_file = target_arena.source_files.first()?;
+        let expr_idx = source_file.statements.nodes.iter().find_map(|&stmt_idx| {
+            let stmt = target_arena.get(stmt_idx)?;
+            if stmt.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                return None;
+            }
+            let assign = target_arena.get_export_assignment(stmt)?;
+            assign.is_export_equals.then_some(assign.expression)
+        })?;
+
+        if !Self::enter_cross_arena_delegation() {
+            return None;
+        }
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+            target_arena.as_ref(),
+            target_binder.as_ref(),
+            self.ctx.types,
+            source_file.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
+        checker.ctx.current_file_idx = target_file_idx;
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
+        );
+
+        let ty = checker.get_type_of_node(expr_idx);
+        Self::leave_cross_arena_delegation();
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+
+        (ty != TypeId::UNKNOWN && ty != TypeId::ERROR).then_some(ty)
+    }
+
+    fn export_assignment_expression_in_current_arena(&self) -> Option<NodeIndex> {
+        self.ctx
+            .arena
+            .source_files
+            .first()?
+            .statements
+            .nodes
+            .iter()
+            .find_map(|&stmt_idx| {
+                let stmt = self.ctx.arena.get(stmt_idx)?;
+                if stmt.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                    return None;
+                }
+                let assign = self.ctx.arena.get_export_assignment(stmt)?;
+                assign.is_export_equals.then_some(assign.expression)
+            })
+    }
+
     fn infer_descriptor_parameter_type_for_file(
         &mut self,
         target_file_idx: usize,
@@ -521,6 +597,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -571,6 +648,7 @@ impl<'a> CheckerState<'a> {
             parent_id: None,
             declaration_order,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         })
     }
@@ -936,6 +1014,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: props.len() as u32 + 1,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -1130,6 +1209,10 @@ impl<'a> CheckerState<'a> {
                 self.resolve_effective_module_exports(&target_file_name)
             });
 
+        let direct_export_assignment_type = target_file_idx.and_then(|_| {
+            self.commonjs_export_assignment_expression_value_type(module_name, source_file_idx)
+        });
+
         if let Some(exports_table) = exports_table {
             let module_is_non_module_entity =
                 self.ctx.module_resolves_to_non_module_entity(module_name);
@@ -1180,6 +1263,9 @@ impl<'a> CheckerState<'a> {
             {
                 let me_type = self.get_type_of_symbol(module_exports_sym);
                 export_equals_type = Some(self.widen_type_for_display(me_type));
+            }
+            if export_equals_type.is_none() {
+                export_equals_type = direct_export_assignment_type;
             }
             let augment_target = source_file_idx
                 .and_then(|src_idx| {
@@ -1244,6 +1330,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1271,6 +1358,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: 0,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1322,6 +1410,10 @@ impl<'a> CheckerState<'a> {
             }
 
             return None;
+        }
+
+        if let Some(direct_export_assignment_type) = direct_export_assignment_type {
+            return Some(direct_export_assignment_type);
         }
 
         // Use the unified JS export surface for the no-export-table fallback.

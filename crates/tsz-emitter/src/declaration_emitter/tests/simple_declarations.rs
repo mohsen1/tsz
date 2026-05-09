@@ -24,6 +24,222 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_defaulted_boolean_param_false_narrowing_return_type() {
+    let source = r#"
+function removeUndefinedButNotFalse(x = true) {
+    if (x === false) {
+        return x;
+    }
+}
+
+declare const cond: boolean;
+function removeNothing(y = cond ? true : undefined) {
+    if (y !== undefined) {
+        if (y === false) {
+            return y;
+        }
+    }
+    return true;
+}
+"#;
+    let output = emit_dts(source);
+
+    assert!(
+        output.contains(
+            "declare function removeUndefinedButNotFalse(x?: boolean): false | undefined;"
+        ),
+        "Expected false narrowing plus fallthrough undefined to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function removeNothing(y?: boolean | undefined): boolean;"),
+        "Expected false/true branches to widen to boolean: {output}"
+    );
+}
+
+#[test]
+fn strip_internal_omits_exported_top_level_declarations() {
+    let source = r#"
+/** @internal */
+export const stripped = 2;
+
+/** @internal */
+export function hiddenFunction() {}
+
+/** @internal */
+export interface HiddenInterface {
+    value: string;
+}
+
+/** @internal */
+export class HiddenClass {}
+
+/** @internal */
+export type HiddenAlias = string;
+
+/** @internal */
+export enum HiddenEnum {
+    A,
+}
+
+/** @internal */
+export namespace HiddenNamespace {
+    export const value = 1;
+}
+
+export const visible = 3;
+"#;
+    let output = emit_dts_strip_internal(source);
+
+    assert!(
+        output.contains("visible"),
+        "Expected visible export to remain: {output}"
+    );
+    for stripped_name in [
+        "stripped",
+        "hiddenFunction",
+        "HiddenInterface",
+        "HiddenClass",
+        "HiddenAlias",
+        "HiddenEnum",
+        "HiddenNamespace",
+        "@internal",
+    ] {
+        assert!(
+            !output.contains(stripped_name),
+            "Expected {stripped_name} to be stripped from declaration output: {output}"
+        );
+    }
+}
+
+#[test]
+fn strip_internal_parameter_property_comments_do_not_emit_internal_fields() {
+    let source = r#"
+export class Foo {
+  constructor(
+    /** @internal */
+    public isInternal1: string,
+    /** @internal */ public isInternal2: string, /** @internal */
+    public isInternal3: string,
+    // @internal
+    public isInternal4: string,
+    // nothing
+    /** @internal */
+    public isInternal5: string,
+    /* @internal */ public isInternal6: string,
+    /* @internal */ public isInternal7: string, /** @internal */
+    // not work
+    public notInternal1: string,
+    // @internal
+    /* not work */
+    public notInternal2: string,
+    /* not work */
+    // @internal
+    /* not work */
+    public notInternal3: string,
+  ) { }
+}
+
+export class Bar {
+  constructor(/* @internal */ public isInternal1: string) {}
+}
+"#;
+    let output = emit_dts_strip_internal(source);
+
+    for stripped_name in [
+        "isInternal1",
+        "isInternal2",
+        "isInternal3",
+        "isInternal4",
+        "isInternal5",
+        "isInternal6",
+        "isInternal7",
+    ] {
+        assert!(
+            !output.contains(&format!("    {stripped_name}: string;")),
+            "Expected @internal parameter property field {stripped_name} to be stripped: {output}"
+        );
+    }
+    assert!(
+        output.contains("notInternal1: string;")
+            && output.contains("notInternal2: string;")
+            && output.contains("notInternal3: string;"),
+        "Expected non-internal parameter properties to remain as class fields: {output}"
+    );
+    assert!(
+        output.contains("constructor(\n    /** @internal */\n    isInternal1: string")
+            && output.contains("/** @internal */ isInternal2: string")
+            && output.contains("constructor(/* @internal */ isInternal1: string);"),
+        "Expected constructor parameters to preserve relevant inline comments: {output}"
+    );
+}
+
+#[test]
+fn test_object_rest_with_keyword_property_names_omits_destructured_key() {
+    let source = r#"
+type P = {
+    enum: boolean;
+    function: boolean;
+    abstract: boolean;
+    async: boolean;
+    await: boolean;
+    one: boolean;
+};
+
+function f1({ enum: _enum, ...rest }: P) {
+    return rest;
+}
+
+function f2({ function: _function, ...rest }: P) {
+    return rest;
+}
+
+function f3({ abstract: _abstract, ...rest }: P) {
+    return rest;
+}
+
+function f4({ async: _async, ...rest }: P) {
+    return rest;
+}
+
+function f5({ await: _await, ...rest }: P) {
+    return rest;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    for (function_name, omitted_key) in [
+        ("f1", "enum"),
+        ("f2", "function"),
+        ("f3", "abstract"),
+        ("f4", "async"),
+        ("f5", "await"),
+    ] {
+        let signature = format!("declare function {function_name}");
+        let start = output
+            .find(&signature)
+            .unwrap_or_else(|| panic!("Expected {signature} in declaration output: {output}"));
+        let end = output[start..]
+            .find("};")
+            .map_or(output.len(), |offset| start + offset);
+        let emitted_function = &output[start..end];
+
+        assert!(
+            !emitted_function.contains(&format!("    {omitted_key}: boolean;")),
+            "Expected `{omitted_key}` to be omitted from {function_name} rest return type: {output}"
+        );
+    }
+
+    assert!(
+        output.contains("declare function f1({ enum: _enum, ...rest }: P):"),
+        "Expected keyword binding pattern to be preserved in f1: {output}"
+    );
+    assert!(
+        output.contains("declare function f5({ await: _await, ...rest }: P):"),
+        "Expected keyword binding pattern to be preserved in f5: {output}"
+    );
+}
+
+#[test]
 fn test_non_exported_function_declaration_emits_declare_function() {
     let source = "function helper(x: string): string { return x; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -166,6 +382,31 @@ export interface I {
     assert!(
         output.contains("export {};"),
         "Expected empty export marker even with type exports: {output}"
+    );
+}
+
+#[test]
+fn test_asserted_class_property_initializer_retains_local_type_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type N = 1;
+export class Bar {
+    c3? = 1 as N;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("type N = 1;"),
+        "Expected asserted initializer alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("c3?: N;"),
+        "Expected optional asserted property to use the alias without widening: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected module marker when local alias is retained: {output}"
     );
 }
 
@@ -319,6 +560,95 @@ export interface Box {
 }
 
 #[test]
+#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+fn test_returned_object_literal_member_comments_are_preserved() {
+    let output = emit_dts(
+        r#"
+/**
+ * make docs
+ */
+export const make = (value: string) => {
+    return {
+        /**
+         * field docs
+         */
+        field: (next: number) => {},
+        /**
+         * method docs
+         */
+        method(next: number) {},
+    };
+}
+
+export class Next {}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare const make: (value: string) => {\n    /** field docs */\n    field: (next: number) => void;\n    /** method docs */\n    method(next: number): void;\n};"
+        ),
+        "Expected returned object literal member JSDoc to stay with members: {output}"
+    );
+    assert!(
+        !output.contains("*/\nexport declare class Next"),
+        "Did not expect returned object member JSDoc to leak to the next declaration: {output}"
+    );
+}
+
+#[test]
+fn test_destructured_binding_comments_are_preserved_before_flattened_name() {
+    let output = emit_dts(
+        r#"
+export let {
+    /**
+    * method docs
+    */
+    method
+} = null as any;
+
+declare global {
+    interface Ext {
+        method(): void;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export declare let \n/**\n* method docs\n*/\nmethod: any;"),
+        "Expected destructured binding JSDoc to be emitted before the flattened name: {output}"
+    );
+    assert!(
+        !output.contains("method: any;\n/**"),
+        "Did not expect destructuring JSDoc to leak after the flattened declaration: {output}"
+    );
+}
+
+#[test]
+fn test_returned_local_uses_source_function_return_annotation_with_type_args() {
+    let output = emit_dts_with_binding(
+        r#"
+export interface Box<T> {
+    current: T;
+}
+export function box<T>(current: T): Box<T> {
+    return { current };
+}
+export const useBox = () => {
+    const value = box<typeof import("pkg")>(null);
+    return value;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const useBox: () => Box<typeof import(\"pkg\")>;"),
+        "Expected local call return annotation to preserve explicit type arguments: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"
@@ -383,6 +713,36 @@ class C {
 }
 
 #[test]
+fn test_ts_class_getter_before_setter_preserves_source_order() {
+    let output = emit_dts(
+        r#"
+const enum G {
+    B = 2,
+}
+class C {
+    get [G.B]() {
+        return true;
+    }
+    set [G.B](value: number) {}
+}
+"#,
+    );
+
+    let getter_pos = output
+        .find("get [G.B](): number;")
+        .expect("missing getter in output");
+    let setter_pos = output
+        .find("set [G.B](value: number);")
+        .expect("missing setter in output");
+
+    assert!(
+        getter_pos < setter_pos,
+        "Expected TypeScript accessor declarations to preserve source order: {output}"
+    );
+}
+
+#[test]
+#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_computed_methods_emit_as_property_signatures() {
     let output = emit_dts(
         r#"
@@ -399,14 +759,14 @@ export class C {
 "#,
     );
 
-    // tsc emits computed methods as method signatures, not property signatures.
+    // tsc emits late-bound computed methods as property-valued function types.
     assert!(
-        output.contains("[key](): string;"),
-        "Expected computed method to use method syntax (matching tsc): {output}"
+        output.contains("[key]: () => string;"),
+        "Expected computed method to use property syntax (matching tsc): {output}"
     );
     assert!(
-        !output.contains("[key]: () => string;"),
-        "Did not expect property signature for computed method: {output}"
+        !output.contains("[key](): string;"),
+        "Did not expect method signature for late-bound computed method: {output}"
     );
     assert!(
         output.contains("regular(): number;"),
@@ -728,6 +1088,31 @@ function format(x) {
     assert!(
         output.contains("declare function format(x: number): string;"),
         "Expected JSDoc function declaration types to flow into .d.ts emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_emits_constrained_jsdoc_template() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template {string} T
+ * @param {T} x
+ * @returns {T}
+ */
+export function id(x) {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function id<T extends string>(x: T): T;"),
+        "Expected constrained JSDoc template to emit as a type parameter constraint: {output}"
+    );
+    assert!(
+        !output.contains("id<{string}, T>"),
+        "Did not expect braced JSDoc constraint to emit as a fake type parameter: {output}"
     );
 }
 
@@ -1127,6 +1512,62 @@ module.exports = a;
 }
 
 #[test]
+fn test_export_equals_namespace_keeps_local_type_dependencies() {
+    let source = r#"
+namespace X {
+    interface A {
+        kind: 'a';
+    }
+
+    interface B {
+        kind: 'b';
+    }
+
+    export type C = A | B;
+}
+
+export = X;
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("interface A {\n        kind: 'a';\n    }"),
+        "Expected local namespace interface A used by exported alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("interface B {\n        kind: 'b';\n    }"),
+        "Expected local namespace interface B used by exported alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("export type C = A | B;"),
+        "Expected exported namespace alias to be retained: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected mixed exported and local namespace members to emit a scope marker: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_shadowed_default_export_uses_self_import_type_names() {
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.current_namespace_self_import_alias = Some("me".to_string());
+    emitter.current_namespace_shadowed_default_name = Some("MyComponent".to_string());
+    emitter.current_namespace_self_export_names.extend([
+        "Things".to_string(),
+        "Props".to_string(),
+        "MyComponent".to_string(),
+    ]);
+
+    let qualified = emitter.qualify_current_namespace_self_type_text("Things<Props, MyComponent>");
+
+    assert_eq!(qualified, "me.Things<me.Props, me.default>");
+}
+
+#[test]
 fn test_js_exports_assignment_emits_named_exports_and_filters_locals() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -1158,6 +1599,56 @@ function C() {
 }
 
 #[test]
+fn test_js_commonjs_keyword_named_exports_emit_aliases() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.class = 123;
+exports.for = "loop";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const _class: 123;"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("declare const _for: \"loop\";"),
+        "Expected reserved export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("export { _class as class, _for as for };"),
+        "Expected reserved export aliases to be grouped: {output}"
+    );
+    assert!(
+        !output.contains("export const class"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+    assert!(
+        !output.contains("export const for"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports["foo"] = 1;
+module.exports["bar"] = "x";
+"#,
+    );
+
+    assert!(
+        output.contains("export const foo: 1;"),
+        "Expected bracket string exports to emit named declarations: {output}"
+    );
+    assert!(
+        output.contains("export const bar: \"x\";"),
+        "Expected module.exports bracket string exports to emit named declarations: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_skips_chained_void_zero_preinit() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -1182,6 +1673,49 @@ exports.y = 2;
 }
 
 #[test]
+fn test_js_commonjs_define_property_exports_emit_named_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.named = 1;
+Object.defineProperty(exports, "myProp", { value: 42, writable: true });
+Object.defineProperty(module.exports, "ro", { value: "fixed" });
+"#,
+    );
+
+    assert!(
+        output.contains("export const named: 1;"),
+        "Expected assignment-shaped CommonJS export declaration: {output}"
+    );
+    assert!(
+        output.contains("export const myProp: number;"),
+        "Expected Object.defineProperty(exports, ...) declaration: {output}"
+    );
+    assert!(
+        output.contains("export const ro: string;"),
+        "Expected Object.defineProperty(module.exports, ...) declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_define_property_only_export_marks_public_api() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+Object.defineProperty(exports, "only", { value: 42 });
+var local = 123;
+"#,
+    );
+
+    assert!(
+        output.contains("export const only: number;"),
+        "Expected defineProperty-only CommonJS export declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare var local:"),
+        "Did not expect local declarations to leak from a defineProperty-only module: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_marks_same_name_function_exported() {
     let output = emit_js_dts(
         r#"
@@ -1193,6 +1727,51 @@ exports.foo = foo;
     assert!(
         output.contains("export function foo(): void;"),
         "Expected same-name CommonJS export to reuse the function declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_object_export_function_infers_binary_return_from_jsdoc_param() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {string} a
+ */
+function bar(a) {
+    return a + a;
+}
+
+module.exports = { bar };
+"#,
+    );
+
+    assert!(
+        output.contains("export function bar(a: string): string;"),
+        "Expected JSDoc parameter type to infer the CommonJS function return: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_default_function_export_is_renamed_to_default_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.default = function (x) {
+    return x;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare function _default(x: any);"),
+        "Expected CJS default function export to use a synthetic default alias: {output}"
+    );
+    assert!(
+        output.contains("export default _default;"),
+        "Expected CJS default export to emit a default alias line: {output}"
+    );
+    assert!(
+        !output.contains("export function default"),
+        "Expected reserved default export name to be rewritten: {output}"
     );
 }
 
@@ -1418,6 +1997,57 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_ts_late_bound_function_assignments_ignore_block_scoped_shadow() {
+    let source = r#"
+export function X() {}
+if (Math.random()) {
+  const X: { test?: any } = {};
+  X.test = 1;
+}
+
+export function Y() {}
+Y.test = "foo";
+if (Math.random()) {
+  const Y = function Y() {}
+  Y.test = 42;
+}
+"#;
+
+    let output = emit_dts_with_binding(source);
+    let expected = r#"export declare function X(): void;
+export declare function Y(): void;
+export declare namespace Y {
+    var test: string;
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected block-scoped shadow assignments to be ignored: {output}"
+    );
+}
+
+#[test]
+fn test_export_default_function_with_late_bound_assignment_emits_default_alias() {
+    let source = r#"
+export default function someFunc() {
+    return "hello!";
+}
+
+someFunc.someProp = "yo";
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+    let expected = r#"declare function someFunc(): string;
+declare namespace someFunc {
+    var someProp: string;
+}
+export default someFunc;"#;
+    assert!(
+        output.contains(expected),
+        "Expected default function expandos to emit through a merged namespace alias: {output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_function_reserved_alias_avoids_existing_member_name() {
     let source = r#"
 export function foo() {}
@@ -1507,6 +2137,30 @@ export declare const arrow9: {
         output.trim(),
         expected,
         "Expected TS late-bound arrow assignments to preserve declaration key text and types: {output}"
+    );
+}
+
+#[test]
+fn test_callable_export_expando_function_property_emits_method_signature() {
+    let source = r#"
+export interface Point {
+    readonly x: number;
+    readonly y: number;
+}
+
+export const Point = (x: number, y: number): Point => ({ x, y });
+Point.zero = (): Point => Point(0, 0);
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("zero(): Point;"),
+        "Expected function-valued expando on callable export to use method syntax: {output}"
+    );
+    assert!(
+        !output.contains("zero: () => Point;"),
+        "Expected not to emit function-valued expando as property syntax: {output}"
     );
 }
 
@@ -2164,7 +2818,6 @@ export class Factory {
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
 fn test_js_commonjs_class_static_assignments_emit_typedef_and_namespace_exports() {
     let source = r#"
 class Handler {
@@ -2219,6 +2872,32 @@ type HandlerOptions = {
         output.trim(),
         expected,
         "Expected CommonJS class static assignments and typedefs to emit in source order: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_property_typedef_quotes_non_identifier_names() {
+    let source = r#"
+/**
+ * @typedef {Object} Options
+ * @property {String} data-id
+ * @property {Number} [max-count]
+ */
+exports.value = {};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("\"data-id\": string;"),
+        "Expected hyphenated JSDoc property name to be quoted: {output}"
+    );
+    assert!(
+        output.contains("\"max-count\"?: number;"),
+        "Expected optional hyphenated JSDoc property name to be quoted before ?: {output}"
     );
 }
 
@@ -2418,6 +3097,38 @@ const result = parse(42);
 }
 
 #[test]
+fn test_private_overloaded_method_initializer_reuses_matching_signature_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+function noArgs(): string { return null as any; }
+function oneArg(input: string): string { return null as any; }
+
+export class Wrapper {
+    private proxy<T, U>(fn: (options: T) => U): (options: T) => U;
+    private proxy<T, U>(fn: (options?: T) => U, noArgs: true): (options?: T) => U;
+    private proxy<T, U>(fn: (options: T) => U) {
+        return null as any;
+    }
+
+    public Proxies = {
+        Failure: this.proxy(noArgs, true),
+        Success: this.proxy(oneArg),
+    };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("Failure: (options?: unknown) => string;"),
+        "Expected optional proxy overload to infer a callable return type: {output}"
+    );
+    assert!(
+        output.contains("Success: (options: string) => string;"),
+        "Expected one-argument proxy overload to infer a callable return type: {output}"
+    );
+}
+
+#[test]
 fn test_object_literal_computed_accessor_pair_emits_writable_symbol_property() {
     let output = emit_dts_with_binding(
         r#"
@@ -2435,6 +3146,253 @@ var obj = {
     assert!(
         !output.contains("readonly [Symbol.isConcatSpreadable]: string;"),
         "Did not expect computed accessor pair to remain readonly: {output}"
+    );
+}
+
+#[test]
+fn symbol_observer_computed_member_drops_redundant_index_signature() {
+    let source = r#"
+interface SymbolConstructor {
+    readonly observer: symbol;
+}
+interface SymbolConstructor {
+    readonly observer: unique symbol;
+}
+
+const obj = {
+    [Symbol.observer]: 0
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let obj_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("obj"))
+                .map(|decl| (NodeIndex(idx as u32), decl))
+        })
+        .map(|(_, decl)| decl)
+        .expect("missing obj declaration");
+    let object_literal = parser
+        .arena
+        .get(obj_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing obj object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(obj_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.initializer.0, TypeId::NUMBER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("[Symbol.observer]: number;"),
+        "Expected computed symbol property to survive: {output}"
+    );
+    assert!(
+        !output.contains("[x: number]: number;"),
+        "Did not expect redundant synthetic numeric index signature: {output}"
+    );
+}
+
+#[test]
+fn non_symbol_computed_member_preserves_matching_index_signature() {
+    let source = r#"
+const key = "x";
+const obj = {
+    [key]: 0
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let obj_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("obj"))
+        })
+        .expect("missing obj declaration");
+    let object_literal = parser
+        .arena
+        .get(obj_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing obj object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(obj_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.initializer.0, TypeId::NUMBER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("[x: number]: number;"),
+        "Expected non-Symbol computed property to preserve matching index signature: {output}"
+    );
+}
+
+#[test]
+fn well_known_symbol_computed_member_preserves_matching_index_signature() {
+    let source = r#"
+const obj = {
+    [Symbol.iterator]: 0
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let obj_decl = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| parser.arena.get_identifier_text(decl.name) == Some("obj"))
+        })
+        .expect("missing obj declaration");
+    let object_literal = parser
+        .arena
+        .get(obj_decl.initializer)
+        .and_then(|node| parser.arena.get_literal_expr(node))
+        .expect("missing obj object literal");
+    let prop_assignment = parser
+        .arena
+        .get(object_literal.elements.nodes[0])
+        .and_then(|node| parser.arena.get_property_assignment(node))
+        .expect("missing computed property assignment");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let object_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        symbol: None,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(obj_decl.initializer.0, object_type);
+    type_cache
+        .node_types
+        .insert(prop_assignment.initializer.0, TypeId::NUMBER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("[Symbol.iterator]: number;"),
+        "Expected computed symbol property to survive: {output}"
+    );
+    assert!(
+        output.contains("[x: number]: number;"),
+        "Expected non-observer Symbol computed property to preserve matching index signature: {output}"
+    );
+}
+
+#[test]
+fn negative_numeric_computed_member_preserves_computed_syntax() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+var v = {
+    [-1]: {},
+    [+1]: {},
+    [~1]: {},
+    [!1]: {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("[-1]: {};"),
+        "Expected negative numeric computed syntax to be preserved: {output}"
+    );
+    assert!(
+        !output.contains("\"-1\": {};"),
+        "Did not expect negative numeric computed property to be quoted: {output}"
+    );
+    assert!(
+        !output.contains("[-2]: {};"),
+        "Expected non-literal negative numeric key to be covered by the numeric index signature: {output}"
     );
 }
 
@@ -2518,6 +3476,74 @@ export const Baa = {
 }
 
 #[test]
+fn test_local_interface_computed_names_do_not_leak_public_dependencies() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const localStringKey = "local";
+const localNumberKey = 1;
+const publicSymbolKey = Symbol();
+
+interface LocalStringNamed {
+    [localStringKey]: number;
+}
+
+interface LocalNumberNamed {
+    [localNumberKey]: string;
+}
+
+export interface PublicNamed {
+    [publicSymbolKey]: number;
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("localStringKey"),
+        "Did not expect local-only interface computed name dependencies to emit: {output}"
+    );
+    assert!(
+        !output.contains("localNumberKey"),
+        "Did not expect local-only interface computed name dependencies to emit: {output}"
+    );
+    assert!(
+        output.contains("declare const publicSymbolKey"),
+        "Expected exported interface computed name dependency to emit: {output}"
+    );
+    assert!(
+        output.contains("[publicSymbolKey]: number;"),
+        "Expected exported interface computed member to emit: {output}"
+    );
+}
+
+#[test]
+fn test_referenced_local_interface_computed_names_keep_dependencies() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const localSymbolKey = Symbol();
+
+interface LocalNamed {
+    [localSymbolKey]: number;
+}
+
+export interface PublicNamed extends LocalNamed {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const localSymbolKey"),
+        "Expected local interface computed name dependency to emit when interface is public: {output}"
+    );
+    assert!(
+        output.contains("interface LocalNamed"),
+        "Expected referenced local interface to emit: {output}"
+    );
+    assert!(
+        output.contains("[localSymbolKey]: number;"),
+        "Expected referenced local interface computed member to emit: {output}"
+    );
+}
+
+#[test]
 fn test_enum_member_initializers_respect_const_assertion_widening() {
     let output = emit_dts_with_binding(
         r#"
@@ -2555,6 +3581,90 @@ class C {
 }
 
 #[test]
+fn test_class_property_initializer_same_name_enum_uses_typeof_enum() {
+    let source = r#"
+enum Hello {
+    World
+}
+class Foo {
+    Hello = Hello;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let source_file = parser
+        .arena
+        .get(root)
+        .and_then(|node| parser.arena.get_source_file(node))
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[1];
+    let prop_idx = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .and_then(|class| class.members.nodes.first().copied())
+        .expect("missing property");
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(prop_idx.0, TypeId::ANY);
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("Hello: typeof Hello;"),
+        "Expected same-name enum initializer to emit typeof enum: {output}"
+    );
+    assert!(
+        !output.contains("readonly [x: number]"),
+        "Did not expect enum value object shape to leak into property type: {output}"
+    );
+}
+
+#[test]
+fn test_class_property_initializer_same_name_enum_uses_typeof_with_inferred_shape() {
+    let output = emit_dts_with_binding(
+        r#"
+enum Hello {
+    World
+}
+class Foo {
+    Hello = Hello;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("Hello: typeof Hello;"),
+        "Expected same-name enum initializer to emit typeof enum: {output}"
+    );
+    assert!(
+        !output.contains("readonly [x: number]"),
+        "Did not expect enum value object shape to leak into property type: {output}"
+    );
+}
+
+#[test]
+fn test_returned_local_conditional_annotation_uses_function_generic_scope() {
+    let output = emit_dts_with_binding(
+        r#"
+function g<T>(x: T) {
+    let y: typeof x extends (infer T)[] ? T : typeof x = null as any;
+    return y;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function g<T>(x: T): T extends (infer T_1)[] ? T_1 : T;"),
+        "Expected returned local annotation to substitute parameter type queries and rename shadowed infer type parameter: {output}"
+    );
+}
+
+#[test]
 fn test_const_enum_member_access_const_variable_preserves_initializer() {
     let output = emit_dts_with_binding(
         r#"
@@ -2574,6 +3684,66 @@ export const b = E.regular;
     assert!(
         output.contains("export declare const b = E.regular;"),
         "Expected property const enum member initializer: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_const_from_namespace_infinity_alias_emits_literal() {
+    let output = emit_dts_with_binding(
+        r#"
+export enum Foo {
+    A = 1e999,
+    B = -1e999,
+}
+
+namespace X {
+    type A = 1e999;
+
+    export function f(): A {
+        throw new Error()
+    }
+}
+
+export const m = X.f();
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const m: Infinity;"),
+        "Expected inaccessible infinity alias return to emit structural literal: {output}"
+    );
+    assert!(
+        !output.contains("export declare const m: A;"),
+        "Did not expect inaccessible alias or unqualified enum member to leak: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_const_from_explicit_enum_member_return_keeps_member_type() {
+    let output = emit_dts_with_binding(
+        r#"
+export enum Foo {
+    A = 1,
+    B = 2,
+}
+
+namespace X {
+    export function f(): Foo.A {
+        throw new Error()
+    }
+}
+
+export const m = X.f();
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const m: Foo.A;"),
+        "Expected explicit enum member return annotation to stay nameable: {output}"
+    );
+    assert!(
+        !output.contains("export declare const m: 1;"),
+        "Did not expect explicit enum member return to collapse to literal: {output}"
     );
 }
 
@@ -3148,5 +4318,191 @@ export default validate;
     assert!(
         decl_pos < default_pos,
         "TS files should preserve source order (declaration first): {trimmed}"
+    );
+}
+
+/// Regression: a TypeScript class whose computed-name members appear
+/// *before* the constructor must keep that order in d.ts.  Prior code
+/// hoisted the constructor between statics and instance members
+/// whenever a class had any computed name, which mangled
+/// `[a]: number; [b]: number; constructor();` into
+/// `constructor(); [a]: number; [b]: number;`.  tsc preserves source
+/// order here (statics still hoist, but the constructor stays in its
+/// non-static slot).
+#[test]
+fn ts_class_with_computed_names_keeps_constructor_after_instance_members() {
+    let output = emit_dts(
+        r#"
+declare const a: 'a';
+declare const b: unique symbol;
+class C12 {
+    [a]: number;
+    [b]: number;
+    ['c']: number;
+    constructor() {}
+}
+"#,
+    );
+    let trimmed = output.trim();
+    let a_pos = trimmed.find("[a]: number;").expect("expected [a] member");
+    let b_pos = trimmed.find("[b]: number;").expect("expected [b] member");
+    let c_pos = trimmed
+        .find("['c']: number;")
+        .expect("expected ['c'] member");
+    let ctor_pos = trimmed
+        .find("constructor();")
+        .expect("expected constructor declaration");
+    assert!(
+        a_pos < b_pos && b_pos < c_pos && c_pos < ctor_pos,
+        "TS class with computed names should preserve source order — instance members before constructor: {trimmed}"
+    );
+}
+
+/// Regression: a `TupleType` whose source has JSDoc comments preceding
+/// individual members must round-trip in d.ts emit as a multi-line
+/// tuple with each comment on its own line, mirroring tsc's behaviour
+/// (see `namedTupleMembers.SegmentAnnotated`).
+///
+/// Counter-regression: tuples *without* leading JSDoc on any member
+/// must keep the compact one-line shape — the multi-line switch is
+/// JSDoc-only, not "any time we have named tuple members" or "any
+/// time we have a rest element".
+#[test]
+fn ts_tuple_with_jsdoc_member_emits_multiline_with_comments() {
+    let output = emit_dts(
+        r#"
+export type SegmentAnnotated = [
+    /**
+     * Size of message buffer segment handles
+     */
+    length: number,
+    /**
+     * Number of segments handled at once
+     */
+    count: number
+];
+"#,
+    );
+    assert!(
+        output.contains("/**\n     * Size of message buffer segment handles\n     */"),
+        "tuple-member JSDoc should round-trip in d.ts emit: {output}"
+    );
+    assert!(
+        output.contains("/**\n     * Number of segments handled at once\n     */"),
+        "second tuple-member JSDoc should round-trip too: {output}"
+    );
+    let length_idx = output.find("length: number").expect("length member");
+    let count_idx = output.find("count: number").expect("count member");
+    assert!(
+        length_idx < count_idx,
+        "tuple member order must be preserved: {output}"
+    );
+}
+
+#[test]
+fn ts_tuple_without_jsdoc_member_keeps_single_line_form() {
+    let output = emit_dts(
+        r#"
+export type Segment = [length: number, count: number];
+export type WithRest = [first: number, second?: number, ...rest: string[]];
+"#,
+    );
+    let trimmed = output.trim();
+    assert!(
+        trimmed
+            .lines()
+            .any(|l| l.contains("export type Segment = [length: number, count: number];")),
+        "non-annotated tuple should stay single-line: {output}"
+    );
+    assert!(
+        trimmed.lines().any(|l| l.contains(
+            "export type WithRest = [first: number, second?: number, ...rest: string[]];"
+        )),
+        "rest-only tuple without JSDoc should stay single-line: {output}"
+    );
+}
+
+/// Counter-regression: when computed-named instance members appear in
+/// source order *before* static members, the static members must still
+/// hoist to the top of the d.ts class body — that's the actual rule
+/// tsc follows for computed-name TS classes (see
+/// `declarationEmitSimpleComputedNames1`).  Verifies the static-hoist
+/// rule didn't regress when the constructor-handling fix landed.
+#[test]
+fn ts_class_with_computed_names_hoists_static_members_above_instance() {
+    let output = emit_dts(
+        r#"
+declare const classFieldName: string;
+declare const otherField: string;
+declare const staticField: string;
+export class Holder {
+    [classFieldName]() { return "value"; }
+    [otherField]() { return 42; }
+    static [staticField]() { return { static: true as boolean }; }
+    static [staticField]() { return { static: "sometimes" as string }; }
+}
+"#,
+    );
+    let trimmed = output.trim();
+    let static_a = trimmed
+        .find("static [staticField]")
+        .expect("expected first static member");
+    let instance_a = trimmed
+        .find("[classFieldName]")
+        .expect("expected first instance member");
+    let instance_b = trimmed
+        .find("[otherField]")
+        .expect("expected second instance member");
+    assert!(
+        static_a < instance_a && static_a < instance_b,
+        "static members should hoist above instance members for TS classes with computed names: {trimmed}"
+    );
+}
+
+/// Direct regression test for the trim helper used by
+/// `type_argument_list_source_text`.  Two-axis property: a bare
+/// overshoot `Foo>` becomes `Foo`, and a nested balanced `<…>` like
+/// `C.A<C.B>` is left intact (naive trimming would corrupt it into
+/// `C.A<C.B`).  The parser's `token_full_start()` correctly anchors
+/// `TypeReference` ends; only `LiteralType`/`UnionType`/
+/// `IntersectionType` have the `token_end()` overshoot quirk this
+/// helper fixes.
+#[test]
+fn strip_type_argument_overshoot_balances_nested_angle_brackets() {
+    use crate::declaration_emitter::DeclarationEmitter;
+
+    let mut overshoot = String::from("\"Hello\">");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut overshoot);
+    assert_eq!(
+        overshoot, "\"Hello\"",
+        "literal-type overshoot must be trimmed"
+    );
+
+    let mut nested = String::from("C.A<C.B>");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut nested);
+    assert_eq!(
+        nested, "C.A<C.B>",
+        "balanced nested `<…>` must not be trimmed"
+    );
+
+    let mut nested_with_overshoot = String::from("C.A<C.B>>");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut nested_with_overshoot);
+    assert_eq!(
+        nested_with_overshoot, "C.A<C.B>",
+        "trailing overshoot `>` must be trimmed but inner `>` kept"
+    );
+
+    let mut trailing_comma = String::from("\"foo\", ");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut trailing_comma);
+    assert_eq!(
+        trailing_comma, "\"foo\"",
+        "trailing `,`/whitespace must drop"
+    );
+
+    let mut quoted_gt = String::from("\"a>b\"");
+    DeclarationEmitter::strip_type_argument_overshoot_for_test(&mut quoted_gt);
+    assert_eq!(
+        quoted_gt, "\"a>b\"",
+        "`>` inside string literals must not affect the balance count"
     );
 }

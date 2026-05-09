@@ -5,81 +5,12 @@
 //! - Discriminated union excess property checking (narrowed member)
 //! - Type alias name display in error messages
 
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("scripts/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let lib_file = LibFile::from_source("lib.es5.d.ts".to_string(), content);
-            return vec![Arc::new(lib_file)];
-        }
-    }
-
-    Vec::new()
-}
+use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let lib_files = load_lib_files_for_test();
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
+    let libs = load_lib_files(&["es5.d.ts"]);
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs)
         .iter()
         .filter(|d| d.code != 2318) // Filter missing global type errors
         .map(|d| (d.code, d.message_text.clone()))
@@ -698,6 +629,120 @@ function test<T extends IFoo>() {
         ts2353.1.contains("'{ prop: boolean; }'"),
         "Expected TS2353 against the concrete union member, got: {}",
         ts2353.1
+    );
+}
+
+#[test]
+fn union_with_generic_intersection_member_reports_concrete_member_display() {
+    let source = r#"
+function test<T extends IFoo>() {
+    const value: T & { prop: boolean } | { name: string } = { name: "test", prop: true };
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'{ name: string; }'"),
+        "Expected TS2353 against the concrete union member, got: {}",
+        ts2353.1
+    );
+    assert!(
+        !ts2353.1.contains("|"),
+        "Expected TS2353 display to omit the generic intersection union member, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn non_generic_union_excess_property_keeps_union_display() {
+    let source = r#"
+interface Cover {
+    color?: string;
+}
+const value: Cover | Cover[] = { couleur: "non" };
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'Cover[] | Cover'") || ts2353.1.contains("'Cover | Cover[]'"),
+        "Expected TS2353 to keep the full union target, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn recursive_array_union_excess_property_uses_outer_alias_display() {
+    let source = r#"
+type Style = StyleBase | StyleArray;
+interface StyleArray extends Array<Style> { }
+interface StyleBase { foo: string; }
+
+const blah: Style = [
+    [[{
+        foo: "asdf",
+        jj: 1
+    }]]
+];
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'Style'"),
+        "Expected TS2353 to mention the recursive alias Style, got: {}",
+        ts2353.1
+    );
+    assert!(
+        !ts2353.1.contains("'StyleBase'"),
+        "Expected TS2353 not to collapse to StyleBase, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn overlapping_discriminant_optionals_report_later_excess_property() {
+    let source = r#"
+interface Common {
+    type: "A" | "B" | "C" | "D";
+    n: number;
+}
+interface A {
+    type: "A";
+    a?: number;
+}
+interface B {
+    type: "B";
+    b?: number;
+}
+
+type CommonWithOverlappingOptionals = Common | (Common & A) | (Common & B);
+
+const c1: CommonWithOverlappingOptionals = {
+    type: "A",
+    n: 1,
+    a: 1,
+    b: 1,
+};
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "expected one TS2353 for 'b', got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'b'"),
+        "TS2353 should mention 'b', got: {}",
+        ts2353[0].1
+    );
+    assert!(
+        ts2353[0].1.contains("Common | (Common & A)"),
+        "TS2353 should use narrowed Common | (Common & A), got: {}",
+        ts2353[0].1
     );
 }
 

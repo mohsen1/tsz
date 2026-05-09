@@ -7,6 +7,7 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Result from resolving literal string keys against an object type.
@@ -500,14 +501,12 @@ impl<'a> CheckerState<'a> {
             .get_function(self.ctx.arena.get(function_idx)?)
         {
             &func.parameters.nodes
-        } else if let Some(method) = self
-            .ctx
-            .arena
-            .get_method_decl(self.ctx.arena.get(function_idx)?)
-        {
-            &method.parameters.nodes
         } else {
-            return None;
+            let method = self
+                .ctx
+                .arena
+                .get_method_decl(self.ctx.arena.get(function_idx)?)?;
+            &method.parameters.nodes
         };
 
         let param_position = parameters.iter().position(|&idx| idx == param_idx)?;
@@ -706,9 +705,8 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
             {
                 shapes.push(shape);
-            } else if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, ty)
-            {
+            } else {
+                let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
                 // Flatten union members: collect function shapes from each.
                 let mut found_any = false;
                 for &member in &members {
@@ -723,8 +721,6 @@ impl<'a> CheckerState<'a> {
                 if !found_any {
                     return None;
                 }
-            } else {
-                return None;
             }
         }
 
@@ -1036,6 +1032,14 @@ impl<'a> CheckerState<'a> {
 
             let evaluated = if should_preserve_contextual_param_type(self.ctx.types, resolved) {
                 resolved
+            } else if crate::query_boundaries::common::type_param_info(self.ctx.types, resolved)
+                .is_some()
+            {
+                // Preserve type parameters that appear inside contextual callback
+                // signatures. Collapsing them to constraints here loses outer
+                // generic identity, e.g. ProxyHandler<T> callback targets become
+                // Function when passed through a generic identity wrapper.
+                resolved
             } else {
                 self.evaluate_type_with_env(resolved)
             };
@@ -1224,7 +1228,7 @@ impl<'a> CheckerState<'a> {
         params: &[NodeIndex],
         param_types: &[Option<TypeId>],
     ) {
-        use crate::query_boundaries::state::checking as query;
+        use crate::query_boundaries::state::checking as state_query;
 
         for (i, &param_idx) in params.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -1242,6 +1246,26 @@ impl<'a> CheckerState<'a> {
             if !is_binding_pattern {
                 continue;
             }
+            let Some(pattern_data) = self.ctx.arena.get_binding_pattern(name_node) else {
+                continue;
+            };
+            let direct_identifier_count = pattern_data
+                .elements
+                .nodes
+                .iter()
+                .filter_map(|&element_idx| self.ctx.arena.get(element_idx))
+                .filter_map(|element_node| self.ctx.arena.get_binding_element(element_node))
+                .filter(|element| {
+                    self.ctx
+                        .arena
+                        .get(element.name)
+                        .is_some_and(|name| name.kind == SyntaxKind::Identifier as u16)
+                })
+                .take(2)
+                .count();
+            if direct_identifier_count < 2 {
+                continue;
+            }
 
             let Some(param_type) = param_types.get(i).and_then(|t| *t) else {
                 continue;
@@ -1249,15 +1273,18 @@ impl<'a> CheckerState<'a> {
             if param_type == TypeId::UNKNOWN || param_type == TypeId::ERROR {
                 continue;
             }
+            if !self.destructured_param_type_may_resolve_to_union(param_type, 0) {
+                continue;
+            }
 
             let mut resolved_for_union = self.evaluate_type_with_env(param_type);
-            if query::union_members(self.ctx.types, resolved_for_union).is_none()
+            if state_query::union_members(self.ctx.types, resolved_for_union).is_none()
                 && let Some(constraint) =
-                    query::type_parameter_constraint(self.ctx.types, resolved_for_union)
+                    state_query::type_parameter_constraint(self.ctx.types, resolved_for_union)
             {
                 resolved_for_union = self.evaluate_type_with_env(constraint);
             }
-            if query::union_members(self.ctx.types, resolved_for_union).is_none() {
+            if state_query::union_members(self.ctx.types, resolved_for_union).is_none() {
                 continue;
             }
 
@@ -1269,6 +1296,78 @@ impl<'a> CheckerState<'a> {
                 true,
                 name_node.kind,
             );
+        }
+    }
+
+    fn destructured_param_type_may_resolve_to_union(&self, type_id: TypeId, depth: u8) -> bool {
+        if crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some() {
+            return true;
+        }
+        if depth >= 4 {
+            return true;
+        }
+
+        let cached_eval = self.ctx.env_eval_cache.borrow().get(&type_id).copied();
+        if let Some(cached) = cached_eval
+            && cached.result != type_id
+        {
+            return self.destructured_param_type_may_resolve_to_union(cached.result, depth + 1);
+        }
+
+        if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
+            return self.lazy_def_may_resolve_to_union(def_id, depth + 1);
+        }
+
+        match query::classify_for_evaluation(self.ctx.types, type_id) {
+            query::EvaluationNeeded::Application { .. } => {
+                let Some(app) = query::type_application(self.ctx.types, type_id) else {
+                    return true;
+                };
+                if let Some(def_id) = query::lazy_def_id(self.ctx.types, app.base) {
+                    return self.lazy_def_may_resolve_to_union(def_id, depth + 1);
+                }
+                true
+            }
+            query::EvaluationNeeded::TypeParameter {
+                constraint: Some(constraint),
+            } => self.destructured_param_type_may_resolve_to_union(constraint, depth + 1),
+            query::EvaluationNeeded::Readonly(inner) => {
+                self.destructured_param_type_may_resolve_to_union(inner, depth + 1)
+            }
+            query::EvaluationNeeded::Intersection(members) => members.iter().any(|&member| {
+                self.destructured_param_type_may_resolve_to_union(member, depth + 1)
+            }),
+            query::EvaluationNeeded::Union(_)
+            | query::EvaluationNeeded::IndexAccess { .. }
+            | query::EvaluationNeeded::KeyOf(_)
+            | query::EvaluationNeeded::Mapped { .. }
+            | query::EvaluationNeeded::Conditional { .. }
+            | query::EvaluationNeeded::TypeQuery(_)
+            | query::EvaluationNeeded::SymbolRef(_) => true,
+            query::EvaluationNeeded::TypeParameter { constraint: None }
+            | query::EvaluationNeeded::Resolved(_)
+            | query::EvaluationNeeded::Callable(_)
+            | query::EvaluationNeeded::Function(_) => false,
+        }
+    }
+
+    fn lazy_def_may_resolve_to_union(&self, def_id: tsz_solver::DefId, depth: u8) -> bool {
+        match self.ctx.definition_store.get_kind(def_id) {
+            Some(tsz_solver::def::DefKind::TypeAlias) => self
+                .ctx
+                .definition_store
+                .get_body(def_id)
+                .is_none_or(|body| self.destructured_param_type_may_resolve_to_union(body, depth)),
+            Some(
+                tsz_solver::def::DefKind::Interface
+                | tsz_solver::def::DefKind::Class
+                | tsz_solver::def::DefKind::ClassConstructor
+                | tsz_solver::def::DefKind::Enum
+                | tsz_solver::def::DefKind::Namespace
+                | tsz_solver::def::DefKind::Function
+                | tsz_solver::def::DefKind::Variable,
+            ) => false,
+            None => true,
         }
     }
 
@@ -1520,16 +1619,37 @@ impl<'a> CheckerState<'a> {
     /// sources (variable references, type annotations, narrowing) are "non-fresh" and
     /// should NOT be widened.
     ///
+    /// An identifier referring to an unannotated `const` declaration whose initializer
+    /// is itself a fresh literal expression is also treated as fresh: tsc tracks
+    /// such bindings as widening literal types and widens them when copied into a
+    /// mutable binding.
+    ///
     /// ## Examples:
     /// ```typescript
     /// let x = "foo";          // "foo" is fresh → widened to string
     /// let a: "foo" = "foo";
     /// let y = a;              // a's type is non-fresh → y: "foo" (not widened)
     /// let z = a || "bar";     // result from || is non-fresh → z: "foo" (not widened)
+    ///
+    /// const tag = "start";    // unannotated const literal → widening literal type
+    /// let m = tag;            // tag is fresh-by-reference → widened to string
     /// ```
     pub(crate) fn is_fresh_literal_expression(&self, idx: NodeIndex) -> bool {
+        self.is_fresh_literal_expression_inner(idx, 0)
+    }
+
+    fn is_fresh_literal_expression_inner(&self, idx: NodeIndex, depth: u8) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
+
+        // Cycle / runaway-recursion guard. Identifier-following can in principle
+        // reach itself through pathological forward references like
+        // `const a = a;`. Bound the chain so the structural recursion always
+        // terminates.
+        const MAX_FRESH_LITERAL_DEPTH: u8 = 16;
+        if depth > MAX_FRESH_LITERAL_DEPTH {
+            return false;
+        }
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -1553,7 +1673,7 @@ impl<'a> CheckerState<'a> {
         if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(paren) = self.ctx.arena.get_parenthesized(node)
         {
-            return self.is_fresh_literal_expression(paren.expression);
+            return self.is_fresh_literal_expression_inner(paren.expression, depth + 1);
         }
 
         // Prefix unary (+/-) on numeric/bigint literals are fresh
@@ -1562,7 +1682,7 @@ impl<'a> CheckerState<'a> {
         {
             let op = prefix.operator;
             if op == SyntaxKind::PlusToken as u16 || op == SyntaxKind::MinusToken as u16 {
-                return self.is_fresh_literal_expression(prefix.operand);
+                return self.is_fresh_literal_expression_inner(prefix.operand, depth + 1);
             }
         }
 
@@ -1572,8 +1692,8 @@ impl<'a> CheckerState<'a> {
         if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
         {
-            return self.is_fresh_literal_expression(cond.when_true)
-                || self.is_fresh_literal_expression(cond.when_false);
+            return self.is_fresh_literal_expression_inner(cond.when_true, depth + 1)
+                || self.is_fresh_literal_expression_inner(cond.when_false, depth + 1);
         }
 
         // Object and array literals need widening (property types get widened)
@@ -1587,6 +1707,23 @@ impl<'a> CheckerState<'a> {
         // but we mark them fresh for consistency
         if kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
             return true;
+        }
+
+        // Identifier referencing an unannotated `const` declaration whose
+        // initializer is itself a fresh literal expression. tsc tracks these
+        // bindings as widening literal types, so copying them into a `let`/`var`
+        // binding must still widen.
+        if kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(decl_idx) = symbol.primary_declaration()
+            && self.ctx.arena.is_const_variable_declaration(decl_idx)
+            && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && var_decl.type_annotation.is_none()
+            && var_decl.initializer.is_some()
+        {
+            return self.is_fresh_literal_expression_inner(var_decl.initializer, depth + 1);
         }
 
         // Everything else (identifiers, call expressions, binary expressions, etc.)
@@ -2094,6 +2231,14 @@ impl<'a> CheckerState<'a> {
                 if (ty == TypeId::ERROR || ty == TypeId::UNDEFINED)
                     && !self.is_array_like_type(object_type)
                 {
+                    let index_signature_ty =
+                        self.get_element_access_type(object_type, TypeId::NUMBER, None);
+                    if index_signature_ty != TypeId::ERROR
+                        && index_signature_ty != TypeId::UNDEFINED
+                    {
+                        types.push(index_signature_ty);
+                        continue;
+                    }
                     return None;
                 }
                 types.push(ty);
@@ -2305,8 +2450,8 @@ impl<'a> CheckerState<'a> {
         literal_index: Option<usize>,
     ) -> bool {
         if object_type == TypeId::ANY
-            || object_type == TypeId::UNKNOWN
             || object_type == TypeId::ERROR
+            || (self.ctx.compiler_options.strict_null_checks && object_type == TypeId::UNKNOWN)
         {
             return false;
         }
@@ -2342,7 +2487,9 @@ impl<'a> CheckerState<'a> {
             object_type
         };
 
-        if check_type == TypeId::ANY || check_type == TypeId::UNKNOWN || check_type == TypeId::ERROR
+        if check_type == TypeId::ANY
+            || check_type == TypeId::ERROR
+            || (self.ctx.compiler_options.strict_null_checks && check_type == TypeId::UNKNOWN)
         {
             return false;
         }

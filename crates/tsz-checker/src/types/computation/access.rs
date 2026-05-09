@@ -1,9 +1,3 @@
-//! Element access and optional chain detection.
-//!
-//! Super keyword computation lives in `access_super`.
-//! Await expression computation lives in `access_await`.
-//! Index type helpers live in `access_helpers`.
-
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -15,10 +9,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-/// Checks if a node is an optional chain expression (`?.`).
-///
-/// Handles property access (`o?.b`), element access (`o?.[0]`), and
-/// call expressions (`o?.b()` / `o.b?.()`).
 pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
@@ -35,10 +25,6 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
             }
         }
         k if k == syntax_kind_ext::CALL_EXPRESSION => {
-            // Check if this call is part of an optional chain.
-            // A call can be optional in two ways:
-            // 1. The callee itself is optional: `o?.b()` -> callee `o?.b` has question_dot_token
-            // 2. The call has an optional token: `o.b?.()` -> call node has OPTIONAL_CHAIN flag
             if node.is_optional_chain() {
                 return true;
             }
@@ -52,9 +38,6 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     }
 }
 
-/// Get the root (leftmost) expression of an optional chain.
-/// For `A?.b()`, traverses through the call and property access to return `A`.
-/// This is used by TS1209 to extract just the target name for the suggestion message.
 pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeIndex {
     let Some(node) = arena.get(idx) else {
         return idx;
@@ -79,7 +62,7 @@ pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeInde
 }
 
 impl<'a> CheckerState<'a> {
-    fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(key_expr_idx)?;
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
@@ -165,17 +148,22 @@ impl<'a> CheckerState<'a> {
             .binder
             .expando_properties
             .get(&obj_key)
-            .is_some_and(|props| props.contains(&prop_key))
+            .is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            })
         {
             return true;
         }
 
         // Use global expando index for O(1) lookup instead of O(N) binder scan
         if let Some(expando_idx) = &self.ctx.global_expando_index {
-            if expando_idx
-                .get(&obj_key)
-                .is_some_and(|props| props.contains(&prop_key))
-            {
+            if expando_idx.get(&obj_key).is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            }) {
                 return true;
             }
         } else if let Some(all_binders) = &self.ctx.all_binders {
@@ -183,7 +171,11 @@ impl<'a> CheckerState<'a> {
                 if binder
                     .expando_properties
                     .get(&obj_key)
-                    .is_some_and(|props| props.contains(&prop_key))
+                    .is_some_and(|props| {
+                        props
+                            .iter()
+                            .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+                    })
                 {
                     return true;
                 }
@@ -247,7 +239,14 @@ impl<'a> CheckerState<'a> {
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
         // back to the flow-narrowed receiver so subtype-based writes still work.
-        let (object_type, write_presence_only) = if skip_flow_narrowing {
+        let expando_write_property_name =
+            if skip_flow_narrowing && self.is_js_file() && self.ctx.compiler_options.check_js {
+                self.expando_element_key_name(access.name_or_argument)
+            } else {
+                None
+            };
+
+        let (object_type, raw_object_type, write_presence_only) = if skip_flow_narrowing {
             let object_type_no_flow =
                 self.get_type_of_write_target_base_expression(access.expression);
             let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
@@ -257,16 +256,19 @@ impl<'a> CheckerState<'a> {
                 && self
                     .ctx
                     .arena
-                    .get_identifier_at(access.name_or_argument)
-                    .is_some_and(|member_ident| {
+                    .get(access.name_or_argument)
+                    .is_some_and(|_| {
+                        let Some(member_name) = expando_write_property_name.as_deref() else {
+                            return false;
+                        };
                         property_access_chain_text_in_arena(self.ctx.arena, access.expression)
                             .is_some_and(|object_key| {
                                 self.collect_expando_properties_for_root(&object_key)
-                                    .contains(&member_ident.escaped_text)
+                                    .contains(member_name)
                                     || object_key.rsplit_once('.').is_some_and(
                                         |(_, last_segment)| {
                                             self.collect_expando_properties_for_root(last_segment)
-                                                .contains(&member_ident.escaped_text)
+                                                .contains(member_name)
                                         },
                                     )
                             })
@@ -314,10 +316,14 @@ impl<'a> CheckerState<'a> {
                     false,
                 )
             };
-            (self.evaluate_application_type(chosen.0), chosen.1)
+            (self.evaluate_application_type(chosen.0), chosen.0, chosen.1)
         } else {
             let object_type = self.get_type_of_node_with_request(access.expression, &read_request);
-            (self.evaluate_application_type(object_type), false)
+            (
+                self.evaluate_application_type(object_type),
+                object_type,
+                false,
+            )
         };
 
         // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
@@ -393,8 +399,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_this_global = self.is_this_resolving_to_global(access.expression);
+        let is_declared_window_global_this =
+            self.is_window_and_global_this_declared_expression(access.expression);
         if let Some(name) = literal_string.as_deref()
-            && (self.is_global_this_like_expression(access.expression) || is_this_global)
+            && (self.is_global_this_like_expression(access.expression)
+                || is_this_global
+                || is_declared_window_global_this)
         {
             let base_display =
                 if self.is_global_this_expression(access.expression) || is_this_global {
@@ -403,7 +413,36 @@ impl<'a> CheckerState<'a> {
                     "Window & typeof globalThis"
                 };
             let allow_unknown_property_fallback =
-                self.is_global_this_expression(access.expression) || is_this_global;
+                (self.is_global_this_expression(access.expression) || is_this_global)
+                    && !is_declared_window_global_this;
+            if is_declared_window_global_this
+                && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
+                    let prop_result =
+                        crate::query_boundaries::property_access::resolve_property_access(
+                            self.ctx.types,
+                            window_type,
+                            name,
+                        );
+                    if let Some(type_id) = prop_result.success_type() {
+                        return if skip_flow_narrowing {
+                            type_id
+                        } else {
+                            self.apply_flow_narrowing(idx, type_id)
+                        };
+                    }
+                }
+                if self.ctx.no_implicit_any() && !self.is_js_file() {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        access.name_or_argument,
+                        "Element implicitly has an 'any' type because index expression is not of type 'number'.",
+                        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
+                    );
+                }
+                return TypeId::ANY;
+            }
             // For element access (globalThis['y']), tsc reports TS2339 at the full
             // expression span. For property access (globalThis.y), at the property name.
             let error_node = if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
@@ -448,6 +487,62 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.apply_flow_narrowing(idx, property_type)
             };
+        }
+
+        // Handle `window[k]` where `k` is a typed identifier whose type is a
+        // single string literal or a union of string literals, e.g.
+        // `const k: 'resizeTo' | 'resizeBy'`. The literal-string branch above
+        // only fires when the AST argument is a string literal node, so
+        // variable indices fall through to the general union-keys path. That
+        // path resolves the property on the full `Window & typeof globalThis`
+        // intersection, where the structural callable shape contributed by
+        // `Window`'s methods is lost during evaluation and the contextual
+        // arrow-function callback collapses to implicit-any. Resolving each
+        // key directly against the `Window` lib type — mirroring the literal
+        // branch above — yields a usable callable shape for the assignment
+        // target so callbacks like `(x, y) => {}` are contextually typed.
+        if literal_string.is_none()
+            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && (self.is_global_this_like_expression(access.expression)
+                || is_this_global
+                || is_declared_window_global_this)
+            && let Some((string_keys, number_keys)) =
+                self.get_literal_key_union_from_type(index_type)
+            && !string_keys.is_empty()
+            && number_keys.is_empty()
+            && let Some(window_type) = self.resolve_lib_type_by_name("Window")
+        {
+            let mut resolved_types: Vec<TypeId> = Vec::with_capacity(string_keys.len());
+            let mut all_resolved = true;
+            for key_atom in &string_keys {
+                let key_name = self.ctx.types.resolve_atom(*key_atom).to_string();
+                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    window_type,
+                    &key_name,
+                );
+                if let Some(type_id) = prop_result.success_type() {
+                    resolved_types.push(type_id);
+                } else {
+                    all_resolved = false;
+                    break;
+                }
+            }
+            if all_resolved && !resolved_types.is_empty() {
+                // Write context: value must satisfy every possible key →
+                // intersection. Read context: result is one of the keyed
+                // properties → union.
+                let combined = if skip_flow_narrowing {
+                    tsz_solver::utils::intersection_or_single(self.ctx.types, resolved_types)
+                } else {
+                    tsz_solver::utils::union_or_single(self.ctx.types, resolved_types)
+                };
+                return if skip_flow_narrowing {
+                    combined
+                } else {
+                    self.apply_flow_narrowing(idx, combined)
+                };
+            }
         }
 
         if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {
@@ -610,6 +705,15 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .index_access(pre_resolution_object_type, index_type);
         }
+        if skip_flow_narrowing
+            && is_generic_receiver
+            && let Some(write_target) = self.constraint_keyof_write_target_for_type_param(
+                index_type,
+                pre_resolution_object_type,
+            )
+        {
+            return write_target;
+        }
 
         // For non-receiver generic composites, keep the canonical indexed-access
         // shell in write position as well. Alias/application/intersection targets
@@ -730,6 +834,33 @@ impl<'a> CheckerState<'a> {
         let mut result_type = None;
         let mut report_no_index = false;
         let mut use_index_signature_check = true;
+
+        if result_type.is_none() {
+            let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
+            let mapped_access =
+                crate::query_boundaries::common::remapped_mapped_index_access_result(
+                    self.ctx.types,
+                    raw_object_type,
+                    index_type,
+                )
+                .or_else(|| {
+                    crate::query_boundaries::common::remapped_mapped_index_access_result(
+                        self.ctx.types,
+                        resolved_pre,
+                        index_type,
+                    )
+                });
+            if let Some(mapped_access) = mapped_access {
+                use crate::query_boundaries::common::RemappedMappedIndexAccessResult::{
+                    Deferred, Known,
+                };
+                let value_type = match mapped_access {
+                    Known(value_type) | Deferred(value_type) => value_type,
+                };
+                result_type = Some(value_type);
+                use_index_signature_check = false;
+            }
+        }
 
         if let Some(name) = literal_string.as_deref() {
             if self
@@ -1081,13 +1212,17 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    use_index_signature_check = false;
-                    // TS18046: 'x' is of type 'unknown'.
-                    // Without strictNullChecks, unknown is treated like any.
-                    if self.error_is_of_type_unknown(access.expression) {
-                        Some(TypeId::ERROR)
+                    if self.ctx.compiler_options.strict_null_checks {
+                        use_index_signature_check = false;
+                        // TS18046: 'x' is of type 'unknown'.
+                        // Without strictNullChecks, unknown is treated like any.
+                        if self.error_is_of_type_unknown(access.expression) {
+                            Some(TypeId::ERROR)
+                        } else {
+                            Some(TypeId::ANY)
+                        }
                     } else {
-                        Some(TypeId::ANY)
+                        None
                     }
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
@@ -1098,8 +1233,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(ref class_info) = self.ctx.enclosing_class
                         && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
                         && self
-                            .summarize_class_chain(base_idx)
-                            .lookup(&property_name, true, true)
+                            .class_chain_member_kind_name_only(base_idx, &property_name, true, true)
                             .is_some()
                     {
                         use crate::diagnostics::{
@@ -1125,8 +1259,12 @@ impl<'a> CheckerState<'a> {
                             self.resolve_class_for_access(access.expression, object_type_for_access)
                         && !is_static_access
                         && self
-                            .summarize_class_chain(class_idx)
-                            .lookup(&property_name, true, true)
+                            .class_chain_member_kind_name_only(
+                                class_idx,
+                                &property_name,
+                                true,
+                                true,
+                            )
                             .is_some()
                     {
                         use crate::diagnostics::{
@@ -1147,6 +1285,20 @@ impl<'a> CheckerState<'a> {
                         );
                         use_index_signature_check = false;
                         Some(TypeId::ERROR)
+                    } else if !self.is_super_expression(access.expression)
+                        && self.property_access_is_current_class_construction_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        )
+                        && let Some((class_idx, is_static_access)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && let Some(member_type) = self
+                            .summarize_class_chain(class_idx)
+                            .lookup(&property_name, is_static_access, true)
+                            .map(|member| member.type_id)
+                    {
+                        use_index_signature_check = false;
+                        Some(member_type)
                     } else {
                         // TS2339 parity for element access on `typeof const enum` with a missing
                         // string-literal member. Const enums do not have reverse mappings, so they
@@ -1192,13 +1344,17 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    use_index_signature_check = false;
-                    // TS18046: 'x' is of type 'unknown'.
-                    // Without strictNullChecks, unknown is treated like any.
-                    if self.error_is_of_type_unknown(access.expression) {
-                        Some(TypeId::ERROR)
+                    if self.ctx.compiler_options.strict_null_checks {
+                        use_index_signature_check = false;
+                        // TS18046: 'x' is of type 'unknown'.
+                        // Without strictNullChecks, unknown is treated like any.
+                        if self.error_is_of_type_unknown(access.expression) {
+                            Some(TypeId::ERROR)
+                        } else {
+                            Some(TypeId::ANY)
+                        }
                     } else {
-                        Some(TypeId::ANY)
+                        None
                     }
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => None,
@@ -1486,7 +1642,6 @@ impl<'a> CheckerState<'a> {
         // "a" | "b" — known keys). The split_nullish_type guard in the solver
         // prevents double-counting. We do NOT add `| undefined` here because
         // doing so would incorrectly penalize accesses through known properties.
-
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index
         {
@@ -1623,6 +1778,23 @@ impl<'a> CheckerState<'a> {
 
         if !report_no_index
             && use_index_signature_check
+            && (result_type == TypeId::UNDEFINED
+                || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    result_type,
+                ))
+            && crate::query_boundaries::common::intersection_members(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            .is_none()
+            && self.narrow_string_index_signature_rejects_index(object_type_for_access, index_type)
+        {
+            report_no_index = true;
+        }
+
+        if !report_no_index
+            && use_index_signature_check
             && self.union_has_missing_concrete_element_access(
                 object_type_for_access,
                 index_type,
@@ -1662,6 +1834,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     object_type_for_access,
                 ) || is_js_expando_object_write);
+            if is_expando_write {
+                result_type = TypeId::ANY;
+            }
             // Suppress TS7053 for expando reads with unique symbol keys on function
             // types. When `func[symKey]` where symKey is a const Symbol() variable
             // and `func[symKey] = value` was assigned as an expando property, tsc
@@ -1704,6 +1879,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self.ctx.types.take_union_too_complex() {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
+
         if let Some(cause) = nullish_cause {
             if access.question_dot_token {
                 result_type = self
@@ -1726,228 +1910,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::context::CheckerOptions;
-    use crate::diagnostics::Diagnostic;
-    use crate::query_boundaries::type_construction::TypeInterner;
-    use crate::state::CheckerState;
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-
-    fn check_source_with_default_libs(source: &str) -> Vec<Diagnostic> {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let source_file = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), source_file);
-
-        let types = TypeInterner::new();
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        checker.check_source_file(source_file);
-
-        checker.ctx.diagnostics.clone()
-    }
-
-    fn has_code(diags: &[Diagnostic], code: u32) -> bool {
-        diags.iter().any(|d| d.code == code)
-    }
-
-    /// Filter out TS2318 ("Cannot find global type") which fires when lib files aren't loaded.
-    fn semantic_errors(diags: &[Diagnostic]) -> Vec<u32> {
-        diags
-            .iter()
-            .filter(|d| d.code != 2318)
-            .map(|d| d.code)
-            .collect()
-    }
-
-    /// Minimal Promise/PromiseLike type definitions for tests.
-    const PROMISE_LIB: &str = r#"
-interface PromiseLike<T> {
-    then<TResult1 = T, TResult2 = never>(
-        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
-        onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
-    ): PromiseLike<TResult1 | TResult2>;
-}
-interface Promise<T> {
-    then<TResult1 = T, TResult2 = never>(
-        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
-        onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
-    ): Promise<TResult1 | TResult2>;
-}
-interface PromiseConstructor {
-    new <T>(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void) => void): Promise<T>;
-}
-declare var Promise: PromiseConstructor;
-"#;
-
-    #[test]
-    fn contextual_type_through_new_promise_variable_decl() {
-        // `const p: Promise<string> = new Promise(resolve => resolve("hello"))` should
-        // infer T = string from the contextual type, producing no errors.
-        let source = format!(
-            r#"{PROMISE_LIB}
-const p: Promise<string> = new Promise(resolve => resolve("hello"));"#
-        );
-        let diags = check_source_with_default_libs(&source);
-        let errors = semantic_errors(&diags);
-        assert!(
-            errors.is_empty(),
-            "Expected no semantic errors for contextually typed new Promise, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn contextual_type_through_await_new_promise() {
-        // `const s: string = await new Promise(resolve => resolve("ok"))` should
-        // infer T = string via the await contextual type union.
-        let source = format!(
-            r#"{PROMISE_LIB}
-async function f() {{ const s: string = await new Promise(resolve => resolve("ok")); }}"#
-        );
-        let diags = check_source_with_default_libs(&source);
-        let errors = semantic_errors(&diags);
-        assert!(
-            errors.is_empty(),
-            "Expected no semantic errors for await new Promise with contextual type, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn contextual_type_async_return_new_promise() {
-        // Note: the full async return + new Promise fix requires real lib files because
-        // resolve_global_interface_type("Promise") doesn't find local declarations.
-        // This test verifies the code doesn't crash; the full fix is validated by
-        // the contextuallyTypeAsyncFunctionReturnType conformance test.
-        let source = format!(
-            r#"{PROMISE_LIB}
-interface Obj {{ key: "value"; }}
-async function f(): Promise<Obj> {{
-    return new Promise(resolve => {{
-        resolve({{ key: "value" }});
-    }});
-}}"#
-        );
-        let diags = check_source_with_default_libs(&source);
-        // Without real lib files, global Promise resolution fails and inference
-        // falls back to unknown, producing TS2322/TS2345. This is expected.
-        // The important thing is no crash and the code path executes.
-        let _ = semantic_errors(&diags);
-    }
-
-    #[test]
-    fn tuple_expression_negative_index_emits_t2514() {
-        // `as const` makes the literal a readonly tuple — without it, `["a", 1]`
-        // is inferred as `(string | number)[]` (an array) and TS2514 is not expected.
-        let diags = check_source_with_default_libs(
-            r#"
-const tuple = ["a", 1] as const;
-const bad = tuple[-1];
-"#,
-        );
-
-        assert!(
-            has_code(&diags, 2514),
-            "Expected TS2514 for tuple expression negative index, got: {:?}",
-            diags.iter().map(|d| d.code).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn private_name_access_unknown_reports_18046() {
-        let diags = check_source_with_default_libs(
-            r#"
-class A {
-    #foo = true;
-    static #baz = 10;
-    static #m() {}
-    method(thing: unknown) {
-        thing.#foo;
-        thing.#m();
-        thing.#baz;
-        thing.#bar;
-        thing.#foo();
-    }
-}
-"#,
-        );
-        let errors = semantic_errors(&diags);
-        assert_eq!(
-            errors.iter().filter(|code| **code == 18046).count(),
-            5,
-            "Expected 5 TS18046 diagnostics for private access on unknown, got: {errors:?}"
-        );
-        assert_eq!(
-            errors.iter().filter(|code| **code == 2339).count(),
-            1,
-            "Expected one TS2339 diagnostic for undeclared private name, got: {errors:?}"
-        );
-        assert!(
-            diags
-                .iter()
-                .any(|d| d.code == 2339 && d.message_text.contains("#bar")),
-            "Expected the TS2339 diagnostic to mention '#bar': {diags:?}"
-        );
-    }
-
-    #[test]
-    fn private_name_access_never_reports_2339() {
-        let diags = check_source_with_default_libs(
-            r#"
-class A {
-    #foo = true;
-    static #baz = 10;
-    static #m() {}
-    method(thing: never) {
-        thing.#foo;
-        thing.#m();
-        thing.#baz;
-        thing.#bar;
-        thing.#foo();
-    }
-}
-"#,
-        );
-        let errors = semantic_errors(&diags);
-        assert_eq!(
-            errors.iter().filter(|code| **code == 2339).count(),
-            5,
-            "Expected 5 TS2339 diagnostics for private access on never, got: {errors:?}"
-        );
-        assert!(
-            errors.iter().all(|code| *code == 2339),
-            "Expected only TS2339 diagnostics, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn inherited_static_member_element_access_emits_ts2576() {
-        let diags = check_source_with_default_libs(
-            r#"
-class Base {
-    static count = 1;
-    static get size() {
-        return 2;
-    }
-}
-class Derived extends Base {}
-const value = new Derived();
-value["count"];
-value["size"];
-"#,
-        );
-
-        let errors = semantic_errors(&diags);
-        assert_eq!(
-            errors.iter().filter(|code| **code == 2576).count(),
-            2,
-            "Expected TS2576 for inherited static field and accessor element access, got: {errors:?}"
-        );
-    }
-}
+#[path = "tests/access.rs"]
+mod tests;

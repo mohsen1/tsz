@@ -5,7 +5,9 @@ use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, is_type_parameter_type, tuple_elements_for_type,
+    array_element_type_for_type, contains_index_access_with_type_parameter_object,
+    contains_index_access_with_variadic_tuple_object, is_type_parameter_type,
+    tuple_elements_for_type,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
@@ -13,7 +15,120 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
+const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
+
 impl<'a> CheckerState<'a> {
+    fn generic_function_argument_has_own_type_params(&self, arg_idx: NodeIndex) -> bool {
+        let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_function(node)
+            .and_then(|func| func.type_parameters.as_ref())
+            .is_some_and(|params| !params.nodes.is_empty())
+    }
+
+    fn generic_function_argument_has_own_type_params_and_annotated_params(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        if func
+            .type_parameters
+            .as_ref()
+            .is_none_or(|params| params.nodes.is_empty())
+        {
+            return false;
+        }
+        func.parameters.nodes.iter().all(|param_idx| {
+            self.ctx
+                .arena
+                .get(*param_idx)
+                .and_then(|param| self.ctx.arena.get_parameter(param))
+                .is_some_and(|param| param.type_annotation.is_some())
+        })
+    }
+
+    fn bare_type_param_constraint_has_callable_return_context(
+        &mut self,
+        expected_type: Option<TypeId>,
+    ) -> bool {
+        let Some(expected_type) = expected_type else {
+            return false;
+        };
+        let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
+            self.ctx.types,
+            expected_type,
+        ) else {
+            return false;
+        };
+        let Some(return_type) =
+            ContextualTypeContext::with_expected(self.ctx.types, constraint).get_return_type()
+        else {
+            return false;
+        };
+        let evaluated = self.evaluate_type_with_env(return_type);
+        crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            return_type,
+        )
+        .or_else(|| {
+            crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                evaluated,
+            )
+        })
+        .is_some()
+    }
+
+    pub(crate) fn call_arg_source_type_annotation_markers(
+        &self,
+        args: &[NodeIndex],
+        arg_type_count: usize,
+    ) -> Vec<bool> {
+        if args.len() != arg_type_count {
+            return vec![false; arg_type_count];
+        }
+        args.iter()
+            .map(|&arg_idx| self.call_arg_source_is_type_assertion(arg_idx))
+            .collect()
+    }
+
+    fn call_arg_source_is_type_assertion(&self, arg_idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::AS_EXPRESSION
+            && node.kind != syntax_kind_ext::TYPE_ASSERTION
+        {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_type_assertion(node)
+            .is_some_and(|assertion| assertion.type_node.is_some())
+    }
+
     /// Collect argument types with contextual typing from expected parameter types.
     ///
     /// This method handles:
@@ -101,6 +216,7 @@ impl<'a> CheckerState<'a> {
         // Track whether TS2556 was already emitted in this call.
         // tsc only reports TS2556 on the first non-tuple spread, not subsequent ones.
         let mut emitted_ts2556 = false;
+        let mut recover_after_spread_ts2589 = false;
 
         for (i, &arg_idx) in args.iter().enumerate() {
             // Skip sensitive arguments in Round 1 of two-pass generic inference.
@@ -116,15 +232,59 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            if recover_after_spread_ts2589 {
+                self.get_type_of_node(arg_idx);
+                arg_types.push(TypeId::ANY);
+                effective_index += 1;
+                continue;
+            }
+
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
                 // Handle spread elements specially - expand tuple types
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                     && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
                 {
                     let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                    let expected_at_spread = expected_for_index(effective_index, expanded_count);
+                    let recursive_mapped_tuple_depth = expected_at_spread.is_some_and(|expected| {
+                        Self::recursive_mapped_tuple_spread_may_exceed_depth_in_types(
+                            self.ctx.types,
+                            spread_type,
+                            expected,
+                        )
+                    });
+                    if recursive_mapped_tuple_depth {
+                        let anchor = self.spread_iterability_error_anchor(spread_data.expression);
+                        if let Some((start, end)) = self.get_node_span(anchor)
+                            && !self.has_diagnostic_code_within_span(
+                                start,
+                                end,
+                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                            )
+                        {
+                            self.emit_ts2589_spread_instantiation_depth(anchor);
+                        }
+                        recover_after_spread_ts2589 = true;
+                        arg_types.push(TypeId::ANY);
+                        effective_index += 1;
+                        continue;
+                    }
 
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_type, spread_data.expression);
+
+                    if self
+                        .aggregate_rest_type_for_spread(
+                            callable_ctx,
+                            effective_index,
+                            expanded_count,
+                        )
+                        .is_some()
+                    {
+                        arg_types.push(self.spread_argument_marker_type(spread_type));
+                        effective_index += 1;
+                        continue;
+                    }
 
                     // If it's a tuple type, expand its elements
                     if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
@@ -259,8 +419,7 @@ impl<'a> CheckerState<'a> {
                         // We check this via `is_rest_parameter_position` on the callable type,
                         // falling back to the large-index probe when the callable type isn't available.
                         if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
-                            let current_expected =
-                                expected_for_index(effective_index, expanded_count);
+                            let current_expected = expected_at_spread;
 
                             // Check if this spread position is a rest parameter position.
                             // Use the callable type context if available for precise check;
@@ -392,12 +551,43 @@ impl<'a> CheckerState<'a> {
                 Some(expanded_count),
                 callable_ctx,
             );
+            let expected_context_is_generic_callable =
+                expected_context_type.or(expected_type).is_some_and(|ty| {
+                    let evaluated = self.evaluate_type_with_env(ty);
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        ty,
+                    )
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    })
+                    .is_some_and(|shape| !shape.type_params.is_empty())
+                });
+            let skip_generic_callable_context_for_annotated_generic_function =
+                expected_context_is_generic_callable
+                    && self.explicit_generic_function_has_fully_annotated_signature(arg_idx);
             let can_apply_contextual_despite_unresolved = unresolved_refresh_context
                 && self.callable_context_can_type_function_argument_despite_unresolved(
                     arg_idx,
                     expected_context_type,
                 );
+            let expected_is_bare_type_param = expected_type.is_some_and(|ty| {
+                crate::query_boundaries::common::type_param_info(self.ctx.types, ty).is_some()
+            });
+            let generic_arg_has_own_type_params =
+                self.generic_function_argument_has_own_type_params(arg_idx);
+            let annotated_generic_arg_can_use_return_context = expected_is_bare_type_param
+                && self.generic_function_argument_has_own_type_params_and_annotated_params(arg_idx)
+                && self.bare_type_param_constraint_has_callable_return_context(expected_type);
+            let skip_bare_type_param_context_for_generic_function = expected_is_bare_type_param
+                && generic_arg_has_own_type_params
+                && !annotated_generic_arg_can_use_return_context;
             let apply_contextual = self.argument_needs_contextual_type(arg_idx)
+                && !skip_bare_type_param_context_for_generic_function
+                && !skip_generic_callable_context_for_annotated_generic_function
                 && (!unresolved_refresh_context || can_apply_contextual_despite_unresolved);
             let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
                 crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
@@ -487,6 +677,10 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypingRequest::NONE
             };
+            if skip_generic_callable_context_for_annotated_generic_function {
+                self.invalidate_expression_for_contextual_retry(arg_idx);
+                self.clear_contextual_resolution_cache();
+            }
             // When the expected parameter type references a const type variable,
             // enable const assertion mode so array/object literals in the argument
             // are inferred as readonly tuples/readonly objects. This matches tsc's
@@ -498,7 +692,10 @@ impl<'a> CheckerState<'a> {
             if !self.ctx.in_const_assertion {
                 let mut should_enable_const = false;
                 if let Some(et) = expected_type
-                    && Self::type_references_const_type_param(self.ctx.types, et)
+                    && Self::type_references_const_type_param_requiring_readonly_argument_context(
+                        self.ctx.types,
+                        et,
+                    )
                 {
                     should_enable_const = true;
                 }
@@ -517,11 +714,10 @@ impl<'a> CheckerState<'a> {
                     );
                     if let Some(param_type) =
                         ctx.get_parameter_type_for_call(effective_index, expanded_count)
-                        && crate::query_boundaries::common::type_param_info(
+                        && Self::direct_const_type_param_requires_readonly_argument_context(
                             self.ctx.types,
                             param_type,
                         )
-                        .is_some_and(|info| info.is_const)
                     {
                         should_enable_const = true;
                     }
@@ -531,7 +727,74 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let arg_snap = self.ctx.snapshot_diagnostics();
-            let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+            let raw_arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+            let arg_type = if let Some(expected) = expected_context_type.or(expected_type) {
+                let expected_eval = self.evaluate_type_with_env(expected);
+                let expected_shape =
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        expected,
+                    )
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            expected_eval,
+                        )
+                    });
+                let raw_arg_eval = self.evaluate_type_with_env(raw_arg_type);
+                let raw_arg_shape =
+                    crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        raw_arg_type,
+                    )
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            raw_arg_eval,
+                        )
+                    });
+                let both_source_and_target_are_generic_signatures = expected_shape
+                    .as_ref()
+                    .is_some_and(|shape| !shape.type_params.is_empty())
+                    && raw_arg_shape
+                        .as_ref()
+                        .is_some_and(|shape| !shape.type_params.is_empty());
+                let should_refine_generic_arg = expected_shape.is_some_and(|shape| {
+                    !shape.is_constructor
+                        && shape.params.iter().all(|param| {
+                            if param.rest {
+                                return false;
+                            }
+                            !crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                param.type_id,
+                            ) || crate::query_boundaries::common::is_type_parameter_like(
+                                self.ctx.types,
+                                param.type_id,
+                            )
+                        })
+                        && crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            shape.return_type,
+                        )
+                });
+                if should_refine_generic_arg
+                    && !both_source_and_target_are_generic_signatures
+                    && self.expression_needs_contextual_signature_instantiation(
+                        arg_idx,
+                        Some(expected),
+                    )
+                {
+                    self.instantiate_generic_function_argument_against_target_params(
+                        raw_arg_type,
+                        expected,
+                    )
+                } else {
+                    raw_arg_type
+                }
+            } else {
+                raw_arg_type
+            };
             self.ctx.in_const_assertion = prev_const_assertion;
 
             let is_direct_function_arg = self.is_callback_like_argument(arg_idx);
@@ -582,6 +845,9 @@ impl<'a> CheckerState<'a> {
                     .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
                     .collect();
                 let mut seen_diag_keys = existing_diag_keys;
+                let preserve_destructuring_initializer_overload_diagnostics = self
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics;
                 self.ctx.rollback_diagnostics_filtered(&arg_snap, |diag| {
                     if Self::should_preserve_speculative_call_diagnostic(diag) {
                         return true;
@@ -623,6 +889,9 @@ impl<'a> CheckerState<'a> {
                             .any(|(start, end)| diag.start >= *start && diag.start < *end);
                     let is_array_literal_arg =
                         arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+                    let preserve_destructuring_initializer_overload =
+                        preserve_destructuring_initializer_overload_diagnostics
+                            && (is_direct_function_arg || is_array_literal_arg);
                     let is_provisional_callback_body_overload =
                         (is_direct_function_arg || is_array_literal_arg)
                             && diag.code == diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
@@ -633,9 +902,9 @@ impl<'a> CheckerState<'a> {
                             || (!is_direct_function_arg
                                 && (raw_context_requires_generic_epc_skip
                                     || callable_context_requires_generic_epc_skip)));
-                    let keep = if is_provisional_callback_body_overload
-                        || is_provisional_callback_body_property_error
-                    {
+                    let keep = if is_provisional_callback_body_overload {
+                        preserve_destructuring_initializer_overload
+                    } else if is_provisional_callback_body_property_error {
                         false
                     } else if !is_provisional_assignability && !is_provisional_implicit_any {
                         true
@@ -767,18 +1036,90 @@ impl<'a> CheckerState<'a> {
         arg_types
     }
 
-    /// Check if a type is or references a const type parameter.
+    fn aggregate_rest_type_for_spread(
+        &self,
+        callable_ctx: CallableContext,
+        effective_index: usize,
+        expanded_count: usize,
+    ) -> Option<TypeId> {
+        let callable_type = callable_ctx.callable_type?;
+        let ctx = ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+        if !ctx.is_rest_parameter_position(effective_index, expanded_count) {
+            return None;
+        }
+        let rest_type = ctx.get_rest_parameter_type(effective_index)?;
+        let needs_aggregate =
+            crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
+                self.ctx.types,
+                rest_type,
+            );
+        if crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_type).is_some()
+            && !crate::query_boundaries::common::is_union_type(self.ctx.types, rest_type)
+            && !needs_aggregate
+        {
+            return None;
+        }
+        needs_aggregate.then_some(rest_type)
+    }
+
+    fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {
+        let marker_name = self.ctx.types.intern_string(SPREAD_ARGUMENT_MARKER_NAME);
+        self.ctx.types.tuple(vec![TupleElement {
+            type_id: spread_type,
+            name: Some(marker_name),
+            optional: false,
+            rest: true,
+        }])
+    }
+
+    pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(
+        db: &dyn tsz_solver::TypeDatabase,
+        spread_type: TypeId,
+        expected_type: TypeId,
+    ) -> bool {
+        let Some(spread_elem) = array_element_type_for_type(db, spread_type) else {
+            return false;
+        };
+        if !crate::query_boundaries::common::contains_type_parameters(db, spread_elem)
+            || !crate::query_boundaries::common::contains_type_parameters(db, expected_type)
+        {
+            return false;
+        }
+
+        let Some(source_shape) =
+            crate::query_boundaries::common::object_shape_for_type(db, spread_elem)
+        else {
+            return false;
+        };
+        let Some(target_shape) =
+            crate::query_boundaries::common::object_shape_for_type(db, expected_type)
+        else {
+            return false;
+        };
+
+        source_shape.properties.iter().any(|source_prop| {
+            target_shape
+                .properties
+                .iter()
+                .find(|target_prop| target_prop.name == source_prop.name)
+                .is_some_and(|target_prop| {
+                    contains_index_access_with_type_parameter_object(db, source_prop.type_id)
+                        && contains_index_access_with_variadic_tuple_object(db, target_prop.type_id)
+                })
+        })
+    }
+
+    /// Check if a type is or references a const type parameter whose constraint
+    /// allows readonly literal inference.
     /// Used to propagate const assertion context into call argument expressions.
-    fn type_references_const_type_param(
+    fn type_references_const_type_param_requiring_readonly_argument_context(
         db: &dyn tsz_solver::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
 
         // Direct check: is the type itself a const type parameter?
-        if let Some(tp_info) = common::type_param_info(db, type_id)
-            && tp_info.is_const
-        {
+        if Self::direct_const_type_param_requires_readonly_argument_context(db, type_id) {
             return true;
         }
 
@@ -786,7 +1127,31 @@ impl<'a> CheckerState<'a> {
         let referenced = common::collect_referenced_types(db, type_id);
         referenced
             .into_iter()
-            .any(|ty| common::type_param_info(db, ty).is_some_and(|info| info.is_const))
+            .any(|ty| Self::direct_const_type_param_requires_readonly_argument_context(db, ty))
+    }
+
+    fn direct_const_type_param_requires_readonly_argument_context(
+        db: &dyn tsz_solver::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common;
+
+        let Some(info) = common::type_param_info(db, type_id) else {
+            return false;
+        };
+        if !info.is_const {
+            return false;
+        }
+        !info
+            .constraint
+            .is_some_and(|constraint| Self::constraint_allows_mutable_array_like(db, constraint))
+    }
+
+    pub(super) fn constraint_allows_mutable_array_like(
+        db: &dyn tsz_solver::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::constraint_allows_mutable_array_like(db, type_id)
     }
 
     /// Check excess properties on call arguments that are object literals.

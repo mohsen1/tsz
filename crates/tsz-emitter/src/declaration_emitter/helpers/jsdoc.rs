@@ -1138,19 +1138,76 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
+            let mut rest = rest.trim();
+            if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
+                && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
+            {
+                let constraint = Self::normalize_jsdoc_type_text(constraint, false);
+                let name_key = name.to_string();
+                if seen.insert(name_key) {
+                    params.push(format!("{name} extends {constraint}"));
+                }
+                rest = remaining;
+            }
+
             for name in rest
                 .split([',', ' ', '\t'])
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
             {
-                let name_str = name.to_string();
-                if seen.insert(name_str.clone()) {
+                // Bracket-default form `@template [T=string]` declares type
+                // parameter `T` with default `string`. Without unwrapping the
+                // brackets, the verbatim segment `[T=string]` would be
+                // emitted between `<` and `>` and produce invalid `.d.ts`
+                // output (issue #4005).
+                let normalized = Self::normalize_jsdoc_template_bracket_default(name);
+                let name_str = normalized.into_owned();
+                let key = Self::jsdoc_template_param_name_key(&name_str).to_string();
+                if seen.insert(key) {
                     params.push(name_str);
                 }
             }
         }
 
         params
+    }
+
+    /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
+    /// `T = default` so the result is valid TypeScript type-parameter
+    /// syntax. Non-bracket segments are returned unchanged.
+    fn normalize_jsdoc_template_bracket_default(segment: &str) -> std::borrow::Cow<'_, str> {
+        let trimmed = segment.trim();
+        if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
+            return std::borrow::Cow::Borrowed(segment);
+        }
+        let inner = &trimmed[1..trimmed.len() - 1];
+        if let Some((name, default)) = inner.split_once('=') {
+            std::borrow::Cow::Owned(format!("{} = {}", name.trim(), default.trim()))
+        } else {
+            std::borrow::Cow::Owned(inner.trim().to_string())
+        }
+    }
+
+    fn jsdoc_template_param_name_key(text: &str) -> &str {
+        let trimmed = text.trim();
+        let end = trimmed
+            .find(|c: char| c == '=' || c.is_whitespace())
+            .unwrap_or(trimmed.len());
+        trimmed[..end].trim()
+    }
+
+    fn take_jsdoc_template_name(text: &str) -> Option<(&str, &str)> {
+        let text = text.trim_start_matches([',', ' ', '\t']);
+        if text.is_empty() {
+            return None;
+        }
+
+        let end = text.find([',', ' ', '\t']).unwrap_or(text.len());
+        let name = text[..end].trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some((name, &text[end..]))
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_typedef_alias(
@@ -1309,7 +1366,7 @@ impl<'a> DeclarationEmitter<'a> {
                 type_text.push_str("     */\n");
             }
             type_text.push_str("    ");
-            type_text.push_str(&property_name);
+            type_text.push_str(&Self::render_jsdoc_property_name(&property_name));
             if optional {
                 type_text.push('?');
             }
@@ -1336,6 +1393,46 @@ impl<'a> DeclarationEmitter<'a> {
             "Object" => "object".to_string(),
             other => other.to_string(),
         }
+    }
+
+    fn render_jsdoc_property_name(name: &str) -> String {
+        if Self::is_jsdoc_property_identifier_name(name) {
+            return name.to_string();
+        }
+        if Self::is_quoted_jsdoc_property_name(name) {
+            return name.to_string();
+        }
+
+        let mut quoted = String::from("\"");
+        for ch in name.chars() {
+            match ch {
+                '"' => quoted.push_str("\\\""),
+                '\\' => quoted.push_str("\\\\"),
+                '\n' => quoted.push_str("\\n"),
+                '\r' => quoted.push_str("\\r"),
+                '\t' => quoted.push_str("\\t"),
+                _ => quoted.push(ch),
+            }
+        }
+        quoted.push('"');
+        quoted
+    }
+
+    fn is_jsdoc_property_identifier_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
+    fn is_quoted_jsdoc_property_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(quote @ ('"' | '\'')) = chars.next() else {
+            return false;
+        };
+        name.ends_with(quote) && name.len() > quote.len_utf8()
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_type_alias_decl(
@@ -1605,7 +1702,8 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file {
             return;
         }
-        let exported = self.source_file_has_module_syntax(source_file);
+        let exported = self.source_file_has_module_syntax(source_file)
+            && self.js_export_equals_names.is_empty();
 
         let mut decls = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {

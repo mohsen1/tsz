@@ -11,7 +11,9 @@
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::file_extensions::is_ts_declaration_file_name;
 use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
 
 use crate::parser::{
@@ -78,6 +80,8 @@ pub const CONTEXT_FLAG_GENERATOR_MEMBER_NAME: u32 = 131072;
 /// Empty spans at EOF report TS1109 from template-span recovery so the
 /// expression error can anchor before trailing trivia while TS1005 anchors at EOF.
 pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
+/// Context flag: parsing a binding pattern as a function parameter name.
+pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
 
 // =============================================================================
 // Parse Diagnostic
@@ -124,6 +128,8 @@ pub struct ParserState {
     pub arena: NodeArena,
     /// Source file name
     pub(crate) file_name: String,
+    /// ECMAScript target used by target-sensitive scanner recovery.
+    pub(crate) language_version: ScriptTarget,
     /// Parser context flags
     pub context_flags: u32,
     /// Current token
@@ -209,6 +215,21 @@ pub struct ParserState {
     /// Current lower bound for scanning parse diagnostics when JSX recovery
     /// absorbs statement terminators into `JsxText`.
     pub(crate) jsx_missing_brace_semicolon_window_start: Option<u32>,
+    /// An empty JSX attribute expression (`attr={}`) should not synthesize a
+    /// semicolon-position missing `}` while recovering the surrounding element.
+    pub(crate) suppress_next_jsx_missing_brace_at_semicolon: bool,
+    /// We are parsing a nested JSX element as an attribute initializer
+    /// (`attr=<...>`). Invalid nested heads use JSX-attribute diagnostics.
+    pub(crate) in_jsx_attribute_initializer_element: bool,
+    /// A JSX attribute list consumed a string literal without `=`, as in
+    /// `<div className"app">`; report expression recovery at semicolon.
+    pub(crate) recover_jsx_missing_attr_initializer_head: bool,
+    /// A malformed JSX attribute list used bracket syntax in a tag head, as in
+    /// `<a[foo]>`; the closing tag should be recovered by outer expression code.
+    pub(crate) suppress_next_jsx_head_missing_semicolon: bool,
+    /// A JSX closing tag had trailing attributes (`</div {...props}>`). The
+    /// tail is recovered as source-level syntax after the JSX expression.
+    pub(crate) recover_jsx_closing_tag_trailing_tail: bool,
     /// Set when `parse_namespace_import` encountered a reserved word that also
     /// starts a statement (e.g. `while` in `import * as while from "foo"`).
     /// Signals `parse_import_declaration_with_modifiers` to bail out of import
@@ -237,14 +258,26 @@ impl ParserState {
     /// Create a new Parser for the given source text.
     #[must_use]
     pub fn new(file_name: String, source_text: String) -> Self {
+        Self::new_with_language_version(file_name, source_text, ScriptTarget::default())
+    }
+
+    /// Create a new Parser for the given source text and ECMAScript target.
+    #[must_use]
+    pub fn new_with_language_version(
+        file_name: String,
+        source_text: String,
+        language_version: ScriptTarget,
+    ) -> Self {
         let estimated_nodes = source_text.len() / 20; // Rough estimate
         // Zero-copy: Pass source_text directly to scanner without cloning
         // This eliminates the 2x memory overhead from duplicating the source
-        let scanner = ScannerState::new(source_text, true);
+        let mut scanner = ScannerState::new(source_text, true);
+        scanner.set_language_version(language_version);
         Self {
             scanner,
             arena: NodeArena::with_capacity(estimated_nodes),
             file_name,
+            language_version,
             context_flags: 0,
             current_token: SyntaxKind::Unknown,
             parse_diagnostics: Vec::new(),
@@ -272,6 +305,11 @@ impl ParserState {
             in_tagged_template: false,
             pending_jsx_missing_close_brace_in_expression_statement: 0,
             jsx_missing_brace_semicolon_window_start: None,
+            suppress_next_jsx_missing_brace_at_semicolon: false,
+            in_jsx_attribute_initializer_element: false,
+            recover_jsx_missing_attr_initializer_head: false,
+            suppress_next_jsx_head_missing_semicolon: false,
+            recover_jsx_closing_tag_trailing_tail: false,
             namespace_import_yielded_to_statement: false,
         }
     }
@@ -279,6 +317,7 @@ impl ParserState {
     pub fn reset(&mut self, file_name: String, source_text: String) {
         self.file_name = file_name;
         self.scanner.set_text(source_text, None, None);
+        self.scanner.set_language_version(self.language_version);
         self.arena.clear();
         self.context_flags = 0;
         self.current_token = SyntaxKind::Unknown;
@@ -307,6 +346,11 @@ impl ParserState {
         self.in_tagged_template = false;
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = None;
+        self.suppress_next_jsx_missing_brace_at_semicolon = false;
+        self.in_jsx_attribute_initializer_element = false;
+        self.recover_jsx_missing_attr_initializer_head = false;
+        self.suppress_next_jsx_head_missing_semicolon = false;
+        self.recover_jsx_closing_tag_trailing_tail = false;
         self.namespace_import_yielded_to_statement = false;
         // The high-water mark tracks the count of scanner diagnostics that
         // have been considered by the parser-side dedup at `parse_error_at`.
@@ -463,20 +507,7 @@ impl ParserState {
 
     /// Check if we're in a declaration file (.d.ts/.d.mts/.d.cts, or .d.<ext>.ts).
     pub(crate) fn is_declaration_file(&self) -> bool {
-        let file_name = self.file_name.to_ascii_lowercase();
-        if file_name.ends_with(".d.ts")
-            || file_name.ends_with(".d.mts")
-            || file_name.ends_with(".d.cts")
-        {
-            return true;
-        }
-        // Arbitrary extension declaration files: .d.<ext>.ts (e.g. .d.html.ts)
-        if file_name.ends_with(".ts") {
-            let basename = file_name.rsplit('/').next().unwrap_or(&file_name);
-            let basename = basename.rsplit('\\').next().unwrap_or(basename);
-            return basename.contains(".d.");
-        }
-        false
+        is_ts_declaration_file_name(&self.file_name)
     }
 
     /// Get current token
@@ -1100,6 +1131,7 @@ impl ParserState {
             SyntaxKind::DotDotDotToken => "...",
             SyntaxKind::Identifier => "identifier",
             SyntaxKind::TryKeyword => "try",
+            SyntaxKind::WhileKeyword => "while",
             SyntaxKind::FromKeyword => "from",
             SyntaxKind::AsKeyword => "as",
             SyntaxKind::OfKeyword => "of",
@@ -1771,13 +1803,11 @@ impl ParserState {
         // instead of TS1003, matching tsc's behavior where the scanner's
         // TS1127 shadows the parser's TS1003 via position-based dedup.
         if self.is_token(SyntaxKind::Unknown) {
-            if self.should_report_error() {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                    diagnostic_codes::INVALID_CHARACTER,
-                );
-            }
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
             return;
         }
         // Only emit error if we haven't already emitted one at this position
@@ -1832,12 +1862,10 @@ impl ParserState {
         )
     }
 
-    /// Check if current token is a reserved word that, when encountered at the
-    /// start of a statement, begins a construct whose grammar is `kw ( expr )`.
-    /// These are the keywords whose cascade (`'(' expected.`, `')' expected.`)
-    /// tsc emits when recovery re-parses the token as a statement.
+    /// Check if current token is a reserved word that namespace-import recovery
+    /// should leave for statement parsing.
     #[inline]
-    pub(crate) const fn is_paren_statement_starter_reserved_word(&self) -> bool {
+    pub(crate) const fn is_namespace_import_recovery_statement_starter(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::WhileKeyword
@@ -1845,6 +1873,9 @@ impl ParserState {
                 | SyntaxKind::IfKeyword
                 | SyntaxKind::SwitchKeyword
                 | SyntaxKind::WithKeyword
+                | SyntaxKind::DoKeyword
+                | SyntaxKind::TryKeyword
+                | SyntaxKind::ReturnKeyword
         )
     }
 
@@ -2057,13 +2088,11 @@ impl ParserState {
         // suppresses errors at the same position as the last error, the parser's TS1005 is
         // always shadowed by the scanner's TS1127. We replicate this by emitting only TS1127.
         if self.is_token(SyntaxKind::Unknown) {
-            if self.should_report_error() {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                    diagnostic_codes::INVALID_CHARACTER,
-                );
-            }
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
             return;
         }
         // Only emit error if we haven't already emitted one at this position

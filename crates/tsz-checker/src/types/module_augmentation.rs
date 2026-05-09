@@ -446,6 +446,44 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    pub(crate) fn module_augmentation_value_type(
+        &mut self,
+        module_spec: &str,
+        name: &str,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for augmentation in self.get_module_augmentation_declarations(module_spec, name) {
+            let arena = augmentation.arena.as_deref().unwrap_or(self.ctx.arena);
+            let Some(node) = arena.get(augmentation.node) else {
+                continue;
+            };
+
+            match node.kind {
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let Some(decl) = arena.get_variable_declaration(node) else {
+                        continue;
+                    };
+                    if decl.type_annotation.is_some() && std::ptr::eq(arena, self.ctx.arena) {
+                        let type_id = self.get_type_of_node(decl.type_annotation);
+                        if type_id != TypeId::ERROR && type_id != TypeId::UNKNOWN {
+                            return Some(type_id);
+                        }
+                    }
+                    return Some(TypeId::ANY);
+                }
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION => {
+                    return Some(TypeId::ANY);
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     /// Search inside namespace augmentation bodies for nested interface declarations.
     ///
     /// For an augmentation like:
@@ -571,8 +609,9 @@ impl<'a> CheckerState<'a> {
         type_args: Option<&[TypeId]>,
     ) -> Vec<tsz_solver::PropertyInfo> {
         use tsz_parser::parser::syntax_kind_ext::{
-            EXPORT_DECLARATION, FUNCTION_DECLARATION, INTERFACE_DECLARATION, METHOD_SIGNATURE,
-            MODULE_BLOCK, MODULE_DECLARATION, PROPERTY_SIGNATURE, VARIABLE_STATEMENT,
+            ENUM_DECLARATION, EXPORT_DECLARATION, FUNCTION_DECLARATION, INTERFACE_DECLARATION,
+            METHOD_SIGNATURE, MODULE_BLOCK, MODULE_DECLARATION, PROPERTY_SIGNATURE,
+            VARIABLE_STATEMENT,
         };
         use tsz_solver::PropertyInfo;
         use tsz_solver::TypeId;
@@ -655,7 +694,18 @@ impl<'a> CheckerState<'a> {
                         && let Some(id_data) = arena.get_identifier(name_node)
                     {
                         let type_id = if std::ptr::eq(arena, self.ctx.arena) {
-                            let mut type_id = self.get_type_of_interface_member_simple(member_idx);
+                            let mut type_id = if member_node.kind == PROPERTY_SIGNATURE
+                                && sig.type_annotation.is_some()
+                                && let Some(self_ref_type) = self
+                                    .module_augmentation_self_reference_type(
+                                        module_spec,
+                                        interface_name,
+                                        sig.type_annotation,
+                                    ) {
+                                self_ref_type
+                            } else {
+                                self.get_type_of_interface_member_simple(member_idx)
+                            };
                             if let Some(substitution) = interface_substitution.as_ref() {
                                 type_id = crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
@@ -684,12 +734,54 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: aug_member_order,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
                 }
                 if let Some(updates) = interface_type_param_updates {
                     self.pop_type_parameters(updates);
+                }
+                continue;
+            }
+
+            if node.kind == ENUM_DECLARATION
+                && let Some(enum_decl) = arena.get_enum(node)
+            {
+                for &member_idx in &enum_decl.members.nodes {
+                    let Some(member_node) = arena.get(member_idx) else {
+                        continue;
+                    };
+                    let Some(member) = arena.get_enum_member(member_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = arena.get(member.name) else {
+                        continue;
+                    };
+                    let member_name = arena
+                        .get_identifier(name_node)
+                        .map(|ident| ident.escaped_text.clone())
+                        .or_else(|| arena.get_literal(name_node).map(|lit| lit.text.clone()));
+                    let Some(member_name) = member_name else {
+                        continue;
+                    };
+
+                    aug_member_order += 1;
+                    members.push(PropertyInfo {
+                        name: self.ctx.types.intern_string(&member_name),
+                        type_id: TypeId::ANY,
+                        write_type: TypeId::ANY,
+                        optional: false,
+                        readonly: true,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: aug_member_order,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
                 }
                 continue;
             }
@@ -755,6 +847,7 @@ impl<'a> CheckerState<'a> {
                                                 parent_id: None,
                                                 declaration_order: 0,
                                                 is_string_named: false,
+                                                is_symbol_named: false,
                                                 single_quoted_name: false,
                                             });
                                         }
@@ -787,6 +880,7 @@ impl<'a> CheckerState<'a> {
                                             parent_id: None,
                                             declaration_order: 0,
                                             is_string_named: false,
+                                            is_symbol_named: false,
                                             single_quoted_name: false,
                                         });
                                     }
@@ -810,6 +904,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
+                                    is_symbol_named: false,
                                     single_quoted_name: false,
                                 });
                             }
@@ -831,6 +926,7 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
+                                    is_symbol_named: false,
                                     single_quoted_name: false,
                                 });
                             }
@@ -886,6 +982,7 @@ impl<'a> CheckerState<'a> {
                                                 parent_id: None,
                                                 declaration_order: 0,
                                                 is_string_named: false,
+                                                is_symbol_named: false,
                                                 single_quoted_name: false,
                                             });
                                         }
@@ -918,6 +1015,7 @@ impl<'a> CheckerState<'a> {
                                             parent_id: None,
                                             declaration_order: 0,
                                             is_string_named: false,
+                                            is_symbol_named: false,
                                             single_quoted_name: false,
                                         });
                                     }
@@ -931,6 +1029,63 @@ impl<'a> CheckerState<'a> {
         }
 
         members
+    }
+
+    /// Preserve `self: Foo` inside `declare module "./m" { interface Foo { ... } }`
+    /// as a Lazy DefId so the post-merge cache update can redirect it to the merged type.
+    fn module_augmentation_self_reference_type(
+        &mut self,
+        module_spec: &str,
+        interface_name: &str,
+        type_annotation: tsz_parser::parser::NodeIndex,
+    ) -> Option<TypeId> {
+        use crate::symbol_resolver::TypeSymbolResolution;
+        use tsz_parser::parser::syntax_kind_ext::{QUALIFIED_NAME, TYPE_REFERENCE};
+
+        let annotation_node = self.ctx.arena.get(type_annotation)?;
+        if annotation_node.kind != TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(annotation_node)?;
+        let name_node = self.ctx.arena.get(type_ref.type_name)?;
+        if name_node.kind == QUALIFIED_NAME {
+            return None;
+        }
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        if ident.escaped_text != interface_name {
+            return None;
+        }
+
+        let sym_id = match self.resolve_identifier_symbol_in_type_position(type_ref.type_name) {
+            TypeSymbolResolution::Type(sym_id) => sym_id,
+            TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => return None,
+        };
+        let aug_module = self.ctx.binder.augmentation_target_modules.get(&sym_id)?;
+        if aug_module != module_spec
+            && !self
+                .module_augmentation_key_candidates(module_spec)
+                .iter()
+                .any(|candidate| candidate == aug_module)
+        {
+            return None;
+        }
+
+        let base_type = self.ctx.create_lazy_type_ref(sym_id);
+        let type_args = type_ref
+            .type_arguments
+            .as_ref()
+            .map(|args| {
+                args.nodes
+                    .iter()
+                    .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if type_args.is_empty() {
+            Some(base_type)
+        } else {
+            Some(self.ctx.types.factory().application(base_type, type_args))
+        }
     }
 
     pub(crate) fn get_module_augmentation_members(

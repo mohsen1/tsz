@@ -341,12 +341,21 @@ impl<'a> CheckerContext<'a> {
         let Some(symbol) = matching_symbol else {
             return self.get_or_create_def_id(sym_id);
         };
+        let is_current_file_local_symbol = self.binder.file_locals.get(expected_name)
+            == Some(sym_id)
+            && self
+                .binder
+                .symbols
+                .get(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name == expected_name)
+            && !self.symbol_is_from_actual_lib(sym_id);
         let symbol_index_matches_name = self
             .definition_store
             .find_def_by_symbol(sym_id.0)
             .and_then(|def_id| self.definition_store.get(def_id))
             .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name);
         if symbol.decl_file_idx == u32::MAX
+            && !is_current_file_local_symbol
             && !symbol_index_matches_name
             && let Some(lib_sym_id) = self.lib_contexts.iter().find_map(|lib_ctx| {
                 lib_ctx
@@ -364,7 +373,11 @@ impl<'a> CheckerContext<'a> {
         {
             return self.get_canonical_lib_def_id(expected_name, lib_sym_id);
         }
-        let file_idx = symbol.decl_file_idx;
+        let file_idx = if is_current_file_local_symbol && self.current_file_idx != usize::MAX {
+            self.current_file_idx as u32
+        } else {
+            symbol.decl_file_idx
+        };
         if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx)
             && self
                 .definition_store
@@ -671,6 +684,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a non-generic definition body in **both** type environments.
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
+        self.definition_store.set_body(def_id, body);
         self.with_envs_for_register("insert_def", |env| {
             env.insert_def(def_id, body);
         });
@@ -684,6 +698,9 @@ impl<'a> CheckerContext<'a> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
+        self.definition_store.set_body(def_id, body);
+        self.definition_store
+            .set_type_params(def_id, params.clone());
         let declared_variances = tsz_solver::TypeResolver::get_type_param_variance(self, def_id);
         self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());

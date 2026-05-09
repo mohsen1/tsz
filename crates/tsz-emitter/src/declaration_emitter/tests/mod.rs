@@ -8,8 +8,8 @@ pub(super) use tsz_parser::parser::node::NodeAccess;
 pub(super) use tsz_parser::parser::syntax_kind_ext;
 pub(super) use tsz_parser::parser::{NodeIndex, ParserState};
 pub(super) use tsz_solver::{
-    CallSignature, CallableShape, DefId, FunctionShape, ObjectFlags, ObjectShape, ParamInfo,
-    PropertyInfo, SymbolRef, TupleElement, TypeId, TypeInterner,
+    CallSignature, CallableShape, DefId, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
+    ParamInfo, PropertyInfo, SymbolRef, TupleElement, TypeId, TypeInterner,
 };
 
 // =============================================================================
@@ -20,6 +20,14 @@ pub(super) fn emit_dts(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.emit(root)
+}
+
+pub(super) fn emit_dts_strip_internal(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.set_strip_internal(true);
     emitter.emit(root)
 }
 

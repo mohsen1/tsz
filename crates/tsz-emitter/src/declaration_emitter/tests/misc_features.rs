@@ -60,6 +60,34 @@ fn test_format_js_number_floats() {
     assert_eq!(DeclarationEmitter::format_js_number(0.5), "0.5");
 }
 
+#[test]
+fn test_large_separated_numeric_literal_declaration_emit() {
+    let output = emit_dts(
+        r#"
+export type X = 0x8000_0000_0000_0000;
+export type Y = 0x7fff_ffff_ffff_ffff;
+export const y: 0x8000_0000_0000_0000 = 0 as any;
+"#,
+    );
+
+    assert!(
+        output.contains("export type X = 9223372036854776000;"),
+        "Expected large separated hex literal type X to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export type Y = 9223372036854776000;"),
+        "Expected large separated hex literal type Y to use JS number text: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: 9223372036854776000;"),
+        "Expected large separated hex literal annotation to use JS number text: {output}"
+    );
+    assert!(
+        !output.contains("9223372036854775807"),
+        "Declaration output must not saturate through i64::MAX: {output}"
+    );
+}
+
 // =============================================================================
 // 16. Rest Parameters
 // =============================================================================
@@ -70,6 +98,84 @@ fn test_rest_parameter_in_function() {
     assert!(
         output.contains("...nums: number[]"),
         "Expected rest parameter: {output}"
+    );
+}
+
+#[test]
+fn test_flat_map_callback_returning_array_subclass_flattens_element_type() {
+    let output = emit_dts(
+        r#"
+declare const foo: unknown[];
+const bar = foo.flatMap(value => value as Foo);
+interface Foo extends Array<string> {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const bar: string[];"),
+        "flatMap callback returning Array subclass should emit flattened element type: {output}"
+    );
+}
+
+#[test]
+fn test_array_literal_of_function_expressions_drops_optional_param_subtypes() {
+    // Regression for narrowingUnionToUnion: when inferring an array element
+    // union from `[(x: T) => …, (x?: T) => …, …]` literals, the optional-
+    // parameter form is a structural subtype of the required-parameter
+    // form, so tsc's UnionReduction.Subtype drops the `?` arm. Mirror that
+    // text-side: any function-typed arm whose only difference from another
+    // arm is one or more `?:` parameters should be removed.
+    let output = emit_dts(
+        r#"
+const TEST_CASES = [
+    (value: string) => {},
+    (value?: string) => {},
+    (value: number) => {},
+    (value?: number) => {},
+];
+"#,
+    );
+    let elem_text = output
+        .lines()
+        .find(|line| line.contains("TEST_CASES:"))
+        .expect("TEST_CASES line missing");
+    assert!(
+        elem_text.contains("((value: string) => void)"),
+        "Expected required-param string arm to remain: {output}"
+    );
+    assert!(
+        elem_text.contains("((value: number) => void)"),
+        "Expected required-param number arm to remain: {output}"
+    );
+    assert!(
+        !elem_text.contains("(value?: string)"),
+        "Optional-param string arm should be subsumed by required-param sibling: {output}"
+    );
+    assert!(
+        !elem_text.contains("(value?: number)"),
+        "Optional-param number arm should be subsumed by required-param sibling: {output}"
+    );
+}
+
+#[test]
+fn test_array_literal_of_function_expressions_paren_wraps_each_arm() {
+    // Regression for narrowingUnionToUnion: when an array literal contains
+    // multiple function expressions that don't all share an identical type,
+    // each function-typed union arm must be parenthesized so the trailing
+    // `=>` does not bind across the `|`. Without parens around each arm,
+    // `(a: A) => void | (a: B) => void` parses as
+    // `(a: A) => (void | (a: B) => void)`.
+    let output = emit_dts(
+        r#"
+const TEST_CASES = [
+    (value: string) => {},
+    (value: number) => {},
+];
+"#,
+    );
+    assert!(
+        output.contains("(((value: string) => void) | ((value: number) => void))[]"),
+        "Expected each function-typed union arm to be parenthesized: {output}"
     );
 }
 
@@ -391,6 +497,35 @@ fn test_export_equals_import_equals_chain_keeps_namespace_dependency() {
 }
 
 #[test]
+fn test_exported_namespace_import_equals_uses_target_for_outer_inferred_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace x {
+        export class c {
+            foo(a: number) {
+                return a;
+            }
+        }
+    }
+
+    export namespace m2 {
+        export namespace m3 {
+            export import c = x.c;
+            export var cProp = new c();
+        }
+    }
+
+    export var d = new m2.m3.c();
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare var d: x.c;"),
+        "Expected exported variable to use the import-equals target type: {output}"
+    );
+}
+
+#[test]
 fn test_import_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts_with_usage_analysis(
         r#"
@@ -597,6 +732,20 @@ fn test_export_type_with_resolution_mode_attributes_is_preserved() {
             r#"export type { RequireInterface } from "pkg" with { "resolution-mode": "require" };"#
         ),
         "Expected export type attributes to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_export_json_attributes_are_stripped_from_declarations() {
+    let output = emit_dts(r#"export { default as data } from "./dep.json" with { type: "json" };"#);
+
+    assert!(
+        output.contains(r#"export { default as data } from "./dep.json";"#),
+        "Expected JSON export attribute to be stripped from declaration output: {output}"
+    );
+    assert!(
+        !output.contains("with {"),
+        "Did not expect non-resolution-mode attributes in declaration output: {output}"
     );
 }
 
@@ -823,6 +972,219 @@ fn test_multiple_variable_declarators() {
     assert!(
         output.contains("y: string"),
         "Expected second variable: {output}"
+    );
+}
+
+#[test]
+fn test_grouped_let_declarator_preserves_null_initializer_type() {
+    let output = emit_dts(r#"let l9 = 0, l10: string = "", l11 = null;"#);
+    assert!(
+        output.contains("declare let l9: number, l10: string, l11: null;"),
+        "Expected grouped let null initializer to emit null: {output}"
+    );
+
+    let const_output = emit_dts("const c = null;");
+    assert!(
+        const_output.contains("declare const c: any;"),
+        "Expected const null initializer to keep tsc-compatible any: {const_output}"
+    );
+}
+
+#[test]
+fn test_type_only_same_name_interface_reference_does_not_emit_local_value_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export interface Component {
+    play(): void;
+}
+
+declare function createComponent(): void;
+const Component = createComponent();
+
+export type ComponentDefinition = Partial<Component>;
+"#,
+    );
+
+    assert!(
+        output.contains("export type ComponentDefinition = Partial<Component>;"),
+        "Expected exported type alias to remain: {output}"
+    );
+    assert!(
+        !output.contains("declare const Component"),
+        "Did not expect type-only Component reference to emit local const: {output}"
+    );
+}
+
+#[test]
+fn test_const_shadowing_non_exported_type_alias_emits_value_declaration() {
+    // Regression for genericContextualTypes1: in a script-mode file (no
+    // imports/exports) a `const fn: fn = …` whose name shadows a
+    // non-exported `type fn = …` must still be emitted as `declare const`.
+    // The earlier behavior treated the value-side const as "type-only
+    // exported" because the shared symbol carried a type-alias declaration,
+    // even though that type alias itself was not exported.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type fn = <A>(a: A) => A;
+const fn: fn = a => a;
+"#,
+    );
+    assert!(
+        output.contains("type fn = <A>(a: A) => A;"),
+        "Expected type alias to remain: {output}"
+    );
+    assert!(
+        output.contains("declare const fn: fn;"),
+        "Expected value-side const shadowing the non-exported type alias to be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_top_level_export_import_alias_preferred_over_qualified_target() {
+    // Regression for internalAliasClassInsideTopLevelModuleWithExport:
+    // when `export import xc = x.c;` is at the file root, references to the
+    // class instance type should be emitted using the alias `xc`, not the
+    // canonical target `x.c`. The alias-target rewrite previously kicked in
+    // unconditionally for every exported import alias, so the printer's
+    // correct `xc` output was being clobbered into `x.c`. Top-level aliases
+    // are always in scope wherever the d.ts is consumed, so the rewrite
+    // should only canonicalize aliases declared inside a namespace where
+    // the local short name might not be reachable from an outer reference.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export namespace x {
+    export class c {
+        foo(a: number) {
+            return a;
+        }
+    }
+}
+
+export import xc = x.c;
+export var cProp = new xc();
+"#,
+    );
+    assert!(
+        output.contains("export declare var cProp: xc;"),
+        "Expected top-level export import alias to be preferred over its qualified target: {output}"
+    );
+}
+
+#[test]
+fn test_js_named_export_function_emitted_at_unfold_position_not_hoisted() {
+    // Regression for nodeModulesAllowJsGeneratedNameCollisions: when a JS
+    // function declaration's name appears in a folded `export { foo }`
+    // statement, the unfold path emits `export function foo(): ...` at the
+    // export statement's source position. Hoisting the same function to the
+    // top of the file would emit it twice (once hoisted, once unfolded) and
+    // also reorder it before sibling inline-exported declarations like
+    // `export const __esModule = false`.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function require() {}
+const exports = {};
+class Object {}
+export const __esModule = false;
+export {require, exports, Object};
+"#,
+    );
+    assert_eq!(
+        output.matches("export function require(): void;").count(),
+        1,
+        "Expected `export function require(): void;` to be emitted exactly once: {output}"
+    );
+    let esmodule_pos = output
+        .find("export const __esModule")
+        .expect("__esModule line missing");
+    let require_pos = output
+        .find("export function require")
+        .expect("require line missing");
+    assert!(
+        esmodule_pos < require_pos,
+        "Expected `__esModule` to be emitted before `require` (matching the source order of inline + folded exports): {output}"
+    );
+}
+
+#[test]
+fn test_export_assignment_keeps_uninitialized_value_declaration() {
+    // Regression for privacyCheckExportAssignmentOnExportedGenericInterface1:
+    // a `var X: T;` (no initializer, with type annotation) whose only public
+    // API consumer is `export = X` was being filtered out by the
+    // initializer-only-dependency check, because that check only looked at
+    // `export { X }` specifiers and did not recognize commonjs
+    // `export = X` as an exporter of the value-side name.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace Foo {
+    export interface A<T> {
+    }
+}
+interface Foo<T> {
+}
+var Foo: new () => Foo.A<Foo<string>>;
+export = Foo;
+"#,
+    );
+    assert!(
+        output.contains("declare var Foo:"),
+        "Expected `declare var Foo` to be emitted when `export = Foo` is the consumer: {output}"
+    );
+    assert!(
+        output.contains("export = Foo;"),
+        "Expected the export assignment to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_const_initializer_call_preserves_local_alias() {
+    // Regression for #3755: declaration emit was dropping a local type alias
+    // that an `export const` *only* references through the inferred type of
+    // its call-expression initializer. The emitted .d.ts referenced the
+    // alias but never declared it, producing invalid output.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box = { value: number };
+function make(): Box { return { value: 1 }; }
+export const item = make();
+"#,
+    );
+    assert!(
+        output.contains("type Box ="),
+        "Expected the local `type Box` to be retained when `export const item = make()` \
+         depends on it through the callee's declared return-type annotation: {output}"
+    );
+    assert!(
+        output.contains("export declare const item: Box"),
+        "Expected the inferred const to keep its alias-named annotation: {output}"
+    );
+}
+
+#[test]
+fn test_export_default_identifier_keeps_ambient_value_declaration() {
+    // Regression for uniqueSymbolPropertyDeclarationEmit: a `declare const X`
+    // (no initializer, with a value-side type annotation) whose only public
+    // API consumer is `export default X` was being filtered out by the
+    // initializer-only-dependency check. The check's name-export lookup
+    // only considered `EXPORT_SPECIFIER` and `EXPORT_ASSIGNMENT` nodes;
+    // tsz parses `export default X` as an `EXPORT_DECLARATION` with
+    // `is_default_export: true` and the identifier in `export_clause`,
+    // which neither path matched.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const Op: {
+  readonly or: unique symbol;
+};
+
+export default Op;
+"#,
+    );
+    assert!(
+        output.contains("declare const Op:"),
+        "Expected `declare const Op` to be emitted when `export default Op` is the consumer: {output}"
+    );
+    assert!(
+        output.contains("export default Op;"),
+        "Expected the default export to be preserved: {output}"
     );
 }
 
@@ -1144,5 +1506,143 @@ class BitOps {
     assert!(
         output.contains("bitwiseAnd(n: number): number;"),
         "Expected bitwise and to return number: {output}"
+    );
+}
+
+// =============================================================================
+// 23. Import-clause fallback heuristics (no usage tracking, e.g. --noCheck --noLib)
+// =============================================================================
+
+// Regression for #3337: with `--noCheck --noLib --declaration --emitDeclarationOnly`
+// tsz dropped a regular default import even though the emitted `.d.ts` referenced
+// the imported binding as a type. The fallback path must keep default imports for
+// the same reason it keeps named imports — they may resolve a type reference in
+// the declaration output.
+#[test]
+fn default_import_is_preserved_in_dts_fallback_when_used_as_type() {
+    let output = emit_dts(
+        r#"
+import Foo from "./dep";
+export let x: Foo;
+"#,
+    );
+
+    assert!(
+        output.contains(r#"import Foo from "./dep";"#),
+        "Expected default import to be preserved in fallback dts emit: {output}"
+    );
+    assert!(
+        output.contains("export declare let x: Foo;"),
+        "Expected exported let to keep its `Foo` type annotation: {output}"
+    );
+}
+
+#[test]
+fn default_import_fallback_preserves_combined_default_and_named() {
+    let output = emit_dts(
+        r#"
+import Foo, { Bar } from "./dep";
+export let x: Foo;
+export let y: Bar;
+"#,
+    );
+
+    assert!(
+        output.contains("Foo") && output.contains("Bar") && output.contains(r#""./dep""#),
+        "Expected combined default + named imports to be preserved in fallback dts emit: {output}"
+    );
+}
+
+#[test]
+fn type_only_default_import_still_preserved_in_fallback() {
+    let output = emit_dts(
+        r#"
+import type Foo from "./dep";
+export let x: Foo;
+"#,
+    );
+
+    assert!(
+        output.contains("Foo") && output.contains(r#""./dep""#),
+        "Expected type-only default import to still be preserved: {output}"
+    );
+}
+
+#[test]
+fn type_only_namespace_import_preserved_in_dts_fallback() {
+    let output = emit_dts(
+        r#"
+import type * as ns from "./dep";
+export interface Foo {
+    x: string;
+}
+export type T = ns.Foo;
+"#,
+    );
+
+    assert!(
+        output.contains(r#"import type * as ns from "./dep";"#),
+        "Expected type-only namespace import to be preserved: {output}"
+    );
+    assert!(
+        output.contains("export type T = ns.Foo;"),
+        "Expected exported type to reference preserved namespace import: {output}"
+    );
+}
+
+#[test]
+fn value_only_ambient_dependency_from_exported_initializer_is_elided() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export const out: number = t;
+"#,
+    );
+
+    assert!(
+        !output.contains("declare const t"),
+        "Did not expect ambient initializer-only dependency to leak: {output}"
+    );
+    assert!(
+        output.contains("export declare const out: number;"),
+        "Expected exported declaration to remain: {output}"
+    );
+}
+
+#[test]
+fn ambient_value_dependency_used_in_exported_type_query_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export type T = typeof t;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const t: number;"),
+        "Expected ambient value referenced by exported typeof to remain: {output}"
+    );
+    assert!(
+        output.contains("export type T = typeof t;"),
+        "Expected exported type query to remain: {output}"
+    );
+}
+
+#[test]
+fn ambient_value_dependency_exported_by_specifier_is_preserved() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare const t: number;
+export { t };
+"#,
+    );
+
+    assert!(
+        output.contains("declare const t: number;"),
+        "Expected ambient value exported by specifier to remain: {output}"
+    );
+    assert!(
+        output.contains("export { t };"),
+        "Expected export specifier to remain: {output}"
     );
 }

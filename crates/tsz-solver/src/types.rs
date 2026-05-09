@@ -1048,6 +1048,12 @@ pub struct PropertyInfo {
     /// (e.g. `"404"` vs `404`). Included in PartialEq/Hash because `"100"` and
     /// `100` are semantically different property keys in TypeScript.
     pub is_string_named: bool,
+    /// Whether this property key came from a symbol-valued computed name.
+    ///
+    /// Unique-symbol keys are encoded as `__unique_N` atoms internally, but a
+    /// user-authored string property can also have that exact text. This flag
+    /// keeps the two cases distinct.
+    pub is_symbol_named: bool,
     /// Whether the string property name was written with single quotes in source.
     /// Declaration emit preserves this for reconstructed mapped properties.
     /// Excluded from PartialEq/Hash since it's purely cosmetic (controls quote
@@ -1068,6 +1074,7 @@ impl PartialEq for PropertyInfo {
             && self.visibility == other.visibility
             && self.parent_id == other.parent_id
             && self.is_string_named == other.is_string_named
+            && self.is_symbol_named == other.is_symbol_named
     }
 }
 
@@ -1084,6 +1091,7 @@ impl std::hash::Hash for PropertyInfo {
         self.visibility.hash(state);
         self.parent_id.hash(state);
         self.is_string_named.hash(state);
+        self.is_symbol_named.hash(state);
     }
 }
 
@@ -1103,6 +1111,7 @@ impl PropertyInfo {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }
     }
@@ -1238,6 +1247,25 @@ impl std::hash::Hash for IndexSignature {
     }
 }
 
+fn index_signature_display_eq(
+    left: &Option<IndexSignature>,
+    right: &Option<IndexSignature>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left == right && left.param_name == right.param_name,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn hash_index_signature_display<H: std::hash::Hasher>(
+    index: &Option<IndexSignature>,
+    state: &mut H,
+) {
+    std::hash::Hash::hash(index, state);
+    std::hash::Hash::hash(&index.as_ref().and_then(|idx| idx.param_name), state);
+}
+
 /// Combined index signature information for a type
 /// Provides convenient access to both string and number index signatures
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
@@ -1269,6 +1297,14 @@ bitflags::bitflags! {
         /// exported class. It must not later pick up module augmentation members
         /// through name-based fallback lookup.
         const NO_MODULE_AUGMENTATION_LOOKUP = 1 << 4;
+        /// Synthetic `Record<K, unknown>` produced by `K in value` flow narrowing.
+        /// This is semantically structural, but diagnostics should keep tsc's
+        /// `Record<..., unknown>` display surface.
+        const IN_OPERATOR_RECORD = 1 << 5;
+        /// Fresh object literal whose own properties all require contextual typing.
+        /// Generic-call inference must defer these literals to Round 2; otherwise
+        /// already-contextualized callback properties can feed back into Round 1.
+        const ALL_PROPERTIES_CONTEXT_SENSITIVE = 1 << 6;
     }
 }
 
@@ -1297,8 +1333,8 @@ impl PartialEq for ObjectShape {
         // The Solver does structural subtyping explicitly, not via PartialEq
         self.flags == other.flags
             && self.properties == other.properties
-            && self.string_index == other.string_index
-            && self.number_index == other.number_index
+            && index_signature_display_eq(&self.string_index, &other.string_index)
+            && index_signature_display_eq(&self.number_index, &other.number_index)
             && self.symbol == other.symbol
     }
 }
@@ -1311,8 +1347,8 @@ impl std::hash::Hash for ObjectShape {
         // This ensures different classes get different TypeIds
         self.flags.hash(state);
         self.properties.hash(state);
-        self.string_index.hash(state);
-        self.number_index.hash(state);
+        hash_index_signature_display(&self.string_index, state);
+        hash_index_signature_display(&self.number_index, state);
         self.symbol.hash(state);
     }
 }
@@ -1324,6 +1360,25 @@ impl ObjectShape {
     /// instead of importing `ObjectFlags::FRESH_LITERAL` directly.
     pub fn mark_fresh_literal(&mut self) {
         self.flags |= ObjectFlags::FRESH_LITERAL;
+    }
+
+    /// Return true if this shape is a fresh object literal.
+    pub const fn is_fresh_literal(&self) -> bool {
+        self.flags.contains(ObjectFlags::FRESH_LITERAL)
+    }
+
+    /// Mark this fresh literal as requiring full contextual Round 2 inference.
+    ///
+    /// Use this instead of importing `ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE`
+    /// directly outside the solver.
+    pub fn mark_all_properties_context_sensitive(&mut self) {
+        self.flags |= ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE;
+    }
+
+    /// Return true if every own property of this fresh literal needed contextual typing.
+    pub const fn all_properties_context_sensitive(&self) -> bool {
+        self.flags
+            .contains(ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE)
     }
 
     /// Mark this shape as having late-bound (computed) members.
@@ -1486,8 +1541,8 @@ impl PartialEq for CallableShape {
         self.call_signatures == other.call_signatures
             && self.construct_signatures == other.construct_signatures
             && self.properties == other.properties
-            && self.string_index == other.string_index
-            && self.number_index == other.number_index
+            && index_signature_display_eq(&self.string_index, &other.string_index)
+            && index_signature_display_eq(&self.number_index, &other.number_index)
             && self.symbol == other.symbol
             && self.is_abstract == other.is_abstract
     }
@@ -1502,8 +1557,8 @@ impl std::hash::Hash for CallableShape {
         self.call_signatures.hash(state);
         self.construct_signatures.hash(state);
         self.properties.hash(state);
-        self.string_index.hash(state);
-        self.number_index.hash(state);
+        hash_index_signature_display(&self.string_index, state);
+        hash_index_signature_display(&self.number_index, state);
         self.symbol.hash(state);
         self.is_abstract.hash(state);
     }

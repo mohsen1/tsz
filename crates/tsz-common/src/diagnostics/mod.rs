@@ -124,6 +124,46 @@ impl Diagnostic {
         });
         self
     }
+
+    /// `Span`-based variant of [`Diagnostic::error`]. Converts the
+    /// half-open `[start, end)` `Span` to the diagnostic's
+    /// start+length representation. Equivalent to
+    /// `Diagnostic::error(file, span.start, span.len(), message, code)`.
+    pub fn error_with_span(
+        file: impl Into<String>,
+        span: crate::span::Span,
+        message: impl Into<String>,
+        code: u32,
+    ) -> Self {
+        Self::error(file, span.start, span.len(), message, code)
+    }
+
+    /// `Span`-based variant of [`Diagnostic::from_code`].
+    pub fn from_code_with_span(
+        code: u32,
+        file: impl Into<String>,
+        span: crate::span::Span,
+        args: &[&str],
+    ) -> Self {
+        Self::from_code(code, file, span.start, span.len(), args)
+    }
+
+    /// `Span`-based variant of [`Diagnostic::with_related`].
+    pub fn with_related_span(
+        self,
+        file: impl Into<String>,
+        span: crate::span::Span,
+        message: impl Into<String>,
+    ) -> Self {
+        self.with_related(file, span.start, span.len(), message)
+    }
+
+    /// View this diagnostic's location as a `Span`. Reconstructs the
+    /// half-open `[start, start + length)` interval from the stored
+    /// start+length pair.
+    pub const fn span(&self) -> crate::span::Span {
+        crate::span::Span::from_len(self.start, self.length)
+    }
 }
 
 /// Look up a `DiagnosticMessage` (code + category + template) by numeric code.
@@ -484,5 +524,52 @@ mod tests {
         // A bare `$` not followed by `{` is passed through as-is.
         let formatted = format_message("got {0}", &["price: $5"]);
         assert_eq!(formatted, "got price: $5");
+    }
+
+    #[test]
+    fn error_with_span_matches_error_start_length() {
+        // `error_with_span(file, Span::new(start, end), msg, code)` must
+        // produce the same diagnostic as `error(file, start, end-start, msg, code)`.
+        // The span uses half-open `[start, end)` semantics.
+        let span = crate::span::Span::new(10, 17);
+        let lhs = Diagnostic::error_with_span("a.ts", span, "hello", 2322);
+        let rhs = Diagnostic::error("a.ts", 10, 7, "hello", 2322);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn span_accessor_round_trips_with_error_with_span() {
+        // `Diagnostic::span()` reconstructs the half-open `Span` that
+        // `error_with_span` stored — round-trip identity.
+        let span = crate::span::Span::new(100, 105);
+        let diag = Diagnostic::error_with_span("a.ts", span, "x", 2322);
+        assert_eq!(diag.span(), span);
+        assert_eq!(diag.span().len(), 5);
+    }
+
+    #[test]
+    fn from_code_with_span_matches_from_code_start_length() {
+        // Same equivalence, for `from_code` / `from_code_with_span`.
+        let span = crate::span::Span::new(0, 4);
+        // Use a known-existing code so format-message lookup behaves the
+        // same on both sides.
+        let code = 2322;
+        let lhs = Diagnostic::from_code_with_span(code, "a.ts", span, &["string", "number"]);
+        let rhs = Diagnostic::from_code(code, "a.ts", 0, 4, &["string", "number"]);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn with_related_span_matches_with_related_start_length() {
+        let main_span = crate::span::Span::new(0, 3);
+        let related_span = crate::span::Span::new(20, 25);
+        let lhs = Diagnostic::error_with_span("a.ts", main_span, "x", 2322).with_related_span(
+            "b.ts",
+            related_span,
+            "see here",
+        );
+        let rhs =
+            Diagnostic::error("a.ts", 0, 3, "x", 2322).with_related("b.ts", 20, 5, "see here");
+        assert_eq!(lhs, rhs);
     }
 }

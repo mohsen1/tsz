@@ -12,9 +12,57 @@ use crate::types::{
 };
 use crate::utils;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::trace;
 
+// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
+// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
+// #4805 / #4807 / #4810.
+thread_local! {
+    static SIGNATURES_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_signatures_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = SIGNATURES_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    SIGNATURES_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn type_contains_noinfer_marker(&mut self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
+
+        let mut roots = vec![ty];
+        if let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+        {
+            roots.push(expanded);
+        }
+
+        roots.into_iter().any(|root| {
+            crate::visitor::collect_all_types(self.interner.as_type_database(), root)
+                .into_iter()
+                .any(|nested| matches!(self.interner.lookup(nested), Some(TypeData::NoInfer(_))))
+        })
+    }
+
     pub(super) fn constrain_properties(
         &mut self,
         ctx: &mut InferenceContext,
@@ -74,9 +122,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // constrain_types(target.write_type, source.write_type)
                             // goes in the contravariant direction and creates spurious
                             // candidates that widen literals incorrectly.
+                            // It must also stay silent for `NoInfer<T>` properties:
+                            // the read-side constraint intentionally stops at the
+                            // marker, and using an unwrapped write type would leak the
+                            // same position back into inference.
                             let write_type_differs = source.write_type != source.type_id
                                 || target.write_type != target.type_id;
-                            if write_type_differs {
+                            if write_type_differs
+                                && !self.type_contains_noinfer_marker(target.type_id)
+                            {
                                 self.constrain_types(
                                     ctx,
                                     var_map,
@@ -101,14 +155,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // property would incorrectly fix `T = undefined` during partial
                     // Round 1 inference (where context-sensitive properties are
                     // intentionally omitted from the source).
-                    let mut placeholder_visited = FxHashSet::default();
+                    let target_has_placeholder = with_signatures_visited(|visited| {
+                        self.type_contains_placeholder(target.type_id, var_map, visited)
+                    });
                     if target.optional
                         && !var_map.contains_key(&target.type_id)
-                        && !self.type_contains_placeholder(
-                            target.type_id,
-                            var_map,
-                            &mut placeholder_visited,
-                        )
+                        && !target_has_placeholder
                     {
                         self.constrain_types(
                             ctx,
@@ -126,14 +178,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Handle remaining target properties that are missing from source
         while target_idx < target_props.len() {
             let target = &target_props[target_idx];
-            let mut placeholder_visited = FxHashSet::default();
-            if target.optional
-                && !var_map.contains_key(&target.type_id)
-                && !self.type_contains_placeholder(
-                    target.type_id,
-                    var_map,
-                    &mut placeholder_visited,
-                )
+            let target_has_placeholder = with_signatures_visited(|visited| {
+                self.type_contains_placeholder(target.type_id, var_map, visited)
+            });
+            if target.optional && !var_map.contains_key(&target.type_id) && !target_has_placeholder
             {
                 self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
             }
@@ -421,8 +469,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if var_map.is_empty() {
             return ty;
         }
-        let mut visited = FxHashSet::default();
-        if !self.type_contains_placeholder(ty, var_map, &mut visited) {
+        let contains_placeholder =
+            with_signatures_visited(|visited| self.type_contains_placeholder(ty, var_map, visited));
+        if !contains_placeholder {
             return ty;
         }
 
@@ -445,8 +494,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         is_constructor: bool,
     ) -> Option<usize> {
-        let mut placeholder_visited = FxHashSet::default();
-        if self.type_contains_placeholder(target_fn, var_map, &mut placeholder_visited) {
+        let target_has_placeholder = with_signatures_visited(|visited| {
+            self.type_contains_placeholder(target_fn, var_map, visited)
+        });
+        if target_has_placeholder {
             let last_idx = signatures
                 .iter()
                 .rposition(|sig| sig.type_params.is_empty())?;
@@ -898,8 +949,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // target (e.g., {kind:T} vs {kind:'a'}|{kind:'b'}) creates separate
             // upper bounds 'a' and 'b', causing false TS2345 when the covariant
             // result ('a') fails to satisfy upper bound 'b'.
-            let mut placeholder_visited = FxHashSet::default();
-            if self.type_contains_placeholder(target_param, var_map, &mut placeholder_visited) {
+            let target_has_placeholder = with_signatures_visited(|visited| {
+                self.type_contains_placeholder(target_param, var_map, visited)
+            });
+            if target_has_placeholder {
                 let was_contra = ctx.in_contra_mode;
                 ctx.in_contra_mode = true;
                 self.constrain_types(ctx, var_map, source_param, target_param, priority);
@@ -992,6 +1045,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return;
                 }
                 let rest_elem_type = self.rest_element_type(t_elem.type_id);
+                // For a terminal rest target like `[...HandleOptions<T[K]>]`, infer the
+                // whole remaining source tuple through the mapped target. Per-element
+                // inference would compare each `{ value: ... }` against the mapped
+                // rest element and lose the tuple position needed for reverse mapping.
+                let rest_target_contains_placeholder = with_signatures_visited(|visited| {
+                    self.type_contains_placeholder(t_elem.type_id, var_map, visited)
+                });
+                if target[i + 1..].is_empty()
+                    && (rest_target_contains_placeholder
+                        || crate::type_queries::is_homomorphic_mapped_type_context(
+                            self.interner,
+                            t_elem.type_id,
+                        ))
+                {
+                    let tail = source
+                        .iter()
+                        .skip(i)
+                        .map(|s_elem| TupleElement {
+                            type_id: s_elem.type_id,
+                            name: s_elem.name,
+                            optional: s_elem.optional,
+                            rest: s_elem.rest,
+                        })
+                        .collect();
+                    let tail_tuple = self.interner.tuple(tail);
+                    self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id, priority);
+                    return;
+                }
                 for s_elem in source.iter().skip(i) {
                     if s_elem.rest {
                         self.constrain_types(

@@ -22,6 +22,8 @@ pub struct AstToIr<'a> {
     current_this_substitution: Cell<Option<ThisSubstitution>>,
     /// Whether we're inside a derived class (has extends clause) — needed for super lowering
     has_super: bool,
+    /// Generated super parameter name for the class IIFE.
+    super_name: String,
     /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
     is_static: bool,
     /// Optional identifier substitution for class self-references in decorated class bodies.
@@ -33,13 +35,14 @@ pub struct AstToIr<'a> {
 }
 
 impl<'a> AstToIr<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             this_captured: Cell::new(false),
             transforms: None,
             current_this_substitution: Cell::new(None),
             has_super: false,
+            super_name: "_super".to_string(),
             is_static: false,
             identifier_substitution: None,
             temp_var_counter: Cell::new(0),
@@ -50,6 +53,11 @@ impl<'a> AstToIr<'a> {
     /// Set whether we're inside a derived class (for super lowering)
     pub const fn with_super(mut self, has_super: bool) -> Self {
         self.has_super = has_super;
+        self
+    }
+
+    pub fn with_super_name(mut self, super_name: String) -> Self {
+        self.super_name = super_name;
         self
     }
 
@@ -385,7 +393,8 @@ impl<'a> AstToIr<'a> {
         // Try to get identifier text, but handle binding patterns and other cases
         let name = if let Some(name) = get_identifier_text(self.arena, var_decl.name) {
             name
-        } else if let Some(name_node) = self.arena.get(var_decl.name) {
+        } else {
+            let name_node = self.arena.get(var_decl.name)?;
             // Fallback: try to get text from source span if available
             // For binding patterns, return None and let caller handle via ASTRef
             if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -394,13 +403,7 @@ impl<'a> AstToIr<'a> {
                 return None; // Handled via ASTRef
             }
             // Try getting identifier via IdentifierData
-            if let Some(id_data) = self.arena.get_identifier(name_node) {
-                id_data.escaped_text.clone()
-            } else {
-                return None;
-            }
-        } else {
-            return None;
+            self.arena.get_identifier(name_node)?.escaped_text.clone()
         };
 
         let initializer = if var_decl.initializer.is_none() {
@@ -655,10 +658,66 @@ impl<'a> AstToIr<'a> {
         IRNode::ASTRef(idx)
     }
 
-    const fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
-        // For-in/for-of need ES5 transformation - use ASTRef for now
-        // A complete implementation would convert to a regular for loop
-        IRNode::ASTRef(idx)
+    fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
+        // Issue #3539: previously we returned `ASTRef(idx)` which delegates
+        // to the AST printer that has no `_this` substitution context. The
+        // body of `for-in`/`for-of` inside a derived ES5 constructor must
+        // recurse through `convert_statement` so any `this` reference
+        // becomes `_this`.
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::ASTRef(idx);
+        };
+        let Some(loop_data) = self.arena.get_for_in_of(node) else {
+            return IRNode::ASTRef(idx);
+        };
+        let kind = if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
+            if loop_data.await_modifier {
+                std::borrow::Cow::Borrowed("await of")
+            } else {
+                std::borrow::Cow::Borrowed("of")
+            }
+        } else {
+            std::borrow::Cow::Borrowed("in")
+        };
+        // The initializer is either a VariableDeclarationList or an
+        // expression. The variable-declaration case never references
+        // `this`, so we keep it as ASTRef for simplicity. The expression
+        // case still benefits from substitution, so use convert_expression.
+        // The initializer is either a VariableDeclarationList or an
+        // expression. For the variable-declaration case we synthesize
+        // `var <name>` from the parsed VariableData rather than slicing
+        // the source — the parser includes the trailing `of`/`in` keyword
+        // in the VARIABLE_DECLARATION_LIST node's range, so an `ASTRef`
+        // would re-emit the keyword. The expression case still benefits
+        // from substitution, so use convert_expression.
+        let initializer_node = self.arena.get(loop_data.initializer);
+        let initializer = if let Some(init_node) = initializer_node
+            && init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(var_data) = self.arena.get_variable(init_node)
+        {
+            let mut text = String::from("var ");
+            for (i, &decl_idx) in var_data.declarations.nodes.iter().enumerate() {
+                if i > 0 {
+                    text.push_str(", ");
+                }
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    text.push_str(&crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, decl.name,
+                    ));
+                }
+            }
+            IRNode::Raw(text.into())
+        } else {
+            self.convert_expression(loop_data.initializer)
+        };
+        IRNode::ForInOfStatement {
+            kind,
+            initializer: Box::new(initializer),
+            expression: Box::new(self.convert_expression(loop_data.expression)),
+            body: Box::new(self.convert_statement(loop_data.statement)),
+        }
     }
 
     fn convert_identifier(&self, idx: NodeIndex) -> IRNode {
@@ -723,7 +782,10 @@ impl<'a> AstToIr<'a> {
                     return IRNode::assign(
                         IRNode::id("_this"),
                         IRNode::logical_or(
-                            IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), call_args),
+                            IRNode::call(
+                                IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                                call_args,
+                            ),
                             IRNode::this(),
                         ),
                     );
@@ -771,14 +833,14 @@ impl<'a> AstToIr<'a> {
                 let super_proto_method = if self.is_static {
                     // Static: _super.method
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: method_name.into(),
                     }
                 } else {
                     // Instance: _super.prototype.method
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::PropertyAccess {
-                            object: Box::new(IRNode::id("_super")),
+                            object: Box::new(IRNode::id(self.super_name.clone())),
                             property: "prototype".to_string().into(),
                         }),
                         property: method_name.into(),
@@ -810,10 +872,10 @@ impl<'a> AstToIr<'a> {
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let index_expr = self.convert_expression(access.name_or_argument);
                 let super_base = if self.is_static {
-                    IRNode::id("_super")
+                    IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: "prototype".to_string().into(),
                     }
                 };
@@ -912,13 +974,13 @@ impl<'a> AstToIr<'a> {
             {
                 return if self.is_static {
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: name.into(),
                     }
                 } else {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::PropertyAccess {
-                            object: Box::new(IRNode::id("_super")),
+                            object: Box::new(IRNode::id(self.super_name.clone())),
                             property: "prototype".to_string().into(),
                         }),
                         property: name.into(),
@@ -951,10 +1013,10 @@ impl<'a> AstToIr<'a> {
             {
                 let index = self.convert_expression(access.name_or_argument);
                 let super_base = if self.is_static {
-                    IRNode::id("_super")
+                    IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
-                        object: Box::new(IRNode::id("_super")),
+                        object: Box::new(IRNode::id(self.super_name.clone())),
                         property: "prototype".to_string().into(),
                     }
                 };
@@ -1443,6 +1505,10 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // FunctionExpression uses FunctionData
         if let Some(func) = self.arena.get_function(node) {
+            let hoisted_before = self.hoisted_temps.borrow().len();
+            let saved_temp_counter = self.temp_var_counter.get();
+            self.temp_var_counter.set(0);
+
             let name = if func.name.is_none() {
                 None
             } else {
@@ -1479,6 +1545,9 @@ impl<'a> AstToIr<'a> {
 
             // Restore previous alias
             self.current_this_substitution.set(prev_substitution);
+            self.temp_var_counter.set(saved_temp_counter);
+            let mut body = body;
+            self.prepend_function_hoisted_temps(&mut body, hoisted_before);
 
             IRNode::FunctionExpr {
                 name: name.map(Into::into),
@@ -1516,6 +1585,10 @@ impl<'a> AstToIr<'a> {
                 }
                 return IRNode::ASTRef(idx);
             }
+            let hoisted_before = self.hoisted_temps.borrow().len();
+            let saved_temp_counter = self.temp_var_counter.get();
+            self.temp_var_counter.set(0);
+
             // First check if there's a directive from LoweringPass
             let (captures_this, class_alias) = if let Some(ref transforms) = self.transforms {
                 if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {
@@ -1577,6 +1650,9 @@ impl<'a> AstToIr<'a> {
                 } else {
                     (vec![], false, None)
                 };
+            let mut body = body;
+            self.temp_var_counter.set(saved_temp_counter);
+            self.prepend_function_hoisted_temps(&mut body, hoisted_before);
 
             // Restore previous state
             self.this_captured.set(prev_captured);
@@ -1601,6 +1677,27 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    fn prepend_function_hoisted_temps(&self, body: &mut Vec<IRNode>, hoisted_before: usize) {
+        let hoisted_after = self.hoisted_temps.borrow().len();
+        if hoisted_after <= hoisted_before {
+            return;
+        }
+
+        let local_temps: Vec<String> = self
+            .hoisted_temps
+            .borrow_mut()
+            .drain(hoisted_before..)
+            .collect();
+        let var_decls = local_temps
+            .into_iter()
+            .map(|name| IRNode::VarDecl {
+                name: name.into(),
+                initializer: None,
+            })
+            .collect();
+        body.insert(0, IRNode::VarDeclList(var_decls));
     }
 
     fn convert_parameters(&self, params: &NodeList) -> Vec<IRParam> {

@@ -12,9 +12,36 @@ use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tsz_common::Atom;
 
 use crate::type_queries::traversal::collect_property_name_atoms_for_diagnostics;
+
+// Reusable scratch `FxHashSet<TypeId>` for `collect_exact_literal_property_keys`'s
+// recursive DFS. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
+thread_local! {
+    static SIGS_ADV_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_sigs_adv_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = SIGS_ADV_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    SIGS_ADV_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Get the type parameter info if this is a type parameter.
 ///
@@ -358,29 +385,163 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
         return type_id;
     };
 
-    let has_error = shape.params.iter().any(|p| p.type_id == TypeId::ERROR)
-        || shape.return_type == TypeId::ERROR;
-    if !has_error {
-        return type_id;
+    fn rewrite_error_to_any_in_display_type(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+        seen: &mut FxHashMap<TypeId, TypeId>,
+    ) -> TypeId {
+        if type_id == TypeId::ERROR {
+            return TypeId::ANY;
+        }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+        if let Some(rewritten) = seen.get(&type_id) {
+            return *rewritten;
+        }
+        seen.insert(type_id, type_id);
+
+        let rewritten = match db.lookup(type_id) {
+            Some(TypeData::Object(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                let mut changed = false;
+                let properties = shape
+                    .properties
+                    .iter()
+                    .map(|prop| {
+                        let type_id = rewrite_error_to_any_in_display_type(db, prop.type_id, seen);
+                        let write_type =
+                            rewrite_error_to_any_in_display_type(db, prop.write_type, seen);
+                        changed |= type_id != prop.type_id || write_type != prop.write_type;
+                        crate::types::PropertyInfo {
+                            type_id,
+                            write_type,
+                            ..prop.clone()
+                        }
+                    })
+                    .collect();
+                if changed {
+                    db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                let mut changed = false;
+                let properties = shape
+                    .properties
+                    .iter()
+                    .map(|prop| {
+                        let type_id = rewrite_error_to_any_in_display_type(db, prop.type_id, seen);
+                        let write_type =
+                            rewrite_error_to_any_in_display_type(db, prop.write_type, seen);
+                        changed |= type_id != prop.type_id || write_type != prop.write_type;
+                        crate::types::PropertyInfo {
+                            type_id,
+                            write_type,
+                            ..prop.clone()
+                        }
+                    })
+                    .collect();
+                let string_index = shape.string_index.map(|mut index| {
+                    let value_type =
+                        rewrite_error_to_any_in_display_type(db, index.value_type, seen);
+                    changed |= value_type != index.value_type;
+                    index.value_type = value_type;
+                    index
+                });
+                let number_index = shape.number_index.map(|mut index| {
+                    let value_type =
+                        rewrite_error_to_any_in_display_type(db, index.value_type, seen);
+                    changed |= value_type != index.value_type;
+                    index.value_type = value_type;
+                    index
+                });
+                if changed {
+                    db.object_with_index(crate::types::ObjectShape {
+                        flags: shape.flags,
+                        properties,
+                        string_index,
+                        number_index,
+                        symbol: shape.symbol,
+                    })
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = db.type_list(list_id);
+                let mut changed = false;
+                let rewritten = members
+                    .iter()
+                    .copied()
+                    .map(|member| {
+                        let rewritten = rewrite_error_to_any_in_display_type(db, member, seen);
+                        changed |= rewritten != member;
+                        rewritten
+                    })
+                    .collect();
+                if changed {
+                    db.union(rewritten)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Array(element)) => {
+                let rewritten = rewrite_error_to_any_in_display_type(db, element, seen);
+                if rewritten != element {
+                    db.array(rewritten)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Tuple(list_id)) => {
+                let elements = db.tuple_list(list_id);
+                let mut changed = false;
+                let rewritten = elements
+                    .iter()
+                    .map(|element| {
+                        let type_id =
+                            rewrite_error_to_any_in_display_type(db, element.type_id, seen);
+                        changed |= type_id != element.type_id;
+                        crate::types::TupleElement {
+                            type_id,
+                            ..*element
+                        }
+                    })
+                    .collect();
+                if changed {
+                    db.tuple(rewritten)
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        };
+        seen.insert(type_id, rewritten);
+        rewritten
     }
 
+    let mut rewritten_types = FxHashMap::default();
     let params = shape
         .params
         .iter()
         .map(|p| crate::types::ParamInfo {
-            type_id: if p.type_id == TypeId::ERROR {
-                TypeId::ANY
-            } else {
-                p.type_id
-            },
+            type_id: rewrite_error_to_any_in_display_type(db, p.type_id, &mut rewritten_types),
             ..*p
         })
-        .collect();
-    let return_type = if shape.return_type == TypeId::ERROR {
-        TypeId::ANY
-    } else {
-        shape.return_type
-    };
+        .collect::<Vec<_>>();
+    let return_type =
+        rewrite_error_to_any_in_display_type(db, shape.return_type, &mut rewritten_types);
+    let has_error = params
+        .iter()
+        .zip(shape.params.iter())
+        .any(|(rewritten, original)| rewritten.type_id != original.type_id)
+        || return_type != shape.return_type;
+    if !has_error {
+        return type_id;
+    }
 
     db.function(crate::types::FunctionShape {
         type_params: shape.type_params.clone(),
@@ -595,6 +756,46 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+pub fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::contains_type_matching(db, type_id, |key| {
+        matches!(key, TypeData::IndexAccess(_, _))
+    })
+}
+
+pub fn index_access_type_arg_alias_hint(
+    db: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    match db.lookup(type_id)? {
+        TypeData::IndexAccess(object_type, _) => {
+            index_access_object_type_arg_alias_hint(db, def_store, object_type)
+        }
+        TypeData::Intersection(list_id) | TypeData::Union(list_id) => db
+            .type_list(list_id)
+            .iter()
+            .find_map(|&member| index_access_type_arg_alias_hint(db, def_store, member)),
+        _ => None,
+    }
+}
+
+fn index_access_object_type_arg_alias_hint(
+    db: &dyn TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    object_type: TypeId,
+) -> Option<TypeId> {
+    let app = get_type_application(db, object_type).or_else(|| {
+        db.get_display_alias(object_type)
+            .and_then(|alias| get_type_application(db, alias))
+    })?;
+    let &arg = app.args.first()?;
+    let TypeData::Lazy(def_id) = db.lookup(arg)? else {
+        return None;
+    };
+    let def = def_store.get(def_id)?;
+    (def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty()).then_some(arg)
+}
+
 /// Get the operand of a `KeyOf` type. Returns `Some(inner)` for `keyof T`.
 pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     // Fast path: intrinsics aren't `KeyOf(_)`.
@@ -735,8 +936,10 @@ pub fn collect_exact_literal_property_keys(
     type_id: TypeId,
 ) -> Option<FxHashSet<Atom>> {
     let mut keys = FxHashSet::default();
-    let mut visited = FxHashSet::default();
-    collect_exact_literal_property_keys_inner(db, type_id, &mut keys, &mut visited)?;
+    let success = with_sigs_adv_visited(|visited| {
+        collect_exact_literal_property_keys_inner(db, type_id, &mut keys, visited)
+    });
+    success?;
     Some(keys)
 }
 
@@ -1282,6 +1485,43 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         Some(TypeData::Mapped(_)) => true, // mapped types are object-like
         Some(TypeData::ReadonlyType(inner)) => is_valid_base_type(db, inner),
         // Intrinsics (never, void, null, etc.), literals, None => not valid base types
+        _ => false,
+    }
+}
+
+/// Check if a type is a valid base type for an interface `extends` clause.
+///
+/// Interface heritage is narrower than class heritage: the base must be an
+/// object type or an intersection of object types with statically known
+/// members. Unions and type parameters are rejected with TS2312.
+#[allow(clippy::match_same_arms)]
+pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return type_id == TypeId::ANY || type_id == TypeId::OBJECT;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
+        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
+        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
+        Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| is_valid_interface_base_type(db, member))
+        }
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.mapped_type(mapped_id);
+            !contains_type_parameters_db(db, mapped.constraint)
+                && !mapped
+                    .name_type
+                    .is_some_and(|name_type| contains_type_parameters_db(db, name_type))
+        }
+        Some(TypeData::ReadonlyType(inner)) => is_valid_interface_base_type(db, inner),
+        Some(TypeData::Lazy(_) | TypeData::Application(_)) => true,
+        Some(TypeData::Union(_) | TypeData::TypeParameter(_)) => false,
         _ => false,
     }
 }

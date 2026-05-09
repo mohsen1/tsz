@@ -6,6 +6,11 @@ use tsz_parser::parser::node::{ForInOfData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+enum AssignmentRestProp {
+    Static(String),
+    Dynamic(String),
+}
+
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn preallocate_nested_iterator_return_temps(
         &mut self,
@@ -525,12 +530,12 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit value binding for async iterator protocol: `var item = _a.value;`
-    /// Uses direct `.value` access (no `__read`) for `for await...of` downleveling.
+    /// Emit value binding for async iterator protocol from an already extracted value.
+    /// Uses direct assignment (no `__read`) for `for await...of` downleveling.
     pub(in crate::emitter) fn emit_for_of_value_binding_iterator_es5_async(
         &mut self,
         initializer: NodeIndex,
-        result_name: &str,
+        value_name: &str,
     ) {
         if initializer.is_none() {
             return;
@@ -541,7 +546,18 @@ impl<'a> Printer<'a> {
         };
 
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            self.write("var ");
+            let flags = init_node.flags as u32;
+            let keyword = if self.ctx.target_es5 {
+                "var"
+            } else if flags & tsz_parser::parser::node_flags::CONST != 0 {
+                "const"
+            } else if flags & tsz_parser::parser::node_flags::LET != 0 {
+                "let"
+            } else {
+                "var"
+            };
+            self.write(keyword);
+            self.write(" ");
             if let Some(decl_list) = self.arena.get_variable(init_node) {
                 let mut first = true;
                 for &decl_idx in &decl_list.declarations.nodes {
@@ -551,9 +567,7 @@ impl<'a> Printer<'a> {
                         if self.is_binding_pattern(decl.name) {
                             let mut first = true;
                             self.emit_es5_destructuring_from_value(
-                                decl.name,
-                                &format!("{result_name}.value"),
-                                &mut first,
+                                decl.name, value_name, &mut first,
                             );
                         } else {
                             if !first {
@@ -562,8 +576,7 @@ impl<'a> Printer<'a> {
                             first = false;
                             self.emit(decl.name);
                             self.write(" = ");
-                            self.write(result_name);
-                            self.write(".value");
+                            self.write(value_name);
                         }
                     }
                 }
@@ -572,17 +585,12 @@ impl<'a> Printer<'a> {
         } else if self.is_binding_pattern(initializer) {
             self.write("var ");
             let mut first = true;
-            self.emit_es5_destructuring_from_value(
-                initializer,
-                &format!("{result_name}.value"),
-                &mut first,
-            );
+            self.emit_es5_destructuring_from_value(initializer, value_name, &mut first);
             self.write_semicolon();
         } else {
             self.emit_expression(initializer);
             self.write(" = ");
-            self.write(result_name);
-            self.write(".value");
+            self.write(value_name);
             self.write_semicolon();
         }
     }
@@ -1017,10 +1025,26 @@ impl<'a> Printer<'a> {
         // Also check if the RHS is a destructuring assignment with an empty pattern,
         // which reduces to just the inner RHS (e.g., `{} = a` evaluates to `a`).
         let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
-        let is_simple = self
+        let mut is_simple = self
             .arena
             .get(effective_right_idx)
             .is_some_and(|n| n.is_identifier());
+
+        // `({ foo, bar } = foo)` — when the LHS reassigns the same identifier
+        // we'd be reading from on the RHS, the second access (`bar = foo.bar`)
+        // sees the clobbered value. Force a temp so `_a = foo, foo = _a.foo,
+        // bar = _a.bar` captures the original RHS first.
+        if is_simple {
+            let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                effective_right_idx,
+            );
+            if !rhs_name.is_empty()
+                && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+            {
+                is_simple = false;
+            }
+        }
 
         // Count elements to determine if we need a temp for complex sources.
         // TypeScript creates a temp for non-identifier sources when there are 2+ elements
@@ -1124,6 +1148,74 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Walk the LHS of a destructuring assignment and return true if any
+    /// assignment target is the identifier `name`. Used to detect cases like
+    /// `({ foo, bar } = foo)` where reading `foo.bar` after assigning to
+    /// `foo` would observe the clobbered value.
+    fn assignment_lhs_reassigns_identifier(&self, lhs: &Node, name: &str) -> bool {
+        // Object literal: `{ foo, bar }` or `{ x: foo }`
+        if lhs.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(lhs) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                match elem_node.kind {
+                    k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_shorthand_property(elem_node)
+                        .is_some_and(|sp| {
+                            crate::transforms::emit_utils::identifier_text_or_empty(
+                                self.arena, sp.name,
+                            ) == name
+                        }),
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .is_some_and(|prop| {
+                            self.arena.get(prop.initializer).is_some_and(|init| {
+                                self.assignment_lhs_reassigns_identifier(init, name)
+                            })
+                        }),
+                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                        self.arena.get_spread(elem_node).is_some_and(|sp| {
+                            crate::transforms::emit_utils::identifier_text_or_empty(
+                                self.arena,
+                                sp.expression,
+                            ) == name
+                        })
+                    }
+                    _ => false,
+                }
+            });
+        }
+        // Array literal: `[a, b]` or `[a = init, ...rest]`
+        if lhs.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(lhs) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.is_identifier() {
+                    return crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, elem_idx,
+                    ) == name;
+                }
+                self.assignment_lhs_reassigns_identifier(elem_node, name)
+            });
+        }
+        // Bare identifier target (rare in destructuring pattern position
+        // but exhaustively covered).
+        if lhs.is_identifier() {
+            return false; // handled by parent walks
+        }
+        false
+    }
+
     pub(in crate::emitter) fn assignment_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -1170,6 +1262,62 @@ impl<'a> Printer<'a> {
         false
     }
 
+    fn assignment_pattern_has_dynamic_computed_property_name(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                match elem_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .is_some_and(|prop| {
+                            self.assignment_property_name_is_dynamic_computed(prop.name)
+                                || self.assignment_pattern_has_dynamic_computed_property_name(
+                                    prop.initializer,
+                                )
+                        }),
+                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                        self.arena.get_spread(elem_node).is_some_and(|spread| {
+                            self.assignment_pattern_has_dynamic_computed_property_name(
+                                spread.expression,
+                            )
+                        })
+                    }
+                    _ => false,
+                }
+            });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    && let Some(spread) = self.arena.get_spread(elem_node)
+                {
+                    return self
+                        .assignment_pattern_has_dynamic_computed_property_name(spread.expression);
+                }
+                self.assignment_pattern_has_dynamic_computed_property_name(elem_idx)
+            });
+        }
+
+        false
+    }
+
     fn assignment_object_literal_is_rest_only(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -1205,6 +1353,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.assignment_pattern_has_dynamic_computed_property_name(left_idx) {
+            self.emit_assignment_destructuring_es5(left_node, right_idx);
+            return;
+        }
+
         let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
         let is_simple = self
             .arena
@@ -1223,11 +1376,58 @@ impl<'a> Printer<'a> {
             self.emit_assignment_separator(&mut first);
             self.write(&temp);
             self.write(" = ");
-            self.emit(right_idx);
+            // The RHS sits inside a comma expression `(_a = RHS, ...)` — never at
+            // statement-leading position, so a paren wrapping a type-erased object
+            // literal (e.g. `({ } as any)` -> after erasure -> `({})`) is redundant.
+            // tsc emits `_a = {}` here, not `_a = ({})`. Peel through paren+type-
+            // erasure if the unwrapped expression is an object literal so the strip
+            // matches tsc's own placement decision.
+            let emit_idx = self.peel_assign_rhs_object_literal_paren(right_idx);
+            self.emit(emit_idx);
             temp
         };
 
         self.emit_assignment_pattern_with_object_rest(left_idx, &source_name, true, &mut first);
+    }
+
+    /// Peel a single layer of `(<TypeErasure>{...})` paren wrapping when the
+    /// expression is the RHS of an assignment in a comma expression — that
+    /// position never has the leading-`{` block-vs-object ambiguity, so the
+    /// outer paren is redundant. Returns the inner expression if the shape
+    /// matches; otherwise returns the original index unchanged.
+    fn peel_assign_rhs_object_literal_paren(&self, idx: NodeIndex) -> NodeIndex {
+        let Some(node) = self.arena.get(idx) else {
+            return idx;
+        };
+        if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return idx;
+        }
+        let Some(paren) = self.arena.get_parenthesized(node) else {
+            return idx;
+        };
+        let Some(inner) = self.arena.get(paren.expression) else {
+            return idx;
+        };
+        let is_type_erasure = inner.kind == syntax_kind_ext::TYPE_ASSERTION
+            || inner.kind == syntax_kind_ext::AS_EXPRESSION
+            || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS;
+        if !is_type_erasure {
+            return idx;
+        }
+        match self.unwrap_type_assertion_kind(paren.expression) {
+            Some(k) if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => paren.expression,
+            _ => idx,
+        }
+    }
+
+    pub(in crate::emitter) fn emit_assignment_object_rest_destructuring_from_source(
+        &mut self,
+        left_idx: NodeIndex,
+        source: &str,
+    ) {
+        let mut first = true;
+        self.emit_assignment_pattern_with_object_rest(left_idx, source, true, &mut first);
     }
 
     fn emit_assignment_rest_only_object(&mut self, left_idx: NodeIndex, right_idx: NodeIndex) {
@@ -1653,6 +1853,8 @@ impl<'a> Printer<'a> {
         source: &str,
         first: &mut bool,
     ) {
+        let mut rest_props = Vec::new();
+
         for &elem_idx in elements {
             if elem_idx.is_none() {
                 continue;
@@ -1664,8 +1866,13 @@ impl<'a> Printer<'a> {
             match elem_node.kind {
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     if let Some(prop) = self.arena.get_property_assignment(elem_node) {
-                        let key_text = self.get_property_key_text(prop.name);
-                        let key = key_text.unwrap_or_default();
+                        let computed_key_temp =
+                            self.emit_assignment_computed_key_temp_if_needed(prop.name, first);
+                        if let Some(rest_prop) = self
+                            .assignment_rest_prop_for_key(prop.name, computed_key_temp.as_deref())
+                        {
+                            rest_props.push(rest_prop);
+                        }
 
                         // Check if value is a nested pattern
                         let value_node = self.arena.get(prop.initializer);
@@ -1681,7 +1888,11 @@ impl<'a> Printer<'a> {
                             self.emit_assignment_separator(first);
                             self.write(&temp);
                             self.write(" = ");
-                            self.emit_object_key_access(source, &key);
+                            self.emit_assignment_object_key_access(
+                                source,
+                                prop.name,
+                                computed_key_temp.as_deref(),
+                            );
                             self.emit_assignment_nested_destructuring(
                                 prop.initializer,
                                 &temp,
@@ -1703,7 +1914,11 @@ impl<'a> Printer<'a> {
                                 self.emit_assignment_separator(first);
                                 self.write(&temp);
                                 self.write(" = ");
-                                self.emit_object_key_access(source, &key);
+                                self.emit_assignment_object_key_access(
+                                    source,
+                                    prop.name,
+                                    computed_key_temp.as_deref(),
+                                );
                                 self.write(", ");
                                 self.emit(bin.left);
                                 self.write(" = ");
@@ -1717,7 +1932,11 @@ impl<'a> Printer<'a> {
                             self.emit_assignment_separator(first);
                             self.emit(prop.initializer);
                             self.write(" = ");
-                            self.emit_object_key_access(source, &key);
+                            self.emit_assignment_object_key_access(
+                                source,
+                                prop.name,
+                                computed_key_temp.as_deref(),
+                            );
                         }
                     }
                 }
@@ -1732,6 +1951,9 @@ impl<'a> Printer<'a> {
                         self.write(&name);
                         self.write(" = ");
                         self.emit_object_key_access(source, &name);
+                        if !name.is_empty() {
+                            rest_props.push(AssignmentRestProp::Static(name));
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
@@ -1743,44 +1965,110 @@ impl<'a> Printer<'a> {
                         self.write_helper("__rest");
                         self.write("(");
                         self.write(source);
-                        self.write(", [");
-                        // Collect non-rest property names
-                        let mut prop_first = true;
-                        for &other_idx in elements {
-                            if other_idx == elem_idx {
-                                continue;
-                            }
-                            if let Some(other_node) = self.arena.get(other_idx) {
-                                let key = match other_node.kind {
-                                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
-                                        .arena
-                                        .get_property_assignment(other_node)
-                                        .and_then(|p| self.get_property_key_text(p.name)),
-                                    k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                                        self.arena.get_shorthand_property(other_node).map(|s| {
-                                            crate::transforms::emit_utils::identifier_text_or_empty(
-                                                self.arena, s.name,
-                                            )
-                                        })
-                                    }
-                                    _ => None,
-                                };
-                                if let Some(k) = key {
-                                    if !prop_first {
-                                        self.write(", ");
-                                    }
-                                    self.write("\"");
-                                    self.write(&k);
-                                    self.write("\"");
-                                    prop_first = false;
-                                }
-                            }
-                        }
-                        self.write("])");
+                        self.write(", ");
+                        self.emit_assignment_rest_exclude_list(&rest_props);
+                        self.write(")");
                     }
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn emit_assignment_computed_key_temp_if_needed(
+        &mut self,
+        name_idx: NodeIndex,
+        first: &mut bool,
+    ) -> Option<String> {
+        if !self.assignment_property_name_is_dynamic_computed(name_idx) {
+            return None;
+        }
+
+        let key_temp = self.make_unique_name_hoisted_assignment();
+        self.emit_assignment_separator(first);
+        self.write(&key_temp);
+        self.write(" = ");
+        self.emit_assignment_computed_property_expression(name_idx);
+        Some(key_temp)
+    }
+
+    fn assignment_rest_prop_for_key(
+        &self,
+        name_idx: NodeIndex,
+        computed_key_temp: Option<&str>,
+    ) -> Option<AssignmentRestProp> {
+        if let Some(temp) = computed_key_temp {
+            return Some(AssignmentRestProp::Dynamic(temp.to_string()));
+        }
+
+        self.get_property_key_text(name_idx)
+            .filter(|key| !key.is_empty())
+            .map(AssignmentRestProp::Static)
+    }
+
+    fn emit_assignment_object_key_access(
+        &mut self,
+        source: &str,
+        name_idx: NodeIndex,
+        computed_key_temp: Option<&str>,
+    ) {
+        if let Some(temp) = computed_key_temp {
+            self.write(source);
+            self.write("[");
+            self.write(temp);
+            self.write("]");
+            return;
+        }
+
+        let key = self.get_property_key_text(name_idx).unwrap_or_default();
+        self.emit_object_key_access(source, &key);
+    }
+
+    fn emit_assignment_rest_exclude_list(&mut self, props: &[AssignmentRestProp]) {
+        self.write("[");
+        for (i, prop) in props.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.emit_assignment_rest_excluded_prop(prop);
+        }
+        self.write("]");
+    }
+
+    fn emit_assignment_rest_excluded_prop(&mut self, prop: &AssignmentRestProp) {
+        match prop {
+            AssignmentRestProp::Static(key) => {
+                self.write("\"");
+                self.write(&key.replace('\\', "\\\\").replace('"', "\\\""));
+                self.write("\"");
+            }
+            AssignmentRestProp::Dynamic(temp) => {
+                self.write("typeof ");
+                self.write(temp);
+                self.write(" === \"symbol\" ? ");
+                self.write(temp);
+                self.write(" : ");
+                self.write(temp);
+                self.write(" + \"\"");
+            }
+        }
+    }
+
+    fn assignment_property_name_is_dynamic_computed(&self, name_idx: NodeIndex) -> bool {
+        self.arena
+            .get(name_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            && self.get_property_key_text(name_idx).is_none()
+    }
+
+    fn emit_assignment_computed_property_expression(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(name_node)
+        {
+            self.emit(computed.expression);
         }
     }
 
@@ -1880,6 +2168,12 @@ impl<'a> Printer<'a> {
             self.get_string_literal_text(name_idx)
         } else if node.is_numeric_literal() {
             self.get_numeric_literal_text(name_idx)
+        } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(node)?;
+            let expr_node = self.arena.get(computed.expression)?;
+            self.arena
+                .get_literal(expr_node)
+                .map(|literal| literal.text.clone())
         } else {
             None
         }

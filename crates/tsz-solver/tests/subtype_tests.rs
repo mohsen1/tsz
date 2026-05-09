@@ -62,6 +62,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -76,6 +77,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
             parent_id: None,
             declaration_order: 1,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -565,6 +567,7 @@ fn test_apparent_symbol_member_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let mismatch = interner.object(vec![PropertyInfo {
@@ -579,6 +582,7 @@ fn test_apparent_symbol_member_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1057,6 +1061,7 @@ fn test_weak_type_detection_not_weak_if_has_required() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -1089,6 +1094,7 @@ fn test_split_accessor_variance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1104,6 +1110,7 @@ fn test_split_accessor_variance() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1129,6 +1136,7 @@ fn test_exact_optional_property_types_toggle() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let source = interner.object(vec![PropertyInfo {
@@ -1143,6 +1151,7 @@ fn test_exact_optional_property_types_toggle() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1423,6 +1432,7 @@ fn test_readonly_property_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let mutable_obj = interner.object(vec![PropertyInfo {
@@ -1437,6 +1447,7 @@ fn test_readonly_property_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -1455,6 +1466,47 @@ fn test_readonly_array_subtyping() {
 
     assert!(checker.is_subtype_of(mutable_array, readonly_array));
     assert!(!checker.is_subtype_of(readonly_array, mutable_array));
+}
+
+struct ReadonlyArrayDefResolver {
+    def_id: DefId,
+}
+
+impl TypeResolver for ReadonlyArrayDefResolver {
+    fn resolve_ref(
+        &self,
+        _symbol: SymbolRef,
+        _interner: &dyn crate::TypeDatabase,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    fn is_builtin_readonly_array_def(&self, def_id: DefId) -> bool {
+        def_id == self.def_id
+    }
+}
+
+#[test]
+fn test_readonly_array_application_matches_readonly_array_syntax() {
+    let interner = TypeInterner::new();
+    let resolver = ReadonlyArrayDefResolver { def_id: DefId(1) };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    let readonly_array_def = interner.lazy(DefId(1));
+    let readonly_array_app = interner.application(readonly_array_def, vec![TypeId::STRING]);
+    let readonly_string_array = interner.readonly_type(interner.array(TypeId::STRING));
+    let readonly_number_array = interner.readonly_type(interner.array(TypeId::NUMBER));
+    let app_or_null = interner.union(vec![readonly_array_app, TypeId::NULL]);
+    let syntax_or_null = interner.union(vec![readonly_string_array, TypeId::NULL]);
+
+    assert!(checker.is_subtype_of(readonly_array_app, readonly_string_array));
+    assert!(checker.is_subtype_of(readonly_string_array, readonly_array_app));
+    assert!(checker.is_subtype_of(app_or_null, syntax_or_null));
+    assert!(!checker.is_subtype_of(readonly_array_app, readonly_number_array));
+
+    let shadow_resolver = ReadonlyArrayDefResolver { def_id: DefId(99) };
+    let mut shadow_checker = SubtypeChecker::with_resolver(&interner, &shadow_resolver);
+    assert!(!shadow_checker.is_subtype_of(readonly_array_app, readonly_string_array));
 }
 
 #[test]
@@ -2666,7 +2718,10 @@ fn test_tuple_array_assignment_tuple_to_union_array() {
 
 #[test]
 fn test_array_to_variadic_tuple() {
-    // string[] is NOT assignable to [...string[]]
+    // `string[]` IS assignable to `[...string[]]` — a variadic tuple with a
+    // single rest element of array type is structurally equivalent to that
+    // array type. tsc accepts this and tsz must too; the symmetric case is
+    // `[...T] <: T` (handled in `visit_tuple`).
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2678,7 +2733,17 @@ fn test_array_to_variadic_tuple() {
         rest: true,
     }]);
 
-    assert!(!checker.is_subtype_of(string_array, target));
+    assert!(checker.is_subtype_of(string_array, target));
+
+    // The reduction must still respect element-type compatibility: a mismatched
+    // element type still rejects.
+    let number_array_target = interner.tuple(vec![TupleElement {
+        type_id: interner.array(TypeId::NUMBER),
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    assert!(!checker.is_subtype_of(string_array, number_array_target));
 }
 
 #[test]
@@ -4172,6 +4237,7 @@ fn test_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4187,6 +4253,7 @@ fn test_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4244,6 +4311,7 @@ fn test_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -4259,6 +4327,7 @@ fn test_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -5148,6 +5217,7 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -5163,6 +5233,7 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -5210,6 +5281,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -5225,6 +5297,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6145,6 +6218,7 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let required_readonly =
@@ -6479,6 +6553,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -6493,6 +6568,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -6541,6 +6617,7 @@ fn test_mapped_type_optional_readonly_remove_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -6864,6 +6941,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let required_readonly_b =
@@ -6894,6 +6972,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     };
     let obj = interner.object(vec![prop_a, prop_b.clone()]);
@@ -7202,6 +7281,7 @@ fn test_generic_covariant_return_position() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -7217,6 +7297,7 @@ fn test_generic_covariant_return_position() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -7329,6 +7410,7 @@ fn test_generic_mixed_variance_positions() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -7344,6 +7426,7 @@ fn test_generic_mixed_variance_positions() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -7600,6 +7683,7 @@ fn test_mutable_property_split_accessor_wider_write() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -8762,6 +8846,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -8776,6 +8861,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -8818,6 +8904,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -8832,6 +8919,7 @@ fn test_invariant_ref_cell_pattern() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -11413,6 +11501,7 @@ fn test_readonly_with_optional() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -11472,6 +11561,7 @@ fn test_readonly_method_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -12893,6 +12983,7 @@ fn test_implements_optional_method() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -14258,6 +14349,7 @@ fn test_never_is_bottom_type_for_object_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -14381,6 +14473,7 @@ fn test_unknown_is_top_type_for_object_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -16789,6 +16882,7 @@ fn test_variance_method_bivariant_params() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -16826,6 +16920,7 @@ fn test_variance_method_bivariant_params() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -16871,6 +16966,7 @@ fn test_variance_function_property_contravariant() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -16900,6 +16996,7 @@ fn test_variance_function_property_contravariant() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -18627,6 +18724,7 @@ fn test_symbol_keyed_object_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -18781,6 +18879,7 @@ fn test_iterable_protocol_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -18816,6 +18915,7 @@ fn test_async_iterable_protocol_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -18842,6 +18942,7 @@ fn test_async_iterable_protocol_types() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -21034,6 +21135,7 @@ fn test_constructor_with_static_properties() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -21932,6 +22034,7 @@ fn test_this_type_with_getter_setter() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -22419,6 +22522,7 @@ fn test_readonly_optional_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -22538,6 +22642,7 @@ fn test_readonly_method_is_always_readonly() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -24456,6 +24561,7 @@ fn test_overload_constructor_overloads() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -24478,6 +24584,7 @@ fn test_overload_constructor_overloads() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

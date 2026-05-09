@@ -99,7 +99,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn source_file_has_jsdoc_typedef_named(source_file: &SourceFileData, name: &str) -> bool {
+    pub(crate) fn source_file_has_jsdoc_typedef_named(
+        source_file: &SourceFileData,
+        name: &str,
+    ) -> bool {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         if source_file.comments.is_empty() {
@@ -126,6 +129,88 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .any(|(typedef_name, _)| typedef_name == name)
         })
+    }
+
+    pub(crate) fn source_file_has_jsdoc_typedef_namespace_root(
+        source_file: &SourceFileData,
+        name: &str,
+    ) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        if source_file.comments.is_empty() {
+            return false;
+        }
+
+        let text = &source_file.text;
+        if !text.contains("@namespace")
+            && !text.contains("@typedef")
+            && !text.contains("@callback")
+            && !text.contains("@import")
+        {
+            return false;
+        }
+        if !text.contains(name) {
+            return false;
+        }
+
+        let namespace_tag = format!("@namespace {name}");
+        let namespace_prefix = format!("{name}.");
+        source_file.comments.iter().any(|comment| {
+            if !is_jsdoc_comment(comment, text) {
+                return false;
+            }
+            let content = get_jsdoc_content(comment, text);
+            content.contains(&namespace_tag)
+                || Self::parse_jsdoc_typedefs(&content)
+                    .iter()
+                    .any(|(typedef_name, _)| {
+                        typedef_name == name || typedef_name.starts_with(&namespace_prefix)
+                    })
+        })
+    }
+
+    /// Whether the JS module resolved from `module_name` declares a top-level
+    /// JSDoc `@typedef Name` matching `typedef_name`.
+    ///
+    /// tsc treats a JSDoc `@typedef` in a `.js` / `.mjs` / `.cjs` module as a
+    /// type-only exported member of that module. Use this helper to suppress
+    /// false-positive TS2305 / TS2694 diagnostics when an importer references
+    /// a typedef name that does not appear in the binder's exports table.
+    pub(crate) fn module_has_jsdoc_typedef_export(
+        &mut self,
+        module_name: &str,
+        typedef_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        use crate::context::is_js_file_name;
+
+        if typedef_name.is_empty() {
+            return false;
+        }
+
+        let Some(target_file_idx) = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_is_js = target_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| is_js_file_name(&source_file.file_name));
+        if !target_is_js {
+            return false;
+        }
+
+        target_arena
+            .source_files
+            .iter()
+            .any(|sf| Self::source_file_has_jsdoc_typedef_named(sf, typedef_name))
     }
 
     pub(crate) fn jsdoc_callable_type_annotation_for_node(
@@ -249,6 +334,15 @@ impl<'a> CheckerState<'a> {
             }
 
             for source_file in &arena.source_files {
+                if Self::jsdoc_source_file_is_external_module(
+                    &self.ctx,
+                    file_idx,
+                    arena,
+                    binder,
+                    source_file,
+                ) {
+                    continue;
+                }
                 if use_typedef_prescan
                     && !Self::source_file_has_jsdoc_typedef_named(source_file, name)
                 {
@@ -284,6 +378,42 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn jsdoc_source_file_is_external_module(
+        ctx: &crate::context::CheckerContext<'_>,
+        file_idx: usize,
+        arena: &tsz_parser::parser::NodeArena,
+        binder: &tsz_binder::BinderState,
+        source_file: &SourceFileData,
+    ) -> bool {
+        if binder.is_external_module() {
+            return true;
+        }
+
+        if let Some(is_external_module_by_file) = ctx.is_external_module_by_file.as_ref()
+            && let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
+        {
+            return *is_external_module;
+        }
+
+        if ctx
+            .all_binders
+            .as_ref()
+            .and_then(|binders| binders.get(file_idx))
+            .is_some_and(|binder| binder.is_external_module())
+        {
+            return true;
+        }
+
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            arena.get(stmt_idx).is_some_and(|stmt| {
+                stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            })
+        })
     }
 
     pub(crate) fn source_file_data_for_node(
@@ -392,6 +522,7 @@ impl<'a> CheckerState<'a> {
         let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, &comments, &source_text)?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+        self.report_invalid_jsdoc_type_predicate_annotation(idx, type_expr);
         self.validate_jsdoc_generic_constraints_at_node(
             idx,
             node.pos,
@@ -408,6 +539,14 @@ impl<'a> CheckerState<'a> {
             &source_text,
         );
         // Set the anchor position for typedef scoping.
+        if Self::jsdoc_backtick_import_argument_offset(type_expr).is_some() {
+            let type_expr_start = self
+                .jsdoc_type_expression_span_for_node(idx)
+                .map(|(start, _)| start)
+                .unwrap_or(node.pos);
+            self.report_jsdoc_backtick_import_type_error(type_expr, type_expr_start);
+            return Some(TypeId::ERROR);
+        }
         let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
         let prev_file_name = self.ctx.file_name.clone();
         let prev_file_idx = self.ctx.current_file_idx;
@@ -757,7 +896,8 @@ impl<'a> CheckerState<'a> {
                 if !type_expr.ends_with('>') {
                     return;
                 }
-                let base = type_expr[..angle_idx].trim();
+                let raw_base = type_expr[..angle_idx].trim();
+                let base = raw_base.strip_suffix('.').unwrap_or(raw_base);
                 let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
                 let args = Self::split_type_args_respecting_nesting(args_str);
                 if args.is_empty() {
@@ -968,6 +1108,7 @@ impl<'a> CheckerState<'a> {
         )?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+        self.report_invalid_jsdoc_type_predicate_annotation(idx, type_expr);
         // Use the authoritative resolution kernel — no fallback chain needed.
         self.resolve_jsdoc_reference(type_expr)
     }
@@ -999,7 +1140,91 @@ impl<'a> CheckerState<'a> {
         )?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+        self.report_invalid_jsdoc_type_predicate_annotation(idx, type_expr);
         self.resolve_jsdoc_reference(type_expr)
+    }
+
+    fn report_invalid_jsdoc_type_predicate_annotation(&mut self, idx: NodeIndex, type_expr: &str) {
+        let Some((predicate_offset, predicate_len)) =
+            Self::invalid_jsdoc_type_predicate_span(type_expr)
+        else {
+            return;
+        };
+        let Some((expr_start, _)) = self.jsdoc_type_expression_span_for_node(idx) else {
+            return;
+        };
+        let start = expr_start.saturating_add(predicate_offset as u32);
+        let end = start.saturating_add(predicate_len as u32);
+        if self.has_diagnostic_code_within_span(
+            start,
+            end,
+            crate::diagnostics::diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+        ) {
+            return;
+        }
+        self.error_at_position(
+            start,
+            predicate_len as u32,
+            crate::diagnostics::diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+            crate::diagnostics::diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+        );
+    }
+
+    fn invalid_jsdoc_type_predicate_span(type_expr: &str) -> Option<(usize, usize)> {
+        let trimmed = type_expr.trim();
+        let leading_ws = type_expr.len() - type_expr.trim_start().len();
+        if trimmed.is_empty() || trimmed.starts_with("function") || trimmed.contains("=>") {
+            return None;
+        }
+        if let Some(after_asserts) = trimmed.strip_prefix("asserts")
+            && after_asserts
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+        {
+            let rest = after_asserts.trim_start();
+            let offset = leading_ws + "asserts".len() + (after_asserts.len() - rest.len());
+            return (!rest.is_empty()).then_some((offset, rest.len()));
+        }
+
+        let mut paren_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut angle_depth = 0u32;
+        let bytes = trimmed.as_bytes();
+        let mut i = 0usize;
+        while i + 4 <= bytes.len() {
+            match bytes[i] as char {
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                '<' => angle_depth += 1,
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                _ => {}
+            }
+            if paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && angle_depth == 0
+                && bytes.get(i..i + 4) == Some(b" is ")
+            {
+                let left = trimmed[..i].trim();
+                let right = trimmed[i + 4..].trim();
+                if !left.is_empty()
+                    && !right.is_empty()
+                    && left
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+                {
+                    return Some((leading_ws, trimmed.len()));
+                }
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Extract `@satisfies` annotation and its keyword position.
@@ -1025,7 +1250,7 @@ impl<'a> CheckerState<'a> {
         let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
         let raw_comment = source_text.get(jsdoc_start as usize..)?;
-        let tag_offset = raw_comment.find("@satisfies")? as u32;
+        let tag_offset = Self::jsdoc_tag_offset(raw_comment, "satisfies")? as u32;
         let keyword_pos = jsdoc_start + tag_offset + 1;
         let resolved = self.resolve_jsdoc_type_str(type_expr)?;
         Some((self.judge_evaluate(resolved), keyword_pos))

@@ -13,6 +13,73 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_has_nonambient_current_file_declaration(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            let current_file_idx = self.ctx.current_file_idx as u32;
+            symbol
+                .declarations
+                .iter()
+                .enumerate()
+                .any(|(idx, &decl_idx)| {
+                    let declaration_is_in_current_file = if let Some(stable) =
+                        symbol.stable_declarations.get(idx)
+                        && stable.is_known()
+                        && stable.has_file_idx()
+                    {
+                        stable.file_idx == current_file_idx
+                    } else if symbol.decl_file_idx != u32::MAX {
+                        symbol.decl_file_idx == current_file_idx
+                    } else {
+                        true
+                    };
+
+                    declaration_is_in_current_file
+                        && self.ctx.arena.get(decl_idx).is_some()
+                        && !self.ctx.arena.is_in_ambient_context(decl_idx)
+                })
+        })
+    }
+
+    pub(crate) fn identifier_has_nonambient_current_file_binding(
+        &self,
+        ident_idx: NodeIndex,
+        expected_name: &str,
+    ) -> bool {
+        let Some(ident) = self.ctx.arena.get_identifier_at(ident_idx) else {
+            return false;
+        };
+        if ident.escaped_text != expected_name {
+            return false;
+        }
+
+        self.ctx
+            .binder
+            .node_symbols
+            .get(&ident_idx.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol_without_tracking(ident_idx))
+            .is_some_and(|sym_id| self.symbol_has_nonambient_current_file_declaration(sym_id))
+    }
+
+    pub(crate) fn is_unshadowed_commonjs_exports_identifier(&self, ident_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get_identifier_at(ident_idx)
+            .is_some_and(|ident| ident.escaped_text == "exports")
+            && !self.identifier_has_nonambient_current_file_binding(ident_idx, "exports")
+    }
+
+    pub(crate) fn is_unshadowed_commonjs_module_identifier(&self, ident_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get_identifier_at(ident_idx)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && !self.identifier_has_nonambient_current_file_binding(ident_idx, "module")
+    }
+
     /// Choose the type to display in a TS2339 "property does not exist on type X"
     /// message after a `PropertyNotFound` lookup.
     ///
@@ -44,6 +111,15 @@ impl<'a> CheckerState<'a> {
         ) {
             return apparent;
         }
+        // Index-access narrowed types (e.g. `E[K]` where E and K are generic
+        // and the resolved value type is a closed union like `A | B`) should
+        // also defer to the apparent display. Returning the IndexAccess form
+        // would otherwise route through the suppress-on-IndexAccess branch
+        // in `error_property_not_exist_at`, silencing TS2339 entirely on a
+        // genuine missing-property situation.
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, narrowed) {
+            return apparent;
+        }
         if crate::query_boundaries::common::union_list_id(self.ctx.types, apparent).is_some() {
             return narrowed;
         }
@@ -66,27 +142,9 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn known_declared_receiver_has_property(
         &mut self,
         expression: NodeIndex,
-        display_object_type: TypeId,
+        _display_object_type: TypeId,
         property_name: &str,
     ) -> bool {
-        let declared_receiver = self.resolve_type_for_property_access(display_object_type);
-        if declared_receiver != TypeId::NEVER
-            && let PropertyAccessResult::Success { .. } =
-                self.resolve_property_access_with_env(declared_receiver, property_name)
-        {
-            return true;
-        }
-
-        let no_flow_base = self.get_type_of_write_target_base_expression(expression);
-        let no_flow_base = self.evaluate_application_type(no_flow_base);
-        let no_flow_receiver = self.resolve_type_for_property_access(no_flow_base);
-        if no_flow_receiver != TypeId::NEVER
-            && let PropertyAccessResult::Success { .. } =
-                self.resolve_property_access_with_env(no_flow_receiver, property_name)
-        {
-            return true;
-        }
-
         let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
             return false;
         };
@@ -98,29 +156,57 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        if declarations.len() != 1 {
+            return false;
+        }
 
         for decl_idx in declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
-            if decl_node.kind != syntax_kind_ext::PARAMETER {
-                continue;
-            }
-            let declared_type = self
-                .ctx
-                .arena
-                .get_parameter(decl_node)
-                .and_then(|param| {
-                    param
-                        .type_annotation
-                        .is_some()
-                        .then_some(param.type_annotation)
-                })
-                .map(|type_node| self.get_type_from_type_node(type_node));
-            let Some(declared_type) = declared_type else {
+            let type_annotation = match decl_node.kind {
+                syntax_kind_ext::PARAMETER => {
+                    self.ctx.arena.get_parameter(decl_node).and_then(|param| {
+                        param
+                            .type_annotation
+                            .is_some()
+                            .then_some(param.type_annotation)
+                    })
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_variable_declaration(decl_node)
+                    .and_then(|var_decl| {
+                        var_decl
+                            .type_annotation
+                            .is_some()
+                            .then_some(var_decl.type_annotation)
+                    }),
+                _ => None,
+            };
+            let Some(type_annotation) = type_annotation else {
                 continue;
             };
+            let declared_type = self.get_type_from_type_node(type_annotation);
             let declared_type = self.evaluate_application_type(declared_type);
+            if matches!(
+                declared_type,
+                TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+            ) || crate::query_boundaries::common::is_union_type(self.ctx.types, declared_type)
+                || crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    declared_type,
+                )
+            {
+                if self.type_reference_class_declares_public_instance_member(
+                    type_annotation,
+                    property_name,
+                ) {
+                    return true;
+                }
+                continue;
+            }
             let declared_type = self.resolve_type_for_property_access(declared_type);
             if declared_type != TypeId::NEVER
                 && let PropertyAccessResult::Success { .. } =
@@ -128,6 +214,179 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
+
+            if self.type_reference_class_declares_public_instance_member(
+                type_annotation,
+                property_name,
+            ) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn type_reference_class_declares_public_instance_member(
+        &mut self,
+        type_annotation: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
+            return false;
+        };
+        let Some(type_name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        if self.ctx.arena.get_identifier(type_name_node).is_none() {
+            return false;
+        }
+        let Some(type_sym_id) = self.resolve_identifier_symbol_without_tracking(type_ref.type_name)
+        else {
+            return false;
+        };
+        let Some(type_declarations) = self
+            .ctx
+            .binder
+            .get_symbol(type_sym_id)
+            .map(|symbol| symbol.declarations.clone())
+        else {
+            return false;
+        };
+
+        type_declarations.iter().any(|&decl_idx| {
+            let Some(class_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if class_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                return false;
+            }
+            let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+                return false;
+            };
+
+            class_data.members.nodes.iter().copied().any(|member_idx| {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    return false;
+                };
+                match member_node.kind {
+                    syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .is_some_and(|prop| {
+                            self.is_public_instance_member(prop.modifiers.as_ref())
+                                && self.get_property_name(prop.name).as_deref()
+                                    == Some(property_name)
+                        }),
+                    syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(member_node)
+                        .is_some_and(|method| {
+                            self.is_public_instance_member(method.modifiers.as_ref())
+                                && self.get_property_name(method.name).as_deref()
+                                    == Some(property_name)
+                        }),
+                    syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                        .ctx
+                        .arena
+                        .get_accessor(member_node)
+                        .is_some_and(|accessor| {
+                            self.is_public_instance_member(accessor.modifiers.as_ref())
+                                && self.get_property_name(accessor.name).as_deref()
+                                    == Some(property_name)
+                        }),
+                    _ => false,
+                }
+            })
+        })
+    }
+
+    fn is_public_instance_member(&self, modifiers: Option<&tsz_parser::parser::NodeList>) -> bool {
+        !self
+            .ctx
+            .arena
+            .has_modifier_ref(modifiers, SyntaxKind::StaticKeyword)
+            && !self
+                .ctx
+                .arena
+                .has_modifier_ref(modifiers, SyntaxKind::PrivateKeyword)
+            && !self
+                .ctx
+                .arena
+                .has_modifier_ref(modifiers, SyntaxKind::ProtectedKeyword)
+    }
+
+    pub(crate) fn declared_intersection_receiver_has_property(
+        &mut self,
+        expression: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
+            return false;
+        };
+
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if declared_type == TypeId::ANY
+            || declared_type == TypeId::ERROR
+            || declared_type == TypeId::UNKNOWN
+            || declared_type == TypeId::NEVER
+        {
+            return false;
+        }
+
+        let declared_from_intersection_annotation =
+            self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.declarations.iter().any(|&decl_idx| {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        return false;
+                    };
+                    let type_annotation =
+                        if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
+                            param.type_annotation
+                        } else if let Some(var_decl) =
+                            self.ctx.arena.get_variable_declaration(decl_node)
+                        {
+                            var_decl.type_annotation
+                        } else {
+                            NodeIndex::NONE
+                        };
+
+                    self.type_annotation_is_intersection(type_annotation)
+                })
+            });
+
+        if !declared_from_intersection_annotation {
+            return false;
+        }
+
+        let evaluated_declared = self.evaluate_application_type(declared_type);
+        let receiver = self.resolve_type_for_property_access(evaluated_declared);
+        receiver != TypeId::NEVER
+            && matches!(
+                self.resolve_property_access_with_env(receiver, property_name),
+                PropertyAccessResult::Success { .. }
+            )
+    }
+
+    fn type_annotation_is_intersection(&self, mut type_annotation: NodeIndex) -> bool {
+        while type_annotation.is_some() {
+            let Some(node) = self.ctx.arena.get(type_annotation) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
+            {
+                type_annotation = paren.type_node;
+                continue;
+            }
+            break;
         }
 
         false
@@ -137,37 +396,23 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
     ) -> bool {
-        !self
-            .resolve_identifier_symbol_without_tracking(idx)
-            .is_some_and(|sym_id| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
-            })
+        self.is_unshadowed_commonjs_module_identifier(idx)
     }
 
     pub(crate) fn current_file_commonjs_exports_target_is_unshadowed(
         &self,
         idx: NodeIndex,
     ) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text == "exports")
-                && !self
-                    .resolve_identifier_symbol_without_tracking(idx)
-                    .is_some_and(|sym_id| {
-                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            symbol.decl_file_idx == self.ctx.current_file_idx as u32
-                        })
-                    });
+            return self.is_unshadowed_commonjs_exports_identifier(idx);
         }
 
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -177,11 +422,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        self.ctx
-            .arena
-            .get_identifier_at(access.expression)
-            .is_some_and(|ident| ident.escaped_text == "module")
-            && self.current_file_commonjs_module_identifier_is_unshadowed(access.expression)
+        self.is_unshadowed_commonjs_module_identifier(access.expression)
             && self
                 .ctx
                 .arena
@@ -189,7 +430,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "exports")
     }
 
-    pub(crate) fn current_file_commonjs_direct_write_rhs(
+    pub(crate) fn property_access_direct_write_rhs(
         &self,
         property_access_idx: NodeIndex,
     ) -> Option<NodeIndex> {
@@ -202,6 +443,13 @@ impl<'a> CheckerState<'a> {
         let binary = self.ctx.arena.get_binary_expr(parent_node)?;
         (binary.left == property_access_idx && self.is_assignment_operator(binary.operator_token))
             .then_some(binary.right)
+    }
+
+    pub(crate) fn current_file_commonjs_direct_write_rhs(
+        &self,
+        property_access_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        self.property_access_direct_write_rhs(property_access_idx)
     }
 
     pub(crate) fn current_file_commonjs_write_rhs_is_undefined_like(&self, idx: NodeIndex) -> bool {
@@ -292,17 +540,151 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn finalize_property_access_result(
-        &self,
+        &mut self,
         idx: NodeIndex,
         result_type: TypeId,
         skip_flow_narrowing: bool,
         skip_result_flow_for_result: bool,
     ) -> TypeId {
+        if self.ctx.types.take_union_too_complex()
+            || self.property_access_result_exceeds_complexity_limit(result_type)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
+
         if skip_flow_narrowing || skip_result_flow_for_result {
             result_type
         } else {
             self.apply_flow_narrowing(idx, result_type)
         }
+    }
+
+    fn property_access_result_exceeds_complexity_limit(&self, type_id: TypeId) -> bool {
+        const UNION_COMPLEXITY_LIMIT: usize = 100_000;
+
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        let mut cross_product_size = 1usize;
+        for member in members {
+            if let Some(union_members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, member)
+            {
+                cross_product_size = cross_product_size.saturating_mul(union_members.len());
+                if cross_product_size >= UNION_COMPLEXITY_LIMIT {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub(crate) fn flow_narrowed_write_receiver_type(
+        &mut self,
+        property_access_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+        declared_type: TypeId,
+    ) -> TypeId {
+        let read_type = self.get_type_of_node_with_request(receiver_idx, &TypingRequest::NONE);
+        if read_type != declared_type {
+            return read_type;
+        }
+        if self.ctx.daa_error_nodes.contains(&receiver_idx.0)
+            || self.ctx.daa_error_nodes.contains(&property_access_idx.0)
+        {
+            return read_type;
+        }
+        if !self.write_receiver_can_flow_narrow(property_access_idx, receiver_idx) {
+            return read_type;
+        }
+        let Some(flow_node) = self.flow_node_for_reference_usage(property_access_idx) else {
+            return read_type;
+        };
+
+        self.flow_analyzer_for_property_reads()
+            .get_flow_type(receiver_idx, read_type, flow_node)
+    }
+
+    pub(crate) fn write_receiver_type_for_property_access(
+        &mut self,
+        property_access_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+        property_name: Option<&str>,
+        object_type_no_flow: TypeId,
+        preserve_non_js_write_base: bool,
+    ) -> (TypeId, bool) {
+        let can_use_no_flow = if let Some(property_name) = property_name {
+            let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
+            let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+            !matches!(
+                self.resolve_property_access_with_env(resolved_no_flow, property_name),
+                PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+            )
+        } else {
+            false
+        };
+
+        if !can_use_no_flow && !preserve_non_js_write_base {
+            return (
+                self.flow_narrowed_write_receiver_type(
+                    property_access_idx,
+                    receiver_idx,
+                    object_type_no_flow,
+                ),
+                false,
+            );
+        }
+
+        let Some(property_name) = property_name else {
+            return (object_type_no_flow, false);
+        };
+        let read_object_type = self.flow_narrowed_write_receiver_type(
+            property_access_idx,
+            receiver_idx,
+            object_type_no_flow,
+        );
+        let evaluated_read = self.evaluate_application_type(read_object_type);
+        let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+        if self.union_write_requires_existing_named_member(resolved_read, property_name) {
+            return (read_object_type, false);
+        }
+
+        let read_has_property = !matches!(
+            self.resolve_property_access_with_env(resolved_read, property_name),
+            PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+        );
+        if read_has_property {
+            (object_type_no_flow, false)
+        } else if self.write_receiver_can_flow_narrow(property_access_idx, receiver_idx) {
+            (read_object_type, true)
+        } else {
+            (object_type_no_flow, true)
+        }
+    }
+
+    fn write_receiver_can_flow_narrow(
+        &self,
+        property_access_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+    ) -> bool {
+        self.flow_node_for_reference_usage(property_access_idx)
+            .is_some()
+            && self.ctx.arena.get(receiver_idx).is_some_and(|expr| {
+                matches!(
+                    expr.kind,
+                    k if k == SyntaxKind::Identifier as u16
+                        || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                )
+            })
     }
 
     pub(crate) fn recover_self_recursive_property_access_type(
@@ -366,11 +748,21 @@ impl<'a> CheckerState<'a> {
             .copied()
             .unwrap_or_else(|| self.get_type_of_node(access.expression));
 
-        self.recover_self_recursive_property_access_type(
+        let recovered = self.recover_self_recursive_property_access_type(
             receiver_type,
             &name_ident.escaped_text,
             result_type,
-        )
+        );
+        if recovered == TypeId::ANY && recovered != result_type {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+            self.error_at_node(
+                idx,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+        }
+        recovered
     }
 
     pub(crate) fn is_stale_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {
@@ -1023,5 +1415,92 @@ impl<'a> CheckerState<'a> {
             }
             _ => Some(false), // Skip non-value declarations (interface, type alias)
         }
+    }
+
+    pub(crate) fn check_jsdoc_prototype_type_decl_constructor_assignment(
+        &mut self,
+        prototype_expr_idx: NodeIndex,
+        property_name: &str,
+        declared_type: TypeId,
+    ) {
+        let Some(prototype_node) = self.ctx.arena.get(prototype_expr_idx) else {
+            return;
+        };
+        if prototype_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(prototype_access) = self.ctx.arena.get_access_expr(prototype_node) else {
+            return;
+        };
+        if self
+            .ctx
+            .arena
+            .get_identifier_at(prototype_access.name_or_argument)
+            .is_none_or(|ident| ident.escaped_text != "prototype")
+        {
+            return;
+        }
+        let Some(func_idx) = self.js_prototype_owner_function_target(prototype_access.expression)
+        else {
+            return;
+        };
+        let Some(body_idx) = self
+            .ctx
+            .arena
+            .get(func_idx)
+            .and_then(|node| self.ctx.arena.get_function(node))
+            .and_then(|func| (!func.body.is_none()).then_some(func.body))
+        else {
+            return;
+        };
+        let Some((source_idx, diag_idx)) =
+            self.constructor_this_assignment_for_property(body_idx, property_name)
+        else {
+            return;
+        };
+
+        let source_type = self.get_type_of_node(source_idx);
+        let target_type =
+            crate::query_boundaries::common::remove_undefined(self.ctx.types, declared_type);
+        if !self.is_assignable_to(source_type, target_type) {
+            let _ = self.check_assignable_or_report_at_exact_anchor(
+                source_type,
+                target_type,
+                source_idx,
+                diag_idx,
+            );
+        }
+    }
+
+    fn constructor_this_assignment_for_property(
+        &mut self,
+        body_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let body_node = self.ctx.arena.get(body_idx)?;
+        let block = self.ctx.arena.get_block(body_node)?;
+        let mut stmts = Vec::new();
+        for &stmt_idx in &block.statements.nodes {
+            self.collect_nested_js_this_assignment_statements(stmt_idx, &mut stmts);
+        }
+        let this_aliases = self.collect_this_aliases(&stmts);
+
+        for stmt_idx in stmts {
+            let Some((found_name, rhs_idx, is_private, _)) =
+                self.extract_this_property_assignment(stmt_idx, &this_aliases)
+            else {
+                continue;
+            };
+            if is_private || found_name != property_name {
+                continue;
+            }
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+            let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+            let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+            return Some((rhs_idx, binary.left));
+        }
+
+        None
     }
 }

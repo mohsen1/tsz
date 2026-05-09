@@ -63,9 +63,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
+        if self.application_type_args_are_unwitnessed(s_app)
+            && self.application_type_args_are_unwitnessed(t_app)
+        {
+            return false;
+        }
+
         s_app.args.iter().chain(t_app.args.iter()).all(|&arg| {
             !crate::contains_type_parameters(self.interner, arg)
                 && !crate::contains_this_type(self.interner, arg)
+        })
+    }
+
+    fn application_type_args_are_unwitnessed(&self, app: &crate::types::TypeApplication) -> bool {
+        let Some(def_id) = self.application_base_def_id(app.base) else {
+            return false;
+        };
+
+        use crate::caches::db::QueryDatabase;
+        let variances = self
+            .resolver
+            .get_type_param_variance(def_id)
+            .or_else(|| {
+                self.query_db
+                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
+            })
+            .or_else(|| {
+                crate::relations::variance::compute_type_param_variances_with_resolver(
+                    self.interner,
+                    self.resolver,
+                    def_id,
+                )
+            });
+
+        variances.as_ref().is_some_and(|variances| {
+            variances.len() == app.args.len() && variances.iter().all(|v| v.is_independent())
         })
     }
 
@@ -85,18 +117,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             _ => None,
         }
-    }
-
-    fn shared_application_base_def_id(
-        &self,
-        source_base: TypeId,
-        target_base: TypeId,
-    ) -> Option<DefId> {
-        let source_def = self.application_base_def_id(source_base)?;
-        let target_def = self.application_base_def_id(target_base)?;
-        self.resolver
-            .defs_are_equivalent(source_def, target_def)
-            .then_some(source_def)
     }
 
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
@@ -389,13 +409,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let same_arity = s_app.args.len() == t_app.args.len();
-        let shared_base_def = self.shared_application_base_def_id(s_app.base, t_app.base);
-        let same_application_family =
-            same_arity && (s_app.base == t_app.base || shared_base_def.is_some());
-        let variance_def_id = if s_app.base == t_app.base {
+        let same_application_family = same_arity && s_app.base == t_app.base;
+        let variance_def_id = if same_application_family {
             self.application_base_def_id(s_app.base)
         } else {
-            shared_base_def
+            None
         };
         let source_type = self.interner.application(s_app.base, s_app.args.clone());
         let target_type = self.interner.application(t_app.base, t_app.args.clone());
@@ -441,11 +459,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
                     })
                     .or_else(|| {
-                        crate::relations::variance::compute_type_param_variances_with_resolver(
-                            self.interner,
-                            self.resolver,
-                            def_id,
-                        )
+                        let computed =
+                            crate::relations::variance::compute_type_param_variances_with_resolver(
+                                self.interner,
+                                self.resolver,
+                                def_id,
+                            );
+                        if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
+                            db.insert_type_param_variance(def_id, variances.clone());
+                        }
+                        computed
                     });
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
@@ -677,21 +700,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_app = self.interner.type_application(t_app_id);
 
         // Must be the same base type (same generic definition)
-        let same_base = s_app.base == t_app.base
-            || self
-                .shared_application_base_def_id(s_app.base, t_app.base)
-                .is_some();
-        if !same_base {
+        if s_app.base != t_app.base {
             return None;
         }
 
-        let variance_def_id = if s_app.base == t_app.base {
-            self.application_base_def_id(s_app.base)
-        } else {
-            self.shared_application_base_def_id(s_app.base, t_app.base)
-        };
-
-        let def_id = variance_def_id?;
+        let def_id = self.application_base_def_id(s_app.base)?;
 
         // Arity normalization: when both applications share the same base but have
         // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
@@ -719,11 +732,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
             })
             .or_else(|| {
-                crate::relations::variance::compute_type_param_variances_with_resolver(
-                    self.interner,
-                    self.resolver,
-                    def_id,
-                )
+                let computed =
+                    crate::relations::variance::compute_type_param_variances_with_resolver(
+                        self.interner,
+                        self.resolver,
+                        def_id,
+                    );
+                if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
+                    db.insert_type_param_variance(def_id, variances.clone());
+                }
+                computed
             });
         // T<X> <: T<any> is always True when any-propagation is enabled — skip
         // variance computation entirely rather than risking structural expansion.
@@ -832,11 +850,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Check if this Application has the same base as the source
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
-                let same_base = s_app.base == t_app.base
-                    || self
-                        .shared_application_base_def_id(s_app.base, t_app.base)
-                        .is_some();
-                if same_base && s_app.args.len() == t_app.args.len() {
+                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
                     app_member_id = Some(t_app_id);
                 } else {
                     non_app_members.push(member);
@@ -989,7 +1003,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
         match self.try_expand_application(app_id) {
-            Some(expanded) => self.check_subtype(source, expanded),
+            Some(expanded) => {
+                let expanded_result = self.check_subtype(source, expanded);
+                if expanded_result.is_true() {
+                    expanded_result
+                } else {
+                    self.check_source_to_collected_application_properties(source, target)
+                        .unwrap_or(expanded_result)
+                }
+            }
             None => {
                 // Evaluation fallback: when try_expand_application fails
                 // (common for lib type aliases like Readonly<T>, Partial<T>
@@ -1000,8 +1022,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if t_eval != target {
                     self.check_subtype(source, t_eval)
                 } else {
-                    SubtypeResult::False
+                    self.check_source_to_collected_application_properties(source, target)
+                        .unwrap_or(SubtypeResult::False)
                 }
+            }
+        }
+    }
+
+    fn check_source_to_collected_application_properties(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        use crate::objects::{PropertyCollectionResult, collect_properties};
+
+        match collect_properties(target, self.interner, self.resolver) {
+            PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } if !properties.is_empty() || string_index.is_some() || number_index.is_some() => {
+                let target_shape = crate::types::ObjectShape {
+                    flags: crate::types::ObjectFlags::empty(),
+                    properties,
+                    string_index,
+                    number_index,
+                    symbol: None,
+                };
+                let target_object =
+                    if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+                        self.interner.object_with_index(target_shape)
+                    } else {
+                        self.interner.object(target_shape.properties)
+                    };
+                Some(self.check_subtype(source, target_object))
+            }
+            PropertyCollectionResult::Any => Some(self.check_subtype(source, TypeId::ANY)),
+            PropertyCollectionResult::Properties { .. } | PropertyCollectionResult::NonObject => {
+                None
             }
         }
     }
@@ -1026,26 +1084,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_mapped_id: MappedTypeId,
         target_mapped_id: MappedTypeId,
     ) -> SubtypeResult {
-        // Try the flattened chain approach first: flatten nested homomorphic mapped
-        // types to get the ultimate source type and combined modifiers.
-        // This handles Partial<Readonly<T>> vs Readonly<Partial<T>> vs Partial<T> etc.
         if let (Some(s_flat), Some(t_flat)) = (
             flatten_mapped_chain(self.interner, source_mapped_id),
             flatten_mapped_chain(self.interner, target_mapped_id),
         ) {
-            // Check if both have the same underlying source type
+            let constraints_match =
+                self.mapped_key_constraint_covers(s_flat.key_constraint, t_flat.key_constraint);
             let sources_match = if s_flat.source == t_flat.source {
                 true
             } else {
                 self.check_subtype(s_flat.source, t_flat.source).is_true()
             };
 
-            if sources_match {
-                // Modifier compatibility:
-                // - Source has optional (?) but target doesn't: REJECT
-                //   (source may have missing properties that target requires)
-                // - Readonly differences: always OK
-                //   (readonly is a read-side restriction, not relevant for assignability)
+            if constraints_match && sources_match {
                 if s_flat.has_optional && !t_flat.has_optional {
                     return SubtypeResult::False;
                 }
@@ -1053,27 +1104,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Fallback: single-level mapped type comparison
         let source_mapped = self.interner.get_mapped(source_mapped_id);
         let target_mapped = self.interner.get_mapped(target_mapped_id);
 
-        // Both must have the same constraint for this optimization to apply.
-        // First try identity comparison, then evaluate to normalize.
-        // This handles e.g. keyof(Application(Readonly, [T])) == keyof(T)
-        // because evaluate_keyof simplifies keyof(MappedType) → keyof(source).
-        let constraints_match = if source_mapped.constraint == target_mapped.constraint {
-            true
-        } else {
-            let s_eval = self.evaluate_type(source_mapped.constraint);
-            let t_eval = self.evaluate_type(target_mapped.constraint);
-            s_eval == t_eval
-        };
+        let constraints_match = self
+            .mapped_key_constraint_covers(source_mapped.constraint, target_mapped.constraint)
+            || (self.mapped_name_types_compatible(&source_mapped, &target_mapped)
+                && self
+                    .check_subtype(target_mapped.constraint, source_mapped.constraint)
+                    .is_true());
 
         if !constraints_match {
             return SubtypeResult::False;
         }
 
-        // Check template types.
         let source_template = source_mapped.template;
         let mut target_template = target_mapped.template;
 
@@ -1092,7 +1136,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Handle nested mapped types in templates.
         if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
@@ -1105,7 +1148,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
 
-        // Compare templates directly
         self.check_subtype(source_template, target_template)
     }
 
@@ -1176,8 +1218,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Constraint must be keyof(S) for some S
-        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+        // Constraint must be keyof(S), or a conditional alias equivalent to
+        // keyof(S), for some S.
+        let Some(constraint_source) = self.homomorphic_mapped_constraint_source(&mapped) else {
             return false;
         };
 
@@ -1212,6 +1255,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // The target must be the same type parameter as the constraint source,
         // or assignable to it.
         if constraint_source == target {
+            return true;
+        }
+        if let Some(source_param) = type_param_info(self.interner, constraint_source)
+            && let Some(source_constraint) = source_param.constraint
+            && self.check_subtype(source_constraint, target).is_true()
+        {
             return true;
         }
         if let Some(target_param) = type_param_info(self.interner, target) {
@@ -1360,8 +1409,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Constraint must be keyof(S) for some S
-        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+        // Constraint must be keyof(S), or a conditional alias equivalent to
+        // keyof(S), for some S.
+        let Some(constraint_source) = self.homomorphic_mapped_constraint_source(&mapped) else {
             return false;
         };
 
@@ -1398,6 +1448,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         false
+    }
+
+    fn homomorphic_mapped_constraint_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        if let Some(source) = keyof_inner_type(self.interner, mapped.constraint) {
+            return Some(source);
+        }
+
+        let (template_obj, template_idx) = index_access_parts(self.interner, mapped.template)?;
+        let idx_param = type_param_info(self.interner, template_idx)?;
+        if idx_param.name != mapped.type_param.name {
+            return None;
+        }
+
+        let full_key_set = self.interner.keyof(template_obj);
+        if self.mapped_key_constraint_covers(mapped.constraint, full_key_set)
+            && self.mapped_key_constraint_covers(full_key_set, mapped.constraint)
+        {
+            Some(template_obj)
+        } else {
+            None
+        }
     }
 
     /// Distribute a homomorphic mapped type over an intersection argument.
@@ -1680,7 +1751,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if let Some(LiteralValue::String(name)) = literal_value(self.interner, remapped) {
                     vec![name]
-                } else if let Some(list_id) = union_list_id(self.interner, remapped) {
+                } else {
+                    let list_id = union_list_id(self.interner, remapped)?;
                     let members = self.interner.type_list(list_id);
                     let mut names = Vec::with_capacity(members.len());
                     for &member in members.iter() {
@@ -1694,8 +1766,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return None;
                     }
                     names
-                } else {
-                    return None;
                 }
             } else {
                 vec![key_name]
@@ -1742,6 +1812,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -1866,6 +1937,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 pub(crate) struct FlattenedMapped {
     /// The ultimate source type (e.g., T in Partial<Readonly<T>>)
     pub source: TypeId,
+    /// The outer mapped key constraint (e.g., `keyof T` or `K`).
+    pub key_constraint: TypeId,
     /// Whether any mapped type in the chain adds optional (?)
     pub has_optional: bool,
     /// Whether any mapped type in the chain adds readonly
@@ -1916,6 +1989,7 @@ pub(crate) fn flatten_mapped_chain(
     {
         return Some(FlattenedMapped {
             source: inner.source,
+            key_constraint: mapped.constraint,
             has_optional: if removes_optional {
                 false
             } else {
@@ -1932,6 +2006,7 @@ pub(crate) fn flatten_mapped_chain(
     // Base case: source object is not a mapped type
     Some(FlattenedMapped {
         source: obj,
+        key_constraint: mapped.constraint,
         has_optional,
         has_readonly,
     })

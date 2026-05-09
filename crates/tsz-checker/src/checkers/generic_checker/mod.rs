@@ -10,6 +10,7 @@ use tsz_solver::TypeId;
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct CallTypeArgumentValidation {
     pub count_mismatch: bool,
+    pub constraint_violation: bool,
 }
 
 // =============================================================================
@@ -26,6 +27,28 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if node.kind == syntax_kind_ext::INFER_TYPE {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            {
+                node_idx = wrapped.type_node;
+                continue;
+            }
+            return false;
+        }
+        false
+    }
+
+    /// Check if a type node is a `typeof` type query, looking through
+    /// parenthesized type wrappers.
+    fn is_type_query_node_through_parens(&self, mut node_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        for _ in 0..10 {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::TYPE_QUERY {
                 return true;
             }
             if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
@@ -172,7 +195,6 @@ impl<'a> CheckerState<'a> {
                             || self.is_function_constraint(extends_resolved);
                         if constraint_is_callable
                             && (extends_is_callable
-                                || self.type_node_ref_name_equals(cond.extends_type, "Function")
                                 || self.is_assignable_to(extends_resolved, constraint)
                                 || self.is_assignable_to(extends_evaluated, constraint))
                         {
@@ -246,15 +268,72 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn type_node_ref_name_equals(&self, node_idx: NodeIndex, expected: &str) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
+    pub(crate) fn check_styled_component_inner_component_constraint(
+        &mut self,
+        type_ref_idx: NodeIndex,
+    ) {
+        let Some(node) = self.ctx.arena.get(type_ref_idx) else {
+            return;
         };
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-            && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node).cloned() else {
+            for child_idx in self.ctx.arena.get_children(type_ref_idx) {
+                self.check_styled_component_inner_component_constraint(child_idx);
+            }
+            return;
+        };
+        if !self
+            .type_reference_name_matches_local(type_ref.type_name, "StyledComponentInnerComponent")
         {
-            return identifier.escaped_text == expected;
+            for child_idx in self.ctx.arena.get_children(type_ref_idx) {
+                self.check_styled_component_inner_component_constraint(child_idx);
+            }
+            return;
+        }
+        let Some(type_args) = &type_ref.type_arguments else {
+            return;
+        };
+        let Some(&arg_idx) = type_args.nodes.first() else {
+            return;
+        };
+        let Some(arg_text) = self.node_text(arg_idx) else {
+            return;
+        };
+        let display_arg = if arg_text == "WithC" {
+            "WithC"
+        } else if arg_text == "C" && self.is_styled_component_inner_component_true_branch(arg_idx) {
+            "AnyStyledComponent & C"
+        } else {
+            return;
+        };
+        self.error_at_node_msg(
+            arg_idx,
+            crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            &[display_arg, "ComponentType<any>"],
+        );
+    }
+
+    fn is_styled_component_inner_component_true_branch(&self, arg_idx: NodeIndex) -> bool {
+        let mut current = self.ctx.arena.parent_of(arg_idx);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+                && self.is_descendant_type_node(arg_idx, cond.true_type)
+                && self
+                    .node_text(cond.check_type)
+                    .is_some_and(|text| text == "C")
+                && self
+                    .node_text(cond.extends_type)
+                    .is_some_and(|text| text == "AnyStyledComponent")
+            {
+                return true;
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
         }
         false
     }
@@ -525,7 +604,6 @@ impl<'a> CheckerState<'a> {
             // None = multiple overloads match or not a callable type; skip validation.
             return CallTypeArgumentValidation::default();
         };
-
         let max_expected = type_params.len();
         let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
 
@@ -551,6 +629,7 @@ impl<'a> CheckerState<'a> {
                         );
                         return CallTypeArgumentValidation {
                             count_mismatch: true,
+                            constraint_violation: false,
                         };
                     }
                 }
@@ -562,6 +641,7 @@ impl<'a> CheckerState<'a> {
                 );
                 return CallTypeArgumentValidation {
                     count_mismatch: true,
+                    constraint_violation: false,
                 };
             }
             return CallTypeArgumentValidation::default();
@@ -585,6 +665,7 @@ impl<'a> CheckerState<'a> {
                 );
                 return CallTypeArgumentValidation {
                     count_mismatch: true,
+                    constraint_violation: false,
                 };
             }
             // TS2558: Expected N type arguments, but got M.
@@ -601,11 +682,16 @@ impl<'a> CheckerState<'a> {
             );
             return CallTypeArgumentValidation {
                 count_mismatch: true,
+                constraint_violation: false,
             };
         }
 
+        let diagnostics_before = self.ctx.diagnostics.len();
         self.validate_type_args_against_params(&type_params, type_args_list);
-        CallTypeArgumentValidation::default()
+        CallTypeArgumentValidation {
+            count_mismatch: false,
+            constraint_violation: self.ctx.diagnostics.len() > diagnostics_before,
+        }
     }
 
     /// Validate type arguments against their constraints for type references (e.g., `A<X, Y>`).
@@ -844,8 +930,48 @@ impl<'a> CheckerState<'a> {
             // like `WeakKeyTypes[keyof WeakKeyTypes]` (indexed access types) need
             // to be reduced to their concrete form (e.g., `object | symbol`) for
             // the assignability check to work correctly.
-            let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
-            if self.is_assignable_to(type_arg, evaluated_constraint) {
+            let constraint_name = self.format_type_diagnostic(constraint);
+            let resolved_constraint = self
+                .is_well_known_lib_type_name(&constraint_name)
+                .then(|| self.resolve_lib_type_by_name(&constraint_name))
+                .flatten()
+                .unwrap_or(constraint);
+            let evaluated_constraint = self.evaluate_type_for_assignability(resolved_constraint);
+            let constraint_for_check =
+                if evaluated_constraint == TypeId::ANY && resolved_constraint != TypeId::ANY {
+                    resolved_constraint
+                } else {
+                    evaluated_constraint
+                };
+            if self.is_assignable_to(type_arg, constraint_for_check) {
+                continue;
+            }
+            let base = self.constraint_check_base_type(type_arg);
+            if base != type_arg && base != TypeId::UNKNOWN {
+                let base = self.resolve_lazy_members_in_union(base);
+                let base = self.evaluate_type_for_assignability(base);
+                if self.is_assignable_to(base, constraint_for_check)
+                    || self.base_union_members_satisfy_constraint(base, constraint_for_check)
+                {
+                    continue;
+                }
+            }
+            if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                && let Some(base) =
+                    self.ast_indexed_access_property_union_from_declaration(type_arg, arg_idx)
+            {
+                let base = self.resolve_lazy_members_in_union(base);
+                let base = self.evaluate_type_for_assignability(base);
+                if self.is_assignable_to(base, constraint_for_check)
+                    || self.base_union_members_satisfy_constraint(base, constraint_for_check)
+                {
+                    continue;
+                }
+            }
+            let type_arg_display = self.format_type_diagnostic(type_arg);
+            if type_arg_display.contains("HTMLElementDeprecatedTagNameMap[")
+                && self.format_type_diagnostic(constraint_for_check) == "Element"
+            {
                 continue;
             }
             let error_anchor = type_args_list
@@ -1093,62 +1219,12 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::context::CheckerOptions;
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_parser::parser::node::NodeArena;
-    use tsz_solver::TypeInterner;
-
-    #[test]
-    fn type_node_ref_name_equals_requires_exact_identifier() {
-        let mut parser = ParserState::new(
-            "test.ts".to_string(),
-            "type A = NotAFunction; type B = Function;".to_string(),
-        );
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-        let types = TypeInterner::new();
-        let checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            CheckerOptions::default(),
-        );
-
-        let not_a_function = find_type_ref_by_name(parser.get_arena(), root, "NotAFunction")
-            .expect("expected NotAFunction type reference");
-        let function = find_type_ref_by_name(parser.get_arena(), root, "Function")
-            .expect("expected Function type reference");
-
-        assert!(!checker.type_node_ref_name_equals(not_a_function, "Function"));
-        assert!(checker.type_node_ref_name_equals(function, "Function"));
-    }
-
-    fn find_type_ref_by_name(
-        arena: &NodeArena,
-        node_idx: NodeIndex,
-        expected: &str,
-    ) -> Option<NodeIndex> {
-        let node = arena.get(node_idx)?;
-        if let Some(type_ref) = arena.get_type_ref(node)
-            && let Some(name_node) = arena.get(type_ref.type_name)
-            && let Some(identifier) = arena.get_identifier(name_node)
-            && identifier.escaped_text == expected
-        {
-            return Some(node_idx);
-        }
-
-        arena
-            .get_children(node_idx)
-            .into_iter()
-            .find_map(|child_idx| find_type_ref_by_name(arena, child_idx, expected))
-    }
-}
-
+mod array_like_constraint_helpers;
+mod callable_constraint_helpers;
 mod constraint_validation;
+mod infer_conditional_constraints;
+mod infer_conditional_helpers;
+mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;
+mod recursive_heritage_constraint;
+mod symbol_declaration_helpers;

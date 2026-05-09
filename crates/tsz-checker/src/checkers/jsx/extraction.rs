@@ -11,13 +11,80 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn jsx_class_component_props_alias_hint(&self, instance_type: TypeId) -> Option<TypeId> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, instance_type)
+            .or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(instance_type)
+                    .and_then(|alias| {
+                        crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                    })
+            })?;
+        let &props_arg = app.args.first()?;
+        crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_arg)
+            .then_some(props_arg)
+    }
+
+    fn store_jsx_props_display_alias_if_matching(&mut self, props_type: TypeId, alias: TypeId) {
+        if self.ctx.types.get_display_alias(props_type).is_some() {
+            return;
+        }
+        let alias_evaluated = self.evaluate_type_with_env(alias);
+        if alias_evaluated != TypeId::ERROR
+            && self.is_assignable_to(alias_evaluated, props_type)
+            && self.is_assignable_to(props_type, alias_evaluated)
+        {
+            self.ctx.types.store_display_alias(props_type, alias);
+        }
+    }
+
+    fn jsx_type_contains_callable_surface(&mut self, type_id: TypeId) -> bool {
+        let mut stack = vec![type_id];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current) {
+                continue;
+            }
+            let evaluated = self.evaluate_type_with_env(current);
+            let resolved = self.resolve_type_for_property_access(evaluated);
+            let resolved = self.resolve_lazy_type(resolved);
+            if resolved != current {
+                stack.push(resolved);
+            }
+            if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, current)
+                .is_some()
+                || crate::query_boundaries::common::call_signatures_for_type(
+                    self.ctx.types,
+                    current,
+                )
+                .is_some_and(|sigs| !sigs.is_empty())
+                || crate::query_boundaries::common::construct_signatures_for_type(
+                    self.ctx.types,
+                    current,
+                )
+                .is_some_and(|sigs| !sigs.is_empty())
+            {
+                return true;
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::intersection_members(self.ctx.types, current)
+            {
+                stack.extend(members);
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, current)
+            {
+                stack.extend(members);
+            }
+        }
+        false
+    }
+
     fn effective_jsx_factory_name(&self) -> String {
         let pragma_factory = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .and_then(|sf| runtime::extract_jsx_pragma(&sf.text));
+            .current_jsx_source_text()
+            .and_then(runtime::extract_jsx_pragma);
         pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
     }
 
@@ -85,21 +152,8 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
         props_type: TypeId,
     ) -> TypeId {
-        let Some(jsx_sym_id) = self.get_jsx_namespace_type() else {
-            return props_type;
-        };
-        let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+        let Some(lma_sym_id) = self.get_jsx_namespace_export_symbol_id("LibraryManagedAttributes")
         else {
-            return props_type;
-        };
-        let Some(exports) = symbol.exports.as_ref() else {
-            return props_type;
-        };
-        let Some(lma_sym_id) = exports.get("LibraryManagedAttributes") else {
             return props_type;
         };
 
@@ -136,14 +190,26 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::PropertyAccessResult::Success { .. }
             );
         if !has_managed_props_metadata
-            && (crate::query_boundaries::common::contains_type_parameters(
+            && crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                component_type,
+            )
+        {
+            let lma_ref = self.resolve_symbol_as_lazy_type(lma_sym_id);
+            return self
+                .ctx
+                .types
+                .factory()
+                .application(lma_ref, vec![component_type, props_type]);
+        }
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props_type) {
+            return props_type;
+        }
+        if !has_managed_props_metadata
+            && crate::computation::call_inference::should_preserve_contextual_application_shape(
                 self.ctx.types,
                 props_type,
             )
-                || crate::computation::call_inference::should_preserve_contextual_application_shape(
-                    self.ctx.types,
-                    props_type,
-                ))
         {
             return props_type;
         }
@@ -168,6 +234,25 @@ impl<'a> CheckerState<'a> {
             {
                 return fallback;
             }
+            // LMA evaluation can produce an intersection whose members are still
+            // unreduced applications when the user-defined helper alias inside
+            // the conditional (e.g. React's distributive `Defaultize<P, D>` built
+            // out of `Pick<P, Exclude<keyof P, keyof D>>` etc.) cannot collapse
+            // its `Pick`/`Exclude`/`Extract`/`Partial` arms to concrete object
+            // shapes. The intersection then fails `object_shape_for_type` even
+            // though the conditional itself succeeded. In that structural case,
+            // when the component still carries `defaultProps` metadata, apply
+            // the same default-props transform used for the `evaluated == ANY`
+            // branch — making the defaulted props optional matches what tsc
+            // emits for these helper-alias shapes.
+            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+                .is_none()
+                && let Some(default_props_type) = default_props_type
+                && let Some(fallback) =
+                    self.try_apply_jsx_default_props_fallback(props_type, default_props_type)
+            {
+                return fallback;
+            }
             // If LMA evaluation produced error types (e.g. due to unresolved qualified
             // type references in complex conditional types like React's
             // LibraryManagedAttributes), fall back to the raw props type rather than
@@ -178,6 +263,25 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 evaluated,
             ) {
+                return props_type;
+            }
+            let evaluated_is_callable = self.jsx_type_contains_callable_surface(evaluated);
+            let props_is_callable = self.jsx_type_contains_callable_surface(props_type);
+            if evaluated_is_callable && !props_is_callable {
+                return props_type;
+            }
+            if crate::computation::call_inference::should_preserve_contextual_application_shape(
+                self.ctx.types,
+                evaluated,
+            )
+                && !crate::computation::call_inference::should_preserve_contextual_application_shape(
+                    self.ctx.types,
+                    props_type,
+                )
+            {
+                return props_type;
+            }
+            if !self.jsx_managed_attributes_preserve_original_props(props_type, evaluated) {
                 return props_type;
             }
             evaluated
@@ -211,9 +315,19 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Skip type parameters — we can't check attributes against unresolved generics
+        // Bare type parameters use their callable/construct constraint for props
+        // extraction, while the raw type parameter remains the component argument
+        // to JSX.LibraryManagedAttributes<T, P>.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
-            return None;
+            let constraint = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                component_type,
+            )?;
+            return self.get_jsx_props_type_for_component_member_with_raw(
+                raw_component_type,
+                constraint,
+                element_idx,
+            );
         }
 
         if let Some(members) =
@@ -276,6 +390,19 @@ impl<'a> CheckerState<'a> {
         element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
         let raw_component_type = component_type;
+        self.get_jsx_props_type_for_component_member_with_raw(
+            raw_component_type,
+            component_type,
+            element_idx,
+        )
+    }
+
+    fn get_jsx_props_type_for_component_member_with_raw(
+        &mut self,
+        raw_component_type: TypeId,
+        component_type: TypeId,
+        element_idx: Option<NodeIndex>,
+    ) -> Option<(TypeId, bool)> {
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -284,9 +411,21 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        if crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            raw_component_type,
+        ) && let Some(props) =
+            self.get_jsx_type_parameter_callable_constraint_props_type(raw_component_type)
+        {
+            let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
+            return Some((props, true));
+        }
+
         // Try SFC first: get call signatures -> first parameter is props type
         if let Some((props, raw_has_tp)) = self.get_sfc_props_type(component_type) {
             let props = self.apply_jsx_library_managed_attributes(raw_component_type, props);
+            let raw_has_tp = raw_has_tp
+                || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props);
             return Some((props, raw_has_tp));
         }
 
@@ -309,6 +448,45 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn get_jsx_type_parameter_callable_constraint_props_type(
+        &mut self,
+        type_param: TypeId,
+    ) -> Option<TypeId> {
+        let constraint =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_param)?;
+        let constraint = self.normalize_jsx_component_type_for_resolution(constraint);
+
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, constraint)
+            && !shape.is_constructor
+        {
+            return Some(
+                shape
+                    .params
+                    .first()
+                    .map(|p| p.type_id)
+                    .unwrap_or_else(|| self.ctx.types.factory().object(vec![])),
+            );
+        }
+
+        let sigs =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, constraint)?;
+        let non_generic: Vec<_> = sigs
+            .iter()
+            .filter(|sig| sig.type_params.is_empty())
+            .collect();
+        if non_generic.len() != 1 {
+            return None;
+        }
+        Some(
+            non_generic[0]
+                .params
+                .first()
+                .map(|p| p.type_id)
+                .unwrap_or_else(|| self.ctx.types.factory().object(vec![])),
+        )
     }
 
     /// Emit TS2604 if the component type has no call or construct signatures.
@@ -647,6 +825,14 @@ impl<'a> CheckerState<'a> {
                         // unresolved type params that can't be checked until
                         // instantiation. Call sigs (SFCs) are still checked.
                         if !is_call_sig && !sig.type_params.is_empty() {
+                            return true;
+                        }
+                        if !is_call_sig
+                            && crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                member_type,
+                            )
+                        {
                             return true;
                         }
                         let ret = self.evaluate_type_with_env(sig.return_type);
@@ -1146,23 +1332,30 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate Application/Lazy instance types to their structural form.
         // e.g. `Component<{reqd: any}, any>` is an Application that evaluates
-        // to a concrete object. Only skip if evaluation still yields a type
-        // with unresolved type parameters (outer generic context).
+        // to a concrete object. Keep partially generic instances: JSX attribute
+        // checking can still read `props` or fall back to the constructor
+        // parameter, and later checks already guard the places where unresolved
+        // type parameters would create false diagnostics.
         let instance_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
             self.ctx.types,
             raw_instance_type,
         ) {
             let evaluated = self.evaluate_type_with_env(raw_instance_type);
-            // After evaluation, if the type still contains type parameters,
-            // we can't resolve it further — bail out.
+            // If evaluation still contains type parameters from an outer generic
+            // context, keep the raw application so member lookup can preserve the
+            // generic props surface (for example React.Component<P>["props"]).
             if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, evaluated)
             {
-                return None;
+                raw_instance_type
+            } else {
+                evaluated
             }
-            evaluated
         } else {
             raw_instance_type
         };
+        let props_alias_hint = self
+            .jsx_class_component_props_alias_hint(raw_instance_type)
+            .or_else(|| self.jsx_class_component_props_alias_hint(instance_type));
 
         // Look up ElementAttributesProperty to know which instance property is props
         // Pass element_idx so TS2608 can be emitted if >1 property
@@ -1190,11 +1383,25 @@ impl<'a> CheckerState<'a> {
                     };
                 match props_result {
                     PropertyAccessResult::Success { type_id, .. } => {
-                        Some(self.strip_implicit_jsx_children_from_props_fallback(type_id))
+                        let props_type =
+                            self.strip_implicit_jsx_children_from_props_fallback(type_id);
+                        if let Some(alias) = props_alias_hint {
+                            self.store_jsx_props_display_alias_if_matching(props_type, alias);
+                        }
+                        Some(props_type)
                     }
                     _ => first_param_type
                         .and_then(|param_type| {
-                            let param_type = self.evaluate_type_with_env(param_type);
+                            let raw_param_type = param_type;
+                            let param_type = self.evaluate_type_with_env(raw_param_type);
+                            if param_type != raw_param_type
+                                && param_type != TypeId::ERROR
+                                && self.ctx.types.get_display_alias(param_type).is_none()
+                            {
+                                self.ctx
+                                    .types
+                                    .store_display_alias(param_type, raw_param_type);
+                            }
                             // When no ElementAttributesProperty is defined, tsc uses the
                             // first constructor parameter as the props type even when it is
                             // a primitive (e.g. `new(n: string): …`). The synthesized attrs
@@ -1234,7 +1441,12 @@ impl<'a> CheckerState<'a> {
                         _ => self.resolve_property_access_with_env(evaluated_instance, name),
                     };
                 match props_result {
-                    PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                    PropertyAccessResult::Success { type_id, .. } => {
+                        if let Some(alias) = props_alias_hint {
+                            self.store_jsx_props_display_alias_if_matching(type_id, alias);
+                        }
+                        Some(type_id)
+                    }
                     // Instance type doesn't have the ElementAttributesProperty member.
                     // This can happen when class inheritance doesn't include inherited
                     // members in the construct signature return type.
@@ -1244,7 +1456,16 @@ impl<'a> CheckerState<'a> {
                     _ => {
                         // Try first construct param as fallback (React-style: new(props: P))
                         if let Some(first_param_type) = first_param_type {
-                            let param_type = self.evaluate_type_with_env(first_param_type);
+                            let raw_param_type = first_param_type;
+                            let param_type = self.evaluate_type_with_env(raw_param_type);
+                            if param_type != raw_param_type
+                                && param_type != TypeId::ERROR
+                                && self.ctx.types.get_display_alias(param_type).is_none()
+                            {
+                                self.ctx
+                                    .types
+                                    .store_display_alias(param_type, raw_param_type);
+                            }
                             if param_type != TypeId::ANY
                                 && param_type != TypeId::ERROR
                                 && param_type != TypeId::STRING

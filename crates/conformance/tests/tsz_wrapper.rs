@@ -209,6 +209,21 @@ fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
 }
 
 #[test]
+fn test_tests_lib_dir_for_cases_dir_uses_sibling_lib_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let cases_dir = temp.path().join("TypeScript/tests/cases");
+    std::fs::create_dir_all(&cases_dir).unwrap();
+
+    assert_eq!(
+        tests_lib_dir_for_cases_dir(&cases_dir),
+        temp.path()
+            .canonicalize()
+            .unwrap()
+            .join("TypeScript/tests/lib")
+    );
+}
+
+#[test]
 fn test_prepare_test_dir_copies_root_tsconfig_to_root() {
     let content = "";
     let filenames = vec![
@@ -1074,6 +1089,26 @@ fn test_normalize_message_paths_normalizes_ts5057_not_found() {
 }
 
 #[test]
+fn test_normalize_message_paths_normalizes_ts5057_specified_directory() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let raw = "Cannot find a tsconfig.json file at the specified directory: 'empty-dir'.";
+    assert_eq!(
+        normalize_message_paths(raw, root),
+        "Cannot find a tsconfig.json file at the specified directory: ''."
+    );
+}
+
+#[test]
+fn test_normalize_message_paths_normalizes_ts5058_path_does_not_exist() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let raw = "The specified path does not exist: 'missing/tsconfig.json'.";
+    assert_eq!(
+        normalize_message_paths(raw, root),
+        "The specified path does not exist: ''."
+    );
+}
+
+#[test]
 fn test_normalize_message_paths_preserves_virtual_absolute_root_dir_prefix() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "File 'packages/search/lib/index.d.ts' is not under 'rootDir' 'packages/search-prefix/src'. 'rootDir' is expected to contain all source files.";
@@ -1134,6 +1169,28 @@ fn test_parse_batch_output_does_not_synthesize_ts5110() {
         !result.error_codes.contains(&5110),
         "parse_batch_output should not inject synthetic TS5110"
     );
+}
+
+#[test]
+fn test_parse_batch_output_preserves_typescript_builtin_lib_diagnostics() {
+    let output = "TypeScript/lib/lib.dom.d.ts(13729,101): error TS2344: Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.\n\
+test.ts(1,1): error TS2304: Cannot find name 'missing'.";
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    let mut error_codes = result.error_codes.clone();
+    error_codes.sort_unstable();
+    assert_eq!(error_codes, vec![2304, 2344]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 2);
+    assert!(result
+        .diagnostic_fingerprints
+        .iter()
+        .any(|fp| fp.code == 2344));
+    assert!(result
+        .diagnostic_fingerprints
+        .iter()
+        .any(|fp| fp.code == 2304));
 }
 
 #[test]

@@ -71,6 +71,158 @@ function f(x: A | B) {
     );
 }
 
+#[test]
+fn shadowed_object_and_function_instanceof_use_local_constructor_instances() {
+    let src = r#"
+function testObject() {
+    class Object {
+        private _brand!: void;
+        obj = 1;
+    }
+
+    class Date {
+        date = 1;
+    }
+
+    let value: string | Object = "" as string | Object;
+    if (value instanceof Object) {
+        const asLocalObject: Object = value;
+        const asString: string = value;
+
+        asLocalObject;
+        asString;
+    }
+
+    let other: string | Date = "" as string | Date;
+    if (other instanceof Object) {
+        const impossible: never = other;
+        const asDate: Date = other;
+
+        impossible;
+        asDate;
+    }
+}
+
+function testFunction() {
+    class Function {
+        fn = 1;
+    }
+
+    let value: string | Function = "" as string | Function;
+    if (value instanceof Function) {
+        const asLocalFunction: Function = value;
+        const asString: string = value;
+
+        asLocalFunction;
+        asString;
+    }
+}
+"#;
+    let diags = diagnostic_messages(src);
+    let ts2322_messages: Vec<_> = diags
+        .iter()
+        .filter_map(|(code, msg)| (*code == 2322).then_some(msg.as_str()))
+        .collect();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|msg| msg.contains("Type 'Object' is not assignable to type 'string'.")),
+        "expected local Object to narrow to the shadowing class, got: {diags:?}"
+    );
+    assert!(
+        ts2322_messages.iter().any(|msg| {
+            msg.contains("not assignable to type 'Date'")
+                && !msg.contains("Type 'Date' is not assignable")
+        }),
+        "expected shadowed Object to preserve the intersection with Date instead of built-in \
+         Object narrowing, got: {diags:?}"
+    );
+    assert!(
+        !ts2322_messages.iter().any(|msg| {
+            msg.contains("(Function & string)") || msg.contains("(Function & Function)")
+        }),
+        "local Function assignment should not use the built-in Function fast path, got: {diags:?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|msg| msg.contains("Type 'Function' is not assignable to type 'string'.")),
+        "expected local Function to narrow to the shadowing class, got: {diags:?}"
+    );
+}
+
+/// When narrowing exhausts a union to `never`, property access against the
+/// resulting `never` value must emit TS2339 — the access is unreachable and
+/// the property genuinely doesn't exist on the value at this point. The
+/// previous behavior suppressed TS2339 whenever the property happened to
+/// exist on the un-narrowed declared receiver, which masked errors in
+/// type-predicate chains over structurally-identical classes (issue #7271,
+/// `instanceofWithStructurallyIdenticalTypes`).
+#[test]
+fn never_receiver_emits_ts2339_even_when_property_exists_on_declared_union() {
+    let src = r#"
+class C1 { item: string = ""; }
+class C2 { item: string[] = []; }
+class C3 { item: string = ""; }
+
+function isC1(c: C1 | C2 | C3): c is C1 { return c instanceof C1 }
+function isC2(c: C1 | C2 | C3): c is C2 { return c instanceof C2 }
+function isC3(c: C1 | C2 | C3): c is C3 { return c instanceof C3 }
+
+function foo2(x: C1 | C2 | C3): string {
+    if (isC1(x)) {
+        return x.item;
+    }
+    else if (isC2(x)) {
+        return x.item[0];
+    }
+    else if (isC3(x)) {
+        return x.item;
+    }
+    return "error";
+}
+"#;
+    let diags = diagnostic_messages(src);
+    let ts2339_on_never = diags.iter().find(|(code, msg)| {
+        *code == 2339 && msg.contains("'item'") && msg.contains("type 'never'")
+    });
+    assert!(
+        ts2339_on_never.is_some(),
+        "expected TS2339 'Property item does not exist on type never' inside the unreachable \
+         isC3 branch (C1 ≡ C3 structurally so isC1's else already filters C3, and isC2's else \
+         exhausts the union to never), got: {diags:?}"
+    );
+}
+
+#[test]
+fn never_receiver_from_declared_discriminated_intersection_suppresses_ts2339() {
+    let src = r#"
+type RuntimeValue =
+    | { type: 'number', value: number }
+    | { type: 'string', value: string }
+    | { type: 'boolean', value: boolean };
+
+function foo1(x: RuntimeValue & { type: 'number' }) {
+    if (x.type === 'number') {
+        x.value;
+    }
+    else {
+        x.value;
+    }
+}
+"#;
+    let diags = diagnostic_messages(src);
+    let ts2339_on_value = diags.iter().find(|(code, msg)| {
+        *code == 2339 && msg.contains("'value'") && msg.contains("type 'never'")
+    });
+    assert!(
+        ts2339_on_value.is_none(),
+        "declared discriminated intersections should preserve their property surface in \
+         unreachable branches, got: {diags:?}"
+    );
+}
+
 /// Literal-typed receivers must keep their literal display in TS2339 — the
 /// helper must not collapse `''` to `'string'` just because the lookup
 /// resolves through a primitive apparent type.

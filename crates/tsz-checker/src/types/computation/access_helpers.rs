@@ -221,6 +221,26 @@ impl<'a> CheckerState<'a> {
         has_any_tuple
     }
 
+    pub(crate) fn narrow_string_index_signature_rejects_index(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+        let Some(string_index) = shape.string_index.as_ref() else {
+            return false;
+        };
+        if matches!(string_index.key_type, TypeId::STRING | TypeId::SYMBOL) {
+            return false;
+        }
+
+        !self.is_assignable_to(index_type, string_index.key_type)
+    }
+
     /// Check if an index type is "generic" — i.e., it cannot be resolved to a
     /// concrete property key and must remain deferred in an `IndexAccess` type.
     ///
@@ -390,7 +410,12 @@ impl<'a> CheckerState<'a> {
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
         {
-            return keyof_inner == type_param;
+            return self.same_type_param_identity(keyof_inner, type_param)
+                || crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
+                    .and_then(|param| param.constraint)
+                    .is_some_and(|constraint| {
+                        self.same_type_param_identity(constraint, keyof_inner)
+                    });
         }
         // K extends keyof T (type param whose constraint is keyof T)
         if let Some(param_info) =
@@ -399,9 +424,61 @@ impl<'a> CheckerState<'a> {
             && let Some(keyof_inner) =
                 crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint)
         {
-            return keyof_inner == type_param;
+            return self.same_type_param_identity(keyof_inner, type_param)
+                || crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
+                    .and_then(|param| param.constraint)
+                    .is_some_and(|constraint| {
+                        self.same_type_param_identity(constraint, keyof_inner)
+                    });
         }
         false
+    }
+
+    pub(crate) fn constraint_keyof_write_target_for_type_param(
+        &mut self,
+        index_type: TypeId,
+        type_param: TypeId,
+    ) -> Option<TypeId> {
+        let constraint =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)?
+                .constraint?;
+        let keyof_inner =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)?;
+        let evaluated_constraint = self.evaluate_type_with_env(constraint);
+        if self.evaluate_type_with_env(keyof_inner) != evaluated_constraint {
+            return None;
+        }
+
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, constraint)
+                .or_else(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated_constraint,
+                    )
+                })?;
+        let evaluated_index = self.evaluate_type_with_env(index_type);
+        let members =
+            crate::query_boundaries::common::union_members(self.ctx.types, evaluated_index)
+                .map(|members| members.to_vec())
+                .unwrap_or_else(|| vec![evaluated_index]);
+
+        let mut write_targets = Vec::new();
+        for member in members {
+            let name =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, member)?;
+            let prop = shape.properties.iter().find(|prop| prop.name == name)?;
+            write_targets.push(prop.write_type);
+        }
+
+        match write_targets.as_slice() {
+            [] => None,
+            [only] => Some(*only),
+            _ => {
+                let intersection = self.ctx.types.factory().intersection(write_targets);
+                Some(self.evaluate_type_with_env(intersection))
+            }
+        }
     }
 
     fn same_type_param_identity(&self, left: TypeId, right: TypeId) -> bool {

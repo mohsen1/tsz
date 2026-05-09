@@ -45,7 +45,220 @@ pub(super) fn same_object_key_space(
     left == right || same_type_param_name(db, left, right)
 }
 
+pub(super) fn indexed_access_object_alias_application_exceeds_depth(
+    checker: &mut CheckerState<'_>,
+    object_node_idx: NodeIndex,
+) -> bool {
+    let Some(object_node) = checker.ctx.arena.get(object_node_idx) else {
+        return false;
+    };
+    let type_name = checker
+        .ctx
+        .arena
+        .get_type_ref(object_node)
+        .map_or(object_node_idx, |type_ref| type_ref.type_name);
+    let Some(raw_sym_id) = checker.resolve_type_symbol_for_lowering(type_name) else {
+        return false;
+    };
+    let sym_id = tsz_binder::SymbolId(raw_sym_id);
+    let Some(symbol) = checker.ctx.binder.get_symbol(sym_id) else {
+        return false;
+    };
+    if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+        return false;
+    }
+    if checker.ctx.symbol_resolution_set.contains(&sym_id) {
+        return false;
+    }
+    let declarations = symbol.declarations.clone();
+
+    declarations.into_iter().any(|decl_idx| {
+        let Some(decl_node) = checker.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(type_alias) = checker.ctx.arena.get_type_alias(decl_node) else {
+            return false;
+        };
+        let body_type = checker.get_type_from_type_node(type_alias.type_node);
+        let Some((base, _)) =
+            crate::query_boundaries::common::application_info(checker.ctx.types, body_type)
+        else {
+            return false;
+        };
+        let Some(app_def_id) =
+            crate::query_boundaries::common::lazy_def_id(checker.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(app_sym_id) = checker.ctx.def_to_symbol_id(app_def_id) else {
+            return false;
+        };
+        if !checker.type_alias_symbol_direct_conditional_branches_are_array_like(app_sym_id) {
+            return false;
+        }
+        checker.ctx.depth_exceeded.set(false);
+        checker.evaluate_type_for_ts2589_check(body_type, app_def_id)
+    })
+}
+
 impl<'a> CheckerState<'a> {
+    fn array_like_kind_has_length(
+        &self,
+        kind: crate::query_boundaries::type_checking_utilities::ArrayLikeKind,
+    ) -> bool {
+        match kind {
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Array(_)
+            | crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Tuple => true,
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Readonly(inner) => {
+                self.indexed_access_type_has_array_like_length(inner)
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Union(members) => {
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.indexed_access_type_has_array_like_length(member))
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Intersection(
+                members,
+            ) => members
+                .iter()
+                .any(|&member| self.indexed_access_type_has_array_like_length(member)),
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Other => false,
+        }
+    }
+
+    fn indexed_access_type_has_array_like_length(&self, type_id: TypeId) -> bool {
+        let kind = crate::query_boundaries::type_checking_utilities::classify_array_like(
+            self.ctx.types,
+            type_id,
+        );
+        self.array_like_kind_has_length(kind)
+    }
+
+    pub(super) fn indexed_access_object_allows_length_property(
+        &mut self,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        let candidates = [
+            object_type,
+            object_type_for_check,
+            self.evaluate_type_with_env(object_type),
+            self.evaluate_type_with_env(object_type_for_check),
+        ];
+
+        candidates.iter().copied().any(|candidate| {
+            self.indexed_access_type_has_array_like_length(candidate)
+                || crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    candidate,
+                )
+                .is_some_and(|constraint| {
+                    self.indexed_access_type_has_array_like_length(constraint)
+                })
+        })
+    }
+
+    pub(super) fn union_restricted_literal_property_is_missing(
+        &mut self,
+        property_name: &str,
+        object_type: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::state::checking;
+
+        if self.ctx.enclosing_class.is_some() {
+            return false;
+        }
+
+        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
+            return false;
+        };
+        if members.len() < 2 {
+            return false;
+        }
+
+        let is_static = self.is_constructor_type(object_type);
+        let mut has_restricted = false;
+        let mut has_other = false;
+        let mut first_declaring_class: Option<NodeIndex> = None;
+
+        for member in members {
+            let member = self.resolve_type_for_property_access(member);
+            let Some(class_idx) = self.get_class_decl_from_type(member) else {
+                has_other = true;
+                continue;
+            };
+
+            match self.find_member_access_info(class_idx, property_name, is_static) {
+                Some(access_info) => {
+                    has_restricted = true;
+                    if let Some(first_decl) = first_declaring_class {
+                        if first_decl != access_info.declaring_class_idx {
+                            has_other = true;
+                        }
+                    } else {
+                        first_declaring_class = Some(access_info.declaring_class_idx);
+                    }
+                }
+                None => has_other = true,
+            }
+        }
+
+        has_restricted && has_other
+    }
+
+    pub(super) fn error_at_index_type_span(
+        &mut self,
+        error_anchor: NodeIndex,
+        message: &str,
+        code: u32,
+    ) {
+        let Some(anchor_node) = self.ctx.arena.get(error_anchor) else {
+            self.error_at_node(error_anchor, message, code);
+            return;
+        };
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            self.error_at_node(error_anchor, message, code);
+            return;
+        };
+        let source = source_file.text.as_ref();
+        let start = anchor_node.pos as usize;
+        let end = anchor_node.end as usize;
+        let Some(text) = source.get(start..end) else {
+            self.error_at_node(error_anchor, message, code);
+            return;
+        };
+        let Some(open_bracket) = text.rfind('[') else {
+            if let Some(index_text) = text.trim().strip_suffix(']').map(str::trim_end)
+                && !index_text.is_empty()
+            {
+                let leading_ws = text.len() - text.trim_start().len();
+                self.ctx.error(
+                    (start + leading_ws) as u32,
+                    index_text.len() as u32,
+                    message.to_string(),
+                    code,
+                );
+                return;
+            }
+            self.error_at_node(error_anchor, message, code);
+            return;
+        };
+        let close_bracket = text.rfind(']').unwrap_or(text.len());
+        if close_bracket <= open_bracket + 1 {
+            self.error_at_node(error_anchor, message, code);
+            return;
+        }
+
+        let inner = &text[open_bracket + 1..close_bracket];
+        let leading_ws = inner.len() - inner.trim_start().len();
+        let trailing_ws = inner.len() - inner.trim_end().len();
+        let pos = start + open_bracket + 1 + leading_ws;
+        let len = inner.len().saturating_sub(leading_ws + trailing_ws).max(1);
+        self.ctx
+            .error(pos as u32, len as u32, message.to_string(), code);
+    }
+
     pub(super) fn canonical_numeric_string_literal_valid_for_object(
         &self,
         index_type: TypeId,
@@ -119,6 +332,40 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         self.is_assignable_to(index_type, self.ctx.types.evaluate_keyof(values))
+    }
+
+    pub(super) fn mapped_object_index_matches_own_key_constraint(
+        &mut self,
+        object_node_idx: NodeIndex,
+        index_type: TypeId,
+        index_type_for_check: TypeId,
+    ) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_node_idx) else {
+            return false;
+        };
+        let Some(mapped) = self.ctx.arena.get_mapped_type(object_node) else {
+            return false;
+        };
+        if mapped.name_type != NodeIndex::NONE {
+            return false;
+        }
+        let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter) else {
+            return false;
+        };
+        let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
+            return false;
+        };
+        if tp.constraint == NodeIndex::NONE {
+            return false;
+        }
+
+        let constraint_type = self.get_type_from_type_node(tp.constraint);
+        let constraint_eval = self.evaluate_type_with_env(constraint_type);
+
+        index_type == constraint_type
+            || index_type_for_check == constraint_eval
+            || (self.is_assignable_to(index_type_for_check, constraint_eval)
+                && self.is_assignable_to(constraint_eval, index_type_for_check))
     }
 
     pub(super) fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {

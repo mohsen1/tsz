@@ -57,10 +57,10 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             capabilities,
             report_unresolved_imports: false,
+            allow_source_file_test_pragmas: false,
             file_is_esm: None,
             file_is_esm_map: None,
-            spelling_suggestions_emitted: std::cell::Cell::new(0),
-            name_resolution_reported_nodes: FxHashSet::default(),
+            name_resolution_diagnostics: crate::context::NameResolutionDiagnostics::default(),
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
             symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
@@ -72,14 +72,18 @@ impl<'a> CheckerContext<'a> {
             lib_type_resolution_cache: FxHashMap::default(),
             lib_delegation_cache: FxHashMap::default(),
             namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
+            export_equals_named_cache: RefCell::new(FxHashMap::default()),
+            nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
+            symbol_name_candidates_cache: RefCell::new(FxHashMap::default()),
+            nested_namespace_candidates_cache_complete: Cell::new(false),
             lowering_entity_name_resolution_cache: RefCell::new(FxHashMap::default()),
+            namespace_exports_cache: RefCell::new(FxHashMap::default()),
             shared_lib_type_cache: None,
             skip_lib_type_resolution: false,
             lib_heritage_in_progress: FxHashSet::default(),
             node_types: crate::context::NodeTypeCache::with_capacity(arena.nodes.len()),
             request_node_types: FxHashMap::default(),
-            object_literal_property_diag_targets: FxHashMap::default(),
-            object_literal_contextual_targets: FxHashMap::default(),
+            object_literal_tracking: crate::context::ObjectLiteralTracking::default(),
             request_cache_counters: crate::context::RequestCacheCounters::default(),
             type_environment: RefCell::new(TypeEnvironment::new()),
             application_eval_set: FxHashSet::default(),
@@ -104,7 +108,7 @@ impl<'a> CheckerContext<'a> {
             symbol_last_assignment_pos: RefCell::new(FxHashMap::default()),
             symbol_flow_confirmed: RefCell::new(FxHashMap::default()),
             narrowing_cache: tsz_solver::NarrowingCache::new(),
-            call_type_predicates: FxHashMap::default(),
+            call_type_predicates: crate::control_flow::CallPredicateMap::default(),
             daa_error_nodes: FxHashSet::default(),
             deferred_ts2454_errors: Vec::new(),
             flow_narrowed_nodes: FxHashSet::with_capacity_and_hasher(256, Default::default()),
@@ -115,8 +119,8 @@ impl<'a> CheckerContext<'a> {
             js_export_surface_cache: FxHashMap::default(),
             js_export_surface_resolution_set: FxHashSet::default(),
             expando_property_resolution_set: FxHashSet::default(),
-            module_specifiers: FxHashMap::default(),
-            module_path_specifiers: FxHashMap::default(),
+            module_specifiers: Arc::new(FxHashMap::default()),
+            module_path_specifiers: Arc::new(FxHashMap::default()),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             class_constructor_type_cache: FxHashMap::default(),
@@ -151,9 +155,11 @@ impl<'a> CheckerContext<'a> {
             nullable_type_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
+            no_overload_call_nodes: FxHashSet::default(),
             callback_return_type_errors: Vec::new(),
             modules_with_ts2307_emitted: FxHashSet::default(),
             deferred_truthiness_diagnostics: Vec::new(),
+            deferred_excess_property_implicit_any_diagnostics: Vec::new(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: FxHashSet::default(),
             circular_type_aliases: FxHashSet::default(),
@@ -164,6 +170,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: super::MAX_SYMBOL_RESOLUTION_DEPTH,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            jsdoc_enum_resolution_set: FxHashSet::default(),
             circular_class_symbols: FxHashSet::default(),
             pending_implicit_any_vars: FxHashMap::default(),
             pending_circular_return_sites: FxHashMap::default(),
@@ -188,6 +195,7 @@ impl<'a> CheckerContext<'a> {
             is_checking_statements: false,
             is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
+            preserve_destructuring_initializer_overload_diagnostics: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
             depth_exceeded: Cell::new(false),
@@ -595,6 +603,11 @@ impl<'a> CheckerContext<'a> {
 
         // Propagate parent state that is safe across arenas.
         ctx.no_implicit_override = parent.no_implicit_override;
+        ctx.allow_source_file_test_pragmas = parent.allow_source_file_test_pragmas;
+        if !parent.lib_contexts.is_empty() {
+            ctx.set_lib_contexts_shared(Arc::clone(&parent.lib_contexts));
+            ctx.set_actual_lib_file_count(parent.actual_lib_file_count);
+        }
 
         // Share symbol caches: after merge, all binders use global SymbolIds,
         // so SymbolId(N) means the same entity regardless of which arena/binder
@@ -607,6 +620,12 @@ impl<'a> CheckerContext<'a> {
         ctx.lib_delegation_cache = parent.lib_delegation_cache.clone();
         *ctx.namespace_member_resolution_cache.borrow_mut() =
             parent.namespace_member_resolution_cache.borrow().clone();
+        *ctx.export_equals_named_cache.borrow_mut() =
+            parent.export_equals_named_cache.borrow().clone();
+        *ctx.nested_namespace_candidates_cache.borrow_mut() =
+            parent.nested_namespace_candidates_cache.borrow().clone();
+        ctx.nested_namespace_candidates_cache_complete =
+            Cell::new(parent.nested_namespace_candidates_cache_complete.get());
         *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent
             .lowering_entity_name_resolution_cache
             .borrow()

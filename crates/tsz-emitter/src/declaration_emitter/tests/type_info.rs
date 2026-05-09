@@ -218,6 +218,22 @@ var prop3: Y< <Tany>() => Tany, <Tany>() => Tany>;
 }
 
 #[test]
+fn test_declared_generic_call_return_preserves_wrapper_for_generic_function_argument() {
+    let output = emit_dts_with_binding(
+        r#"
+interface Modifier<T> {}
+declare function fn<T>(x: T): Modifier<T>;
+export const value = fn(<T>(x: T): T => x);
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const value: Modifier<(<T>(x: T) => T)>;"),
+        "Expected declared generic call return wrapper to survive generic function substitution: {output}"
+    );
+}
+
+#[test]
 fn test_named_class_expression_constructor_type_is_inlined() {
     let source = r#"
 export function wrapClass(param: any) {
@@ -343,8 +359,11 @@ export class Derived extends mixin(Base) {}
 #[test]
 fn test_default_export_class_extends_expression_uses_synthetic_base_alias() {
     let source = r#"
+interface Greeter {
+    getGreeting(): string;
+}
 interface GreeterConstructor {
-    new (): {};
+    new (): Greeter;
 }
 declare function getGreeterBase(): GreeterConstructor;
 export default class extends getGreeterBase() {}
@@ -380,6 +399,10 @@ export default class extends getGreeterBase() {}
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
     let output = emitter.emit(root);
 
+    assert!(
+        output.contains("interface Greeter {"),
+        "Expected synthetic base alias dependencies to retain constructor return interface: {output}"
+    );
     assert!(
         output.contains("declare const default_base: GreeterConstructor;"),
         "Expected default export class extends expression to synthesize a default_base alias: {output}"
@@ -493,6 +516,105 @@ export class Derived extends getBase()<string, number> {}
     assert!(
         output.contains("export declare class Derived extends Derived_base<string, number> {"),
         "Expected derived class to preserve original type arguments on the alias: {output}"
+    );
+}
+
+#[test]
+fn test_named_class_extends_expression_recovers_returned_local_class_when_type_is_never() {
+    let source = r#"
+type AnyFunction<Result = any> = (...input: any[]) => Result;
+type AnyConstructor<Instance extends object = object, Static extends object = object> =
+    (new (...input: any[]) => Instance) & Static;
+type MixinHelperFunc = <A extends AnyConstructor, T>(required: [A], arg: T) => T extends AnyFunction<infer M> ? M : never;
+export const Mixin: MixinHelperFunc = null as any;
+export class Base {}
+export class XmlElement2 extends Mixin(
+    [Base],
+    (base: AnyConstructor<Base, typeof Base>) => {
+        class XmlElement2 extends base {
+            num: number = 0;
+        }
+        return XmlElement2;
+    }) {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            (node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+                .filter(|&idx| {
+                    parser
+                        .arena
+                        .get(idx)
+                        .and_then(|node| parser.arena.get_class(node))
+                        .is_some_and(|class| {
+                            parser.arena.get_identifier_text(class.name) == Some("XmlElement2")
+                        })
+                })
+        })
+        .next_back()
+        .expect("missing exported XmlElement2 class");
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, TypeId::NEVER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "declare const XmlElement2_base: {\n    new (): {\n        num: number;\n    };\n};"
+        ),
+        "Expected source fallback to recover returned local class constructor shape: {output}"
+    );
+    assert!(
+        !output.contains("declare const XmlElement2_base: never;"),
+        "Did not expect synthetic class base alias to stay `never`: {output}"
+    );
+}
+
+#[test]
+fn test_local_class_mixin_preserves_base_static_intersection() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Constructor<C> { new (...args: any[]): C; }
+
+function mixin<B extends Constructor<{}>>(Base: B) {
+    class PrivateMixed extends Base {
+        bar = 2;
+    }
+    return PrivateMixed;
+}
+
+export class Unmixed {
+    foo = 1;
+}
+
+export const Mixed = mixin(Unmixed);
+"#,
+    );
+
+    assert!(
+        output.contains("} & typeof Unmixed;"),
+        "Expected mixin constructor type to preserve base static side: {output}"
+    );
+    assert!(
+        !output.contains("foo: number;\n        bar: number;"),
+        "Inherited base instance fields should stay behind typeof base intersection: {output}"
     );
 }
 
@@ -688,10 +810,14 @@ export class A {
     method.is_class_prototype = true;
     method.parent_id = Some(class_sym);
     method.declaration_order = 1;
+    let mut duplicate_property =
+        PropertyInfo::new(interner.intern_string("[iterator]"), method_type);
+    duplicate_property.parent_id = Some(class_sym);
+    duplicate_property.declaration_order = 2;
 
     let instance_type = interner.object_with_index(ObjectShape {
         flags: ObjectFlags::default(),
-        properties: vec![method],
+        properties: vec![method, duplicate_property],
         string_index: None,
         number_index: None,
         symbol: None,
@@ -780,6 +906,101 @@ export class A {
     assert!(
         !printed.contains("[iterator]: () => number;"),
         "Did not expect unique symbol keyed property syntax: {printed}"
+    );
+}
+
+#[test]
+fn test_synthesized_computed_method_index_signatures_widen_nested_literal_returns() {
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _root = parser.parse_source_file();
+    let binder = BinderState::new();
+
+    let interner = TypeInterner::new();
+    let method_return = interner.union(vec![
+        interner.function(FunctionShape::new(
+            Vec::new(),
+            interner.literal_string("value"),
+        )),
+        interner.function(FunctionShape::new(
+            Vec::new(),
+            interner.literal_number(42.0),
+        )),
+    ]);
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: method_return,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        number_index: None,
+        symbol: None,
+    });
+
+    let static_true_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("static"),
+            interner.literal_boolean(true),
+        )],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let static_string_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("static"),
+            interner.literal_string("sometimes"),
+        )],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let static_index_type = interner.union(vec![
+        instance_type,
+        interner.function(FunctionShape::new(Vec::new(), static_true_type)),
+        interner.function(FunctionShape::new(Vec::new(), static_string_type)),
+    ]);
+    let ctor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), instance_type)],
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: static_index_type,
+            readonly: false,
+            param_name: Some(interner.intern_string("x")),
+        }),
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(ctor_type);
+
+    assert!(
+        printed.contains("[x: string]: (() => string) | (() => number);"),
+        "Expected instance computed method returns to widen inside the synthesized index signature: {printed}"
+    );
+    assert!(
+        printed.contains("static: boolean;"),
+        "Expected static computed method object returns to widen boolean literals: {printed}"
+    );
+    assert!(
+        printed.contains("static: string;"),
+        "Expected static computed method object returns to widen string literals: {printed}"
+    );
+    assert!(
+        !printed.contains("\"value\"")
+            && !printed.contains("42")
+            && !printed.contains("true")
+            && !printed.contains("\"sometimes\""),
+        "Did not expect literal return types to leak from synthesized computed methods: {printed}"
     );
 }
 
@@ -973,6 +1194,49 @@ export namespace C {
 }
 
 #[test]
+fn test_type_application_elides_trailing_default_type_argument() {
+    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
+    let _root = parser.parse_source_file();
+    let binder = BinderState::new();
+
+    let interner = TypeInterner::new();
+    let promise_def = DefId(9301);
+    let resolve_atom = interner.intern_string("ResolveType");
+    let reject_atom = interner.intern_string("RejectType");
+    let promise_type = interner.application(
+        interner.lazy(promise_def),
+        vec![TypeId::STRING, TypeId::ANY],
+    );
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .def_to_name
+        .insert(promise_def, "TPromise".to_string());
+    type_cache.def_type_params.insert(
+        promise_def.0,
+        vec![
+            tsz_solver::types::TypeParamInfo {
+                name: resolve_atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            tsz_solver::types::TypeParamInfo {
+                name: reject_atom,
+                constraint: None,
+                default: Some(TypeId::ANY),
+                is_const: false,
+            },
+        ],
+    );
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(promise_type);
+
+    assert_eq!(printed, "TPromise<string>");
+}
+
+#[test]
 fn test_object_literal_enum_values_preserve_typeof_and_widen_members() {
     let output = emit_dts_with_binding(
         r#"
@@ -1030,6 +1294,58 @@ namespace A.B.D {
     assert!(
         !output.contains("en: typeof A.B.C.e;"),
         "Did not expect nested namespace typeof reference to stay fully qualified: {output}"
+    );
+}
+
+#[test]
+fn test_returned_auto_accessor_parameter_unknown_uses_parameter_type() {
+    let source = r#"
+function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
+    return class extends superclass {};
+}
+
+export function wrapper<T>(value: T) {
+    class BaseClass {
+        accessor name = value;
+    }
+    return class MyClass extends mixin(BaseClass) {
+        accessor name = value;
+    };
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let wrapper = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            parser
+                .arena
+                .get_function(node)
+                .filter(|func| parser.arena.get_identifier_text(func.name) == Some("wrapper"))
+        })
+        .expect("missing wrapper function");
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let rewritten = emitter.rewrite_returned_auto_accessor_parameter_unknowns(
+        wrapper,
+        "{\n    new (): {\n        get name(): unknown;\n        set name(arg: unknown);\n    };\n}",
+    );
+
+    assert!(
+        rewritten.contains("get name(): T;"),
+        "Expected getter type to come from the accessor initializer parameter: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("set name(arg: T);"),
+        "Expected setter type to come from the accessor initializer parameter: {rewritten}"
     );
 }
 
@@ -1105,5 +1421,46 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
         printed.contains("? C : "),
         "Expected the true branch to reference the inferred placeholder by bare \
          name `C`, not `infer C`: {printed}"
+    );
+}
+
+#[test]
+fn test_inexact_optional_mapped_intersection_simplifies_for_inferred_emit() {
+    let actual = r#"(x: {} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? keyof unknown : never]+?: undefined extends {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] ? {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown] | undefined : {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+} & {
+    [K in "foo" | "bar" | "baz" as undefined extends {
+    foo?: string;
+    bar: number;
+    baz: undefined;
+}[keyof unknown] ? never : keyof unknown]: {
+        foo?: string;
+        bar: number;
+        baz: undefined;
+    }[keyof unknown];
+}) => null"#;
+
+    let simplified = DeclarationEmitter::simplify_inexact_optional_mapped_intersection_text(actual)
+        .expect("expected inexact optional mapped intersection to simplify");
+
+    assert_eq!(
+        simplified,
+        "(x: {\n    foo?: string | undefined;\n    baz?: undefined;\n} & {\n    bar: number;\n}) => null"
     );
 }

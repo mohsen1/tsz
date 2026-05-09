@@ -17,6 +17,7 @@ use crate::relations::compat::{AssignabilityOverrideProvider, ShapeExtractor, St
 use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TypeData, TypeId};
 use crate::visitor::TypeVisitor;
+use rustc_hash::FxHashSet;
 
 use super::compat::CompatChecker;
 
@@ -75,6 +76,34 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<bool> {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            let mut visiting = FxHashSet::default();
+            self.private_brand_assignability_override_inner(source, target, &mut visiting)
+        })
+    }
+
+    fn private_brand_assignability_override_inner(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        visiting: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> Option<bool> {
+        let pair = (source, target);
+        if !visiting.insert(pair) {
+            return None;
+        }
+
+        let result = self.private_brand_assignability_override_body(source, target, visiting);
+        visiting.remove(&pair);
+        result
+    }
+
+    fn private_brand_assignability_override_body(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        visiting: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> Option<bool> {
         use crate::types::Visibility;
 
         // Fast path: identical types don't need nominal brand override logic.
@@ -99,7 +128,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
-                if let Some(false) = self.private_brand_assignability_override(member, target) {
+                if let Some(false) =
+                    self.private_brand_assignability_override_inner(member, target, visiting)
+                {
                     return Some(false); // Fail if any member fails
                 }
             }
@@ -112,7 +143,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             let members = self.interner.type_list(members);
             // If source matches ANY target member, it's valid
             for &member in members.iter() {
-                match self.private_brand_assignability_override(source, member) {
+                match self.private_brand_assignability_override_inner(source, member, visiting) {
                     Some(true) | None => return None, // Pass (or structural fallback)
                     Some(false) => {}                 // Keep checking other members
                 }
@@ -125,7 +156,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
-                if let Some(false) = self.private_brand_assignability_override(source, member) {
+                if let Some(false) =
+                    self.private_brand_assignability_override_inner(source, member, visiting)
+                {
                     return Some(false); // Fail if any member fails
                 }
             }
@@ -137,7 +170,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
-                match self.private_brand_assignability_override(member, target) {
+                match self.private_brand_assignability_override_inner(member, target, visiting) {
                     Some(true) | None => return None, // Pass (or structural fallback)
                     Some(false) => {}                 // Keep checking other members
                 }
@@ -154,7 +187,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if resolved == source {
                 return None;
             }
-            return self.private_brand_assignability_override(resolved, target);
+            return self.private_brand_assignability_override_inner(resolved, target, visiting);
         }
 
         if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
@@ -164,7 +197,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if resolved == target {
                 return None;
             }
-            return self.private_brand_assignability_override(source, resolved);
+            return self.private_brand_assignability_override_inner(source, resolved, visiting);
         }
 
         // 6. Base case: Extract and compare object shapes
@@ -552,6 +585,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return res;
         }
 
+        if let Some(result) = self.array_redeclaration_identity(a, b) {
+            return result;
+        }
+
         // 5. Normalize Application/Mapped/Lazy types before structural comparison.
         // Required<{a?: string}> must evaluate to {a: string} before bidirectional
         // subtype checking, just as is_assignable_impl() does via normalize_assignability_operands.
@@ -578,6 +615,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
         if a_norm == TypeId::ANY || b_norm == TypeId::ANY {
             return false;
+        }
+
+        if let Some(result) = self.array_redeclaration_identity(a_norm, b_norm) {
+            return result;
         }
 
         // 5 pre-check: Callable signature type parameter identity.
@@ -663,6 +704,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Fast identity failed — fall through to bidirectional subtype
         }
 
+        // Also handle cases where normalization itself exposes direct array types.
+        if let Some(result) = self.array_redeclaration_identity(a, b) {
+            return result;
+        }
+
         // For both union and non-union types, delegate to bidirectional subtyping.
         // This handles intersection distribution, typeof resolution, and other
         // structural equivalences that TypeId-level identity misses.
@@ -678,6 +724,41 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // assuming related. Without this, `IPromise2<W, U>` vs `Promise2<any, W>` at
         // a cycle point would be assumed related (because same DefId pair), even though
         // the type arguments [W, U] vs [any, W] are NOT identical.
+        // 5c. Object index signature & const-enum-flag identity.
+        //
+        // tsc's `isTypeIdenticalTo` requires both object types to expose
+        // identical index signatures and const-enum semantics. The bidirectional
+        // subtype check below is too permissive here: assigning `{ A: E.A }` to
+        // `{ A: E.A; [k: number]: string }` succeeds (the source has no numeric
+        // properties so the index requirement is vacuously satisfied) and the
+        // reverse also succeeds, so the two types appear identical. That breaks
+        // TS2403 for `var x: typeof Enum; var x: { A: Enum.A };` redeclarations,
+        // where `typeof Enum` carries the numeric reverse-mapping signature
+        // (and `CONST_ENUM` flag on const enums) that the plain object literal
+        // lacks. Reject the pair early when those structural signals diverge.
+        if let (
+            Some(TypeData::Object(a_id) | TypeData::ObjectWithIndex(a_id)),
+            Some(TypeData::Object(b_id) | TypeData::ObjectWithIndex(b_id)),
+        ) = (self.interner.lookup(a), self.interner.lookup(b))
+        {
+            let a_shape = self.interner.object_shape(a_id);
+            let b_shape = self.interner.object_shape(b_id);
+            let a_const_enum = a_shape
+                .flags
+                .contains(crate::types::ObjectFlags::CONST_ENUM);
+            let b_const_enum = b_shape
+                .flags
+                .contains(crate::types::ObjectFlags::CONST_ENUM);
+            if a_const_enum != b_const_enum {
+                return false;
+            }
+            if a_shape.string_index.is_some() != b_shape.string_index.is_some()
+                || a_shape.number_index.is_some() != b_shape.number_index.is_some()
+            {
+                return false;
+            }
+        }
+
         // TS2403 identity checking mirrors tsc's `isTypeIdenticalTo` which uses
         // the `identity` relation — strictly bidirectional structural equality.
         // Unlike the subtype relation, identity does NOT have bivariance at all:
@@ -697,6 +778,22 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             "are_types_identical_for_redeclaration: result"
         );
         fwd && bwd
+    }
+
+    fn array_redeclaration_identity(&mut self, a: TypeId, b: TypeId) -> Option<bool> {
+        let a_elem = self.mutable_array_element_for_redeclaration(a)?;
+        let b_elem = self.mutable_array_element_for_redeclaration(b)?;
+
+        Some(self.are_types_identical_for_redeclaration(a_elem, b_elem))
+    }
+
+    fn mutable_array_element_for_redeclaration(&self, type_id: TypeId) -> Option<TypeId> {
+        crate::type_queries::mutable_array_element_for_redeclaration(
+            self.interner,
+            type_id,
+            self.subtype.resolver.get_array_base_type(),
+            None,
+        )
     }
 
     fn overloaded_callable_signatures_match_in_order(&mut self, a: TypeId, b: TypeId) -> bool {

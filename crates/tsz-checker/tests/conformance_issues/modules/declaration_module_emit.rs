@@ -1,6 +1,51 @@
 use super::super::core::*;
 
 #[test]
+fn test_import_equals_export_equals_function_namespace_overloads_report_no_match() {
+    let files = [
+        (
+            "/file.d.ts",
+            r#"
+declare namespace Foo {
+    interface Whatever {
+        prop: any;
+    }
+}
+
+declare function Foo(opts?: Foo.Whatever): void;
+declare function Foo(cb: Function, opts?: Foo.Whatever): void;
+
+export = Foo;
+"#,
+        ),
+        (
+            "/index.ts",
+            r#"
+import X = require("./file");
+
+X(0);
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
+        &files,
+        "/index.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        codes.contains(&2769),
+        "Expected TS2769 for overloaded export= function mismatch. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_named_default_import_from_export_equals_class_uses_default_import_rules() {
     let files = [
         (
@@ -531,6 +576,47 @@ model.cache;
     );
 }
 
+#[test]
+fn test_namespace_import_conflict_uses_local_namespace_for_qualified_type_members() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "/file1.ts",
+                r#"
+export namespace Library {
+    export type Bar = { a: number };
+}
+"#,
+            ),
+            (
+                "/file2.ts",
+                r#"
+import * as Lib from "./file1";
+namespace Lib {
+    export const foo: string = "";
+}
+var x: Lib.Bar;
+"#,
+            ),
+        ],
+        "/file2.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2440),
+        "Expected TS2440 for namespace import/local namespace conflict. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2694),
+        "Expected TS2694 for missing local namespace type member. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// TS2719: when two different types share the same display name (e.g. a type
 /// parameter `T` shadowing an interface `T`), the checker should emit "Two
 /// different types with this name exist, but they are unrelated" instead of
@@ -873,7 +959,6 @@ if (!(result instanceof RegExp)) {
 }
 
 #[test]
-#[ignore = "CFA flow merge after instanceof doesn't preserve the class type in the union - separate issue from instanceof narrowing"]
 fn test_instanceof_class_narrows_union_at_merge_point() {
     // From conformance/expressions/typeGuards/typeGuardsWithInstanceOf.ts (#31155 repro)
     // After `if (v instanceof C) { ... }`, the type of `v` should be
@@ -882,6 +967,15 @@ fn test_instanceof_class_narrows_union_at_merge_point() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "test.ts",
         r#"
+interface I { global: string; }
+var result!: I;
+var result2!: I;
+
+if (!(result instanceof RegExp)) {
+    result = result2;
+} else if (!result.global) {
+}
+
 interface OnChanges {
     onChanges(changes: Record<string, unknown>): void
 }
@@ -916,7 +1010,7 @@ function foo() {
     // tsc expects: two TS2339 errors for v.onChanges on lines accessing it
     let ts2339_msgs: Vec<_> = diagnostics
         .iter()
-        .filter(|(c, _)| *c == 2339)
+        .filter(|(c, m)| *c == 2339 && m.contains("onChanges"))
         .map(|(_, m)| m.as_str())
         .collect();
     assert!(
@@ -2000,8 +2094,235 @@ declare class MyArray<T> implements Array<T> {
         "Expected TS2416 for 'every' property incompatibility. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
+        ts2416.iter().any(|(_, message)| {
+            message.contains("Property 'every'") && message.contains("base type 'T[]'")
+        }),
+        "Expected TS2416 to display the global Array<T> target as 'T[]'. Actual diagnostics: {ts2416:#?}"
+    );
+    assert!(
         ts2420.is_empty(),
         "Should NOT emit TS2420 for this case. Only TS2416 expected. Got TS2420: {ts2420:#?}"
+    );
+}
+
+#[test]
+fn test_generic_array_extension_global_array_display_uses_shorthand() {
+    let source = r#"
+export declare class ObservableArray<T> implements Array<T> {
+    concat<U extends T[]>(...items: U[]): T[];
+    concat(...items: T[]): T[];
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2420 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2420)
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2420
+            .iter()
+            .any(|(_, message)| message.contains("interface 'T[]'")),
+        "Expected global Array<T> implements diagnostic to display interface 'T[]'. Actual TS2420 diagnostics: {ts2420:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_interface_in_implements_shadows_global_array() {
+    let source = r#"
+export {};
+
+interface Array<T> {
+    custom: T;
+}
+
+class Box implements Array<number> {
+    custom = 1;
+}
+
+new Box().custom.toFixed();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+
+    assert!(
+        !has_error(&diagnostics, 2420),
+        "Expected module-local Array<number> to be checked instead of global number[]. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected Box.custom to remain visible after the implements check. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_interface_missing_member_uses_local_display() {
+    let source = r#"
+export {};
+
+interface Array<T> {
+    custom: T;
+}
+
+class Box implements Array<number> {}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2420 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2420)
+        .expect("Expected TS2420 for missing local Array.custom member");
+
+    assert!(
+        ts2420.1.contains("interface 'Array<number>'"),
+        "Expected local interface display name in TS2420. Actual diagnostic: {ts2420:#?}"
+    );
+    assert!(
+        ts2420.1.contains("custom"),
+        "Expected TS2420 to mention the local Array.custom member. Actual diagnostic: {ts2420:#?}"
+    );
+    assert!(
+        !ts2420.1.contains("number[]"),
+        "Did not expect global array display name for module-local Array. Actual diagnostic: {ts2420:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_type_alias_shadows_global_array_reference() {
+    let source = r#"
+export {};
+
+type Array<T> = {
+    custom: T;
+};
+
+declare const value: Array<number>;
+
+value.custom.toFixed();
+value.length;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, message)| message.contains("length")
+                && message.contains("type 'Array<number>'")),
+        "Expected local Array<number> to reject only value.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|(_, message)| !message.contains("custom")),
+        "Expected value.custom to resolve through the local Array alias. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_alias_shadows_type_literal_member_reference() {
+    let source = r#"
+export {};
+
+type Array<T> = {
+    custom: T;
+};
+
+type ReadonlyArray<T> = {
+    readonlyCustom: T;
+};
+
+type Box = {
+    value: Array<number>;
+    readonlyValue: ReadonlyArray<number>;
+};
+
+declare const box: Box;
+
+box.value.custom.toFixed();
+box.value.length;
+box.readonlyValue.readonlyCustom.toFixed();
+box.readonlyValue.length;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, message)| message.contains("length")
+                && message.contains("type 'Array<number>'")),
+        "Expected local Array<number> in type literal member to reject box.value.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.len() == 2 && ts2339.iter().all(|(_, message)| message.contains("length")),
+        "Expected local ReadonlyArray<number> in type literal member to reject box.readonlyValue.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|(_, message)| !message.contains("custom")),
+        "Expected local Array and ReadonlyArray members to remain visible in type literals. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_module_local_array_alias_shadows_function_type_reference() {
+    let source = r#"
+export {};
+
+type Array<T> = {
+    custom: T;
+};
+
+type ReadonlyArray<T> = {
+    readonlyCustom: T;
+};
+
+type Fn = (value: Array<string>) => Array<string>;
+type ReadonlyFn = (value: ReadonlyArray<string>) => ReadonlyArray<string>;
+declare const fn: Fn;
+declare const readonlyFn: ReadonlyFn;
+
+const result = fn({ custom: "ok" });
+const readonlyResult = readonlyFn({ readonlyCustom: "ok" });
+result.custom.toUpperCase();
+result.length;
+readonlyResult.readonlyCustom.toUpperCase();
+readonlyResult.length;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Expected function parameters to use local Array aliases, not builtin arrays. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|(_, message)| message.contains("length")
+                && message.contains("type 'Array<string>'")),
+        "Expected local Array<string> function return type to reject result.length. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|(_, message)| !message.contains("custom")),
+        "Expected result.custom and readonlyResult.readonlyCustom to resolve through local aliases. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

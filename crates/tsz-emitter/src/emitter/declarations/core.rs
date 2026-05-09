@@ -25,7 +25,9 @@ impl<'a> Printer<'a> {
 
         // For JavaScript emit: skip declaration-only functions (no body)
         // These are just type information in TypeScript (overload signatures)
-        if func.body.is_none() {
+        let has_recovered_trailing_comma =
+            func.body.is_none() && self.has_recovered_declaration_trailing_comma(node);
+        if func.body.is_none() && !has_recovered_trailing_comma {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -42,6 +44,14 @@ impl<'a> Printer<'a> {
 
         if func.is_async {
             self.write("async ");
+        }
+
+        if self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::AccessorKeyword)
+            || self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
         }
 
         self.write("function");
@@ -116,6 +126,18 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
+        if has_recovered_trailing_comma {
+            self.write(" { }");
+            self.function_scope_depth -= 1;
+            if func.name.is_some() {
+                let func_name = self.get_identifier_text_idx(func.name);
+                if !func_name.is_empty() {
+                    self.declared_namespace_names.insert(func_name);
+                }
+            }
+            return;
+        }
+
         // No return type for JavaScript — skip comments inside erased return type
         if !self.ctx.flags.in_declaration_emit
             && func.type_annotation.is_some()
@@ -127,6 +149,10 @@ impl<'a> Printer<'a> {
         self.write_space();
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        let prev_pending_function_body_parameters = std::mem::replace(
+            &mut self.pending_function_body_parameters,
+            func.parameters.nodes.clone(),
+        );
         // Don't increment again — already incremented before parameter emission
 
         // Push temp scope and block scope for function body.
@@ -141,6 +167,7 @@ impl<'a> Printer<'a> {
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
             if let Some(param) = self.arena.get_parameter_at(param_idx) {
                 let name = self.get_identifier_text_idx(param.name);
@@ -150,11 +177,13 @@ impl<'a> Printer<'a> {
             }
         }
         self.emit(func.body);
+        self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.flags.in_generator = prev_in_generator;
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.pending_function_body_parameters = prev_pending_function_body_parameters;
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
 
@@ -448,6 +477,17 @@ impl<'a> Printer<'a> {
                 }
 
                 let mut output = printer.emit(&ir).to_string();
+                if self
+                    .arena
+                    .has_modifier(&enum_decl.modifiers, SyntaxKind::AccessorKeyword)
+                    || self.has_recovered_accessor_modifier(node)
+                {
+                    let var_prefix = format!("var {enum_name};");
+                    let accessor_var_prefix = format!("accessor {var_prefix}");
+                    if output.starts_with(&var_prefix) {
+                        output = format!("{accessor_var_prefix}{}", &output[var_prefix.len()..]);
+                    }
+                }
                 if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
                     let var_prefix = format!("var {enum_name};\n");
                     if output.starts_with(&var_prefix) {
@@ -602,9 +642,40 @@ impl<'a> Printer<'a> {
         source
             .lines()
             .map(str::trim)
-            .filter(|line| line.starts_with("return ") && line.ends_with(';'))
-            .map(str::to_string)
+            .filter_map(|line| {
+                self.recover_interface_var_statement(line).or_else(|| {
+                    self.is_recoverable_interface_return_statement(line)
+                        .then(|| line.to_string())
+                })
+            })
             .collect()
+    }
+
+    fn recover_interface_var_statement(&self, line: &str) -> Option<String> {
+        let rest = line.strip_prefix("var ")?;
+        let rest = rest.trim_start();
+        let mut end = 0usize;
+        for (idx, ch) in rest.char_indices() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                end = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            return None;
+        }
+
+        let after_name = rest[end..].trim_start();
+        if !matches!(after_name.as_bytes().first(), Some(b':' | b';' | b',')) {
+            return None;
+        }
+
+        Some(format!("var {};", &rest[..end]))
+    }
+
+    fn is_recoverable_interface_return_statement(&self, line: &str) -> bool {
+        line.starts_with("return ") && line.ends_with(';') && !line.contains(':')
     }
 
     fn interface_source_end(&self, start: usize) -> Option<usize> {

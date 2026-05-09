@@ -348,6 +348,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
                 ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
@@ -376,43 +377,7 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::ES5Enum { enum_node } => {
-                let mut enum_emitter = EnumES5Emitter::new(self.arena);
-                enum_emitter.set_indent_level(self.writer.indent_level());
-                enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
-                if let Some(text) = self.source_text {
-                    enum_emitter.set_source_text(text);
-                }
-                let mut output = enum_emitter.emit_enum(enum_node);
-                if let Some(enum_decl) = self.arena.get_enum_at(enum_node) {
-                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
-                    if !enum_name.is_empty() {
-                        if self.declared_namespace_names.contains(&enum_name) {
-                            let var_prefix = format!("var {enum_name};\n");
-                            if output.starts_with(&var_prefix) {
-                                output = output[var_prefix.len()..].to_string();
-                            }
-                        }
-                        self.declared_namespace_names.insert(enum_name);
-                    }
-                }
-                self.write(output.trim_end_matches('\n'));
-                // Emit any trailing comment on the enum's closing `}` line
-                // (e.g., `enum E { ... } // trailing comment`).
-                // The EnumES5Emitter handles comments INSIDE the enum body, so we need to:
-                // 1. Advance comment_emit_idx past all inner enum body comments
-                // 2. Emit any trailing comment ON the closing `}` line
-                // 3. Then skip remaining comments in the enum node range
-                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
-                // Step 1: Skip all comments inside the enum body (before enum_close_pos)
-                while self.comment_emit_idx < self.all_comments.len()
-                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
-                {
-                    self.comment_emit_idx += 1;
-                }
-                // Step 2: Emit trailing comment on the enum closing `}` line (if any)
-                self.emit_trailing_comments(enum_close_pos);
-                // Step 3: Skip any remaining comments in the enum node range
-                self.skip_comments_for_erased_node(node);
+                self.emit_es5_enum_directive(node, enum_node);
             }
 
             EmitDirective::CommonJSExport {
@@ -470,6 +435,9 @@ impl<'a> Printer<'a> {
                             ns_emitter.set_target_es5(true);
                             ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                             ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                            ns_emitter.set_emit_decorator_metadata(
+                                self.ctx.options.emit_decorator_metadata,
+                            );
                             ns_emitter.set_transforms(self.transforms.clone());
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
@@ -601,7 +569,7 @@ impl<'a> Printer<'a> {
                         self.ctx.original_module_kind = prev_original;
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(node)
+                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(idx, node)
                     {
                         // Inline form: exports.x = initializer;
                         let decl_count = inline_decls.len();
@@ -646,7 +614,7 @@ impl<'a> Printer<'a> {
                             && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
                         {
                             self.pending_commonjs_class_export_name =
-                                Some(ident.escaped_text.clone());
+                                Some((idx, ident.escaped_text.clone()));
                         }
                         let prev_module = self.ctx.options.module;
                         let prev_original = self.ctx.original_module_kind;
@@ -659,7 +627,9 @@ impl<'a> Printer<'a> {
                         // If the deferred export was NOT consumed (e.g. the class had no
                         // static blocks/fields, so emit_class_es6_with_options was not
                         // reached, or the class was ambient), emit it now as a fallback.
-                        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                        if let Some((_, class_name)) =
+                            self.pending_commonjs_class_export_name.take()
+                        {
                             if !self.writer.is_at_line_start() {
                                 self.write_line();
                             }
@@ -904,6 +874,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             es5_emitter.set_tslib_prefix(true);
+            es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_printer_options(self.ctx.options.clone());
         if let Some(text) = self.source_text_for_map() {
@@ -1058,6 +1029,7 @@ impl<'a> Printer<'a> {
         emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             emitter.set_tslib_prefix(true);
+            emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         // For class expressions, emit as expression (no `let C = ` wrapper)
         if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
@@ -1067,7 +1039,7 @@ impl<'a> Printer<'a> {
                 emitter.set_function_name(name.to_string());
             } else if let Some(ref name) = self.anonymous_default_export_name {
                 emitter.set_function_name(name.clone());
-            } else if let Some(ref name) = self.pending_commonjs_class_export_name {
+            } else if let Some((_, ref name)) = self.pending_commonjs_class_export_name {
                 emitter.set_function_name(name.clone());
             }
         }
@@ -1155,6 +1127,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
                 ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
@@ -1171,36 +1144,7 @@ impl<'a> Printer<'a> {
                 }
             }
             EmitDirective::ES5Enum { enum_node } => {
-                let mut enum_emitter = EnumES5Emitter::new(self.arena);
-                enum_emitter.set_indent_level(self.writer.indent_level());
-                enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
-                if let Some(text) = self.source_text {
-                    enum_emitter.set_source_text(text);
-                }
-                let mut output = enum_emitter.emit_enum(*enum_node);
-                if let Some(enum_decl) = self.arena.get_enum_at(*enum_node) {
-                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
-                    if !enum_name.is_empty() {
-                        if self.declared_namespace_names.contains(&enum_name) {
-                            let var_prefix = format!("var {enum_name};\n");
-                            if output.starts_with(&var_prefix) {
-                                output = output[var_prefix.len()..].to_string();
-                            }
-                        }
-                        self.declared_namespace_names.insert(enum_name);
-                    }
-                }
-                self.write(output.trim_end_matches('\n'));
-                // Advance comment_emit_idx past all inner enum body comments
-                // and emit trailing comment on the closing `}` line.
-                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
-                while self.comment_emit_idx < self.all_comments.len()
-                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
-                {
-                    self.comment_emit_idx += 1;
-                }
-                self.emit_trailing_comments(enum_close_pos);
-                self.skip_comments_for_erased_node(node);
+                self.emit_es5_enum_directive(node, *enum_node);
             }
             EmitDirective::ES5AsyncFunction { function_node } => {
                 if let Some(func_node) = self.arena.get(*function_node)
@@ -1363,6 +1307,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
                 ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
@@ -1379,36 +1324,7 @@ impl<'a> Printer<'a> {
                 }
             }
             EmitDirective::ES5Enum { enum_node } => {
-                let mut enum_emitter = EnumES5Emitter::new(self.arena);
-                enum_emitter.set_indent_level(self.writer.indent_level());
-                enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
-                if let Some(text) = self.source_text {
-                    enum_emitter.set_source_text(text);
-                }
-                let mut output = enum_emitter.emit_enum(*enum_node);
-                if let Some(enum_decl) = self.arena.get_enum_at(*enum_node) {
-                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
-                    if !enum_name.is_empty() {
-                        if self.declared_namespace_names.contains(&enum_name) {
-                            let var_prefix = format!("var {enum_name};\n");
-                            if output.starts_with(&var_prefix) {
-                                output = output[var_prefix.len()..].to_string();
-                            }
-                        }
-                        self.declared_namespace_names.insert(enum_name);
-                    }
-                }
-                self.write(output.trim_end_matches('\n'));
-                // Advance comment_emit_idx past all inner enum body comments
-                // and emit trailing comment on the closing `}` line.
-                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
-                while self.comment_emit_idx < self.all_comments.len()
-                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
-                {
-                    self.comment_emit_idx += 1;
-                }
-                self.emit_trailing_comments(enum_close_pos);
-                self.skip_comments_for_erased_node(node);
+                self.emit_es5_enum_directive(node, *enum_node);
             }
             EmitDirective::CommonJSExport {
                 names,
@@ -1435,6 +1351,8 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_target_es5(self.ctx.target_es5);
                     ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                     ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                    ns_emitter
+                        .set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
                     ns_emitter.set_transforms(self.transforms.clone());
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
@@ -1467,7 +1385,8 @@ impl<'a> Printer<'a> {
                     if let Some(name_id) = names.first()
                         && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
                     {
-                        self.pending_commonjs_class_export_name = Some(ident.escaped_text.clone());
+                        self.pending_commonjs_class_export_name =
+                            Some((idx, ident.escaped_text.clone()));
                     }
                     let prev_module = self.ctx.options.module;
                     let prev_original = self.ctx.original_module_kind;
@@ -1481,7 +1400,7 @@ impl<'a> Printer<'a> {
                     }
                     self.ctx.options.module = prev_module;
                     self.ctx.original_module_kind = prev_original;
-                    if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                    if let Some((_, class_name)) = self.pending_commonjs_class_export_name.take() {
                         if !self.writer.is_at_line_start() {
                             self.write_line();
                         }
@@ -1717,6 +1636,64 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_chained_directive(node, idx, directives, index - 1);
         }
+    }
+
+    fn emit_es5_enum_directive(&mut self, node: &Node, enum_node: NodeIndex) {
+        let mut enum_emitter = EnumES5Emitter::new(self.arena);
+        enum_emitter.set_indent_level(self.writer.indent_level());
+        enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
+        if let Some(text) = self.source_text {
+            enum_emitter.set_source_text(text);
+        }
+        let mut output = enum_emitter.emit_enum(enum_node);
+        if let Some(enum_decl) = self.arena.get_enum_at(enum_node) {
+            let enum_name = self.get_identifier_text_idx(enum_decl.name);
+            if !enum_name.is_empty() {
+                if self.declared_namespace_names.contains(&enum_name) {
+                    let var_prefix = format!("var {enum_name};\n");
+                    if output.starts_with(&var_prefix) {
+                        output = output[var_prefix.len()..].to_string();
+                    }
+                }
+
+                if let Some(export_name) = self
+                    .deferred_local_export_bindings
+                    .as_ref()
+                    .and_then(|bindings| bindings.get(&enum_name))
+                {
+                    let from = format!("({enum_name} || ({enum_name} = {{}}))");
+                    let export_access = if is_valid_identifier_name(export_name) {
+                        format!("exports.{export_name}")
+                    } else {
+                        format!("exports[\"{export_name}\"]")
+                    };
+                    let to = format!("({enum_name} || ({export_access} = {enum_name} = {{}}))");
+                    if output.contains(&from) {
+                        output = output.replacen(&from, &to, 1);
+                        self.ctx
+                            .module_state
+                            .iife_exported_names
+                            .insert(enum_name.clone());
+                        self.ctx
+                            .module_state
+                            .inline_exported_names
+                            .insert(export_name.clone());
+                    }
+                }
+
+                self.declared_namespace_names.insert(enum_name);
+            }
+        }
+        self.write(output.trim_end_matches('\n'));
+
+        let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+        while self.comment_emit_idx < self.all_comments.len()
+            && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
+        {
+            self.comment_emit_idx += 1;
+        }
+        self.emit_trailing_comments(enum_close_pos);
+        self.skip_comments_for_erased_node(node);
     }
 
     /// Emit ES5 super call: transform super(...) to _super.call(this, ...)

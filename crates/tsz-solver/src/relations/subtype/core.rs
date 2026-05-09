@@ -10,15 +10,19 @@
 //! - `TypeResolver` trait for lazy symbol resolution
 //! - Tracer pattern for zero-cost diagnostic abstraction
 
+use std::sync::Arc;
+
 use crate::AssignabilityChecker;
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
+use crate::objects::{PropertyCollectionResult, collect_properties};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, SymbolRef, TypeData, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, SymbolRef, TemplateSpan, TypeData,
+    TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -180,6 +184,26 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// `getSingleCallSignature` returns undefined inside callback mode and the
     /// next callback recursion starts fresh through `compareTypes`.
     pub(crate) in_callback_param_check: bool,
+    /// The immediate callback signature comparison should use
+    /// `BivariantCallback` return compatibility. This is set only when the
+    /// callback comparison is reached from a bivariant method/constructor slot.
+    pub(crate) in_bivariant_callback_return_check: bool,
+    /// True only while the immediate callback signature comparison is checking
+    /// its own parameter list. Nested function comparisons reached through
+    /// `compareTypes` must start fresh, so `are_parameters_compatible_impl`
+    /// clears this around recursive subtype calls.
+    pub(crate) force_strict_callback_param_variance: bool,
+    /// Type arguments from the current generic application receiver while
+    /// comparing a method property. If a callable method parameter is exactly
+    /// one of these args, it originated as a generic type-parameter slot and
+    /// should keep normal method bivariance, matching tsc's
+    /// `isInstantiatedGenericParameter` guard.
+    pub(crate) instantiated_generic_method_args: Vec<TypeId>,
+    /// Original `strict_function_types` values saved while
+    /// `check_subtype_with_method_variance` temporarily enables bivariant
+    /// method parameters. Return-type comparisons consult this so method
+    /// bivariance does not leak into returned function types.
+    pub(crate) method_bivariance_strict_stack: Vec<bool>,
     /// Optional inheritance graph for O(1) nominal class subtype checking.
     /// When provided, enables fast nominal checks for class inheritance.
     pub inheritance_graph: Option<&'a crate::classes::inheritance::InheritanceGraph>,
@@ -219,6 +243,12 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// evaluated multiple times across different subtype checks.
     /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
     pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
+    /// Apparent object shapes for primitive wrapper fallback.
+    ///
+    /// Primitive structural subtype checks can ask for the same wrapper shape
+    /// thousands of times. Cache the shape once per checker so those
+    /// checks avoid rebuilding method signatures and property vectors.
+    pub(crate) apparent_primitive_shapes: [Option<Arc<ObjectShape>>; 5],
     /// Optional tracer for collecting subtype failure diagnostics.
     /// When `Some`, enables detailed failure reason collection for error messages.
     /// When `None`, disables tracing for maximum performance (default).
@@ -274,6 +304,10 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
             in_callback_param_check: false,
+            in_bivariant_callback_return_check: false,
+            force_strict_callback_param_variance: false,
+            instantiated_generic_method_args: Vec::new(),
+            method_bivariance_strict_stack: Vec::new(),
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
@@ -287,6 +321,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
+            apparent_primitive_shapes: std::array::from_fn(|_| None),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -316,6 +351,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
             in_callback_param_check: false,
+            in_bivariant_callback_return_check: false,
+            force_strict_callback_param_variance: false,
+            instantiated_generic_method_args: Vec::new(),
+            method_bivariance_strict_stack: Vec::new(),
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
@@ -329,6 +368,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
+            apparent_primitive_shapes: std::array::from_fn(|_| None),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -389,6 +429,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+
+    fn intersection_has_incompatible_target_property(
+        &mut self,
+        source_intersection: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(target_shape_id) = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))
+        else {
+            return false;
+        };
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let PropertyCollectionResult::Properties {
+            properties: source_props,
+            ..
+        } = collect_properties(source_intersection, self.interner, self.resolver)
+        else {
+            return false;
+        };
+
+        for target_prop in &target_shape.properties {
+            let Some(source_prop) = self.lookup_property(&source_props, None, target_prop.name)
+            else {
+                continue;
+            };
+
+            let saved_tracer = self.tracer.take();
+            let compatible =
+                self.check_property_compatibility(source_prop, target_prop, None, None);
+            self.tracer = saved_tracer;
+
+            if compatible.is_false() {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Reset per-check state so this checker can be reused for another subtype check.
@@ -482,6 +560,72 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    fn constrained_projection_for_template_source(&mut self, source: TypeId) -> Option<TypeId> {
+        let template_id = template_literal_id(self.interner, source)?;
+        let spans = self.interner.template_list(template_id);
+        let mut projected = Vec::with_capacity(spans.len());
+        let mut changed = false;
+
+        for span in spans.iter() {
+            match span {
+                TemplateSpan::Text(atom) => projected.push(TemplateSpan::Text(*atom)),
+                TemplateSpan::Type(type_id) => {
+                    let projected_type =
+                        self.constrained_projection_for_template_span_type(*type_id);
+                    changed |= projected_type != *type_id;
+                    projected.push(TemplateSpan::Type(projected_type));
+                }
+            }
+        }
+
+        if !changed {
+            return None;
+        }
+
+        let projected = self.interner.template_literal(projected);
+        Some(self.evaluate_type(projected))
+    }
+
+    fn constrained_projection_for_template_span_type(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(info) = type_param_info(self.interner, type_id)
+            && let Some(constraint) = info.constraint
+        {
+            return self.evaluate_type(constraint);
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::StringIntrinsic { kind, type_arg }) => {
+                let projected_arg = self.constrained_projection_for_template_span_type(type_arg);
+                if projected_arg != type_arg {
+                    return self.evaluate_type(self.interner.string_intrinsic(kind, projected_arg));
+                }
+                type_id
+            }
+            Some(TypeData::TemplateLiteral(template_id)) => {
+                let spans = self.interner.template_list(template_id);
+                let mut projected = Vec::with_capacity(spans.len());
+                let mut changed = false;
+                for span in spans.iter() {
+                    match span {
+                        TemplateSpan::Text(atom) => projected.push(TemplateSpan::Text(*atom)),
+                        TemplateSpan::Type(inner) => {
+                            let projected_inner =
+                                self.constrained_projection_for_template_span_type(*inner);
+                            changed |= projected_inner != *inner;
+                            projected.push(TemplateSpan::Type(projected_inner));
+                        }
+                    }
+                }
+                if changed {
+                    self.evaluate_type(self.interner.template_literal(projected))
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        }
+    }
+
     fn object_shape_def_id(&self, type_id: TypeId) -> Option<DefId> {
         let shape_id = object_shape_id(self.interner, type_id)
             .or_else(|| object_with_index_shape_id(self.interner, type_id))?;
@@ -497,6 +641,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .get_lazy_type_params(def_id)
             .is_some_and(|params| !params.is_empty());
         (!has_type_params).then_some(def_id)
+    }
+
+    pub(crate) fn readonly_array_application_base(&self, base: TypeId) -> bool {
+        match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => self.resolver.is_builtin_readonly_array_def(def_id),
+            Some(TypeData::UnresolvedTypeName(name)) => {
+                self.interner.resolve_atom_ref(name).as_ref() == "ReadonlyArray"
+            }
+            _ => self
+                .interner
+                .get_display_alias(base)
+                .is_some_and(|alias| self.readonly_array_application_base(alias)),
+        }
+    }
+
+    pub(crate) fn readonly_array_application_element(&self, type_id: TypeId) -> Option<TypeId> {
+        let app_id = application_id(self.interner, type_id)?;
+        let app = self.interner.type_application(app_id);
+        (app.args.len() == 1 && self.readonly_array_application_base(app.base))
+            .then_some(app.args[0])
+    }
+
+    pub(crate) fn readonly_array_syntax_element(&self, type_id: TypeId) -> Option<TypeId> {
+        let inner = readonly_inner_type(self.interner, type_id)?;
+        array_element_type(self.interner, inner)
+    }
+
+    pub(crate) fn type_contains_readonly_array_syntax(&self, type_id: TypeId) -> bool {
+        if self.readonly_array_syntax_element(type_id).is_some() {
+            return true;
+        }
+        union_list_id(self.interner, type_id).is_some_and(|members| {
+            self.interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.type_contains_readonly_array_syntax(member))
+        })
     }
 
     /// Inner subtype check (after cycle detection and type evaluation).
@@ -806,6 +987,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
+            if let Some(projected) = self.constrained_projection_for_template_source(source)
+                && projected != source
+                && self.check_subtype(projected, target).is_true()
+            {
+                return SubtypeResult::True;
+            }
+
             // Distributive intersection factoring:
             // S <: (A & S) | (B & S) is equivalent to S <: A | B
             let s_arc;
@@ -862,6 +1050,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // that distinguish between target union members, check each discriminant
             // value against the matching target members with a narrowed source.
             // See TypeScript's typeRelatedToDiscriminatedType.
+            if self
+                .type_related_to_discriminated_tuple_type(source, &member_list)
+                .is_true()
+            {
+                return SubtypeResult::True;
+            }
+
             if self
                 .type_related_to_discriminated_type(source, &member_list)
                 .is_true()
@@ -990,6 +1185,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // the weak-type generosity concern.
             let target_is_object_like = object_shape_id(self.interner, target).is_some()
                 || object_with_index_shape_id(self.interner, target).is_some();
+            let target_property_conflict = target_is_object_like
+                && self.intersection_has_incompatible_target_property(source, target);
             // Branded-primitive targets carry their brand properties on a
             // sibling weak object member (e.g., `string & { kind?: K }`).  When
             // the source is also an intersection that mixes a primitive with a
@@ -1035,6 +1232,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let saved_intersection_check = self.in_intersection_member_check;
             self.in_intersection_member_check = false;
             for &member in member_list.iter() {
+                if target_property_conflict {
+                    continue;
+                }
                 if target_is_object_like && type_param_info(self.interner, member).is_some() {
                     continue;
                 }
@@ -1968,6 +2168,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(s_inner, t_inner);
         }
 
+        // Lib lowering can preserve `ReadonlyArray<T>` as a generic application,
+        // while syntax lowering represents `readonly T[]` as ReadonlyType(Array<T>).
+        // They are the same readonly-array surface and should compare by element.
+        if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_application_element(source),
+            self.readonly_array_syntax_element(target),
+        ) {
+            return self.check_subtype(s_elem, t_elem);
+        }
+
+        if let (Some(s_elem), Some(t_elem)) = (
+            self.readonly_array_syntax_element(source),
+            self.readonly_array_application_element(target),
+        ) {
+            return self.check_subtype(s_elem, t_elem);
+        }
+
         // Readonly target peeling: T <: Readonly<U> if T <: U
         // A mutable type can always be treated as readonly (readonly is a supertype)
         // CRITICAL: Only peel if source is NOT Readonly. If source IS Readonly, we must
@@ -2121,13 +2338,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return SubtypeResult::True;
                     }
                 }
-                // Try the Array<T> interface for full structural comparison.
-                // This handles cases like: number[] <: { toString(): string }
-                if let Some(elem) = array_element_type(self.interner, source)
-                    && let Some(result) = self.check_array_interface_subtype(elem, target)
-                {
-                    return result;
-                }
                 // Check tuple elements against numeric target properties.
                 // In tsc, tuples have numeric properties ("0", "1", ...) that are
                 // structurally compatible with object types having those properties.
@@ -2152,6 +2362,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if all_satisfied {
                         return SubtypeResult::True;
                     }
+                }
+                // Try the Array<T> interface for full structural comparison.
+                // This handles cases like: number[] <: { toString(): string }
+                // and tuple rest inference against evaluated Array<T> constraints.
+                if let Some(elem) = array_element_type(self.interner, source).or_else(|| {
+                    crate::type_queries::get_tuple_element_type_union(self.interner, source)
+                }) && let Some(result) = self.check_array_interface_subtype(elem, target)
+                {
+                    return result;
                 }
                 // Trace: Array/tuple not compatible with object
                 if let Some(tracer) = &mut self.tracer
@@ -2206,8 +2425,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // Target has non-empty properties + index signature.
                 // Try the Array<T> interface for full structural comparison.
-                if let Some(elem) = array_element_type(self.interner, source)
-                    && let Some(result) = self.check_array_interface_subtype(elem, target)
+                if let Some(elem) = array_element_type(self.interner, source).or_else(|| {
+                    crate::type_queries::get_tuple_element_type_union(self.interner, source)
+                }) && let Some(result) = self.check_array_interface_subtype(elem, target)
                 {
                     return result;
                 }
@@ -2222,6 +2442,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 return SubtypeResult::False;
             }
+        }
+
+        if let Some(projected) = self.constrained_projection_for_template_source(source)
+            && projected != source
+            && self.check_subtype(projected, target).is_true()
+        {
+            return SubtypeResult::True;
         }
 
         // =======================================================================

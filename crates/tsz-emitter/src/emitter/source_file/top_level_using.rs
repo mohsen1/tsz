@@ -1106,13 +1106,31 @@ impl<'a> Printer<'a> {
         {
             emitted = stripped.to_string();
         }
+        // Default-exported decorated classes emitted *inside* a System
+        // top-level `using` block are threaded through a `_default`
+        // tracker variable that lives at the System closure scope. This
+        // applies to BOTH named classes (`@dec export default class C
+        // { }` → `exports_1("default", _default = C);`) and anonymous
+        // classes (`@dec export default class { }` →
+        // `exports_1("default", _default = default_1);`). Native
+        // `using` (ES2025+) skips the tracker since the export sits at
+        // module top level rather than inside a try/catch.
+        let local_expr = if export_name == "default"
+            && self.in_system_execute_body
+            && self.in_top_level_using_scope
+            && !self.ctx.options.target.supports_es2025()
+        {
+            format!("_default = {binding_name}")
+        } else {
+            binding_name.to_string()
+        };
         let export_stmt = if let Some(indent) = leading_indent.as_ref() {
             format!(
                 "{indent}{}",
-                self.top_level_using_export_binding_stmt(export_name, binding_name)
+                self.top_level_using_export_binding_stmt(export_name, &local_expr)
             )
         } else {
-            self.top_level_using_export_binding_stmt(export_name, binding_name)
+            self.top_level_using_export_binding_stmt(export_name, &local_expr)
         };
 
         if export_name == "default" {
@@ -1256,6 +1274,15 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
             self.write_export_binding_start("default");
+            // Inside a top-level System using-block, anonymous default
+            // classes thread through a `_default` tracker variable so
+            // the export call mirrors tsc's
+            // `exports_1("default", _default = default_1);` shape. Outside
+            // a using-block (or for non-anonymous classes) the binding
+            // name is the live binding and no tracker is needed.
+            if self.in_top_level_using_scope {
+                self.write("_default = ");
+            }
             self.write(&binding_name);
             self.write_export_binding_end();
             return true;
@@ -1381,6 +1408,13 @@ impl<'a> Printer<'a> {
                     }
                     self.write_line();
                     self.write_export_binding_start(export_name);
+                    // Inside a top-level using-block, the export must hop
+                    // through the closure's `_default` tracker so re-exports
+                    // observe the post-decorator value
+                    // (`exports_1("default", _default = default_1);`).
+                    if self.in_top_level_using_scope {
+                        self.write("_default = ");
+                    }
                     self.write(&binding_name);
                     self.write_export_binding_end();
                 } else if self.in_system_execute_body

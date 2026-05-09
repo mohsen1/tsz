@@ -1,5 +1,7 @@
 //! Tests for TS2693 (type-only as value) and TS2362/TS2363 (arithmetic operand errors)
 
+use crate::context::{CheckerOptions, ScriptTarget};
+
 #[test]
 fn test_interface_used_as_value() {
     let source = r"
@@ -147,6 +149,38 @@ const r5 = a % b;  // OK - number modulo
     assert_eq!(
         error_count, 0,
         "Expected no TS2362/TS2363 errors, got {error_count}"
+    );
+}
+
+#[test]
+fn test_for_of_unknown_expression_emits_ts18046() {
+    let source = r"
+declare const value: unknown;
+
+for (const item of value) {
+    item.foo;
+}
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 18046 && d.message_text.contains("'value' is of type 'unknown'")
+        }),
+        "Expected TS18046 for the for-of source expression, got {diags:?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.message_text.contains("'item' is of type 'unknown'")),
+        "Expected no cascaded TS18046 on the recovered loop variable, got {diags:?}"
     );
 }
 
@@ -497,11 +531,11 @@ Test(({ b = '5' } = {}));
 }
 
 #[test]
-fn test_unknown_property_access_emits_ts18046() {
+fn test_unknown_property_access_emits_ts18046_with_strict() {
     let source = r"
 function f(x: unknown) {
     x.foo;
-    x[10];
+    x['p'];
 }
 ";
     let diags = crate::test_utils::check_source_diagnostics(source);
@@ -516,6 +550,37 @@ function f(x: unknown) {
     assert_eq!(
         ts2339_count, 0,
         "Expected no TS2339 for unknown property access (should be TS18046), got {ts2339_count}"
+    );
+}
+
+#[test]
+fn test_unknown_property_access_emits_ts2339_and_ts7053_without_strict() {
+    let source = r"
+function f(x: unknown) {
+    x.foo;
+    x['p'];
+}
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts18046_count = diags.iter().filter(|d| d.code == 18046).count();
+    assert_eq!(ts18046_count, 0);
+    let ts2339_count = diags.iter().filter(|d| d.code == 2339).count();
+    assert!(
+        ts2339_count >= 1,
+        "Expected TS2339 for x.foo without strictNullChecks, got {ts2339_count}. Diagnostics: {diags:?}"
+    );
+    let ts7053_count = diags.iter().filter(|d| d.code == 7053).count();
+    assert!(
+        ts7053_count >= 1,
+        "Expected TS7053 for x['p'] without strictNullChecks, got {ts7053_count}. Diagnostics: {diags:?}"
     );
 }
 

@@ -379,11 +379,33 @@ impl<'a> CheckerState<'a> {
             if info.name.starts_with('#') {
                 continue;
             }
+            let base_type_for_member = if info.is_static {
+                base_static_type
+            } else {
+                base_instance_type
+            };
+            let base_prop_result = base_type_for_member.map(|base_type_id| {
+                self.resolve_property_access_with_env(base_type_id, &info.name)
+            });
+            // For intersections like `Protected & Protected2`, a property
+            // missing from every member can still resolve as `Success` with
+            // `type_id == never`. That's not an actual override — treat
+            // `never` as "no such member" so we don't emit a spurious
+            // TS2416 ("not assignable to ... 'never'"). tsc's heritage
+            // override check only fires when the base actually declares
+            // the property.
+            let member_exists_via_type = base_prop_result.is_some_and(|result| {
+                matches!(
+                    result,
+                    crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. }
+                        if type_id != TypeId::NEVER
+                )
+            });
             let member_exists_in_base = if info.is_static {
                 base_static_member_names.contains(&info.name)
             } else {
                 base_instance_member_names.contains(&info.name)
-            };
+            } || member_exists_via_type;
 
             if info.has_dynamic_name {
                 if info.has_override {
@@ -451,14 +473,27 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if !info.is_static
+                && info.is_accessor
+                && !info.is_method
+                && member_exists_in_base
+                && base_type_for_member.is_some()
+                && self.heritage_display_base_has_setter_only_accessor(base_class_name, &info.name)
+            {
+                self.error_at_node(
+                    info.name_idx,
+                    &format!(
+                        "'{}' is defined as a property in class '{}', but is overridden here in '{}' as an accessor.",
+                        info.name, base_class_name, derived_class_name
+                    ),
+                    diagnostic_codes::IS_DEFINED_AS_A_PROPERTY_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_ACCESSOR,
+                );
+                continue;
+            }
+
             // Check property type compatibility with base (TS2416)
             // Only check if the member actually exists in the base type —
             // otherwise there's no override to be incompatible with.
-            let base_type_for_member = if info.is_static {
-                base_static_type
-            } else {
-                base_instance_type
-            };
             if let Some(base_type_id) = base_type_for_member
                 && member_exists_in_base
             {
@@ -466,8 +501,9 @@ impl<'a> CheckerState<'a> {
                 // Skip if either type is ANY
                 if member_type != TypeId::ANY {
                     use crate::query_boundaries::common::PropertyAccessResult;
-                    let base_prop_result =
-                        self.resolve_property_access_with_env(base_type_id, &info.name);
+                    let base_prop_result = base_prop_result.unwrap_or_else(|| {
+                        self.resolve_property_access_with_env(base_type_id, &info.name)
+                    });
                     if let PropertyAccessResult::Success {
                         type_id: base_type, ..
                     } = base_prop_result
@@ -494,8 +530,10 @@ impl<'a> CheckerState<'a> {
 
                         if should_report {
                             if info.is_static {
+                                let error_idx =
+                                    class_data.name.into_option().unwrap_or(info.name_idx);
                                 self.error_at_node(
-                                    info.name_idx,
+                                    error_idx,
                                     &format!(
                                         "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
                                     ),
@@ -505,8 +543,12 @@ impl<'a> CheckerState<'a> {
                                 let member_type_str = self.format_type(member_type);
                                 let base_type_str = self.format_type(base_type);
                                 let display_name = format_property_name_for_diagnostic(&info.name);
-                                let base_class_display_name =
-                                    base_class_name_for_diagnostic(base_class_name);
+                                let base_class_display_name = self
+                                    .array_or_tuple_alias_target_text_for_name(base_class_name)
+                                    .map(Cow::Owned)
+                                    .unwrap_or_else(|| {
+                                        base_class_name_for_diagnostic(base_class_name)
+                                    });
                                 self.error_at_node(
                                     info.name_idx,
                                     &format!(
@@ -539,6 +581,91 @@ impl<'a> CheckerState<'a> {
         );
 
         self.pop_type_parameters(derived_type_param_updates);
+    }
+
+    fn heritage_display_base_has_setter_only_accessor(
+        &self,
+        base_class_name: &str,
+        member_name: &str,
+    ) -> bool {
+        base_class_name.split("typeof ").skip(1).any(|suffix| {
+            let ident = suffix
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<String>();
+            if ident.is_empty() {
+                return false;
+            }
+            let Some(sym_id) = self.ctx.binder.file_locals.get(&ident) else {
+                return false;
+            };
+            let (has_get_or_auto, has_set) =
+                self.class_symbol_member_accessor_shape(sym_id, member_name);
+            has_set && !has_get_or_auto
+        })
+    }
+
+    fn class_symbol_member_accessor_shape(
+        &self,
+        class_sym_id: tsz_binder::SymbolId,
+        member_name: &str,
+    ) -> (bool, bool) {
+        let Some(symbol) = self.get_symbol_globally(class_sym_id) else {
+            return (false, false);
+        };
+        let mut has_get_or_auto = false;
+        let mut has_set = false;
+        for &decl_idx in &symbol.declarations {
+            let Some(class_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+                continue;
+            };
+            for &member_idx in &class_data.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                match member_node.kind {
+                    syntax_kind_ext::PROPERTY_DECLARATION => {
+                        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        if self.has_accessor_modifier(&prop.modifiers)
+                            && self
+                                .get_property_name(prop.name)
+                                .is_some_and(|name| name == member_name)
+                        {
+                            has_get_or_auto = true;
+                        }
+                    }
+                    syntax_kind_ext::GET_ACCESSOR => {
+                        let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                            continue;
+                        };
+                        if self
+                            .get_property_name(accessor.name)
+                            .is_some_and(|name| name == member_name)
+                        {
+                            has_get_or_auto = true;
+                        }
+                    }
+                    syntax_kind_ext::SET_ACCESSOR => {
+                        let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                            continue;
+                        };
+                        if self
+                            .get_property_name(accessor.name)
+                            .is_some_and(|name| name == member_name)
+                        {
+                            has_set = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        (has_get_or_auto, has_set)
     }
 
     /// Report errors for members with `override` in a class that has no base class.
@@ -1345,14 +1472,6 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| {
                             self.intersection_instance_display_name(h_expr_idx, type_arguments)
                         })
-                        .or_else(|| {
-                            heritage_sym_id.and_then(|sym_id| {
-                                self.format_symbol_reference_with_type_arguments(
-                                    sym_id,
-                                    type_arguments,
-                                )
-                            })
-                        })
                         .unwrap_or_else(|| {
                             self.format_heritage_instance_display(
                                 instance_type,
@@ -1419,14 +1538,6 @@ impl<'a> CheckerState<'a> {
                         .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
                         .or_else(|| {
                             self.intersection_instance_display_name(h_expr_idx, type_arguments)
-                        })
-                        .or_else(|| {
-                            heritage_sym_id.and_then(|sym_id| {
-                                self.format_symbol_reference_with_type_arguments(
-                                    sym_id,
-                                    type_arguments,
-                                )
-                            })
                         })
                         .unwrap_or_else(|| {
                             self.format_heritage_instance_display(

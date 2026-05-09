@@ -203,6 +203,77 @@ class C {}
 }
 
 #[test]
+fn jsdoc_import_tag_binds_namespace_alias_split_across_continuation_lines() {
+    // Multi-line `@import` continuation: tsc accepts JSDoc imports whose
+    // clause is broken across the `@import`, namespace, and `from` lines.
+    // Without continuation merging the binder sees an empty rest on the
+    // `@import` line and silently fails to register `types`, which then
+    // surfaces as a TS2304 on every later `types.A` reference.
+    let source = r#"
+/**
+ * @import
+ * * as types
+ * from "./types"
+ */
+class C {}
+"#;
+    let mut parser = ParserState::new("b.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let ns_sym_id = binder
+        .file_locals
+        .get("types")
+        .expect("expected multi-line JSDoc namespace import alias to bind");
+    let ns_sym = binder
+        .symbols
+        .get(ns_sym_id)
+        .expect("expected symbol data for `types`");
+    assert_ne!(ns_sym.flags & symbol_flags::ALIAS, 0);
+    assert!(ns_sym.is_type_only);
+    assert_eq!(ns_sym.import_module.as_deref(), Some("./types"));
+    assert_eq!(ns_sym.import_name.as_deref(), Some("*"));
+}
+
+#[test]
+fn jsdoc_import_tag_binds_string_literal_export_names() {
+    let source = r#"
+/**
+ * @import { "a,b" as CommaName, "as" as AsName, "from" as FromName } from "./dep"
+ */
+class C {}
+"#;
+    let mut parser = ParserState::new("b.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    for (local_name, import_name) in [("CommaName", "a,b"), ("AsName", "as"), ("FromName", "from")]
+    {
+        let sym_id = binder
+            .file_locals
+            .get(local_name)
+            .unwrap_or_else(|| panic!("expected JSDoc import alias {local_name}"));
+        let symbol = binder
+            .symbols
+            .get(sym_id)
+            .unwrap_or_else(|| panic!("expected symbol data for {local_name}"));
+        assert_ne!(symbol.flags & symbol_flags::ALIAS, 0);
+        assert!(symbol.is_type_only);
+        assert_eq!(symbol.import_module.as_deref(), Some("./dep"));
+        assert_eq!(symbol.import_name.as_deref(), Some(import_name));
+    }
+
+    assert!(
+        !binder.file_locals.has("b\""),
+        "quoted names containing commas must not be split as separate imports"
+    );
+}
+
+#[test]
 fn export_as_namespace_records_current_file_namespace_metadata() {
     let source = r"
 export var x: number;
@@ -985,6 +1056,40 @@ function outer() {
     assert!(
         inner_symbol.flags & symbol_flags::FUNCTION != 0,
         "inner should have FUNCTION flag"
+    );
+}
+
+#[test]
+fn function_body_declarations_hoist_even_in_strict_es2015() {
+    // A function body's top-level block is the function scope for declaration
+    // hoisting. Nested blocks are block-scoped in ES2015 strict mode, but the
+    // direct function body is not a nested block.
+    let options = BinderOptions {
+        target: ScriptTarget::ES2015,
+        always_strict: true,
+    };
+    let (binder, _parser) = parse_and_bind_with_options(
+        r#"
+function outer() {
+    var clash;
+    function clash() {}
+}
+"#,
+        options,
+    );
+
+    let function_scope_clash = binder.scopes.iter().find_map(|scope| {
+        (scope.kind == ContainerKind::Function)
+            .then(|| scope.table.get("clash"))
+            .flatten()
+    });
+    let clash_sym = function_scope_clash
+        .and_then(|sym_id| binder.symbols.get(sym_id))
+        .expect("expected `clash` in the function scope");
+    assert!(
+        clash_sym.flags & symbol_flags::FUNCTION != 0,
+        "function-body declaration should hoist to the function scope, got flags {}",
+        clash_sym.flags
     );
 }
 
@@ -2243,6 +2348,49 @@ function foo() {}
     assert!(
         !binder.is_external_module,
         "plain script should not be an external module"
+    );
+}
+
+#[test]
+fn object_define_property_exports_make_js_file_external_module() {
+    for source in [
+        r#"
+const URL = 1;
+Object.defineProperty(exports, "value", { value: URL });
+"#,
+        r#"
+const Headers = 1;
+Object.defineProperty(module.exports, "value", { value: Headers });
+"#,
+    ] {
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        assert!(
+            binder.is_external_module,
+            "Object.defineProperty CommonJS export should make JS file module-scoped: {source}"
+        );
+    }
+}
+
+#[test]
+fn nested_commonjs_export_assignment_makes_js_file_external_module() {
+    let source = r#"
+const URL = 1;
+function publish() {
+    module.exports.value = URL;
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        binder.is_external_module,
+        "nested CommonJS export assignments should make checked JS files module-scoped"
     );
 }
 
@@ -5621,6 +5769,78 @@ interface Stable extends Extra { b: number }
     );
 }
 
+#[test]
+fn semantic_defs_namespace_then_interface_merge_promotes_to_interface() {
+    // When a Namespace declaration is followed by an Interface declaration
+    // with the same name, the merged kind must promote to Interface so that
+    // type-position references render as `B`, not `typeof B`.
+    let binder = bind_source(
+        "
+namespace B { export const x = 1; }
+interface B { name: string; }
+",
+    );
+    let sym_id = binder.file_locals.get("B").expect("expected B");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for B");
+    assert_eq!(entry.kind, super::SemanticDefKind::Interface);
+}
+
+#[test]
+fn semantic_defs_namespace_then_class_merge_promotes_to_class() {
+    let binder = bind_source(
+        "
+namespace C { export const helper = 1; }
+class C { method() {} }
+",
+    );
+    let sym_id = binder.file_locals.get("C").expect("expected C");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for C");
+    assert_eq!(entry.kind, super::SemanticDefKind::Class);
+}
+
+#[test]
+fn semantic_defs_namespace_then_type_alias_merge_promotes_to_type_alias() {
+    let binder = bind_source(
+        "
+namespace T { export const v = 1; }
+type T = string;
+",
+    );
+    let sym_id = binder.file_locals.get("T").expect("expected T");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for T");
+    assert_eq!(entry.kind, super::SemanticDefKind::TypeAlias);
+}
+
+#[test]
+fn semantic_defs_function_then_namespace_merge_keeps_function() {
+    // Function-namespace declaration merging is the namespace-on-callable
+    // pattern; the value side is the function. The kind-promotion rule
+    // only fires for type-side declarations (Interface/Class/TypeAlias/Enum)
+    // merging into a Namespace, so a Function entry must remain unchanged
+    // when a Namespace declaration merges in.
+    let binder = bind_source(
+        "
+function f() {}
+namespace f { export const helper = 1; }
+",
+    );
+    let sym_id = binder.file_locals.get("f").expect("expected f");
+    let entry = binder
+        .semantic_defs
+        .get(&sym_id)
+        .expect("expected semantic def for f");
+    assert_eq!(entry.kind, super::SemanticDefKind::Function);
+}
+
 // =============================================================================
 // BinderFileSummary tests
 // =============================================================================
@@ -6951,4 +7171,110 @@ class Qux {}
             "stable (pos, end) for {name} must match a node in the re-parsed arena"
         );
     }
+}
+
+// =============================================================================
+// BinderState round-trip (lib snapshot campaign)
+// =============================================================================
+
+/// Phase 1.5 (`PERFORMANCE_PLAN.md)`: `BinderState` must round-trip
+/// through serde with diagnostic-identical behaviour, otherwise the
+/// disk-backed lib cache would silently corrupt symbol resolution. The
+/// resolution caches (`resolved_export_cache`, `resolved_identifier_cache`)
+/// are `#[serde(skip)]` because they're regenerable; this test verifies
+/// the *non-cache* state — symbols, scopes, flow, declared modules —
+/// survives serialise → deserialise.
+///
+/// Uses `serde_json` for debuggability (the production lib snapshot
+/// pipeline will use a binary format, but JSON exercises the same serde
+/// derives).
+#[test]
+fn binder_state_round_trips_via_serde_json_preserves_symbols() {
+    let source = "
+interface Promise<T> {
+    then(): Promise<T>;
+}
+const greeting = \"hello world\";
+type Cache = { storedValue: number };
+declare module \"virtual:env\" {
+    export const VAL: string;
+}
+";
+    let mut parser = ParserState::new("snapshot_round_trip.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Capture pre-serialize state.
+    let original_file_locals_len = binder.file_locals.len();
+    let original_symbols_len = binder.symbols.len();
+    let original_declared_modules_len = binder.declared_modules.len();
+    let original_promise = binder.file_locals.get("Promise");
+    let original_greeting = binder.file_locals.get("greeting");
+    let original_cache = binder.file_locals.get("Cache");
+    assert!(
+        original_file_locals_len > 0,
+        "fixture must declare file locals"
+    );
+    assert!(original_promise.is_some(), "Promise must be bound");
+    assert!(original_greeting.is_some(), "greeting must be bound");
+    assert!(original_cache.is_some(), "Cache must be bound");
+
+    // Round-trip via JSON (binary format will be a separate PR).
+    let json = serde_json::to_string(&binder).expect("BinderState should serialize");
+    let restored: BinderState =
+        serde_json::from_str(&json).expect("BinderState should deserialize");
+
+    // Top-level lengths preserved.
+    assert_eq!(restored.file_locals.len(), original_file_locals_len);
+    assert_eq!(restored.symbols.len(), original_symbols_len);
+    assert_eq!(
+        restored.declared_modules.len(),
+        original_declared_modules_len
+    );
+
+    // Symbol IDs for the same names match (proves SymbolArena round-trips).
+    assert_eq!(restored.file_locals.get("Promise"), original_promise);
+    assert_eq!(restored.file_locals.get("greeting"), original_greeting);
+    assert_eq!(restored.file_locals.get("Cache"), original_cache);
+
+    // Declared modules survive (proves Arc<FxHashSet<String>> round-trips).
+    assert!(restored.declared_modules.contains("virtual:env"));
+
+    // Resolution caches start empty (they're #[serde(skip)] — confirms the
+    // cache invariant: lazy-rebuild from the binder's sources is safe).
+    assert!(
+        restored
+            .resolved_export_cache
+            .read()
+            .expect("RwLock should not be poisoned")
+            .is_empty(),
+        "resolved_export_cache must be empty after deserialize (regenerated lazily)"
+    );
+    assert!(
+        restored
+            .resolved_identifier_cache
+            .read()
+            .expect("RwLock should not be poisoned")
+            .is_empty(),
+        "resolved_identifier_cache must be empty after deserialize"
+    );
+}
+
+#[test]
+fn binder_state_round_trips_empty_program() {
+    let source = ";";
+    let mut parser = ParserState::new("empty.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let json = serde_json::to_string(&binder).expect("empty BinderState serializes");
+    let restored: BinderState =
+        serde_json::from_str(&json).expect("empty BinderState deserializes");
+
+    assert_eq!(restored.symbols.len(), binder.symbols.len());
+    assert_eq!(restored.file_locals.len(), binder.file_locals.len());
 }

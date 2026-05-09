@@ -15,15 +15,52 @@ use tsz_common::interner::Atom;
 
 // Import TypeDatabase trait
 use crate::caches::db::TypeDatabase;
+use std::cell::RefCell;
 
-/// Merge two visibility levels, returning the more restrictive one.
-///
-/// Ordering: Private > Protected > Public
+thread_local! {
+    static COLLECT_PROPERTIES_STACK: RefCell<Vec<TypeId>> = const { RefCell::new(Vec::new()) };
+}
+
+// Nested public collect_properties calls can reset TypeEvaluator-local guards while
+// resolving recursive mapped/indexed-access aliases. Track the active type stack
+// across collectors so recursive members are skipped the same way the collector's
+// local `seen` set skips them inside a single public call.
+const MAX_COLLECT_PROPERTIES_DEPTH: usize = 16_384;
+
+struct CollectPropertiesDepthGuard {
+    type_id: TypeId,
+}
+
+impl CollectPropertiesDepthGuard {
+    fn enter(type_id: TypeId) -> Option<Self> {
+        COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
+            if stack.len() >= MAX_COLLECT_PROPERTIES_DEPTH || stack.contains(&type_id) {
+                return None;
+            }
+            stack.push(type_id);
+            Some(Self { type_id })
+        })
+    }
+}
+
+impl Drop for CollectPropertiesDepthGuard {
+    fn drop(&mut self) {
+        COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
+            if stack.last().copied() == Some(self.type_id) {
+                stack.pop();
+            } else if let Some(pos) = stack.iter().rposition(|&active| active == self.type_id) {
+                stack.remove(pos);
+            }
+        });
+    }
+}
+
+/// Merge two visibility levels for an intersection property.
 const fn merge_visibility(a: Visibility, b: Visibility) -> Visibility {
     match (a, b) {
         (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
-        (Visibility::Protected, _) | (_, Visibility::Protected) => Visibility::Protected,
-        (Visibility::Public, Visibility::Public) => Visibility::Public,
+        (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+        (Visibility::Protected, Visibility::Protected) => Visibility::Protected,
     }
 }
 
@@ -63,7 +100,7 @@ pub enum PropertyCollectionResult {
 ///
 /// # Important
 /// - Call signatures are NOT collected (this is for properties only)
-/// - Mapped types are NOT handled (input should be pre-lowered/evaluated)
+/// - Mapped types are handled only when their property set can be reduced to finite keys
 /// - `any & T` always returns `Any` (commutative)
 pub fn collect_properties<R>(
     type_id: TypeId,
@@ -146,6 +183,9 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         if !self.seen.insert(type_id) {
             return;
         }
+        let Some(_depth_guard) = CollectPropertiesDepthGuard::enter(type_id) else {
+            return;
+        };
 
         // 1. Resolve Lazy/Ref
         let resolved = resolve_type(type_id, self.interner, self.resolver);
@@ -162,6 +202,9 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 let shape = self.interner.object_shape(shape_id);
                 self.merge_shape(&shape);
             }
+            Some(TypeData::Mapped(mapped_id)) => {
+                self.collect_finite_mapped_properties(mapped_id);
+            }
             // Any type in intersection makes everything Any (commutative)
             Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
                 self.found_any = true;
@@ -170,6 +213,20 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             Some(TypeData::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint {
                     self.collect(constraint);
+                }
+            }
+            Some(TypeData::Application(_)) => {
+                let mut evaluator = crate::evaluation::evaluate::TypeEvaluator::with_resolver(
+                    self.interner,
+                    self.resolver,
+                );
+                let evaluated = evaluator.evaluate(resolved);
+                if evaluated != resolved {
+                    self.collect(evaluated);
+                } else if let Some(expanded) = self.expand_application_with_resolver(resolved)
+                    && expanded != resolved
+                {
+                    self.collect(expanded);
                 }
             }
             // Conditional type: collect properties from its default constraint.
@@ -199,6 +256,114 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             _ => {
                 // Not an object or intersection - ignore (call signatures, primitives, etc.)
             }
+        }
+    }
+
+    fn expand_application_with_resolver(&self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+            return None;
+        };
+        let type_params = self.resolver.get_lazy_type_params(def_id)?;
+        let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        if body == type_id || type_params.is_empty() {
+            return None;
+        }
+
+        let substitution =
+            crate::TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+        let mut instantiated = crate::instantiate_type(self.interner, body, &substitution);
+        if crate::contains_this_type(self.interner, instantiated) {
+            instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
+        }
+        Some(instantiated)
+    }
+
+    fn collect_finite_mapped_properties(&mut self, mapped_id: crate::types::MappedTypeId) {
+        let Some(names) =
+            crate::type_queries::collect_finite_mapped_property_names(self.interner, mapped_id)
+        else {
+            return;
+        };
+
+        let mapped = self.interner.mapped_type(mapped_id);
+        let mut properties = Vec::with_capacity(names.len());
+
+        for name in names {
+            let name_text = self.interner.resolve_atom(name);
+            let Some(type_id) = crate::type_queries::get_finite_mapped_property_type(
+                self.interner,
+                mapped_id,
+                &name_text,
+            ) else {
+                continue;
+            };
+            let (optional, readonly) = self.finite_mapped_property_modifiers(&mapped, name);
+            properties.push(PropertyInfo {
+                name,
+                type_id,
+                write_type: type_id,
+                optional,
+                readonly,
+                visibility: Visibility::Public,
+                is_method: false,
+                is_class_prototype: false,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            });
+        }
+
+        let shape = ObjectShape {
+            flags: crate::types::ObjectFlags::empty(),
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        };
+        self.merge_shape(&shape);
+    }
+
+    fn finite_mapped_property_modifiers(
+        &self,
+        mapped: &crate::types::MappedType,
+        property_name: Atom,
+    ) -> (bool, bool) {
+        let source_modifiers = self.finite_mapped_source_property_modifiers(mapped, property_name);
+        let (source_optional, source_readonly) = source_modifiers.unwrap_or((false, false));
+        let is_homomorphic = source_modifiers.is_some();
+        crate::type_queries::compute_mapped_modifiers(
+            mapped,
+            is_homomorphic,
+            source_optional,
+            source_readonly,
+        )
+    }
+
+    fn finite_mapped_source_property_modifiers(
+        &self,
+        mapped: &crate::types::MappedType,
+        property_name: Atom,
+    ) -> Option<(bool, bool)> {
+        let (source_type, key_type) =
+            crate::type_queries::get_index_access_types(self.interner, mapped.template)?;
+        let key_param = crate::type_param_info(self.interner, key_type)?;
+        if key_param.name != mapped.type_param.name {
+            return None;
+        }
+
+        let resolved_source = resolve_type(source_type, self.interner, self.resolver);
+        match collect_properties(resolved_source, self.interner, self.resolver) {
+            PropertyCollectionResult::Properties { properties, .. } => {
+                PropertyInfo::find_in_slice(&properties, property_name)
+                    .map(|prop| (prop.optional, prop.readonly))
+            }
+            _ => None,
         }
     }
 
@@ -240,6 +405,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             let mut type_ids = vec![prop.type_id];
             let mut all_optional = prop.optional;
             let mut any_readonly = prop.readonly;
+            let mut visibility = prop.visibility;
 
             for member_result in member_props.iter().skip(1) {
                 match member_result {
@@ -249,6 +415,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                             type_ids.push(other_prop.type_id);
                             all_optional = all_optional && other_prop.optional;
                             any_readonly = any_readonly || other_prop.readonly;
+                            visibility = merge_visibility(visibility, other_prop.visibility);
                         } else {
                             present_in_all = false;
                             break;
@@ -286,12 +453,13 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         write_type: union_type,
                         optional: all_optional,
                         readonly: any_readonly,
-                        visibility: prop.visibility,
+                        visibility,
                         is_method: prop.is_method,
                         is_class_prototype: prop.is_class_prototype,
                         parent_id: prop.parent_id,
                         declaration_order: 0,
                         is_string_named: prop.is_string_named,
+                        is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                     });
                 }

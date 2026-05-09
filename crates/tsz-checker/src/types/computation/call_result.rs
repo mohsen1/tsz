@@ -5,11 +5,11 @@ use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{ParamInfo, TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -17,6 +17,7 @@ pub(super) struct CallResultContext<'a> {
     pub(super) args: &'a [NodeIndex],
     pub(super) arg_types: &'a [TypeId],
     pub(super) callee_type: TypeId,
+    pub(super) callee_has_declared_generic_signature: bool,
     pub(super) is_super_call: bool,
     pub(super) is_optional_chain: bool,
     pub(super) allow_contextual_mismatch_deferral: bool,
@@ -106,11 +107,350 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn polymorphic_this_indexed_conditional_target(
+        &mut self,
+        callee_type: TypeId,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        index: usize,
+    ) -> Option<TypeId> {
+        if args.len() < 3 || arg_types.len() < 3 {
+            return None;
+        }
+        if index != 2 {
+            return None;
+        }
+        if self
+            .ctx
+            .arena
+            .get(args[0])
+            .is_none_or(|node| node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16)
+        {
+            return None;
+        }
+
+        let shape = common::function_shape_for_type(self.ctx.types, callee_type)
+            .or_else(|| {
+                common::function_shape_for_type(
+                    self.ctx.types,
+                    self.evaluate_type_with_env(callee_type),
+                )
+            })
+            .or_else(|| {
+                common::callable_shape_for_type(self.ctx.types, callee_type)
+                    .and_then(|callable| callable.call_signatures.first().cloned())
+                    .map(|sig| {
+                        std::sync::Arc::new(tsz_solver::FunctionShape {
+                            type_params: sig.type_params,
+                            params: sig.params,
+                            this_type: sig.this_type,
+                            return_type: TypeId::UNKNOWN,
+                            type_predicate: sig.type_predicate,
+                            is_constructor: false,
+                            is_method: sig.is_method,
+                        })
+                    })
+            });
+        let shape = shape?;
+        if shape.type_params.len() < 2 || shape.params.len() < 3 {
+            return None;
+        }
+        let first_param = common::type_param_info(self.ctx.types, shape.params[0].type_id)?;
+        if first_param.name != shape.type_params[0].name {
+            return None;
+        }
+
+        let third_param = shape.params[2].type_id;
+        if !common::contains_type_parameters(self.ctx.types, third_param) {
+            return None;
+        }
+
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        substitution.insert(shape.type_params[0].name, self.ctx.types.this_type());
+        substitution.insert(shape.type_params[1].name, arg_types[1]);
+        let target = crate::query_boundaries::common::instantiate_type_preserving_meta(
+            self.ctx.types,
+            third_param,
+            &substitution,
+        );
+        if !common::contains_this_type(self.ctx.types, target) {
+            return None;
+        }
+        Some(target)
+    }
+
+    fn report_polymorphic_this_indexed_conditional_arg(
+        &mut self,
+        callee_type: TypeId,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+    ) -> bool {
+        let Some(target) =
+            self.polymorphic_this_indexed_conditional_target(callee_type, args, arg_types, 2)
+        else {
+            return false;
+        };
+        if self.is_assignable_to(arg_types[2], target) {
+            return false;
+        }
+        self.error_argument_not_assignable_preserving_param_display(arg_types[2], target, args[2]);
+        true
+    }
+
+    fn error_argument_not_assignable_preserving_param_display(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) {
+        if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
+            return;
+        }
+        if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
+            arg_type, param_type, arg_idx,
+        ) {
+            return;
+        }
+
+        let display_arg_type = common::widen_argument_type_for_display(self.ctx.types, arg_type);
+        let mut actual_display = self.format_type_diagnostic(display_arg_type);
+        if matches!(actual_display.as_str(), "true[]" | "false[]") {
+            actual_display = "boolean[]".to_string();
+        }
+        let mut target_display = self
+            .constrained_variadic_tuple_parameter_display(param_type, arg_type)
+            .or_else(|| {
+                self.underfilled_generic_variadic_tuple_parameter_display(param_type, arg_type)
+            })
+            .or_else(|| {
+                self.finite_mapped_parameter_display_type(param_type)
+                    .map(|display_type| self.format_type_for_assignability_message(display_type))
+            })
+            .unwrap_or_else(|| self.format_type_diagnostic(param_type));
+        if target_display.contains("Array<") {
+            target_display = Self::normalize_array_generic_to_shorthand(&target_display);
+        }
+        if let Some((generic_actual_display, generic_target_display)) =
+            self.generic_direct_primitive_mismatch_display(arg_type, param_type, arg_idx)
+        {
+            actual_display = generic_actual_display;
+            target_display = generic_target_display;
+        }
+        let message = format_message(
+            diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+            &[&actual_display, &target_display],
+        );
+        self.error_at_node(
+            arg_idx,
+            &message,
+            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+        );
+    }
+
+    fn finite_mapped_parameter_display_type(&mut self, param_type: TypeId) -> Option<TypeId> {
+        let mapped_id = common::mapped_type_id(self.ctx.types, param_type)?;
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+        let names = crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+            self.ctx.types,
+            mapped_id,
+        )?;
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort_by(|a, b| {
+            self.ctx
+                .types
+                .resolve_atom_ref(*a)
+                .cmp(&self.ctx.types.resolve_atom_ref(*b))
+        });
+
+        let mut properties = Vec::with_capacity(names.len());
+        for name in names {
+            let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
+            let type_id =
+                crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
+                    self.ctx.types,
+                    mapped_id,
+                    &property_name,
+                )?;
+            let mut property = tsz_solver::PropertyInfo::new(name, type_id);
+            property.optional = mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
+            property.readonly = mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+            properties.push(property);
+        }
+
+        Some(self.ctx.types.factory().object(properties))
+    }
+
     fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {
         crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
             self.ctx.types,
             callee_type,
         )
+    }
+
+    fn is_spread_argument_marker_type(&self, type_id: TypeId) -> bool {
+        common::is_spread_marker_tuple(self.ctx.types.as_type_database(), type_id)
+    }
+
+    fn literalized_aggregate_actual_for_call_args(
+        &mut self,
+        args: &[NodeIndex],
+        index: usize,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> Option<TypeId> {
+        let actual_elements = common::tuple_elements(self.ctx.types, actual)?;
+        let expanded_args = self.build_expanded_args_for_error(args);
+        if index > expanded_args.len() {
+            return None;
+        }
+        let rest_args = &expanded_args[index..];
+        if rest_args.len() != actual_elements.len() {
+            return None;
+        }
+
+        let mut changed = false;
+        let elements: Vec<_> = actual_elements
+            .into_iter()
+            .enumerate()
+            .zip(rest_args.iter().copied())
+            .map(|((actual_pos, element), arg_idx)| {
+                let expected_element = self.expected_tuple_element_for_aggregate_actual(
+                    expected,
+                    rest_args.len(),
+                    actual_pos,
+                );
+                let should_widen =
+                    expected_element.is_some_and(|ty| common::is_callable_type(self.ctx.types, ty));
+                let type_id = if should_widen {
+                    element.type_id
+                } else {
+                    self.literal_type_from_initializer(arg_idx)
+                        .inspect(|&literal_type| {
+                            changed |= literal_type != element.type_id;
+                        })
+                        .unwrap_or(element.type_id)
+                };
+                TupleElement {
+                    type_id,
+                    name: element.name,
+                    optional: element.optional,
+                    rest: element.rest,
+                }
+            })
+            .collect();
+
+        changed.then(|| self.ctx.types.tuple(elements))
+    }
+
+    fn expected_tuple_element_for_aggregate_actual(
+        &mut self,
+        expected: TypeId,
+        actual_len: usize,
+        actual_pos: usize,
+    ) -> Option<TypeId> {
+        let expected = self.evaluate_type_with_env(expected);
+        let expected = self.resolve_type_for_property_access(expected);
+        let expected = self.resolve_lazy_type(expected);
+        let expected = self.evaluate_application_type(expected);
+        let expected = common::unwrap_readonly(self.ctx.types, expected);
+        let elements = common::tuple_elements(self.ctx.types, expected)?;
+        let rest_index = elements.iter().position(|element| element.rest)?;
+        if actual_pos < rest_index {
+            return elements.get(actual_pos).map(|element| element.type_id);
+        }
+        let tail = &elements[rest_index + 1..];
+        if tail.is_empty() {
+            return None;
+        }
+        let tail_start = actual_len.saturating_sub(tail.len());
+        (actual_pos >= tail_start)
+            .then(|| {
+                tail.get(actual_pos - tail_start)
+                    .map(|element| element.type_id)
+            })
+            .flatten()
+    }
+
+    fn declared_rest_parameter_index_for_call(&self, callee_expr: NodeIndex) -> Option<usize> {
+        let callee_sym = self
+            .resolve_identifier_symbol(callee_expr)
+            .or_else(|| self.resolve_qualified_symbol(callee_expr))?;
+        let callee = self.ctx.binder.get_symbol(callee_sym)?;
+        callee.declarations.iter().copied().find_map(|decl_idx| {
+            let node = self.ctx.arena.get(decl_idx)?;
+            let func = self.ctx.arena.get_function(node)?;
+            func.parameters
+                .nodes
+                .iter()
+                .copied()
+                .enumerate()
+                .find_map(|(index, param_idx)| {
+                    let param_node = self.ctx.arena.get(param_idx)?;
+                    let param = self.ctx.arena.get_parameter(param_node)?;
+                    param.dot_dot_dot_token.then_some(index)
+                })
+        })
+    }
+
+    fn aggregate_actual_after_declared_rest_start(
+        &mut self,
+        actual: TypeId,
+        index: usize,
+        declared_rest_index: usize,
+    ) -> Option<TypeId> {
+        if declared_rest_index <= index {
+            return None;
+        }
+        let drop_count = declared_rest_index - index;
+        let elements = common::tuple_elements(self.ctx.types, actual)?;
+        if drop_count > elements.len() {
+            return None;
+        }
+        Some(self.ctx.types.tuple(elements[drop_count..].to_vec()))
+    }
+
+    fn spread_rest_tuple_diagnostic_types(
+        &mut self,
+        arg_idx: NodeIndex,
+        expected: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        let arg_node = self.ctx.arena.get(arg_idx)?;
+        if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+            return None;
+        }
+        let spread = self.ctx.arena.get_spread(arg_node)?;
+        let mut spread_type = self.get_type_of_node(spread.expression);
+        spread_type = self.resolve_type_for_property_access(spread_type);
+        spread_type = self.resolve_lazy_type(spread_type);
+        spread_type = self.evaluate_application_type(spread_type);
+        common::array_element_type(self.ctx.types, spread_type)?;
+
+        let mut callback_shape =
+            (*common::function_shape_for_type(self.ctx.types, expected)?).clone();
+        let last_param = callback_shape.params.last_mut()?;
+        if !last_param.rest {
+            return None;
+        }
+        *last_param = ParamInfo {
+            type_id: spread_type,
+            ..*last_param
+        };
+        let callback_type = self.ctx.types.factory().function(callback_shape);
+        let expected_tuple = self.ctx.types.tuple(vec![
+            TupleElement {
+                type_id: spread_type,
+                name: None,
+                optional: false,
+                rest: true,
+            },
+            TupleElement {
+                type_id: callback_type,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        Some((spread_type, expected_tuple))
     }
 
     fn should_attempt_deferred_literal_elaboration(&mut self, expected: TypeId) -> bool {
@@ -148,11 +488,24 @@ impl<'a> CheckerState<'a> {
 
     fn preferred_literal_expected_for_mismatch(
         &self,
+        callee_has_declared_generic_signature: bool,
         arg_types: &[TypeId],
+        args: &[NodeIndex],
+        actual: TypeId,
         mismatch_index: usize,
         expected: TypeId,
     ) -> TypeId {
+        if common::contains_type_parameters(self.ctx.types, expected) {
+            return expected;
+        }
         if common::literal_value(self.ctx.types, expected).is_some() {
+            return expected;
+        }
+        let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
+        if !common::is_primitive_type(self.ctx.types, actual_display_type) {
+            return expected;
+        }
+        if !callee_has_declared_generic_signature {
             return expected;
         }
         arg_types
@@ -163,6 +516,16 @@ impl<'a> CheckerState<'a> {
             .find(|&candidate| {
                 common::literal_value(self.ctx.types, candidate).is_some()
                     && common::widen_literal_type(self.ctx.types, candidate) == expected
+            })
+            .or_else(|| {
+                args.iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(idx, _)| *idx != mismatch_index)
+                    .filter_map(|(_, arg_idx)| self.literal_type_from_initializer(arg_idx))
+                    .find(|&candidate| {
+                        common::widen_literal_type(self.ctx.types, candidate) == expected
+                    })
             })
             .unwrap_or(expected)
     }
@@ -263,6 +626,7 @@ impl<'a> CheckerState<'a> {
             args,
             arg_types,
             callee_type,
+            callee_has_declared_generic_signature,
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,
@@ -273,11 +637,13 @@ impl<'a> CheckerState<'a> {
                 if is_super_call {
                     return TypeId::VOID;
                 }
+                self.report_polymorphic_this_indexed_conditional_arg(callee_type, args, arg_types);
                 let return_type = self.normalized_builtin_object_entries_return_type(
                     callee_expr,
                     arg_types,
                     return_type,
                 );
+
                 self.finalize_call_return_like_success(
                     callee_expr,
                     arg_types,
@@ -458,8 +824,9 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ERROR;
                 }
-
-                let arg_idx = self.map_expanded_arg_index_to_original(args, index);
+                let arg_idx = self
+                    .map_expanded_arg_index_to_original(args, index)
+                    .map(|arg_idx| self.ctx.arena.skip_parenthesized(arg_idx));
                 let mismatch_is_spread_arg = arg_idx.is_some_and(|arg_idx| {
                     self.ctx
                         .arena
@@ -479,18 +846,76 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                 }
-                let reported_actual = match arg_types.get(index).copied() {
+                let aggregate_literal_actual = if self
+                    .format_type_diagnostic(expected)
+                    .contains("<unknown>")
+                {
+                    None
+                } else {
+                    self.literalized_aggregate_actual_for_call_args(args, index, actual, expected)
+                };
+                let original_is_spread_marker = arg_types.get(index).is_some_and(|&ty| {
+                    common::is_spread_marker_tuple(self.ctx.types.as_type_database(), ty)
+                });
+                let aggregate_rest_mismatch = (common::tuple_elements(self.ctx.types, actual)
+                    .is_some()
+                    || original_is_spread_marker)
+                    && arg_types
+                        .get(index)
+                        .copied()
+                        .is_none_or(|original| original != actual);
+                let mut reported_actual = match arg_types.get(index).copied() {
                     Some(TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) | None => actual,
+                    Some(original) if self.is_spread_argument_marker_type(original) => actual,
+                    Some(original)
+                        if original != actual
+                            && common::tuple_elements(self.ctx.types, actual).is_some() =>
+                    {
+                        aggregate_literal_actual.unwrap_or(actual)
+                    }
                     Some(original) => original,
                 };
-                let reported_expected = self
-                    .generic_callable_mismatch_display_target(actual, expected)
-                    .unwrap_or(expected);
-                let reported_expected = self.preferred_literal_expected_for_mismatch(
+                let aggregate_anchor_override = if aggregate_rest_mismatch {
+                    self.declared_rest_parameter_index_for_call(callee_expr)
+                        .and_then(|rest_index| {
+                            self.aggregate_actual_after_declared_rest_start(
+                                reported_actual,
+                                index,
+                                rest_index,
+                            )
+                            .map(|adjusted| {
+                                reported_actual = adjusted;
+                                args.get(rest_index).copied().unwrap_or(call_idx)
+                            })
+                        })
+                } else {
+                    None
+                };
+                let polymorphic_this_expected = self.polymorphic_this_indexed_conditional_target(
+                    callee_type,
+                    args,
                     arg_types,
                     index,
-                    reported_expected,
                 );
+                let preserve_type_parameter_expected_display =
+                    common::contains_type_parameters(self.ctx.types, expected);
+                let reported_expected = if let Some(expected) = polymorphic_this_expected {
+                    expected
+                } else if common::contains_this_type(self.ctx.types, expected) {
+                    expected
+                } else {
+                    let reported_expected = self
+                        .generic_callable_mismatch_display_target(actual, expected)
+                        .unwrap_or(expected);
+                    self.preferred_literal_expected_for_mismatch(
+                        callee_has_declared_generic_signature,
+                        arg_types,
+                        args,
+                        reported_actual,
+                        index,
+                        reported_expected,
+                    )
+                };
                 let mut elaborated = false;
                 let should_try_deferred_elaboration = self
                     .should_attempt_deferred_literal_elaboration(expected)
@@ -609,8 +1034,33 @@ impl<'a> CheckerState<'a> {
                         actual,
                     );
                     if !suppress_weak && !elaborated {
-                        if prefer_argument_level_return_mismatch {
+                        let spread_rest_tuple_display = (!aggregate_rest_mismatch)
+                            .then(|| {
+                                self.spread_rest_tuple_diagnostic_types(arg_idx, reported_expected)
+                            })
+                            .flatten();
+                        if let Some(polymorphic_this_expected) = polymorphic_this_expected {
+                            self.error_argument_not_assignable_preserving_param_display(
+                                reported_actual,
+                                polymorphic_this_expected,
+                                arg_idx,
+                            );
+                        } else if let Some((spread_actual, spread_expected)) =
+                            spread_rest_tuple_display
+                        {
                             self.error_argument_not_assignable_at(
+                                spread_actual,
+                                spread_expected,
+                                arg_idx,
+                            );
+                        } else if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                aggregate_anchor_override.unwrap_or(arg_idx),
+                            );
+                        } else if preserve_type_parameter_expected_display {
+                            self.error_argument_not_assignable_preserving_param_display(
                                 reported_actual,
                                 reported_expected,
                                 arg_idx,
@@ -620,6 +1070,49 @@ impl<'a> CheckerState<'a> {
                                 reported_actual,
                                 reported_expected,
                                 arg_idx,
+                            );
+                        }
+                    }
+                } else if index >= arg_types.len() {
+                    if should_try_deferred_elaboration
+                        && !self.should_suppress_weak_key_arg_mismatch(
+                            callee_expr,
+                            args,
+                            index,
+                            actual,
+                        )
+                        && let Some(last_arg) = args.last().copied()
+                    {
+                        elaborated = self.try_elaborate_object_literal_arg_error_with_source(
+                            last_arg,
+                            expected,
+                            Some(actual),
+                        );
+                    }
+                    if !elaborated
+                        && allow_contextual_mismatch_deferral
+                        && self.should_defer_contextual_argument_mismatch(actual, expected)
+                    {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
+                    if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
+                        && !elaborated
+                    {
+                        if aggregate_rest_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                aggregate_anchor_override.unwrap_or(call_idx),
+                            );
+                        } else {
+                            let _ = self.check_argument_assignable_or_report(
+                                reported_actual,
+                                reported_expected,
+                                call_idx,
                             );
                         }
                     }
@@ -652,11 +1145,19 @@ impl<'a> CheckerState<'a> {
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                         && !elaborated
                     {
-                        let _ = self.check_argument_assignable_or_report(
-                            reported_actual,
-                            reported_expected,
-                            last_arg,
-                        );
+                        if aggregate_rest_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                aggregate_anchor_override.unwrap_or(last_arg),
+                            );
+                        } else {
+                            let _ = self.check_argument_assignable_or_report(
+                                reported_actual,
+                                reported_expected,
+                                last_arg,
+                            );
+                        }
                     }
                 } else {
                     if allow_contextual_mismatch_deferral
@@ -668,11 +1169,19 @@ impl<'a> CheckerState<'a> {
                             TypeId::ERROR
                         };
                     }
-                    let _ = self.check_argument_assignable_or_report(
-                        reported_actual,
-                        reported_expected,
-                        call_idx,
-                    );
+                    if aggregate_rest_mismatch {
+                        self.error_argument_not_assignable_at(
+                            reported_actual,
+                            reported_expected,
+                            aggregate_anchor_override.unwrap_or(call_idx),
+                        );
+                    } else {
+                        let _ = self.check_argument_assignable_or_report(
+                            reported_actual,
+                            reported_expected,
+                            call_idx,
+                        );
+                    }
                 }
 
                 if self.is_generic_callable_against_nongeneric_target(actual, expected) {
@@ -719,6 +1228,7 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
                 ..
             } => {
+                self.ctx.no_overload_call_nodes.insert(call_idx.0);
                 let overload_failures_disagree = failures.len() > 1
                     && failures.windows(2).any(|pair| {
                         pair[0].code != pair[1].code
@@ -819,6 +1329,9 @@ impl<'a> CheckerState<'a> {
         if self.call_target_generic_rest_requires_fixed_arity_error(actual, expected) {
             return false;
         }
+        if common::contains_this_type(self.ctx.types, expected) {
+            return false;
+        }
         // When both types are Applications of the same base (e.g., F<CP> vs F<unknown>),
         // the mismatch comes from variance checking, not from contextual typing.
         // Don't defer — the variance rejection is definitive. This matches tsc which
@@ -869,10 +1382,17 @@ impl<'a> CheckerState<'a> {
             has_construct_signatures(self, actual) && has_construct_signatures(self, expected);
         let constructor_generic_mismatch = constructor_mismatch
             && (actual_has_generic_signatures || expected_has_generic_signatures);
-        if assign_query::contains_infer_types(self.ctx.types, actual)
-            || assign_query::contains_infer_types(self.ctx.types, expected)
-        {
-            return true;
+        let actual_contains_infer = assign_query::contains_infer_types(self.ctx.types, actual);
+        let expected_contains_infer = assign_query::contains_infer_types(self.ctx.types, expected);
+        if actual_contains_infer || expected_contains_infer {
+            let evaluated_actual = self.evaluate_type_with_env(actual);
+            let evaluated_expected = self.evaluate_type_with_env(expected);
+            let evaluated_still_has_holes =
+                assign_query::contains_infer_types(self.ctx.types, evaluated_actual)
+                    || assign_query::contains_infer_types(self.ctx.types, evaluated_expected)
+                    || assign_query::contains_type_parameters(self.ctx.types, evaluated_actual)
+                    || assign_query::contains_type_parameters(self.ctx.types, evaluated_expected);
+            return evaluated_still_has_holes;
         }
         if callable_mismatch {
             let refined_actual = if self
@@ -911,6 +1431,23 @@ impl<'a> CheckerState<'a> {
                     assign_query::contains_infer_types(self.ctx.types, refined_actual)
                         || assign_query::contains_type_parameters(self.ctx.types, refined_actual);
                 if !actual_has_holes {
+                    return true;
+                }
+                let actual_type_params: rustc_hash::FxHashSet<_> =
+                    common::collect_referenced_types(self.ctx.types, refined_actual)
+                        .into_iter()
+                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
+                        .collect();
+                let expected_type_params: rustc_hash::FxHashSet<_> =
+                    common::collect_referenced_types(self.ctx.types, refined_expected)
+                        .into_iter()
+                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
+                        .collect();
+                if !actual_type_params.is_empty()
+                    && actual_type_params
+                        .iter()
+                        .all(|ty| expected_type_params.contains(ty))
+                {
                     return true;
                 }
             }
@@ -978,11 +1515,18 @@ impl<'a> CheckerState<'a> {
 
         let db = self.ctx.types;
 
-        // Extract the base DefId from an Application type (e.g., A<T> -> DefId_A)
+        // Extract the base DefId from a class Application type (e.g., A<T> -> DefId_A).
+        // Type aliases such as Partial<T> remain transparent enough for deferred
+        // assignability; only nominal class bases make the rejection permanent.
         let base_def = |ty: TypeId| -> Option<tsz_solver::DefId> {
             let app_id = application_id(db, ty)?;
             let app = db.type_application(app_id);
-            lazy_def_id(db, app.base)
+            let def_id = lazy_def_id(db, app.base)?;
+            matches!(
+                tsz_solver::TypeResolver::get_def_kind(&self.ctx, def_id),
+                Some(tsz_solver::def::DefKind::Class)
+            )
+            .then_some(def_id)
         };
 
         let actual_def = base_def(actual);

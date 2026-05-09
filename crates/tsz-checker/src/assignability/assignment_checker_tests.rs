@@ -10,6 +10,8 @@ use crate::test_utils::{check_js_source_diagnostics, check_source};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 
+mod assignment_checker_typebox_tests;
+
 fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
 }
@@ -591,6 +593,134 @@ const foo: Union = {
 }
 
 #[test]
+fn discriminated_union_object_literal_expands_literal_alias_property_target() {
+    let source = r#"
+interface LinearAxis { type: "linear"; }
+interface CategoricalAxis { type: "categorical"; }
+
+type Axis = LinearAxis | CategoricalAxis;
+type AxisType = "linear" | "categorical";
+
+const objectTarget: Axis = { type: undefined };
+const directTarget: AxisType = undefined;
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected object-property and direct-alias TS2322 diagnostics, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type 'undefined' is not assignable to type '\"linear\" | \"categorical\"'."
+        )),
+        "object literal property diagnostic should expand the contextual literal-union alias, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'undefined' is not assignable to type 'AxisType'.")),
+        "direct alias annotation diagnostic should keep the alias display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn discriminated_tuple_union_accepts_literal_union_tuple_elements() {
+    let source = r#"
+type A = ["a", number] | ["b", number] | ["c", string];
+declare const value: ["a" | "b", 1] | ["c", ""];
+
+const ok: A = value;
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "tuple discriminant assignment should not emit TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nondiscriminated_union_object_literal_reports_whole_object_mismatch() {
+    let source = r#"
+declare var str: string;
+declare var num: number;
+var strOrNumber: string | number = str || num;
+
+const value: { prop: string; anotherP: string } | { prop: number } = {
+    prop: strOrNumber
+};
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one whole-object TS2322, got: {diagnostics:?}"
+    );
+
+    let diag = ts2322[0];
+    let value_start = source.find("value").expect("expected variable name") as u32;
+    let prop_start = source.rfind("prop: strOrNumber").expect("expected prop") as u32;
+    assert_eq!(
+        diag.start, value_start,
+        "non-discriminated union failure should stay on the assignment target, got: {diag:?}"
+    );
+    assert_ne!(
+        diag.start, prop_start,
+        "non-discriminated union failure should not elaborate to the property"
+    );
+    assert!(
+        diag.message_text.contains("Type '{ prop: string | number; }' is not assignable to type '{ prop: string; anotherP: string; } | { prop: number; }'."),
+        "whole-object TS2322 should display the object literal against the union, got: {diag:?}"
+    );
+}
+
+#[test]
+fn nondiscriminated_union_function_property_elaborates_to_property_type() {
+    let source = r#"
+interface IString {
+    common(a: string, b: number): string;
+}
+interface INumber {
+    common(a: string, b: number): number;
+}
+declare var strOrNumber: string | number;
+
+const value: IString | INumber = {
+    common: (a, b) => strOrNumber,
+};
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one property-level TS2322, got: {diagnostics:?}"
+    );
+
+    let diag = ts2322[0];
+    let common_start = source.rfind("common").expect("expected property name") as u32;
+    let value_start = source.rfind("value").expect("expected variable name") as u32;
+    assert_eq!(
+        diag.start, common_start,
+        "function-valued union property should elaborate to the property name, got: {diag:?}"
+    );
+    assert_ne!(
+        diag.start, value_start,
+        "function-valued union property should not stay on the whole assignment"
+    );
+    assert!(
+        diag.message_text.contains("Type '(a: string, b: number) => string | number' is not assignable to type '((a: string, b: number) => string) | ((a: string, b: number) => number)'."),
+        "property-level TS2322 should display the function against the unioned function property, got: {diag:?}"
+    );
+}
+
+#[test]
 fn numeric_property_assignment_reports_nested_value_mismatch() {
     let source = r#"
 interface A {
@@ -674,6 +804,32 @@ let foo: Record<E, any> = {};
 }
 
 #[test]
+fn mapped_type_assertion_source_preserves_alias_display() {
+    let source = r#"
+type HomomorphicMappedType<T> = { [P in keyof T]: T[P] extends string ? boolean : null };
+
+function test<T extends [number] | readonly [string]>() {
+    const arr: any[] = [] as HomomorphicMappedType<T>;
+}
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for readonly tuple mapped type assertion");
+    assert!(
+        diag.message_text
+            .contains("Type 'HomomorphicMappedType<T>' is not assignable to type 'any[]'."),
+        "TS2322 should preserve the mapped alias assertion display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("[T[0] extends string"),
+        "TS2322 should not expand the mapped alias assertion to its tuple body, got: {diag:?}"
+    );
+}
+
+#[test]
 fn function_expression_assignment_reports_outer_signature_mismatch() {
     let source = r#"
 interface T {
@@ -734,6 +890,69 @@ let tup: [number, number, number] = [1, 2, 3, "string"];
             .message_text
             .contains("Type 'string' is not assignable to type 'number'"),
         "tuple arity mismatch should not collapse to the extra element mismatch, got: {diag:?}"
+    );
+}
+
+#[test]
+fn array_literal_tuple_assignment_ignores_later_tuple_length_alias_display() {
+    let source = r#"
+let tup: [number, string];
+tup = [1];
+type B = Pick<[number], "length">;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    assert!(
+        diag.message_text
+            .contains("Type '[number]' is not assignable to type '[number, string]'."),
+        "TS2322 should display the array literal source as a tuple, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Type 'B' is not assignable"),
+        "later tuple-length aliases must not repaint array literal source display, got: {diag:?}"
+    );
+}
+
+#[test]
+fn tuple_spread_assignment_satisfies_numeric_object_properties() {
+    let source = r#"
+var temp2: [number[], string[]] = [[1, 2, 3], ["hello", "string"]];
+
+interface TupLike {
+    0: number[] | string[];
+    1: number[] | string[];
+}
+
+var c0: TupLike = [...temp2];
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2739),
+        "tuple spreads should satisfy numeric object properties without TS2739: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "tuple spread assignment should match tsc without extra diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn optional_tuple_length_assignment_accepts_minimum_length_literal() {
+    let source = r#"
+declare const tuple: [number?];
+tuple.length = 0;
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2322),
+        "`[number?]` length should be `0 | 1`, so assigning 0 must not emit TS2322: {diagnostics:?}"
     );
 }
 
@@ -887,6 +1106,95 @@ fn generic_conditional_type_alias_stays_deferred() {
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn deferred_conditional_target_assignability_fingerprints() {
+    let source = r#"
+type Distributive<T> = T extends { a: number } ? { a: number } : { b: number };
+
+function f2<T>(t1: { x: T; y: T }, t2: T extends T ? { x: T; y: T } : never) {
+    t1 = t2;
+    t2 = t1;
+}
+
+function testAssignabilityToConditionalType<T>() {
+    const o = { a: 1, b: 2 };
+    const o2: [T] extends [[infer U]] ? U : { b: number } = o;
+    const o6: Distributive<[T] extends [never] ? { a: number } : never> = o;
+}
+
+type InferBecauseWhyNot<T> = [T] extends [(p: infer P1) => any] ? P1 | T : never;
+function f3<Q extends (arg: any) => any>(x: Q): InferBecauseWhyNot<Q> {
+    return x;
+}
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("T extends T ? { x: T; y: T; } : never")),
+        "expected TS2322 for assigning into deferred `T extends T` target, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("[T] extends [[infer U]] ? U : { b: number; }")),
+        "expected TS2322 for nested-infer conditional target, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("InferBecauseWhyNot<Q>")),
+        "expected TS2322 for tuple-wrapped infer return target, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|msg| !msg.contains("Distributive<[T] extends [never]")),
+        "should not report the `o6` distributive-never case, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_call_with_this_indexed_conditional_parameter_reports_ts2345() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Wrapped<T> = { ___secret: T };
+type Unwrap<T> = T extends Wrapped<infer U> ? U : T;
+declare function set<T, K extends keyof T>(obj: T, key: K, value: Unwrap<T[K]>): Unwrap<T[K]>;
+
+class Foo {
+    prop!: Wrapped<string>;
+    method() {
+        set(this, "prop", "hi");
+    }
+}
+
+set(new Foo(), "prop", "hi");
+"#,
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected only the class-method call to report TS2345, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains("Unwrap<this[\"prop\"]>"),
+        "expected polymorphic this indexed-access target, got: {ts2345:?}"
     );
 }
 
@@ -1359,7 +1667,7 @@ fn js_constructor_property_with_logical_or_is_declaration() {
     // Pattern: `X.Y = X.Y || function() {}` — tsc treats this as a
     // declaration (AssignmentDeclarationKind.Property), not a regular
     // assignment. No TS2322 should be emitted.
-    let diagnostics = check_js_source_diagnostics(
+    let diagnostics = check_source(
         r#"
 var test = {};
 test.K = test.K ||
@@ -1368,7 +1676,15 @@ test.K = test.K ||
 test.K.prototype = {
     add() {}
 };
+
+new test.K().add;
 "#,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
     );
 
     assert!(
@@ -1376,23 +1692,45 @@ test.K.prototype = {
         "JS lazy constructor initialization `X.Y = X.Y || function() {{}}` \
          should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
     );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2351 && d.code != 7009),
+        "JS lazy constructor initialization `X.Y = X.Y || function() {{}}` \
+         should keep the property constructable, got: {diagnostics:?}"
+    );
 }
 
 #[test]
 fn js_constructor_property_with_nullish_coalescing_is_declaration() {
     // Pattern: `X.Y = X.Y ?? function() {}` — same as above but with `??`.
-    let diagnostics = check_js_source_diagnostics(
+    let diagnostics = check_source(
         r#"
 var test = {};
 test.K = test.K ??
     function () {}
+
+test.K.prototype = {
+    add() {}
+};
+
+new test.K();
 "#,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
     );
 
     assert!(
         diagnostics.iter().all(|d| d.code != 2322),
         "JS lazy constructor initialization `X.Y = X.Y ?? function() {{}}` \
          should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2351 && d.code != 7009),
+        "JS lazy constructor initialization `X.Y = X.Y ?? function() {{}}` \
+         should keep the property constructable, got: {diagnostics:?}"
     );
 }
 
@@ -1470,18 +1808,6 @@ function f() {
     );
 }
 
-// Regression: TS2322 must fire when a bare type parameter is assigned to a
-// template-literal pattern referencing the same type parameter.
-//
-// `tsc` reports TS2322 here because ``${T}`` is an opaque pattern type;
-// `T`'s instantiation could be a literal subtype that does not structurally
-// match the template, so the assignment is not statically sound. Without the
-// template-literal carve-out in `should_suppress_assignability_diagnostic`,
-// the generic "complex type" suppression would silently accept it because
-// ``${T}`` "contains" T but is not itself a type parameter.
-///
-/// Repros the missing fingerprint at
-/// `templateLiteralTypes5.ts(14,11)`.
 #[test]
 fn type_parameter_to_template_literal_of_self_emits_ts2322() {
     let source = r#"
@@ -1507,6 +1833,31 @@ function f<T extends "a" | "b">(x: T) {
     assert_eq!(
         lhs_diag.start, test1_start,
         "TS2322 should anchor at the variable declaration name (test1)"
+    );
+}
+
+#[test]
+fn string_intrinsic_type_parameter_variance_emits_ts2322() {
+    let diags = diagnostics_for(
+        r#"
+function foo<T extends string, U extends T>(x: Uppercase<T>, y: Uppercase<U>) {
+    x = y;
+    y = x;
+}
+"#,
+    );
+
+    let ts2322s: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322s.len(),
+        1,
+        "expected only `Uppercase<T> -> Uppercase<U>` to be rejected; got: {diags:?}"
+    );
+    assert!(
+        ts2322s[0]
+            .message_text
+            .contains("Type 'Uppercase<T>' is not assignable to type 'Uppercase<U>'."),
+        "expected intrinsic variance diagnostic to preserve generic intrinsic display; got: {ts2322s:?}"
     );
 }
 
@@ -1609,5 +1960,35 @@ function f({ show: showRename = v => v }: Show) {}
         diag.message_text.contains("'number'") && diag.message_text.contains("'string'"),
         "TS2322 should describe the body return-type mismatch (number vs string), got: {:?}",
         diag.message_text
+    );
+}
+
+#[test]
+fn recursive_mapped_alias_application_display_stays_at_application() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Id2<T> = { [K in keyof T]: Id2<Id2<T[K]>> };
+type Foo3 = Id2<{ x: { y: { z: { a: { b: { c: number } } } } } }>;
+type Foo4 = Id2<{ x: { y: { z: { a: { b: { c: string } } } } } }>;
+declare const foo3: Foo3;
+const foo4: Foo4 = foo3;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for recursive mapped alias mismatch");
+    assert!(
+        diag.message_text
+            .contains("Id2<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>")
+            && diag
+                .message_text
+                .contains("Id2<{ x: { y: { z: { a: { b: { c: string; }; }; }; }; }; }>"),
+        "TS2322 should preserve the recursive alias application display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("'Foo3'") && !diag.message_text.contains("'Foo4'"),
+        "TS2322 should not repaint the application as wrapper aliases, got: {diag:?}"
     );
 }

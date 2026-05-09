@@ -10,6 +10,38 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn current_source_file_has_esm_syntax(&self) -> bool {
+        self.source_file_idx_has_esm_syntax(self.ctx.current_file_idx)
+    }
+
+    pub(crate) fn source_file_idx_has_esm_syntax(&self, file_idx: usize) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        Self::source_file_arena_has_esm_syntax(arena)
+    }
+
+    fn source_file_arena_has_esm_syntax(arena: &tsz_parser::parser::NodeArena) -> bool {
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            if stmt_idx.is_none() {
+                continue;
+            }
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
     pub(super) fn commonjs_static_member_name_in_arena(
         arena: &tsz_parser::parser::NodeArena,
         idx: NodeIndex,
@@ -48,17 +80,16 @@ impl<'a> CheckerState<'a> {
         (symbol_type != TypeId::ERROR && symbol_type != TypeId::UNKNOWN).then_some(symbol_type)
     }
 
-    pub(crate) fn check_commonjs_export_property_redeclarations(&mut self) {
-        if !self.is_js_file() {
+    pub(crate) fn check_commonjs_export_property_redeclarations(
+        &mut self,
+        statements: &[NodeIndex],
+    ) {
+        if !self.is_js_file() || self.current_source_file_has_esm_syntax() {
             return;
         }
 
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-
         let mut rhs_expr = None;
-        for (stmt_ordinal, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+        for (stmt_ordinal, &stmt_idx) in statements.iter().enumerate() {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
@@ -103,7 +134,7 @@ impl<'a> CheckerState<'a> {
         let mut explicit_exports: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
         let mut root_exports: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
 
-        for &stmt_idx in &source_file.statements.nodes {
+        for &stmt_idx in statements {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
             };
@@ -120,7 +151,7 @@ impl<'a> CheckerState<'a> {
                 && let Some((target, member_name)) =
                     self.commonjs_define_property_target_and_name(stmt.expression)
             {
-                if self.is_current_file_commonjs_export_base(target) {
+                if self.is_current_file_commonjs_export_base_for_redeclaration(target) {
                     explicit_exports
                         .entry(member_name)
                         .or_default()
@@ -168,7 +199,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if self.is_current_file_commonjs_export_base(access.expression) {
+            if self.is_current_file_commonjs_export_base_for_redeclaration(access.expression) {
                 explicit_exports
                     .entry(member_name)
                     .or_default()
@@ -220,6 +251,83 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn is_current_file_commonjs_export_base_for_redeclaration(&self, idx: NodeIndex) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier_at(idx)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+                && !self.identifier_has_nonambient_binding_for_redeclaration(idx, "exports");
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && !self
+                .identifier_has_nonambient_binding_for_redeclaration(access.expression, "module")
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
+    fn identifier_has_nonambient_binding_for_redeclaration(
+        &self,
+        ident_idx: NodeIndex,
+        expected_name: &str,
+    ) -> bool {
+        let Some(ident) = self.ctx.arena.get_identifier_at(ident_idx) else {
+            return false;
+        };
+        if ident.escaped_text != expected_name {
+            return false;
+        }
+
+        self.ctx
+            .binder
+            .node_symbols
+            .get(&ident_idx.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol_without_tracking(ident_idx))
+            .is_some_and(|sym_id| self.symbol_has_nonambient_binding_for_redeclaration(sym_id))
+    }
+
+    fn symbol_has_nonambient_binding_for_redeclaration(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            let declaration_arena = if symbol.decl_file_idx != u32::MAX {
+                self.ctx.get_arena_for_file(symbol.decl_file_idx)
+            } else {
+                self.ctx.arena
+            };
+
+            symbol.declarations.iter().any(|&decl_idx| {
+                declaration_arena.get(decl_idx).is_some()
+                    && !declaration_arena.is_in_ambient_context(decl_idx)
+            })
+        })
+    }
+
     fn json_value_type(&mut self, value: &JsonValue) -> TypeId {
         let factory = self.ctx.types.factory();
         match value {
@@ -255,6 +363,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: declaration_order as u32,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -300,6 +409,10 @@ impl<'a> CheckerState<'a> {
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
         let json_type = self.json_module_type_for_module(module_name, source_file_idx)?;
+        if !self.json_namespace_import_uses_default_export(source_file_idx) {
+            return Some(self.commonjs_json_namespace_type(json_type));
+        }
+
         let namespace_type = self.ctx.types.factory().object(vec![PropertyInfo {
             name: self.ctx.types.intern_string("default"),
             type_id: json_type,
@@ -312,13 +425,59 @@ impl<'a> CheckerState<'a> {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }]);
-        self.ctx.namespace_module_names.insert(
-            namespace_type,
-            self.imported_namespace_display_module_name(module_name),
-        );
         Some(namespace_type)
+    }
+
+    fn commonjs_json_namespace_type(&mut self, json_type: TypeId) -> TypeId {
+        let default_atom = self.ctx.types.intern_string("default");
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, json_type)
+        else {
+            return json_type;
+        };
+        if !shape
+            .properties
+            .iter()
+            .any(|property| property.name == default_atom)
+        {
+            return json_type;
+        }
+
+        let mut properties = shape.properties.clone();
+        for property in &mut properties {
+            if property.name == default_atom {
+                property.type_id = json_type;
+                property.write_type = json_type;
+                property.optional = false;
+                property.readonly = false;
+                property.declaration_order = 0;
+            }
+        }
+        self.ctx.types.factory().object(properties)
+    }
+
+    fn json_namespace_import_uses_default_export(&self, source_file_idx: Option<usize>) -> bool {
+        if !self.ctx.compiler_options.module.is_node_module() {
+            return false;
+        }
+
+        let file_idx = source_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+            return true;
+        }
+        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+            return false;
+        }
+
+        self.lookup_file_is_esm(file_name).unwrap_or(false)
     }
 
     fn is_undefined_like_commonjs_rhs(&self, idx: NodeIndex) -> bool {
@@ -370,6 +529,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         preserve_js_extension: bool,
     ) -> TypeId {
+        if self.current_source_file_has_esm_syntax() {
+            let empty_namespace = self.ctx.types.factory().object(Vec::new());
+            self.ctx.namespace_module_names.insert(
+                empty_namespace,
+                self.current_file_commonjs_module_name(preserve_js_extension),
+            );
+            return empty_namespace;
+        }
+
         // Use the cached JsExportSurface for typed exports instead of
         // re-scanning the AST with augment_namespace_props_with_commonjs_exports_for_file.
         let current_file_idx = self.ctx.current_file_idx;
@@ -418,6 +586,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: props.len() as u32,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }
@@ -756,37 +925,35 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_current_file_commonjs_export_base(&self, idx: NodeIndex) -> bool {
+        if self.current_source_file_has_esm_syntax() {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                // Direct `exports` identifier (not user-declared)
-                if ident.escaped_text == "exports"
-                    && self
-                        .resolve_identifier_symbol_without_tracking(idx)
-                        .is_none()
+            // Direct `exports` identifier (not user-declared)
+            if self.is_unshadowed_commonjs_exports_identifier(idx) {
+                return true;
+            }
+
+            // Check if the identifier is a variable alias for exports/module.exports
+            if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
+            {
+                let decl_idx = symbol.value_declaration;
+                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                    && var_decl.initializer.is_some()
+                    && Self::is_exports_or_module_exports_or_chain_in_arena(
+                        self.ctx.arena,
+                        var_decl.initializer,
+                    )
                 {
                     return true;
-                }
-
-                // Check if the identifier is a variable alias for exports/module.exports
-                if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
-                {
-                    let decl_idx = symbol.value_declaration;
-                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                        && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                        && var_decl.initializer.is_some()
-                        && Self::is_exports_or_module_exports_or_chain_in_arena(
-                            self.ctx.arena,
-                            var_decl.initializer,
-                        )
-                    {
-                        return true;
-                    }
                 }
             }
             return false;
@@ -799,18 +966,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        let module_is_unshadowed = !self
-            .resolve_identifier_symbol_without_tracking(access.expression)
-            .is_some_and(|sym_id| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.decl_file_idx == self.ctx.current_file_idx as u32)
-            });
-        self.ctx
-            .arena
-            .get_identifier_at(access.expression)
-            .is_some_and(|ident| ident.escaped_text == "module" && module_is_unshadowed)
+        self.is_unshadowed_commonjs_module_identifier(access.expression)
             && self
                 .ctx
                 .arena

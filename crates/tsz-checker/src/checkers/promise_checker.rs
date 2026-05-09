@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::promise as query;
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -51,6 +52,12 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.escaped_name.as_str() == "Awaited"
+        {
+            return true;
+        }
         match query::classify_promise_type(self.ctx.types, base) {
             query::PromiseTypeKind::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
@@ -73,6 +80,39 @@ impl<'a> CheckerState<'a> {
         name == "Promise"
     }
 
+    fn is_global_promise_symbol(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+        Self::is_exactly_promise_name(symbol.escaped_name.as_str())
+            && self.symbol_has_standard_lib_origin(sym_id)
+    }
+
+    pub(crate) fn symbol_has_standard_lib_origin(&self, sym_id: SymbolId) -> bool {
+        if self.ctx.symbol_is_from_actual_lib(sym_id)
+            || self.ctx.symbol_is_from_lib(sym_id)
+            || self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+        {
+            return true;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.iter().any(|arena| {
+                        self.ctx
+                            .lib_contexts
+                            .iter()
+                            .take(self.ctx.actual_lib_file_count)
+                            .any(|lib_ctx| std::sync::Arc::ptr_eq(&lib_ctx.arena, arena))
+                    })
+                })
+        })
+    }
+
     /// Strict check: is this type exactly the global `Promise<T>` type?
     ///
     /// Unlike `is_promise_type` (which broadly matches Promise-like names), this only
@@ -86,7 +126,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                         {
-                            if Self::is_exactly_promise_name(symbol.escaped_name.as_str()) {
+                            if self.is_global_promise_symbol(sym_id, symbol) {
                                 return true;
                             }
                             // If the base is a type alias, resolve through it to check
@@ -102,7 +142,7 @@ impl<'a> CheckerState<'a> {
                     query::PromiseTypeKind::TypeQuery(sym_ref) => {
                         let sym_id = SymbolId(sym_ref.0);
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                            return self.is_global_promise_symbol(sym_id, symbol);
                         }
                         false
                     }
@@ -116,14 +156,14 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
-                    return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                    return self.is_global_promise_symbol(sym_id, symbol);
                 }
                 false
             }
             query::PromiseTypeKind::TypeQuery(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    return Self::is_exactly_promise_name(symbol.escaped_name.as_str());
+                    return self.is_global_promise_symbol(sym_id, symbol);
                 }
                 false
             }
@@ -233,6 +273,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn object_type_symbol_is_promise_like(&self, type_id: TypeId) -> bool {
+        let query::PromiseTypeKind::Object(shape_id) =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+
+        let shape = self.ctx.types.object_shape(shape_id);
+        let Some(sym_id) = shape.symbol else {
+            return false;
+        };
+
+        self.promise_symbol_and_decl_file(sym_id)
+            .is_some_and(|(symbol, _)| self.is_promise_like_name(symbol.escaped_name.as_str()))
+    }
+
     /// Extract a Promise member from a contextual type that may be a union.
     ///
     /// When the contextual type for a `new Promise(...)` expression is a union like
@@ -264,7 +320,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Called when processing async functions to ensure Promise is available.
     /// Matches TSC behavior which emits TS2318 "Cannot find global type 'Promise'"
-    /// when the Promise type is not in scope - INCLUDING when noLib is true.
+    /// when the Promise type is not in scope. Callers must gate on
+    /// `compiler_options.no_lib` because tsc skips this check under `--noLib`
+    /// (the user owns the global type surface). See #3787.
     ///
     /// Routes through the environment capability boundary for the decision.
     pub fn check_global_promise_available(&mut self) {
@@ -675,10 +733,15 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Fallback: if the alias expands to a promise-like type reference (e.g., Promise from lib),
-        // treat it as Promise<unknown> if we can't get the type argument.
-        // This handles cases like: type PromiseAlias<T> = Promise<T> where Promise comes from lib.
-        if self.type_ref_is_promise_like(lowered) {
+        // Fallback only for aliases that still resolve to a Promise-like type after
+        // lowering, or aliases whose own name is Promise-like. Do not use
+        // `type_ref_is_promise_like` by itself here: it treats arbitrary object
+        // types as Promise-like, so `type Box<T> = { data: T }` would unwrap to
+        // `T` after `await Promise<Box<T>>`.
+        if self.is_promise_type(lowered)
+            || self.is_promise_like_name(symbol.escaped_name.as_str())
+            || self.object_type_symbol_is_promise_like(lowered)
+        {
             // If we have args, try to return the first one (the T in Promise<T>)
             // Otherwise return UNKNOWN for stricter type checking
             return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
@@ -945,7 +1008,8 @@ impl<'a> CheckerState<'a> {
     /// Get the return type for implicit return checking.
     ///
     /// For async functions, this unwraps Promise<T> to get T.
-    /// For generator functions, returns UNKNOWN (not fully implemented).
+    /// For generator functions, this unwraps `Generator<Y, R, N>` /
+    /// `AsyncGenerator<Y, R, N>` to get `R`.
     /// Otherwise, returns the original return type.
     pub fn return_type_for_implicit_return_check(
         &mut self,
@@ -954,7 +1018,9 @@ impl<'a> CheckerState<'a> {
         is_generator: bool,
     ) -> TypeId {
         if is_generator {
-            return TypeId::UNKNOWN; // Generator support not implemented - use UNKNOWN
+            return self
+                .generator_return_type_for_implicit_return_check(return_type)
+                .unwrap_or(TypeId::UNKNOWN);
         }
 
         if is_async {
@@ -968,6 +1034,28 @@ impl<'a> CheckerState<'a> {
         }
 
         return_type
+    }
+
+    /// Extract the generator completion type used by TS2355/TS2366/TS7030.
+    ///
+    /// Return-completeness diagnostics reason about the value passed to
+    /// `return`, not the full generator object type. Try the original type
+    /// first because evaluating `Generator<Y, R, N>` can expand it into a
+    /// structural object and lose the application wrapper that carries `R`.
+    pub fn generator_return_type_for_implicit_return_check(
+        &mut self,
+        return_type: TypeId,
+    ) -> Option<TypeId> {
+        if let Some(inner) = self.get_generator_return_type_argument(return_type) {
+            return Some(inner);
+        }
+
+        let resolved = self.resolve_ref_type(return_type);
+        if resolved != return_type {
+            self.get_generator_return_type_argument(resolved)
+        } else {
+            None
+        }
     }
 
     /// Check if a return type annotation syntactically looks like Promise<T>.
@@ -1079,7 +1167,15 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let name = ident.escaped_text.as_str();
-                if Self::is_exactly_promise_name(name) {
+                if Self::is_exactly_promise_name(name)
+                    && matches!(
+                        self.resolve_identifier_symbol_in_type_position_without_tracking(
+                            type_ref.type_name
+                        ),
+                        TypeSymbolResolution::Type(body_sym_id)
+                            if self.symbol_has_standard_lib_origin(body_sym_id)
+                    )
+                {
                     return true;
                 }
                 // The alias body might reference another alias — resolve recursively
@@ -1122,7 +1218,14 @@ impl<'a> CheckerState<'a> {
         {
             // Only match simple identifier "Promise" — not qualified names
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return ident.escaped_text.as_str() == "Promise";
+                return ident.escaped_text.as_str() == "Promise"
+                    && matches!(
+                        self.resolve_identifier_symbol_in_type_position_without_tracking(
+                            type_ref.type_name
+                        ),
+                        TypeSymbolResolution::Type(sym_id)
+                            if self.symbol_has_standard_lib_origin(sym_id)
+                    );
             }
         }
 
@@ -1572,6 +1675,41 @@ impl<'a> CheckerState<'a> {
     fn evaluate_awaited_application(&mut self, type_id: TypeId) -> TypeId {
         if self.is_awaited_application(type_id) {
             self.evaluate_application_type(type_id)
+        } else {
+            type_id
+        }
+    }
+
+    pub(crate) fn evaluate_awaited_application_for_assignability(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        if !self.is_awaited_application(type_id) {
+            return type_id;
+        }
+
+        let evaluated = self.evaluate_application_type(type_id);
+        if evaluated != type_id {
+            return evaluated;
+        }
+
+        let Some((_base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let Some(&arg) = args.first() else {
+            return type_id;
+        };
+
+        // Awaited<T> is transparent for non-thenables. If the conditional
+        // evaluator preserved the raw alias application, keep assignability in
+        // step with tsc's getAwaitedType without incorrectly treating
+        // Awaited<Promise<T>> as Promise<T>.
+        if self.unwrap_promise_type(arg).is_none()
+            && self.extract_awaited_type_from_thenable(arg).is_none()
+        {
+            arg
         } else {
             type_id
         }

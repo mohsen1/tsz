@@ -10,10 +10,10 @@
 //! only TS6188.
 
 use crate::parser::state::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 fn parse_codes(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     parser
         .scanner
         .get_scanner_diagnostics()

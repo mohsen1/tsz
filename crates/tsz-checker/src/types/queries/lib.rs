@@ -22,6 +22,14 @@ use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn lib_name_has_local_augmentation(&self, name: &str) -> bool {
+        self.ctx
+            .binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|v| !v.is_empty())
+    }
+
     /// True when callers must skip `shared_lib_type_cache` for `name`:
     /// either this checker locally augments `name`, or `name` is multi-lib
     /// merged where property-listing order in printed diagnostic messages
@@ -33,11 +41,7 @@ impl<'a> CheckerState<'a> {
         if name == "Array" {
             return true;
         }
-        self.ctx
-            .binder
-            .global_augmentations
-            .get(name)
-            .is_some_and(|v| !v.is_empty())
+        self.lib_name_has_local_augmentation(name)
     }
 
     /// Resolve a lib type by name and also return its type parameters.
@@ -49,6 +53,18 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+
+        if name == "Array"
+            && self.ctx.share_owner_symbol_type_results
+            && !self.lib_name_has_local_augmentation(name)
+            && let Some(ty) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+        {
+            let params =
+                tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
+            if !params.is_empty() {
+                return (Some(ty), params);
+            }
+        }
 
         // Short-circuit via shared cache; skip when this checker locally
         // augments `name` (its merged TypeId would differ from peers').
@@ -337,6 +353,13 @@ impl<'a> CheckerState<'a> {
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
+            if export_name == "default"
+                && self.ctx.compiler_options.module.is_node_module()
+                && self.ctx.file_is_esm == Some(true)
+                && !self.module_is_esm(module_name)
+            {
+                return Some(sym_id);
+            }
             let source_file_idx = self
                 .ctx
                 .resolve_symbol_file_index(sym_id)
@@ -724,6 +747,37 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(member_symbol) = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))
+            && member_symbol.has_any_flags(symbol_flags::ALIAS)
+            && member_symbol.import_name.is_none()
+            && let Some(module_specifier) = member_symbol.import_module.clone()
+        {
+            let source_file_idx = if member_symbol.decl_file_idx == u32::MAX {
+                self.ctx.current_file_idx
+            } else {
+                member_symbol.decl_file_idx as usize
+            };
+            if let Some(module_type) =
+                self.commonjs_module_value_type(&module_specifier, Some(source_file_idx))
+            {
+                return Some(module_type);
+            }
+        }
+
+        if let Some(member_symbol) = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))
+            && member_symbol.has_any_flags(symbol_flags::ALIAS)
+            && member_symbol.import_name.as_deref() == Some("default")
+            && let Some(module_specifier) = member_symbol.import_module.clone()
+            && let Some(namespace_type) =
+                self.node_esm_cjs_default_import_namespace_type(&module_specifier)
+        {
+            return Some(namespace_type);
+        }
+
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
             && member_symbol.has_any_flags(symbol_flags::ALIAS)
         {
@@ -1030,6 +1084,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                if let Some(module_specifier) = import_module.as_deref()
+                    && let Some(member_type) = self.namespace_default_reexport_property_type(
+                        module_specifier,
+                        self.ctx
+                            .resolve_symbol_file_index(sym_id)
+                            .or(Some(self.ctx.current_file_idx)),
+                        property_name,
+                    )
+                {
+                    return Some(member_type);
+                }
+
                 if let Some(member_id) = direct_member_id {
                     let member_type =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
@@ -1190,6 +1256,18 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .find(|prop| self.ctx.types.resolve_atom(prop.name) == property_name)
                         .map(|prop| prop.type_id);
+                }
+
+                if let Some(module_specifier) = import_module.as_deref()
+                    && let Some(member_type) = self.namespace_default_reexport_property_type(
+                        module_specifier,
+                        self.ctx
+                            .resolve_symbol_file_index(sym_id)
+                            .or(Some(self.ctx.current_file_idx)),
+                        property_name,
+                    )
+                {
+                    return Some(member_type);
                 }
 
                 if let Some(member_id) = direct_member_id {
@@ -2318,5 +2396,46 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::NodeArena;
+    use tsz_solver::{QueryDatabase, TypeInterner, TypeParamInfo};
+
+    #[test]
+    fn shared_array_resolution_reuses_registered_base_and_params() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let array_base = types.factory().object(Vec::new());
+        let array_param = TypeParamInfo {
+            name: types.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        types.set_array_base_type(array_base, vec![array_param]);
+
+        let mut checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+        checker.ctx.share_owner_symbol_type_results = true;
+
+        let (resolved, params) = checker.resolve_lib_type_with_params("Array");
+
+        assert_eq!(resolved, Some(array_base));
+        assert_eq!(params, vec![array_param]);
+
+        let (resolved_string, params_string) = checker.resolve_lib_type_with_params("String");
+        assert_eq!(resolved_string, None);
+        assert_eq!(params_string, Vec::<TypeParamInfo>::new());
     }
 }

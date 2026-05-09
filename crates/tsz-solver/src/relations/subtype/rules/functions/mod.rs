@@ -355,24 +355,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Returns `true` when the type is callable and the (first) call signature
-    /// originates from a method declaration. Used by
-    /// `are_parameters_compatible_impl` to decide whether the strict-callback
-    /// override would actually change behavior — if neither side is method-
-    /// flavored, the override is a no-op and we skip the cache-slot split.
-    fn callable_first_signature_is_method(&self, type_id: TypeId) -> bool {
-        if let Some(shape_id) = crate::visitor::function_shape_id(self.interner, type_id) {
-            return self.interner.function_shape(shape_id).is_method;
-        }
-        if let Some(shape_id) = crate::visitor::callable_shape_id(self.interner, type_id) {
-            let shape = self.interner.callable_shape(shape_id);
-            if let Some(sig) = shape.call_signatures.first() {
-                return sig.is_method;
-            }
-        }
-        false
-    }
-
     /// Check parameter compatibility with method bivariance support.
     /// Methods are bivariant even when `strict_function_types` is enabled.
     pub(crate) fn are_parameters_compatible_impl(
@@ -419,44 +401,57 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // NOTE: North Star V1.2 prioritizes soundness. Bivariance is enabled for methods
         // even in strict mode to match modern TypeScript behavior.
         let method_should_be_bivariant = is_method && !self.disable_method_bivariance;
-        let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
+        let force_strict_callback_params = self.force_strict_callback_param_variance;
+        let use_bivariance = !force_strict_callback_params
+            && (method_should_be_bivariant || !self.strict_function_types);
 
         // When the parameter types are themselves callable (callbacks), tsc treats
-        // the recursive comparison strictly regardless of whether the inner
-        // signatures originated from method declarations. This mirrors
-        // `SignatureCheckMode.Callback` in `compareSignaturesRelated`: inside a
-        // callback, params skip the bivariant first-half so methods do not
-        // loosen the contravariance check. The flag is consumed on entry to
-        // `check_function_subtype_impl`, so deeper-level (level 3+) checks fall
-        // back to normal method bivariance — matching tsc, where the inner
-        // recursion goes through `compareTypes` and starts a fresh
-        // `compareSignaturesRelated` without the Callback bit set.
-        //
-        // Narrowing: only flip the flag when at least one of the inner
-        // signatures is method-flavored. If neither callable is a method, the
-        // override-to-strict in `check_function_subtype_impl` is a no-op, and
-        // adding `IN_CALLBACK_PARAM_CHECK` to the cache key would only split
-        // cache slots without changing the result — paying for nothing.
+        // the recursive comparison under `SignatureCheckMode.Callback` when the
+        // outer slot is method-bivariant. That drops the outer covariant retry
+        // and makes the callback's own parameter list strict. tsc skips this
+        // path for slots that originated as instantiated generic parameters
+        // (`value: T` in `Bivar<T>`); those keep ordinary method bivariance.
+        let callback_originated_from_instantiated_generic =
+            self.callback_param_originated_from_instantiated_generic(source_type, target_type);
+        let inner_signature_is_method_like = self.callable_first_signature_is_method(source_type)
+            || self.callable_first_signature_is_method(target_type);
         let entering_callback_check = s_has_call
             && t_has_call
-            && (self.callable_first_signature_is_method(source_type)
-                || self.callable_first_signature_is_method(target_type));
+            && !callback_originated_from_instantiated_generic
+            && (method_should_be_bivariant || inner_signature_is_method_like);
+        let entering_bivariant_callback_return =
+            entering_callback_check && method_should_be_bivariant;
         let saved_in_callback = self.in_callback_param_check;
+        let saved_in_bivariant_callback_return = self.in_bivariant_callback_return_check;
         if entering_callback_check {
             self.in_callback_param_check = true;
+            self.in_bivariant_callback_return_check = entering_bivariant_callback_return;
         }
 
         let result = if !use_bivariance {
             // Contravariant check: Target <: Source
             // This applies even when parameter types contain `this` types.
-            // The `this` type is polymorphic but does not change parameter variance.
-            self.check_subtype(target_type, source_type).is_true()
+            // The `this` type is polymorphic but does not change parameter
+            // variance. Clear the immediate-callback strictness while recursing:
+            // nested function comparisons reached through compareTypes start
+            // fresh in tsc.
+            self.check_subtype_from_parameter_compare(target_type, source_type)
+                .is_true()
         } else {
             // Bivariant: either direction works (Unsound, Legacy TS behavior)
             // Try contravariant first: Target <: Source
-            if self.check_subtype(target_type, source_type).is_true() {
+            if self
+                .check_subtype_from_parameter_compare(target_type, source_type)
+                .is_true()
+            {
                 self.in_callback_param_check = saved_in_callback;
+                self.in_bivariant_callback_return_check = saved_in_bivariant_callback_return;
                 return true;
+            }
+            if entering_callback_check {
+                self.in_callback_param_check = saved_in_callback;
+                self.in_bivariant_callback_return_check = saved_in_bivariant_callback_return;
+                return false;
             }
             // The first `check_subtype` consumed `in_callback_param_check`
             // inside `check_function_subtype_impl` (it captures and resets the
@@ -468,11 +463,77 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.in_callback_param_check = true;
             }
             // If contravariant fails, try covariant: Source <: Target
-            self.check_subtype(source_type, target_type).is_true()
+            self.check_subtype_from_parameter_compare(source_type, target_type)
+                .is_true()
         };
 
         self.in_callback_param_check = saved_in_callback;
+        self.in_bivariant_callback_return_check = saved_in_bivariant_callback_return;
         result
+    }
+
+    /// Returns true when the type is callable and the first call signature is
+    /// method-flavored. Callback mode still applies for ordinary higher-order
+    /// function parameters when the callback type itself came from a bivariant
+    /// method signature, such as `{ foo(x: I): O }["foo"]`.
+    fn callable_first_signature_is_method(&self, type_id: TypeId) -> bool {
+        if let Some(shape_id) = crate::visitor::function_shape_id(self.interner, type_id) {
+            return self.interner.function_shape(shape_id).is_method;
+        }
+        if let Some(shape_id) = crate::visitor::callable_shape_id(self.interner, type_id) {
+            let shape = self.interner.callable_shape(shape_id);
+            if let Some(sig) = shape.call_signatures.first() {
+                return sig.is_method;
+            }
+        }
+        false
+    }
+
+    fn check_subtype_from_parameter_compare(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> SubtypeResult {
+        let saved_force_strict = self.force_strict_callback_param_variance;
+        self.force_strict_callback_param_variance = false;
+        let result = self.check_subtype(source_type, target_type);
+        self.force_strict_callback_param_variance = saved_force_strict;
+        result
+    }
+
+    fn callback_param_originated_from_instantiated_generic(
+        &self,
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> bool {
+        self.instantiated_generic_method_args
+            .iter()
+            .any(|&arg| self.type_matches_instantiated_generic_arg(source_type, arg))
+            || self
+                .instantiated_generic_method_args
+                .iter()
+                .any(|&arg| self.type_matches_instantiated_generic_arg(target_type, arg))
+    }
+
+    fn type_matches_instantiated_generic_arg(&self, type_id: TypeId, arg: TypeId) -> bool {
+        if type_id == arg {
+            return true;
+        }
+
+        if let Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) =
+            self.interner.lookup(type_id)
+        {
+            return self.type_matches_instantiated_generic_arg(inner, arg);
+        }
+
+        if let Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) =
+            self.interner.lookup(arg)
+        {
+            return self.type_matches_instantiated_generic_arg(type_id, inner);
+        }
+
+        self.interner.get_display_alias(type_id) == Some(arg)
+            || self.interner.get_display_alias(arg) == Some(type_id)
     }
 
     /// Check if `this` parameters are compatible.
@@ -715,7 +776,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        self.check_subtype(source_return, target_return)
+        if let Some(&original_strict_function_types) = self.method_bivariance_strict_stack.last() {
+            let saved_strict_function_types = self.strict_function_types;
+            self.strict_function_types = original_strict_function_types;
+            let result = self.check_subtype(source_return, target_return);
+            self.strict_function_types = saved_strict_function_types;
+            result
+        } else {
+            self.check_subtype(source_return, target_return)
+        }
     }
 
     pub(crate) fn instantiate_function_shape(

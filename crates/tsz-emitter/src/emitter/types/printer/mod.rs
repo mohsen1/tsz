@@ -69,7 +69,7 @@ impl<'a> TypePrinter<'a> {
             symbol_arena: None,
             type_cache: None,
             current_depth: 0,
-            max_depth: 10,
+            max_depth: 128,
             indent_level: None,
             enclosing_symbol: None,
             node_arena: None,
@@ -199,6 +199,17 @@ impl<'a> TypePrinter<'a> {
         }
         self.interner.resolve_atom(name)
     }
+
+    pub(crate) fn type_param_scope_contains_name(&self, name: &str) -> bool {
+        self.outer_type_param_names
+            .iter()
+            .any(|atom| self.interner.resolve_atom(*atom) == name)
+            || self
+                .type_param_renames
+                .iter()
+                .any(|(_, renamed)| renamed == name)
+    }
+
     pub(crate) fn with_type_param_scope(
         &self,
         new_params: &[tsz_solver::types::TypeParamInfo],

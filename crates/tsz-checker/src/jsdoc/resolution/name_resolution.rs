@@ -16,10 +16,23 @@ use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
+use tsz_common::numeric::parse_numeric_literal_value;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{IndexSignature, ObjectShape, TypeId, TypePredicate};
+
+/// Strip a leading and matching trailing `"` or `'` from `s` if both are
+/// present. Returns the bare inner string when stripped, otherwise `None`.
+fn strip_quoted_string(s: &str) -> Option<&str> {
+    s.strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            s.strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn enclosing_expression_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
@@ -62,6 +75,14 @@ impl<'a> CheckerState<'a> {
     fn jsdoc_type_expr_is_broad_function(type_expr: &str) -> bool {
         let trimmed = type_expr.trim();
         trimmed.eq_ignore_ascii_case("function") || trimmed.eq_ignore_ascii_case("Function")
+    }
+
+    fn jsdoc_type_expr_may_be_numeric_literal(type_expr: &str) -> bool {
+        type_expr.bytes().any(|byte| byte.is_ascii_digit())
+            && type_expr.bytes().all(|byte| {
+                byte.is_ascii_hexdigit()
+                    || matches!(byte, b'o' | b'O' | b'x' | b'X' | b'.' | b'_' | b'+' | b'-')
+            })
     }
 
     pub(crate) fn resolve_jsdoc_implicit_any_builtin_type(
@@ -217,9 +238,14 @@ impl<'a> CheckerState<'a> {
         let (module_specifier, member_name) = Self::parse_jsdoc_import_type(type_expr)?;
 
         if let Some(member_name) = member_name {
-            let sym_id = self.resolve_jsdoc_import_member(&module_specifier, &member_name)?;
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
-            return (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved);
+            if let Some(sym_id) = self.resolve_jsdoc_import_member(&module_specifier, &member_name)
+            {
+                let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                    return Some(resolved);
+                }
+            }
+            return self.resolve_import_type_jsdoc_typedef(&module_specifier, &member_name, None);
         }
 
         self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
@@ -348,8 +374,67 @@ impl<'a> CheckerState<'a> {
             && type_expr.ends_with(']')
             && let Some((base_str, index_str)) = Self::parse_jsdoc_index_access_segments(type_expr)
         {
+            // tsc reports TS2339 when a JSDoc indexed-access type uses a
+            // string-literal key the imported module doesn't export
+            // (e.g. `import("./dep")["Foo"]`). For an `import(...)` base
+            // we resolve the member directly via the import resolver: the
+            // bare `import("./dep")` form does not round-trip through
+            // `resolve_jsdoc_type_str` for ESM-only modules (no
+            // commonjs-style module value type exists), so we cannot rely
+            // on the structural property lookup below. #3213.
+            if base_str.starts_with("import(")
+                && let Some(key) = strip_quoted_string(index_str)
+                && let Some((module_specifier, None)) = Self::parse_jsdoc_import_type(base_str)
+                && self
+                    .resolve_jsdoc_import_member(&module_specifier, key)
+                    .is_none()
+            {
+                let display = format!("typeof import(\"{module_specifier}\")");
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[key, &display],
+                );
+                let anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                self.ctx.error(
+                    anchor,
+                    type_expr.len() as u32,
+                    message,
+                    crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+                return Some(TypeId::ERROR);
+            }
             let base_type = self.resolve_jsdoc_type_str(base_str)?;
             let index_type = self.resolve_jsdoc_type_str(index_str)?;
+            // Same TS2339 rule for the structural case (e.g. when the base
+            // resolves to a real type with a string-literal index).
+            if let Some(key_atom) =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+            {
+                let key = self.ctx.types.resolve_atom_ref(key_atom).to_string();
+                let lookup = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    base_type,
+                    &key,
+                );
+                if matches!(
+                    lookup,
+                    crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
+                ) {
+                    let display = self.format_type_diagnostic(base_type);
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        &[&key, &display],
+                    );
+                    let anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                    self.ctx.error(
+                        anchor,
+                        type_expr.len() as u32,
+                        message,
+                        crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                    return Some(TypeId::ERROR);
+                }
+            }
             return Some(self.ctx.types.factory().index_access(base_type, index_type));
         }
         if type_expr.starts_with('[') && type_expr.ends_with(']') {
@@ -371,10 +456,8 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             return Some(factory.literal_boolean(false));
         }
-        if let Ok(n) = type_expr.parse::<f64>()
-            && type_expr
-                .chars()
-                .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+        if Self::jsdoc_type_expr_may_be_numeric_literal(type_expr)
+            && let Some(n) = parse_numeric_literal_value(type_expr)
         {
             let factory = self.ctx.types.factory();
             return Some(factory.literal_number(n));
@@ -445,9 +528,12 @@ impl<'a> CheckerState<'a> {
                             .and_then(|rest| rest.strip_suffix(">"))
                     });
                 if let Some(inner) = obj_map_inner {
-                    let mut parts = inner.split(',');
-                    let key_str = parts.next().unwrap_or("").trim();
-                    let value_str = parts.next().unwrap_or("").trim();
+                    let parts = Self::split_type_args_respecting_nesting(inner);
+                    if parts.len() != 2 {
+                        return None;
+                    }
+                    let key_str = parts[0].trim();
+                    let value_str = parts[1].trim();
                     if let (Some(key_type), Some(value_type)) = (
                         self.jsdoc_type_from_expression(key_str),
                         self.jsdoc_type_from_expression(value_str),
@@ -669,7 +755,8 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') {
-                    let base_name = type_expr[..angle_idx].trim();
+                    let raw_base_name = type_expr[..angle_idx].trim();
+                    let base_name = raw_base_name.strip_suffix('.').unwrap_or(raw_base_name);
                     if type_expr.ends_with('>') {
                         let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
                         let arg_strs = Self::split_type_args_respecting_nesting(args_str);
@@ -739,14 +826,8 @@ impl<'a> CheckerState<'a> {
                 if tp_name.is_empty() {
                     continue;
                 }
-                // Handle constraints: `T extends Foo`
-                let (name, constraint_str) = if let Some(ext_idx) = tp_name.find(" extends ") {
-                    (&tp_name[..ext_idx], Some(&tp_name[ext_idx + 9..]))
-                } else {
-                    (tp_name, None)
-                };
-                let constraint =
-                    constraint_str.and_then(|s| self.jsdoc_type_from_expression(s.trim()));
+                let (name, constraint_str) = Self::split_jsdoc_type_param_constraint(tp_name);
+                let constraint = constraint_str.and_then(|s| self.jsdoc_type_from_expression(s));
                 let atom = self.ctx.types.intern_string(name);
                 let info = tsz_solver::TypeParamInfo {
                     name: atom,
@@ -840,13 +921,12 @@ impl<'a> CheckerState<'a> {
         return_type_str: &str,
         params_inner: &str,
     ) -> (Option<TypeId>, Option<tsz_solver::TypePredicate>) {
-        // Try `asserts param` or `asserts param is Type`
-        if let Some(rest) = return_type_str.strip_prefix("asserts ") {
-            let rest = rest.trim();
+        let (is_asserts, rest) = Self::split_jsdoc_asserts_prefix(return_type_str);
+        if is_asserts {
             // Check for `asserts param is Type`
-            if let Some(is_idx) = Self::find_word_boundary(rest, " is ") {
+            if let Some((is_idx, is_end)) = Self::find_jsdoc_type_predicate_is(rest) {
                 let param_name = rest[..is_idx].trim();
-                let type_str = rest[is_idx + 4..].trim();
+                let type_str = rest[is_end..].trim();
                 let pred_type = self.jsdoc_type_from_expression(type_str);
                 let (target, parameter_index) =
                     self.jsdoc_type_predicate_target(param_name, params_inner);
@@ -872,9 +952,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Try `param is Type` (non-assertion type predicate)
-        if let Some(is_idx) = Self::find_word_boundary(return_type_str, " is ") {
+        if let Some((is_idx, is_end)) = Self::find_jsdoc_type_predicate_is(return_type_str) {
             let param_name = return_type_str[..is_idx].trim();
-            let type_str = return_type_str[is_idx + 4..].trim();
+            let type_str = return_type_str[is_end..].trim();
             // Validate that param_name is a simple identifier, not a type expression
             if param_name
                 .chars()
@@ -895,11 +975,6 @@ impl<'a> CheckerState<'a> {
 
         // Regular return type
         (self.jsdoc_type_from_expression(return_type_str), None)
-    }
-
-    /// Find ` is ` at a word boundary (not inside a type expression).
-    fn find_word_boundary(s: &str, needle: &str) -> Option<usize> {
-        s.find(needle)
     }
 
     /// Build a `TypePredicateTarget` from a parameter name.
@@ -1116,6 +1191,7 @@ impl<'a> CheckerState<'a> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let first_member = segments.next()?;
+        let remaining_segments: Vec<_> = segments.collect();
         let root_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
             self.ctx
                 .lib_contexts
@@ -1155,11 +1231,15 @@ impl<'a> CheckerState<'a> {
         }
         let module_specifier = self.get_require_module_specifier(var_decl.initializer)?;
         if !self.jsdoc_module_specifier_prefers_direct_type_exports(&module_specifier) {
-            return None;
+            return self.resolve_jsdoc_js_require_export_type(
+                &module_specifier,
+                first_member,
+                &remaining_segments,
+            );
         }
 
         let mut current_sym = self.resolve_jsdoc_import_member(&module_specifier, first_member)?;
-        for segment in segments {
+        for segment in remaining_segments {
             let lib_binders = self.get_lib_binders();
             let mut visited_aliases = AliasCycleTracker::new();
             current_sym = self
@@ -1184,6 +1264,55 @@ impl<'a> CheckerState<'a> {
 
         let resolved = self.resolve_jsdoc_symbol_type(current_sym);
         (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
+    }
+
+    fn resolve_jsdoc_js_require_export_type(
+        &mut self,
+        module_specifier: &str,
+        first_member: &str,
+        remaining_segments: &[&str],
+    ) -> Option<TypeId> {
+        let mut current_type = self
+            .resolve_js_export_named_type(
+                module_specifier,
+                first_member,
+                Some(self.ctx.current_file_idx),
+            )
+            .and_then(|export_type| {
+                self.instance_type_from_constructor_type(export_type)
+                    .or(Some(export_type))
+            })
+            .filter(|&export_type| export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN)
+            .or_else(|| {
+                let export_sym_id = self
+                    .resolve_jsdoc_import_member(module_specifier, first_member)
+                    .or_else(|| {
+                        self.resolve_named_export_via_export_equals(module_specifier, first_member)
+                    })
+                    .or_else(|| {
+                        let mut visited_aliases = AliasCycleTracker::new();
+                        self.resolve_reexported_member_symbol(
+                            module_specifier,
+                            first_member,
+                            &mut visited_aliases,
+                        )
+                    })?;
+                let export_type = self.resolve_jsdoc_symbol_type(export_sym_id);
+                (export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN)
+                    .then_some(export_type)
+            })?;
+
+        for segment in remaining_segments {
+            let access = self.resolve_property_access_with_env(current_type, segment);
+            current_type = match access {
+                crate::query_boundaries::common::PropertyAccessResult::Success {
+                    type_id, ..
+                } => self.resolve_type_query_type(type_id),
+                _ => return None,
+            };
+        }
+
+        Some(current_type)
     }
 
     pub(crate) fn resolve_jsdoc_entity_name_symbol(
@@ -1312,12 +1441,50 @@ impl<'a> CheckerState<'a> {
             if file_idx == self.ctx.current_file_idx {
                 continue;
             }
+            if self.jsdoc_file_idx_is_external_module(file_idx, binder) {
+                continue;
+            }
             if let Some(sym_id) = binder.file_locals.get(root_name) {
                 return Some((sym_id, file_idx));
             }
         }
 
         None
+    }
+
+    fn jsdoc_file_idx_is_external_module(
+        &self,
+        file_idx: usize,
+        binder: &tsz_binder::BinderState,
+    ) -> bool {
+        if binder.is_external_module() {
+            return true;
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(arena) = all_arenas.get(file_idx) else {
+            return false;
+        };
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+
+        if let Some(is_external_module_by_file) = self.ctx.is_external_module_by_file.as_ref()
+            && let Some(is_external_module) = is_external_module_by_file.get(&source_file.file_name)
+        {
+            return *is_external_module;
+        }
+
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            arena.get(stmt_idx).is_some_and(|stmt| {
+                stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || stmt.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            })
+        })
     }
 
     fn resolve_jsdoc_commonjs_binding_element_type(
@@ -1447,11 +1614,17 @@ impl<'a> CheckerState<'a> {
 
         if symbol.has_any_flags(symbol_flags::FUNCTION) && symbol.value_declaration.is_some() {
             let constructor_type = self.get_type_of_symbol(sym_id);
-            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+            if !self.ctx.class_instance_resolution_set.insert(sym_id) {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                return self.ctx.types.factory().lazy(def_id);
+            }
+            let instance_type = self.synthesize_js_constructor_instance_type(
                 symbol.value_declaration,
                 constructor_type,
                 &[],
-            ) {
+            );
+            self.ctx.class_instance_resolution_set.remove(&sym_id);
+            if let Some(instance_type) = instance_type {
                 return instance_type;
             }
         }

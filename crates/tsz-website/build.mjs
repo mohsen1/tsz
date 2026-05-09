@@ -55,6 +55,15 @@ function fmt(n) {
   return Number(n).toLocaleString("en-US");
 }
 
+function tszSpeedupScore(row) {
+  const tsz = Number(row?.tsz_ms);
+  const tsgo = Number(row?.tsgo_ms);
+  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) {
+    return -Infinity;
+  }
+  return tsgo / tsz;
+}
+
 // ── Step 1: Extract metrics ─────────────────────────────────
 
 function extractMetrics() {
@@ -225,7 +234,12 @@ function generateBenchmarkCharts(data) {
     </div>`;
   }
 
-  const allResults = data.results;
+  const allResults = data.results.slice().sort((a, b) => {
+    const aScore = tszSpeedupScore(a);
+    const bScore = tszSpeedupScore(b);
+    if (aScore !== bScore) return bScore - aScore;
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  });
   const measurable = allResults.filter(r => r.tsz_ms != null && r.tsgo_ms != null);
   if (!allResults.length) return `<div class="bench-placeholder">No valid benchmark results found.</div>`;
 
@@ -259,8 +273,8 @@ function generateBenchmarkCharts(data) {
       continue;
     }
 
-    const tszWidth = Math.max(2, (r.tsz_ms / maxMs) * barMaxWidth);
-    const tsgoWidth = Math.max(2, (r.tsgo_ms / maxMs) * barMaxWidth);
+    const tszWidth = (r.tsz_ms / maxMs) * barMaxWidth;
+    const tsgoWidth = (r.tsgo_ms / maxMs) * barMaxWidth;
     const winnerLabel = r.winner === "tsz"
       ? `tsz ${r.factor?.toFixed(1)}x faster`
       : r.winner === "tsgo"

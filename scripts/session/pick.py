@@ -63,11 +63,7 @@ def detail_path(root: Path) -> Path:
 
 def ensure_inputs(root: Path, *, ensure_submodule: bool) -> Path:
     if ensure_submodule and not (root / "TypeScript" / "tests").is_dir():
-        print("TypeScript submodule missing - initializing...", file=sys.stderr)
-        subprocess.run(
-            ["git", "-C", str(root), "submodule", "update", "--init", "--depth", "1", "TypeScript"],
-            check=True,
-        )
+        init_typescript_submodule(root)
 
     detail = detail_path(root)
     if not detail.is_file():
@@ -75,6 +71,43 @@ def ensure_inputs(root: Path, *, ensure_submodule: bool) -> Path:
         print("  run: scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot", file=sys.stderr)
         sys.exit(1)
     return detail
+
+
+def init_typescript_submodule(root: Path) -> None:
+    """Initialize the TypeScript submodule, falling back to a full clone.
+
+    The shallow `--depth 1` clone is fast but only works when the pinned
+    commit is reachable from the default-branch tip. Pinned commits often
+    drift behind upstream `main`, leaving the shallow clone with no way to
+    fetch the recorded SHA. When that happens, fall back to a full
+    (non-shallow) clone so contributors aren't left with a half-cloned
+    submodule that subsequent commands silently treat as missing tests.
+    """
+    print("TypeScript submodule missing - initializing...", file=sys.stderr)
+    shallow = subprocess.run(
+        ["git", "-C", str(root), "submodule", "update", "--init", "--depth", "1", "TypeScript"],
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if shallow.returncode == 0 and (root / "TypeScript" / "tests").is_dir():
+        return
+
+    if shallow.stderr:
+        sys.stderr.write(shallow.stderr)
+    print(
+        "Shallow submodule clone did not produce a usable working tree; retrying with full clone...",
+        file=sys.stderr,
+    )
+    # Drop partial state so the retry isn't poisoned by a half-fetched pack.
+    subprocess.run(
+        ["git", "-C", str(root), "submodule", "deinit", "-f", "--", "TypeScript"],
+        check=False,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "submodule", "update", "--init", "--recursive", "TypeScript"],
+        check=True,
+    )
 
 
 def load_failures(detail: Path) -> list[Failure]:
@@ -150,18 +183,40 @@ def fmt_codes(codes: list[str]) -> str:
     return ",".join(codes) or "-"
 
 
+def display_path(failure: Failure, root: Path | None = None) -> str:
+    """Pick the most navigable form of the test path for human output.
+
+    The detail snapshot stores absolute paths captured on the machine that
+    produced it (e.g. `/Users/<author>/code/tsz/.worktrees/<wt>/TypeScript/...`).
+    Echoing those verbatim leaves users staring at an unopenable path. When a
+    repo root is provided and the failure's path can be anchored on the
+    `TypeScript/` segment, prefer that local-relative form. Fall back to the
+    raw path so behaviour outside a repo (or for unparseable paths) is
+    unchanged.
+    """
+    if root is None:
+        return failure.path
+    parts = Path(failure.path).parts
+    if "TypeScript" in parts:
+        idx = parts.index("TypeScript")
+        return str(Path(*parts[idx:]))
+    return failure.path
+
+
 def print_human_pick(
     failure: Failure,
     *,
     pool: int,
     requested_category: str | None = None,
     include_verbose_command: bool = True,
+    root: Path | None = None,
 ) -> None:
+    shown_path = display_path(failure, root)
     if requested_category:
         print(f"category: {requested_category} (resolved: {failure.category})")
-        print(f"path:     {failure.path}")
+        print(f"path:     {shown_path}")
     else:
-        print(f"path:     {failure.path}")
+        print(f"path:     {shown_path}")
         print(f"category: {failure.category}")
     print(f"expected: {fmt_codes(failure.expected)}")
     print(f"actual:   {fmt_codes(failure.actual)}")
@@ -173,6 +228,46 @@ def print_human_pick(
         print(
             f'verbose run: ./scripts/conformance/conformance.sh run --filter "{failure.filter_name}" --verbose'
         )
+
+
+def resolve_test_source(root: Path, failure: Failure) -> Path | None:
+    """Locate the test source on disk.
+
+    The detail snapshot stores absolute paths from the machine that produced
+    the snapshot (e.g. `/tmp/tsz-snap-refresh/TypeScript/tests/...`), so a
+    naive `root / failure.path` resolves to a non-existent path on other
+    machines. Fall back to the local TypeScript submodule by anchoring the
+    path on the `TypeScript/tests/` segment.
+    """
+    direct = Path(failure.path)
+    if direct.is_absolute() and direct.is_file():
+        return direct
+    candidate = root / failure.path.lstrip("/")
+    if candidate.is_file():
+        return candidate
+    parts = Path(failure.path).parts
+    for marker in ("TypeScript", "tests"):
+        if marker in parts:
+            idx = parts.index(marker)
+            candidate = root.joinpath(*parts[idx:])
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def print_test_source(root: Path, failure: Failure, *, max_lines: int = 80) -> None:
+    """Print the test source body, truncated to `max_lines` to keep terminals readable."""
+    print()
+    print("-------------------- test source --------------------")
+    source = resolve_test_source(root, failure)
+    if source is None:
+        print(f"(source file missing: {failure.path})")
+        return
+    lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in lines[:max_lines]:
+        print(line)
+    if len(lines) > max_lines:
+        print(f"... (truncated at {max_lines} lines; total {len(lines)})")
 
 
 def run_verbose(root: Path, failure: Failure) -> None:
@@ -195,7 +290,9 @@ def command_quick(args: argparse.Namespace) -> int:
     failures = load_failures(ensure_inputs(root, ensure_submodule=True))
     picks, pool = select_failures(failures, code=args.code, seed=args.seed)
     pick = picks[0]
-    print_human_pick(pick, pool=pool)
+    print_human_pick(pick, pool=pool, root=root)
+    if args.show_source:
+        print_test_source(root, pick)
     if args.run:
         run_verbose(root, pick)
     return 0
@@ -212,7 +309,9 @@ def command_category(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
     pick = picks[0]
-    print_human_pick(pick, pool=pool, requested_category=args.category)
+    print_human_pick(pick, pool=pool, requested_category=args.category, root=root)
+    if args.show_source:
+        print_test_source(root, pick)
     if args.run:
         run_verbose(root, pick)
     return 0
@@ -288,18 +387,8 @@ def command_show(args: argparse.Namespace) -> int:
     pick = picks[0]
 
     print("==================== random pick ====================")
-    print_human_pick(pick, pool=pool, include_verbose_command=False)
-    print()
-    print("==================== test source ====================")
-    source = root / pick.path
-    if source.is_file():
-        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
-        for line in lines[:80]:
-            print(line)
-        if len(lines) > 80:
-            print(f"... (truncated at 80 lines; total {len(lines)})")
-    else:
-        print(f"(source file missing: {pick.path})")
+    print_human_pick(pick, pool=pool, include_verbose_command=False, root=root)
+    print_test_source(root, pick)
     print()
     print("==================== verbose run ====================")
     run_verbose(root, pick)
@@ -311,6 +400,11 @@ def add_common_pick_args(parser: argparse.ArgumentParser, *, run: bool = False) 
     parser.add_argument("--code", default="")
     if run:
         parser.add_argument("--run", action="store_true")
+        parser.add_argument(
+            "--show-source",
+            action="store_true",
+            help="print the test source after the pick metadata (truncated to 80 lines)",
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:

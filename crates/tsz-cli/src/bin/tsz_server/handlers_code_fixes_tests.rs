@@ -37,18 +37,26 @@ fn make_server() -> Server {
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),
         include_completions_with_class_member_snippets: false,
+        include_inlay_parameter_name_hints: None,
+        generate_return_in_doc_template: None,
         new_line_character: None,
         plugin_configs: FxHashMap::default(),
         native_ts_worker: None,
+        pending_events: Vec::new(),
     }
 }
 
+/// Issue #3848: tsserver does NOT inject filename-gated `inferFromUsage`
+/// placeholders for JSDoc `@type {function(...)}` annotations — the same
+/// source under any other file name returns just the
+/// `Annotate with type from JSDoc` fix. Verify tsz-server now matches that
+/// invariant: the response must contain the annotate fix and must NOT carry
+/// any empty-changes `inferFromUsage` actions.
 #[test]
-fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_16() {
+fn get_code_fixes_jsdoc_does_not_emit_filename_gated_placeholders() {
     let mut server = make_server();
     let file = "/annotateWithTypeFromJSDoc16.ts";
     let content = "/** @type {function(*, ...number, ...boolean): void} */\nvar x = (x, ys, ...zs) => { x; ys; zs; };\n";
-    let annotate_index_zero_based = 3usize;
 
     server
         .open_files
@@ -73,18 +81,22 @@ fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_16() {
         .as_ref()
         .and_then(serde_json::Value::as_array)
         .expect("expected getCodeFixes actions array");
-    assert!(
-        actions.len() > annotate_index_zero_based,
-        "expected at least {} actions for {file}, got {actions:?}",
-        annotate_index_zero_based + 1
-    );
-    let annotate = &actions[annotate_index_zero_based];
-    assert_eq!(
-        annotate
+    let any_annotate = actions.iter().any(|action| {
+        action
             .get("description")
-            .and_then(serde_json::Value::as_str),
-        Some("Annotate with type from JSDoc"),
-        "unexpected action order for {file}: {actions:?}"
+            .and_then(serde_json::Value::as_str)
+            == Some("Annotate with type from JSDoc")
+    });
+    assert!(
+        any_annotate,
+        "expected an 'Annotate with type from JSDoc' action for {file}, got {actions:?}"
+    );
+    let any_infer_placeholder = actions.iter().any(|action| {
+        action.get("fixId").and_then(serde_json::Value::as_str) == Some("inferFromUsage")
+    });
+    assert!(
+        !any_infer_placeholder,
+        "tsserver does not emit `inferFromUsage` for JSDoc @type function annotations; got {actions:?}"
     );
 }
 
@@ -217,7 +229,82 @@ fn collect_import_candidates_normalizes_commonjs_js_specifiers() {
 }
 
 #[test]
-#[ignore] // TODO: Code fix suggestion needs filtering for plain missing properties vs typos
+fn get_code_fixes_unresolved_function_call_offers_missing_function_declaration() {
+    // Plain unresolved call expression `foo(1);` must produce a
+    // `fixMissingFunctionDeclaration` action, not an empty
+    // `Add all missing imports` action. Regression for
+    // https://github.com/mohsen1/tsz/issues/3806.
+    let mut server = make_server();
+    let content = "foo(1);\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success);
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+
+    let fix_names: Vec<&str> = actions
+        .iter()
+        .filter_map(|a| a.get("fixName").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        fix_names.contains(&"fixMissingFunctionDeclaration"),
+        "expected fixMissingFunctionDeclaration in {fix_names:?}"
+    );
+    assert!(
+        !fix_names.contains(&"quickfix"),
+        "empty fixMissingImport quickfix must not appear, got {actions:?}"
+    );
+
+    let fix = actions
+        .iter()
+        .find(|a| {
+            a.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixMissingFunctionDeclaration")
+        })
+        .expect("missing the function-declaration fix");
+    let description = fix
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert_eq!(
+        description, "Add missing function declaration 'foo'",
+        "unexpected description: {description}"
+    );
+    let new_text = fix
+        .get("changes")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("textChanges"))
+        .and_then(|t| t.get(0))
+        .and_then(|t| t.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert!(
+        new_text.contains("function foo("),
+        "expected function declaration in newText, got {new_text:?}"
+    );
+}
+
+#[test]
 fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
     let mut server = make_server();
     server.open_files.insert(
@@ -274,6 +361,42 @@ fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
         ],
         "unexpected codefix list for plain TS2339 missing property: {actions:?}"
     );
+
+    for action in actions {
+        let changes = action
+            .get("changes")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing-member fix should include changes");
+        assert_eq!(changes.len(), 1, "expected one file change: {action:?}");
+        assert_eq!(
+            changes[0]
+                .get("fileName")
+                .and_then(serde_json::Value::as_str),
+            Some("/declarations.d.ts")
+        );
+        let text_changes = changes[0]
+            .get("textChanges")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing textChanges");
+        assert_eq!(
+            text_changes.len(),
+            1,
+            "expected one insertion edit: {action:?}"
+        );
+        assert_eq!(
+            text_changes[0].get("start"),
+            text_changes[0].get("end"),
+            "missing-member fix should insert into the target interface"
+        );
+        assert!(
+            text_changes[0]
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text.contains("unknown")
+                    && (text.contains("test") || text.contains("[x: string]"))),
+            "missing-member edit should declare the requested member: {action:?}"
+        );
+    }
 }
 
 #[test]
@@ -945,10 +1068,9 @@ fn extract_module_specifier_from_import_change(new_text: &str) -> Option<String>
         (idx + "from ".len(), '\'')
     } else if let Some(idx) = new_text.find("require(\"") {
         (idx + "require(".len(), '"')
-    } else if let Some(idx) = new_text.find("require('") {
-        (idx + "require(".len(), '\'')
     } else {
-        return None;
+        let idx = new_text.find("require('")?;
+        (idx + "require(".len(), '\'')
     };
 
     let rest = &new_text[prefix_len..];
@@ -2390,5 +2512,149 @@ fn handle_get_code_fixes_prefers_add_missing_async_for_underscore_arrow_paramete
     assert!(
         new_text.contains("b: async (_) => \"hello\""),
         "expected async underscored-parameter arrow update, got: {new_text}"
+    );
+}
+
+// Issue #3832: getCodeFixes should return an empty body when the requested
+// span does not overlap any matching diagnostic (no fallback to all matching
+// diagnostics in the file).
+#[test]
+fn get_code_fixes_returns_empty_when_span_misses_diagnostic() {
+    let mut server = make_server();
+    let file = "/missing_name_outside_span.ts";
+    let content = "missingName = 1;\nconst ok = 1;\n";
+
+    server
+        .open_files
+        .insert(file.to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": file,
+            "startLine": 2,
+            "startOffset": 1,
+            "endLine": 2,
+            "endOffset": 1,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    assert!(
+        actions.is_empty(),
+        "expected no code fixes when request span misses the diagnostic, got: {actions:?}"
+    );
+}
+
+// Issue #3938: implement-interface codefix should generate stubs for method
+// signatures, not just property signatures. tsc emits a method body that
+// throws "Method not implemented." for each missing method.
+#[test]
+fn handle_get_code_fixes_implement_interface_method_signature() {
+    let mut server = make_server();
+    let content = "interface I { m(): void; }\nclass C implements I {}\n";
+    server
+        .open_files
+        .insert("/method_iface.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/method_iface.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .unwrap_or_else(|| {
+            panic!("expected implement-interface codefix for method signature, got: {actions:?}")
+        });
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("m(): void {"),
+        "expected method stub for missing method, got: {new_text}"
+    );
+    assert!(
+        new_text.contains("throw new Error(\"Method not implemented.\");"),
+        "expected throw stub in method body, got: {new_text}"
+    );
+}
+
+// Issue #3938: a property whose type is a function type (e.g.
+// `m: () => void;`) must continue to be rendered as a property assignment,
+// not as a method stub. The method-signature parse path must only fire when
+// the member name is followed directly by `(` or `<`, not by `:`.
+#[test]
+fn handle_get_code_fixes_implement_interface_function_typed_property() {
+    let mut server = make_server();
+    let content = "interface I { m: () => void; }\nclass C implements I {}\n";
+    server
+        .open_files
+        .insert("/fn_prop_iface.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/fn_prop_iface.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix for function-typed property");
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("m: () => void;"),
+        "expected property assignment for function-typed property, got: {new_text}"
+    );
+    assert!(
+        !new_text.contains("Method not implemented."),
+        "function-typed properties should not be rendered as throwing methods, got: {new_text}"
     );
 }

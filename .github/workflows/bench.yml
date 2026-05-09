@@ -9,13 +9,13 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
-# Full benchmark runs are intentionally serialized across CI completions,
-# schedules, and manual dispatches. A newer commit must not cancel the running
-# benchmark, and a second workflow run must not compete for the same benchmark
-# runners.
+# Workflow-run benchmarks coalesce aggressively so stale main commits do not
+# spend self-hosted runner time in prepare/shards. Scheduled and manual runs are
+# protected from workflow-run cancellation; workflow-run gates skip cheaply while
+# an explicit benchmark is active.
 concurrency:
-  group: bench
-  cancel-in-progress: false
+  group: bench-${{ github.event_name == 'workflow_run' && 'workflow-run' || 'explicit' }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
 
 permissions:
   contents: read
@@ -26,6 +26,7 @@ env:
   BENCH_FULL: "1"
   BENCH_COLD: "1"
   BENCH_PGO: "1"
+  BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS: "900"
   TSC_NPM_SPEC: "6.0.2"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -53,6 +54,32 @@ jobs:
               echo "CI conclusion was '${{ github.event.workflow_run.conclusion }}'; skipping bench."
               should_run=false
             else
+              if [[ "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}" != "0" ]]; then
+                echo "Waiting ${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}s for main to settle before starting bench."
+                sleep "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}"
+              fi
+
+              explicit_runs=$(
+                {
+                  gh run list \
+                    --repo "${{ github.repository }}" \
+                    --workflow Bench \
+                    --status queued \
+                    --json databaseId,event \
+                    --jq ".[] | select((.event == \"schedule\" or .event == \"workflow_dispatch\") and (.databaseId != ${GITHUB_RUN_ID})) | .databaseId" || true
+                  gh run list \
+                    --repo "${{ github.repository }}" \
+                    --workflow Bench \
+                    --status in_progress \
+                    --json databaseId,event \
+                    --jq ".[] | select((.event == \"schedule\" or .event == \"workflow_dispatch\") and (.databaseId != ${GITHUB_RUN_ID})) | .databaseId" || true
+                } 2>/dev/null | sort -u | wc -l | tr -d '[:space:]'
+              )
+              if [[ "${explicit_runs}" != "0" ]]; then
+                echo "A scheduled/manual Bench run is queued or active; skipping workflow-run bench."
+                should_run=false
+              fi
+
               latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
                 --jq '.object.sha' 2>/dev/null || true)
               if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
@@ -70,18 +97,42 @@ jobs:
     if: needs.bench-gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 90
+    outputs:
+      should_run: ${{ steps.prepare-gate.outputs.should_run }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
 
+      - id: prepare-gate
+        name: Re-check benchmark target before prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          should_run=true
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
+              --jq '.object.sha' 2>/dev/null || true)
+            if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
+              echo "Benchmark target ${BENCH_TARGET_SHA} became stale after bench-gate; latest main is ${latest_main_sha}. Skipping prepare."
+              should_run=false
+            fi
+          fi
+
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+
       - name: Restore GCS caches
+        if: steps.prepare-gate.outputs.should_run == 'true'
         env:
           _TSZ_CI_SUITE: bench
         run: scripts/ci/gcp-cache.sh restore
 
       - name: Restore bench npm/tool cache
+        if: steps.prepare-gate.outputs.should_run == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -92,6 +143,7 @@ jobs:
             bench-tools-${{ runner.os }}-
 
       - name: Restore bench PGO binary cache
+        if: steps.prepare-gate.outputs.should_run == 'true'
         uses: actions/cache@v4
         with:
           path: .target-bench/dist
@@ -100,6 +152,7 @@ jobs:
             bench-pgo-${{ runner.os }}-
 
       - name: Validate bench PGO binary cache
+        if: steps.prepare-gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -140,6 +193,7 @@ jobs:
           touch .target-bench/dist/tsz
 
       - name: Install pnpm
+        if: steps.prepare-gate.outputs.should_run == 'true'
         run: |
           if ! command -v pnpm &>/dev/null; then
             mkdir -p "$HOME/.npm-global"
@@ -150,6 +204,7 @@ jobs:
           pnpm config set store-dir "$PNPM_STORE_DIR"
 
       - name: Prepare benchmark binary and tools
+        if: steps.prepare-gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -uo pipefail
@@ -173,6 +228,7 @@ jobs:
           exit "${PIPESTATUS[0]}"
 
       - name: Mark bench PGO binary cache
+        if: steps.prepare-gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -198,7 +254,7 @@ jobs:
           printf '%s\n' "$fingerprint" > .target-bench/dist/.bench-source-fingerprint
 
       - name: Upload benchmark prep log
-        if: always()
+        if: always() && steps.prepare-gate.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: bench-prepare-log
@@ -208,14 +264,17 @@ jobs:
           compression-level: 1
 
       - name: Save GCS caches
+        if: steps.prepare-gate.outputs.should_run == 'true'
         env:
           _TSZ_CI_SUITE: bench
         run: scripts/ci/gcp-cache.sh save
 
       - name: Pack benchmark prep artifact
+        if: steps.prepare-gate.outputs.should_run == 'true'
         run: tar -cf bench-prep.tar .target-bench/tools .target-bench/dist
 
       - name: Upload benchmark prep artifact
+        if: steps.prepare-gate.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: bench-prep
@@ -227,6 +286,7 @@ jobs:
   bench:
     name: bench-${{ matrix.label }}
     needs: bench-prepare
+    if: needs.bench-prepare.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -247,12 +307,18 @@ jobs:
           - label: solver-stress
             timeout: 120
             filter: 'Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches'
-          - label: algorithmic
+          - label: algorithmic-bct
             timeout: 120
-            filter: 'BCT candidates|Constraint conflicts N|Mapped complex template keys'
+            filter: 'BCT candidates'
+          - label: algorithmic-constraint
+            timeout: 120
+            filter: 'Constraint conflicts N'
+          - label: algorithmic-mapped
+            timeout: 120
+            filter: 'Mapped complex template keys'
           - label: projects
             timeout: 120
-            filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|nextjs-fresh-app'
+            filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
           - label: large-ts-repo
             timeout: 120
             filter: '^large-ts-repo$'
@@ -365,8 +431,8 @@ jobs:
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          if [[ "${#json_files[@]}" -ne 6 ]]; then
-            echo "Expected 6 benchmark shard JSON files, found ${#json_files[@]}."
+          if [[ "${#json_files[@]}" -ne 8 ]]; then
+            echo "Expected 8 benchmark shard JSON files, found ${#json_files[@]}."
             printf 'Found JSON files:\n'
             printf '  %s\n' "${json_files[@]}"
             find bench-artifacts -maxdepth 2 -type f -print || true

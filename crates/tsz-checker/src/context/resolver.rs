@@ -3,12 +3,200 @@
 //! Implements `tsz_solver::TypeResolver` which enables the solver to resolve
 //! `TypeData::Lazy(DefId)` references back to cached types during evaluation.
 
-use crate::context::CheckerContext;
+use crate::context::{
+    CheckerContext, ResolutionError, ResolutionModeOverride, ResolutionRequestKind,
+};
+use crate::module_resolution::module_specifier_candidates;
 use crate::query_boundaries::variance::Variance;
 use std::sync::Arc;
 use tsz_parser::parser::base::{NodeIndex, NodeList};
 
 impl<'a> CheckerContext<'a> {
+    /// Get the resolution error for a specifier under an explicit resolution-mode override.
+    pub fn get_resolution_error_with_mode(
+        &self,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<&ResolutionError> {
+        if let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmImport,
+        ) {
+            return Some(error);
+        }
+        if let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmReExport,
+        ) {
+            return Some(error);
+        }
+        if matches!(
+            resolution_mode_override,
+            Some(ResolutionModeOverride::Require)
+        ) && let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::CjsRequire,
+        ) {
+            return Some(error);
+        }
+
+        self.get_resolution_error(specifier)
+    }
+
+    /// Get the resolution error for a specifier under the exact driver request.
+    pub fn get_resolution_error_for_request(
+        &self,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+        request_kind: ResolutionRequestKind,
+    ) -> Option<&ResolutionError> {
+        if let Some(errors) = self.resolved_module_request_errors.as_ref() {
+            for candidate in crate::module_resolution::module_specifier_error_candidates(specifier)
+            {
+                if let Some(error) = errors.get(&(
+                    self.current_file_idx,
+                    candidate,
+                    resolution_mode_override,
+                    request_kind,
+                )) {
+                    return Some(error);
+                }
+            }
+            return None;
+        }
+
+        self.get_resolution_error(specifier)
+    }
+
+    /// Resolve an import specifier from a specific file using an explicit
+    /// `resolution-mode` override when one was present in the original request.
+    pub fn resolve_import_target_from_file_with_mode(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<usize> {
+        if let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmImport,
+        ) {
+            return Some(target_idx);
+        }
+        if let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmReExport,
+        ) {
+            return Some(target_idx);
+        }
+        if matches!(
+            resolution_mode_override,
+            Some(ResolutionModeOverride::Require)
+        ) && let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::CjsRequire,
+        ) {
+            return Some(target_idx);
+        }
+
+        self.resolve_import_target_from_file(source_file_idx, specifier)
+    }
+
+    /// Resolve an import specifier from a specific file using the exact driver request.
+    pub fn resolve_import_target_from_file_for_request(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+        request_kind: ResolutionRequestKind,
+    ) -> Option<usize> {
+        if let Some(paths) = self.resolved_module_request_paths.as_ref() {
+            for candidate in module_specifier_candidates(specifier) {
+                if let Some(target_idx) = paths.get(&(
+                    source_file_idx,
+                    candidate.clone(),
+                    resolution_mode_override,
+                    request_kind,
+                )) {
+                    return Some(*target_idx);
+                }
+            }
+            return None;
+        }
+
+        self.resolve_import_target_from_file(source_file_idx, specifier)
+    }
+
+    /// Compute the checker-side resolution-mode key used by the CLI driver for a request.
+    pub fn resolution_mode_for_request(
+        &self,
+        request_kind: ResolutionRequestKind,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<ResolutionModeOverride> {
+        if resolution_mode_override.is_some() {
+            return resolution_mode_override;
+        }
+
+        match request_kind {
+            ResolutionRequestKind::DynamicImport => return Some(ResolutionModeOverride::Import),
+            ResolutionRequestKind::CjsRequire => return Some(ResolutionModeOverride::Require),
+            ResolutionRequestKind::EsmImport | ResolutionRequestKind::EsmReExport => {}
+        }
+
+        let file_name = self
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(self.current_file_idx))
+            .and_then(|arena| arena.source_files.first())
+            .map(|source_file| source_file.file_name.as_str())
+            .unwrap_or(self.file_name.as_str());
+
+        if self.compiler_options.module == tsz_common::common::ModuleKind::Preserve {
+            if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+                return Some(ResolutionModeOverride::Import);
+            }
+            if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+                return Some(ResolutionModeOverride::Require);
+            }
+            return Some(ResolutionModeOverride::Import);
+        }
+
+        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+            return Some(ResolutionModeOverride::Import);
+        }
+        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+            return Some(ResolutionModeOverride::Require);
+        }
+        if self.compiler_options.module.is_es_module() {
+            return Some(ResolutionModeOverride::Import);
+        }
+        if let Some(is_esm) = self
+            .file_is_esm_map
+            .as_ref()
+            .and_then(|map| map.get(file_name))
+            .copied()
+        {
+            return Some(if is_esm {
+                ResolutionModeOverride::Import
+            } else {
+                ResolutionModeOverride::Require
+            });
+        }
+        Some(if self.file_is_esm == Some(true) {
+            ResolutionModeOverride::Import
+        } else {
+            ResolutionModeOverride::Require
+        })
+    }
+
     /// Check if a lib interface has a heritage-merged version in the cache.
     ///
     /// During lib resolution, interface bodies are registered in `symbol_types`/`type_env`
@@ -337,6 +525,16 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                     // tripping during deep recursive type resolution). Fall through to
                     // the type environment, which may have the correct resolved type from
                     // an earlier successful resolution.
+                } else if ty == tsz_solver::TypeId::UNKNOWN {
+                    // Skip placeholder UNKNOWN entries written by recursion guards
+                    // / stub registrations during cross-file alias body lowering.
+                    // Returning UNKNOWN here would let the evaluator collapse a
+                    // generic application like `Pick<member, ...>` to bare
+                    // unknown, silently erasing the alias's structural shape
+                    // for downstream object spreads / intersections. A real
+                    // resolved body is reachable through the later
+                    // `type_env.get_def` and `DefinitionStore::get_body`
+                    // fallbacks, so let the function continue past this entry.
                 } else if crate::query_boundaries::common::lazy_def_id(self.types, ty)
                     == Some(def_id)
                 {
@@ -371,6 +569,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         if !is_atomics
             && let Ok(env) = self.type_env.try_borrow()
             && let Some(body) = env.get_def(def_id)
+            && body != tsz_solver::TypeId::UNKNOWN
+            && body != tsz_solver::TypeId::ERROR
         {
             // For lib interfaces, check if the heritage-merged version is available.
             if let Some(override_ty) = self.lib_heritage_cache_override(sym_id, body) {
@@ -450,6 +650,23 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 "resolve_lazy: found in SYMBOL_TYPE bucket"
             );
             return Some(resolved);
+        }
+
+        // Final fallback: consult the shared `DefinitionStore` for a body
+        // registered by a sibling file's checker (e.g., `Pick`/`Exclude` from
+        // `helpers/util.ts` referenced by another file's alias body). Without
+        // this, cross-file type-alias bodies that reference file-local
+        // helpers from their declaring file evaluate to `None` and the
+        // downstream evaluator collapses them to `unknown`, silently
+        // erasing the alias's structural contributions in object spreads,
+        // intersections, and other consumers.
+        if let Some(body) = self.definition_store.get_body(def_id) {
+            tracing::trace!(
+                def_id = def_id.0,
+                type_id = body.0,
+                "resolve_lazy: found in DefinitionStore body"
+            );
+            return Some(body);
         }
 
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
@@ -725,6 +942,17 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
+    fn is_builtin_readonly_array_def(&self, def_id: tsz_solver::DefId) -> bool {
+        let has_readonly_array_name = self
+            .definition_store
+            .get_name(def_id)
+            .is_some_and(|name| self.types.resolve_atom_ref(name).as_ref() == "ReadonlyArray");
+        has_readonly_array_name
+            && self
+                .def_to_symbol_id(def_id)
+                .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
+    }
+
     /// Get the `SymbolId` for a `DefId`.
     ///
     /// Uses the `DefinitionStore` to look up the `symbol_id` stored in `DefinitionInfo`.
@@ -749,6 +977,92 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
         // Look up via get_existing_def_id (checks local cache + authoritative index)
         self.get_existing_def_id(sym_id)
+    }
+
+    /// Resolve an `UnresolvedTypeName(name)` text to a `DefId` using the
+    /// merged binder graph. This recovers cross-file qualified names whose
+    /// lowering pass landed `Application(UnresolvedTypeName(name), args)`
+    /// because the alias body was lowered before the merged binder was
+    /// available. Mirrors `resolve_entity_name_text_to_def_id_for_lowering`
+    /// from `CheckerState` but lives on `CheckerContext` so the solver-side
+    /// type evaluator can call it via the `TypeResolver` trait.
+    fn resolve_unresolved_type_name(&self, name: &str) -> Option<tsz_solver::def::DefId> {
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        // Prefer a non-alias entry from `global_file_locals_index` so we
+        // walk the actual declaration symbol directly. Fall back to the
+        // current binder's local entry (typically an import alias) only
+        // when no concrete declaration is reachable cross-file.
+        let global_concrete = self
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(root_name))
+            .and_then(|entries| {
+                entries.iter().find(|(file_idx, sym)| {
+                    self.all_binders
+                        .as_ref()
+                        .and_then(|b| b.as_ref().get(*file_idx))
+                        .and_then(|binder| binder.get_symbol(*sym))
+                        .is_some_and(|symbol| {
+                            !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                        })
+                })
+            })
+            .map(|&(_, sym)| sym);
+        let mut current_sym = global_concrete
+            .or_else(|| self.binder.file_locals.get(root_name))
+            .or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.file_locals.get(root_name))
+            })?;
+
+        for segment in segments {
+            // Walk through alias chains (e.g. `import { util } from "..."` ->
+            // the actual namespace symbol).
+            let mut visited = 0u32;
+            while let Some(symbol) = self.binder.get_symbol(current_sym) {
+                if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+                    break;
+                }
+                let Some(target) = self.binder.resolve_import_symbol(current_sym) else {
+                    break;
+                };
+                if target == current_sym || visited >= 8 {
+                    break;
+                }
+                current_sym = target;
+                visited += 1;
+            }
+            let symbol = self.binder.get_symbol(current_sym).or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.get_symbol(current_sym))
+            })?;
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+        }
+
+        let def_id = self.get_or_create_def_id(current_sym);
+        // Cache the resolution into `type_env` so the next solver-side
+        // evaluator pass (which uses `TypeEnvironment` as resolver) can
+        // reduce `Application(UnresolvedTypeName(name), args)` without
+        // having to bounce back into the wider CheckerContext path. The
+        // first-pass evaluator runs with `&*self.type_env`, so without
+        // this cache share every nested Application keeps producing
+        // opaque results for the rest of an instantiated body.
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_unresolved_resolution(name.to_string(), def_id);
+        }
+        Some(def_id)
     }
 
     /// Check if a `TypeId` represents a full Enum type (not a specific member).

@@ -131,11 +131,15 @@ fn test_keyof_unknown_is_never() {
 }
 
 #[test]
-fn test_keyof_never_is_never() {
+fn test_keyof_never_is_property_key() {
     let interner = TypeInterner::new();
     let keyof_never = interner.keyof(TypeId::NEVER);
     let result = evaluate_type(&interner, keyof_never);
-    assert_eq!(result, TypeId::NEVER, "keyof never should be never");
+    let property_key = interner.union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
+    assert_eq!(
+        result, property_key,
+        "keyof never should be string | number | symbol"
+    );
 }
 
 #[test]

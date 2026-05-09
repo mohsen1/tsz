@@ -11,7 +11,7 @@ use crate::caches::db::QueryDatabase;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
+use crate::types::{IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -78,7 +78,22 @@ pub fn compute_conditional_expression_type(
         return interner.union2(adjusted_true, adjusted_false);
     }
 
+    if contains_unique_symbol(interner, true_type) || contains_unique_symbol(interner, false_type) {
+        return interner.union_preserve_members(vec![true_type, false_type]);
+    }
+
     interner.union2(true_type, false_type)
+}
+
+fn contains_unique_symbol(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match interner.lookup(type_id) {
+        Some(TypeData::UniqueSymbol(_)) => true,
+        Some(TypeData::Union(list_id)) => interner
+            .type_list(list_id)
+            .iter()
+            .any(|&member| contains_unique_symbol(interner, member)),
+        _ => false,
+    }
 }
 
 pub fn normalize_object_union_members_for_write_target(
@@ -217,9 +232,17 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
         return None;
     }
 
+    // Collect property names in source order. shape.properties is Atom-sorted
+    // (canonical form for hashing), so iterating it directly leaks Atom-allocation
+    // order into `names`, producing non-source-order display strings on the
+    // resulting normalized objects. Sort by `declaration_order` so the first
+    // missing-property fill-in for an empty `{}` literal stays in the order tsc
+    // reports.
     let mut names: Vec<Atom> = Vec::new();
     for (_, shape) in &object_members {
-        for prop in &shape.properties {
+        let mut props_by_decl: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        props_by_decl.sort_by_key(|p| p.declaration_order);
+        for prop in props_by_decl {
             if !names.contains(&prop.name) {
                 names.push(prop.name);
             }
@@ -236,7 +259,17 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
         let completed = add_missing_optional_properties(&shape.properties, &names);
         if completed != shape.properties {
             changed = true;
-            normalized.push(interner.object_with_flags(completed, shape.flags));
+            // Capture source-order display properties before interning sorts the
+            // canonical shape by Atom. Without this, the canonical shape may
+            // dedupe to a previously-interned twin whose `declaration_order` is
+            // zero, and the diagnostic printer falls back to Atom order — which
+            // is non-deterministic across compilations and rarely matches the
+            // source-written property order tsc preserves.
+            let mut display_props = completed.clone();
+            crate::types::normalize_display_property_order(&mut display_props);
+            let new_type_id = interner.object_with_flags(completed, shape.flags);
+            interner.store_display_properties(new_type_id, display_props);
+            normalized.push(new_type_id);
         } else {
             normalized.push(original_type);
         }
@@ -331,6 +364,24 @@ pub fn compute_template_expression_type(
         }
     }
 
+    if !parts.is_empty()
+        && texts.len() == parts.len() + 1
+        && parts
+            .iter()
+            .any(|&part| crate::type_queries::contains_type_parameters_db(db, part))
+    {
+        let mut spans = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            if !text.is_empty() {
+                spans.push(TemplateSpan::Text(db.intern_string(text)));
+            }
+            if i < parts.len() {
+                spans.push(TemplateSpan::Type(parts[i]));
+            }
+        }
+        return db.template_literal(spans);
+    }
+
     // Template literals produce string type by default
     TypeId::STRING
 }
@@ -372,12 +423,101 @@ pub fn compute_template_expression_type_contextual(
             // For each interpolated part, check if it's assignable to the template constraint
             // (string | number | bigint | boolean | null | undefined).
             // If so, use the part type directly; otherwise widen to string.
-            let part = parts[i];
+            let part = template_substitution_type(db, parts[i]);
             spans.push(TemplateSpan::Type(part));
         }
     }
 
     db.template_literal(spans)
+}
+
+fn template_substitution_type(db: &dyn TypeDatabase, part: TypeId) -> TypeId {
+    if template_substitution_type_is_valid(db, part, 0) {
+        part
+    } else {
+        TypeId::STRING
+    }
+}
+
+fn template_substitution_type_is_valid(db: &dyn TypeDatabase, part: TypeId, depth: u32) -> bool {
+    if depth > 10 {
+        return false;
+    }
+    if matches!(
+        part,
+        TypeId::STRING
+            | TypeId::NUMBER
+            | TypeId::BIGINT
+            | TypeId::BOOLEAN
+            | TypeId::NULL
+            | TypeId::UNDEFINED
+            | TypeId::BOOLEAN_TRUE
+            | TypeId::BOOLEAN_FALSE
+    ) {
+        return true;
+    }
+    if part.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(part) {
+        Some(TypeData::Intrinsic(
+            IntrinsicKind::String
+            | IntrinsicKind::Number
+            | IntrinsicKind::Bigint
+            | IntrinsicKind::Boolean
+            | IntrinsicKind::Null
+            | IntrinsicKind::Undefined,
+        ))
+        | Some(TypeData::Literal(_))
+        | Some(TypeData::TemplateLiteral(_)) => true,
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .all(|&member| template_substitution_type_is_valid(db, member, depth + 1)),
+        Some(TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| template_substitution_type_is_valid(db, member, depth + 1)),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            info.constraint.is_some_and(|constraint| {
+                template_substitution_type_is_valid(db, constraint, depth + 1)
+                    || template_substitution_constraint_is_dependent(db, constraint, depth + 1)
+            })
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            template_substitution_type_is_valid(db, inner, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn template_substitution_constraint_is_dependent(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 10 || type_id.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(type_id) {
+        Some(
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::Application(_)
+            | TypeData::KeyOf(_)
+            | TypeData::IndexAccess(_, _),
+        ) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| template_substitution_constraint_is_dependent(db, member, depth + 1)),
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            template_substitution_constraint_is_dependent(db, inner, depth + 1)
+        }
+        _ => false,
+    }
 }
 
 /// Checks whether a type is or contains a template literal contextual type.
@@ -497,7 +637,10 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     // collapses to `{ a: number }`, losing optionalized properties and causing
     // downstream TS2339/TS2353 drift.
     if let Some(normalized) = normalize_fresh_object_literal_union_members(interner, &widened) {
-        return interner.union(normalized);
+        let origin_members = normalized.clone();
+        let result = interner.union(normalized);
+        interner.store_union_origin(result, origin_members);
+        return result;
     }
 
     // Constructor-valued arrays should preserve member unions. Collapsing

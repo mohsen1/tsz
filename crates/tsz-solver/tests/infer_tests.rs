@@ -982,6 +982,7 @@ fn test_resolve_bounds_object_readonly_property_missing_ok() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     let lower = interner.object(Vec::new());
@@ -1722,6 +1723,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -1771,6 +1773,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -1827,6 +1830,7 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -1883,6 +1887,7 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -1939,6 +1944,7 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -1995,6 +2001,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2041,6 +2048,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_property() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -2087,6 +2095,7 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2143,6 +2152,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2199,6 +2209,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2248,6 +2259,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2297,6 +2309,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2346,6 +2359,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2395,6 +2409,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2444,6 +2459,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2493,6 +2509,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2542,6 +2559,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2591,6 +2609,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2640,6 +2659,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2689,6 +2709,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2738,6 +2759,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2787,6 +2809,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2836,6 +2859,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2885,6 +2909,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2934,6 +2959,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -2983,6 +3009,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3032,6 +3059,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3081,6 +3109,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3130,6 +3159,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3179,6 +3209,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3228,6 +3259,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3277,6 +3309,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3326,6 +3359,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3375,6 +3409,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_zero_without_sig
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3424,6 +3459,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign_trai
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3473,6 +3509,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_digits() 
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3522,6 +3559,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_minus_missing_dig
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3571,6 +3609,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_sign() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3620,6 +3659,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_minus() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3669,6 +3709,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_negative() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3718,6 +3759,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_positive() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3767,6 +3809,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_without_sign(
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3816,6 +3859,7 @@ fn test_resolve_bounds_number_index_ignores_missing_exponent_sign() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3865,6 +3909,7 @@ fn test_resolve_bounds_number_index_ignores_leading_zero_decimal_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3914,6 +3959,7 @@ fn test_resolve_bounds_number_index_ignores_hex_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -3963,6 +4009,7 @@ fn test_resolve_bounds_number_index_ignores_binary_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4012,6 +4059,7 @@ fn test_resolve_bounds_number_index_ignores_octal_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4061,6 +4109,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zero_mantissa() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4110,6 +4159,7 @@ fn test_resolve_bounds_number_index_ignores_leading_dot_decimal_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4159,6 +4209,7 @@ fn test_resolve_bounds_number_index_ignores_multiple_leading_zeros() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4208,6 +4259,7 @@ fn test_resolve_bounds_number_index_ignores_negative_hex_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4257,6 +4309,7 @@ fn test_resolve_bounds_number_index_ignores_negative_binary_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4306,6 +4359,7 @@ fn test_resolve_bounds_number_index_ignores_negative_octal_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4355,6 +4409,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_sign() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4404,6 +4459,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_minus() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4453,6 +4509,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_missing_digits() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4502,6 +4559,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_minus_missing_digits() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4551,6 +4609,7 @@ fn test_resolve_bounds_number_index_ignores_negative_exponent_zero() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4600,6 +4659,7 @@ fn test_resolve_bounds_number_index_ignores_positive_exponent_zero() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4649,6 +4709,7 @@ fn test_resolve_bounds_number_index_accepts_negative_decimal_boundary_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4705,6 +4766,7 @@ fn test_resolve_bounds_number_index_ignores_trailing_decimal_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4754,6 +4816,7 @@ fn test_resolve_bounds_number_index_ignores_leading_plus_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -4803,6 +4866,7 @@ fn test_resolve_bounds_number_index_ignores_numeric_separator_name() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }],
         string_index: None,
@@ -11647,6 +11711,7 @@ fn test_default_recursive_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     ctx.add_upper_bound(var_t, node);
@@ -13601,6 +13666,7 @@ fn test_circular_constraint_linked_list_generic() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         PropertyInfo {
@@ -13615,6 +13681,7 @@ fn test_circular_constraint_linked_list_generic() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);
@@ -14840,6 +14907,7 @@ fn test_variance_computation_covariant() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -15139,9 +15207,9 @@ fn test_const_type_param_preserves_literal_number() {
 }
 
 #[test]
-fn test_const_type_param_array_to_readonly_tuple() {
+fn test_const_type_param_array_to_readonly_array() {
     // function foo<const T>(x: T): T
-    // foo([1, 2, 3]) should infer T as readonly [1, 2, 3] (not number[])
+    // foo([1, 2, 3]) should infer T as readonly array with literal elements.
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
@@ -15156,15 +15224,12 @@ fn test_const_type_param_array_to_readonly_tuple() {
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
 
-    // With const, array should become readonly tuple
+    // With const, declared array types remain arrays inside the readonly wrapper.
     match interner.lookup(result) {
-        Some(TypeData::ReadonlyType(inner)) => {
-            // Inner should be a tuple with literal elements
-            match interner.lookup(inner) {
-                Some(TypeData::Tuple(_)) => {} // Expected
-                other => panic!("Expected Tuple inside ReadonlyType, got {other:?}"),
-            }
-        }
+        Some(TypeData::ReadonlyType(inner)) => match interner.lookup(inner) {
+            Some(TypeData::Array(element)) => assert_eq!(element, one),
+            other => panic!("Expected Array inside ReadonlyType, got {other:?}"),
+        },
         other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
@@ -15402,6 +15467,7 @@ fn test_deep_widen_object_candidate_homomorphic_mapped() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -15451,6 +15517,7 @@ fn test_deep_widen_object_candidate_naked_type_variable() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -15500,6 +15567,7 @@ fn test_no_deep_widen_return_type_priority() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -15921,5 +15989,385 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
         result == TypeId::STRING || result == hi_literal,
         "U should be inferred from the concrete init argument (string / \"hi\"), got {:?}",
         interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_reverse_mapped_inference_preserves_source_declaration_order() {
+    // Reverse-mapped homomorphic inference (from `{ [K in keyof T]: T[K] }`
+    // matched against a source object) builds an object candidate for T from
+    // accumulated (key, source_property_type) pairs. tsc preserves the source
+    // object's declared member order on the candidate so diagnostic output
+    // (e.g. `Argument of type ... is not assignable to parameter of type
+    // 'Deep<{ <props in source order> }>'`) matches the source's declaration
+    // order rather than a name-hash order.
+    //
+    // Property names are picked so atom-id/alphabetical order DIFFERS from the
+    // source's declared order. Without the fix the candidate's declaration_order
+    // defaults to 0 and the interner reassigns it from the alphabetically-sorted
+    // insertion index — flipping the printed order to alpha < mid < zalpha.
+    use crate::types::{MappedType, TypeParamInfo, Visibility};
+    use tsz_common::interner::Atom;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // Intern names in an order that makes atom-id order DIFFER from the
+    // intended declaration order. The interner assigns atom ids sequentially,
+    // and shape.properties is stored sorted by atom id for hash consistency,
+    // so the bug only manifests when those two orders disagree.
+    // Atom-id order: alpha < mid < zalpha. Declaration order: zalpha, alpha, mid.
+    let alpha = interner.intern_string("alpha");
+    let mid = interner.intern_string("mid");
+    let zalpha = interner.intern_string("zalpha");
+    let wrap = interner.intern_string("wrap");
+    let make_prop = |name, type_id, decl_order| PropertyInfo {
+        name,
+        type_id,
+        write_type: type_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: decl_order,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+
+    // Mapped target: `{ [K in keyof T]: { wrap: T[K] } }`. Wrapping T[K] in
+    // a single-property object makes the inferred candidate (a plain `{ z:
+    // number; a: string; m: boolean; }`) intern to a different shape than the
+    // wrapped source — preventing the interner from silently de-duplicating
+    // the candidate against the source and bypassing the assertion.
+    let k_param = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.type_param(k_param);
+    let inner_index = interner.index_access(t_type, k_type);
+    let template = interner.object(vec![PropertyInfo::new(wrap, inner_index)]);
+    let target = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: interner.keyof(t_type),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Source matching the mapped pattern. Declaration order intentionally
+    // disagrees with alphabetical/atom-id order: zalpha (1), alpha (2), mid (3).
+    let wrap_num = interner.object(vec![PropertyInfo::new(wrap, TypeId::NUMBER)]);
+    let wrap_str = interner.object(vec![PropertyInfo::new(wrap, TypeId::STRING)]);
+    let wrap_bool = interner.object(vec![PropertyInfo::new(wrap, TypeId::BOOLEAN)]);
+    let source = interner.object(vec![
+        make_prop(zalpha, wrap_num, 1),
+        make_prop(alpha, wrap_str, 2),
+        make_prop(mid, wrap_bool, 3),
+    ]);
+
+    ctx.infer_from_types(source, target, InferencePriority::HomomorphicMappedType)
+        .unwrap();
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+
+    let shape_id = match interner.lookup(result) {
+        Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
+        other => panic!("Expected Object candidate, got {other:?}"),
+    };
+    let shape = interner.object_shape(shape_id);
+
+    let order_of = |name: Atom| {
+        shape
+            .properties
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.declaration_order)
+            .unwrap_or_else(|| panic!("missing property {name:?}"))
+    };
+    let z_order = order_of(zalpha);
+    let a_order = order_of(alpha);
+    let m_order = order_of(mid);
+    assert!(
+        z_order < a_order && a_order < m_order,
+        "candidate must preserve source declaration order \
+         (zalpha < alpha < mid); got zalpha={z_order} alpha={a_order} mid={m_order}"
+    );
+}
+
+/// Inferring from an array argument against a `[...T]` parameter must produce
+/// `T = sourceArray`. The variadic tuple `[...T]` is structurally equivalent
+/// to `T` (when `T` is array-typed), so a generic call like
+/// `function f<T extends unknown[]>(t: [...T]): T; f(arr)` infers `T = arr`'s
+/// type. Without this rule, inference falls through and `T` defaults to its
+/// constraint (`unknown[]`), then the assignability check emits a spurious
+/// TS2345 because `[...unknown[]]` is not normalized to `unknown[]`.
+#[test]
+fn test_inference_from_array_against_single_rest_variadic_tuple() {
+    use crate::types::{InferencePriority, TupleElement};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: number[]
+    let source = interner.array(TypeId::NUMBER);
+
+    // Target: [...T]
+    let target = interner.tuple(vec![TupleElement {
+        type_id: t_type,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(
+        result, source,
+        "inferring number[] against [...T] should produce T = number[]"
+    );
+}
+
+/// Same rule with a different type-parameter name to guard against any
+/// hardcoded-name regression. The behaviour must be structural.
+#[test]
+fn test_inference_from_array_against_single_rest_variadic_tuple_alt_name() {
+    use crate::types::{InferencePriority, TupleElement};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    // Use a different name to prove the rule is structural.
+    let p_name = interner.intern_string("P");
+    let var_p = ctx.fresh_type_param(p_name, false);
+    let p_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: p_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let source = interner.array(TypeId::STRING);
+
+    let target = interner.tuple(vec![TupleElement {
+        type_id: p_type,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let result = ctx.resolve_with_constraints(var_p).unwrap();
+    assert_eq!(
+        result, source,
+        "rule is structural and must not depend on the type-parameter name"
+    );
+}
+
+/// Targets with multiple elements (e.g., `[...T, number]`) are *not* in scope
+/// for the new single-rest rule — the spread-tuple-equals-array reduction only
+/// applies when the rest is the sole element. This test pins that boundary so
+/// future refactors don't accidentally over-broaden the case.
+#[test]
+fn test_inference_from_array_against_mixed_variadic_tuple_does_not_match() {
+    use crate::types::{InferencePriority, TupleElement};
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source = interner.array(TypeId::NUMBER);
+
+    // Target: [...T, number] — has a fixed trailing element after the rest.
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: t_type,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    // The single-rest reduction must not fire here. Either no candidate is
+    // recorded, or any recorded candidate must come from a different rule —
+    // we only assert that the rule under test does not naively bind T to the
+    // entire source array.
+    let resolved = ctx.resolve_with_constraints(var_t).unwrap_or(TypeId::ERROR);
+    assert_ne!(
+        resolved, source,
+        "single-rest rule must not fire on multi-element variadic tuples"
+    );
+}
+
+/// Extract Inference Improvement (TypeScript issue #25065): inferring a type
+/// parameter K from a source against a target shaped like `Extract<K, U>`
+/// (`K extends U ? K : never`) must infer K = source. Without this, K is left
+/// unresolved and falls back to its constraint, which produces wrong-shape
+/// diagnostics like `Argument of type 'unique symbol' is not assignable to
+/// parameter of type 'keyof StrNum'` instead of tsc's
+/// `... parameter of type 'never'` on `Extract<K, string>` parameter sites.
+#[test]
+fn test_inference_through_extract_pattern_conditional() {
+    use crate::types::InferencePriority;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let k_name = interner.intern_string("K");
+    let var_k = ctx.fresh_type_param(k_name, false);
+    let k_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: a unique symbol stand-in (any concrete type works for this rule;
+    // the rule should propagate whatever the argument type is).
+    let source = TypeId::SYMBOL;
+
+    // Target: `K extends string ? K : never` — the canonical Extract shape
+    // after the type alias is inlined during inference.
+    let target = interner.conditional(ConditionalType {
+        check_type: k_type,
+        extends_type: TypeId::STRING,
+        true_type: k_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let resolved = ctx.resolve_with_constraints(var_k).unwrap();
+    assert_eq!(
+        resolved, source,
+        "inferring K from `Extract<K, U>`-shaped target must yield K = source"
+    );
+}
+
+/// Same rule under a different type-parameter name to guarantee the fix is
+/// structural and does not depend on `K` (or any other name) being hardcoded.
+#[test]
+fn test_inference_through_extract_pattern_conditional_alt_name() {
+    use crate::types::InferencePriority;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    // Use a name that has no special meaning in the compiler.
+    let p_name = interner.intern_string("P");
+    let var_p = ctx.fresh_type_param(p_name, false);
+    let p_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: p_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source = TypeId::NUMBER;
+
+    // `P extends string ? P : never`
+    let target = interner.conditional(ConditionalType {
+        check_type: p_type,
+        extends_type: TypeId::STRING,
+        true_type: p_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let resolved = ctx.resolve_with_constraints(var_p).unwrap();
+    assert_eq!(
+        resolved, source,
+        "Extract-pattern inference rule must be structural, not name-dependent"
+    );
+}
+
+/// The Extract-pattern rule must NOT fire when the conditional is
+/// non-distributive (e.g. `[T] extends [U] ? T : never`). Non-distributive
+/// conditionals carry different semantics in tsc and must not be reduced to
+/// a naked-parameter inference site.
+#[test]
+fn test_inference_skips_non_distributive_extract_pattern() {
+    use crate::types::InferencePriority;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+    let t_type = interner.intern(TypeData::TypeParameter(crate::types::TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source = TypeId::NUMBER;
+
+    // `T extends string ? T : never` but flagged non-distributive — the rule
+    // must not reduce this to inference on T.
+    let target = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: TypeId::STRING,
+        true_type: t_type,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let resolved = ctx.resolve_with_constraints(var_t).unwrap_or(TypeId::ERROR);
+    assert_ne!(
+        resolved, source,
+        "non-distributive conditionals must not be treated as Extract-like \
+         inference sites"
     );
 }

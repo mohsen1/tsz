@@ -407,6 +407,13 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    pub(crate) fn is_nominal_lib_object_type_name(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "Window" | "Document" | "Element" | "HTMLElement" | "Event" | "EventTarget"
+        )
+    }
+
     /// Check if a missing type-position name should emit TS2318/TS2583 instead of TS2304.
     ///
     /// This is intentionally narrower than `is_well_known_lib_type_name`: many
@@ -452,24 +459,18 @@ impl<'a> CheckerState<'a> {
     /// Some missing lib names use TS2318/TS2583, while others still use the
     /// ordinary type-position "Cannot find name" path.
     pub(crate) fn report_missing_lib_type_name(&mut self, name: &str, idx: NodeIndex) {
-        // Under `--noLib`, tsc emits TS2318 only for the "core" global set
-        // (Array, Boolean, Function, …). For ES2015+ globals (Map, Set,
-        // Promise, …) it stays silent — the "change lib" suggestion
-        // (TS2583) is irrelevant when the user explicitly opted out of libs.
         let no_lib = self.ctx.compiler_options.no_lib;
-        if no_lib && tsz_binder::lib_loader::is_es2015_plus_type(name) {
-            return;
-        }
+        let is_es2015_plus = tsz_binder::lib_loader::is_es2015_plus_type(name);
 
         if self.has_special_missing_lib_type_diagnostic(name) {
+            // Under `--noLib`, tsc does not emit the TS2583 "change lib"
+            // suggestion for ES2015+ globals because the user explicitly
+            // opted out of libs. Non-special lib helper names still follow
+            // the ordinary unresolved-name path below.
+            if no_lib && is_es2015_plus {
+                return;
+            }
             self.error_cannot_find_global_type(name, idx);
-            return;
-        }
-
-        // Under `--noLib`, tsc suppresses TS2304 for well-known lib type
-        // names (PromiseLike, ArrayLike, Document, etc.) that aren't in the
-        // "core global" set reported via TS2318.
-        if no_lib && self.is_well_known_lib_type_name(name) {
             return;
         }
 
@@ -641,8 +642,16 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_constructor_type(&self, type_id: TypeId) -> bool {
+        self.is_constructor_type_inner(type_id, &[])
+    }
+
+    fn is_constructor_type_inner(&self, type_id: TypeId, seen: &[TypeId]) -> bool {
         // Any type is always considered a constructor type (TypeScript compatibility)
         if type_id == TypeId::ANY {
+            return true;
+        }
+
+        if query::is_constructor_function_type(self.ctx.types, type_id) {
             return true;
         }
 
@@ -657,6 +666,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if seen.contains(&type_id) {
+            return false;
+        }
+        let mut next_seen = Vec::with_capacity(seen.len() + 1);
+        next_seen.extend_from_slice(seen);
+        next_seen.push(type_id);
+
         let kind = query::classify_for_constructor_check(self.ctx.types, type_id);
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
@@ -664,19 +680,22 @@ impl<'a> CheckerState<'a> {
         match kind {
             query::ConstructorCheckKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
-                    self.is_constructor_type(constraint)
+                    self.is_constructor_type_inner(constraint, &next_seen)
                 } else {
                     false
                 }
             }
-            query::ConstructorCheckKind::Intersection(members) => {
-                members.iter().any(|&m| self.is_constructor_type(m))
-            }
+            query::ConstructorCheckKind::Intersection(members) => members
+                .iter()
+                .any(|&m| self.is_constructor_type_inner(m, &next_seen)),
             query::ConstructorCheckKind::Union(members) => {
                 // Union types are constructable if ALL members are constructable
                 // This matches TypeScript's behavior where `type A | B` used in extends
                 // requires both A and B to be constructors
-                !members.is_empty() && members.iter().all(|&m| self.is_constructor_type(m))
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&m| self.is_constructor_type_inner(m, &next_seen))
             }
             query::ConstructorCheckKind::Application { base } => {
                 // For type applications like Ctor<{}>, check if the base type is a constructor
@@ -704,7 +723,7 @@ impl<'a> CheckerState<'a> {
                 // - Interfaces with construct signatures (e.g., Constructor<T>)
                 // - Other Application types
                 // - Type aliases that resolve to constructors via intersections
-                self.is_constructor_type(base)
+                self.is_constructor_type_inner(base, &next_seen)
             }
             // Lazy reference (DefId) - check if it's a class or interface
             // This handles cases like:
@@ -777,7 +796,7 @@ impl<'a> CheckerState<'a> {
                         // Recursively check if the resolved type is a constructor
                         // Avoid infinite recursion by checking if cached_type == type_id
                         if cached_type != type_id {
-                            return self.is_constructor_type(cached_type);
+                            return self.is_constructor_type_inner(cached_type, &next_seen);
                         }
                     }
 
@@ -839,11 +858,11 @@ impl<'a> CheckerState<'a> {
                             // Try evaluating it through the solver to get the concrete result.
                             let evaluated = self.ctx.types.evaluate_type(alias_type);
                             if evaluated != type_id && evaluated != TypeId::ERROR {
-                                return self.is_constructor_type(evaluated);
+                                return self.is_constructor_type_inner(evaluated, &next_seen);
                             }
                             // Also check the unevaluated type (might have construct signatures directly)
                             if alias_type != type_id && alias_type != evaluated {
-                                return self.is_constructor_type(alias_type);
+                                return self.is_constructor_type_inner(alias_type, &next_seen);
                             }
                         }
                     }
@@ -871,7 +890,7 @@ impl<'a> CheckerState<'a> {
                         // Recursively check if the resolved type is a constructor
                         // Avoid infinite recursion by checking if cached_type == type_id
                         if cached_type != type_id {
-                            return self.is_constructor_type(cached_type);
+                            return self.is_constructor_type_inner(cached_type, &next_seen);
                         }
                     }
                 }
@@ -886,7 +905,7 @@ impl<'a> CheckerState<'a> {
                 let evaluated = self.ctx.types.evaluate_type(type_id);
                 if evaluated != type_id && evaluated != TypeId::ERROR && evaluated != TypeId::NEVER
                 {
-                    self.is_constructor_type(evaluated)
+                    self.is_constructor_type_inner(evaluated, &next_seen)
                 } else {
                     // Deferred conditional type — assume constructable to match tsc
                     true
@@ -896,7 +915,7 @@ impl<'a> CheckerState<'a> {
                 // For other deferred types, try evaluating to get the resolved type.
                 let evaluated = self.ctx.types.evaluate_type(type_id);
                 if evaluated != type_id && evaluated != TypeId::ERROR {
-                    self.is_constructor_type(evaluated)
+                    self.is_constructor_type_inner(evaluated, &next_seen)
                 } else {
                     false
                 }
@@ -1028,12 +1047,32 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        let value_decl = self
+            .checked_js_constructor_value_declaration(
+                symbol_id,
+                symbol.value_declaration,
+                &symbol.declarations,
+            )
+            .unwrap_or(symbol.value_declaration);
         let symbol_arena = self
             .ctx
             .binder
-            .symbol_arenas
-            .get(&symbol_id)
-            .map_or(self.ctx.arena, |arena| arena.as_ref());
+            .declaration_arenas
+            .get(&(symbol_id, value_decl))
+            .and_then(|arenas| arenas.first().map(|arena| arena.as_ref()))
+            .or_else(|| {
+                self.ctx
+                    .resolve_symbol_file_index(symbol_id)
+                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            })
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&symbol_id)
+                    .map(|arena| arena.as_ref())
+            })
+            .unwrap_or(self.ctx.arena);
         let Some(source_file) = symbol_arena.source_files.first() else {
             return false;
         };
@@ -1041,7 +1080,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let value_decl = symbol.value_declaration;
         let Some(node) = symbol_arena.get(value_decl) else {
             return false;
         };
@@ -1050,7 +1088,7 @@ impl<'a> CheckerState<'a> {
             let jsdoc = self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
             if jsdoc
                 .as_ref()
-                .is_some_and(|content| content.contains("@constructor"))
+                .is_some_and(|content| Self::jsdoc_contains_tag(content, "constructor"))
             {
                 return true;
             }
@@ -1068,7 +1106,7 @@ impl<'a> CheckerState<'a> {
             let jsdoc = self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
             if jsdoc
                 .as_ref()
-                .is_some_and(|content| content.contains("@constructor"))
+                .is_some_and(|content| Self::jsdoc_contains_tag(content, "constructor"))
             {
                 return true;
             }

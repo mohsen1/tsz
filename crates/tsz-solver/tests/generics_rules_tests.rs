@@ -1,4 +1,5 @@
 use super::*;
+use crate::CompatChecker;
 use crate::TypeInterner;
 use crate::def::{DefId, DefKind};
 use crate::visitor::application_id;
@@ -197,6 +198,91 @@ fn test_try_expand_application_self_reference_returns_none() {
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
     assert!(checker.try_expand_application(app_id).is_none());
+}
+
+#[test]
+fn test_remapped_mapped_type_wider_source_keys_assign_to_narrower_target_keys() {
+    let interner = TypeInterner::new();
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_info);
+    let u_info = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(t_type),
+        default: None,
+        is_const: false,
+    };
+    let u_type = interner.type_param(u_info);
+
+    let a_info = TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let a_type = interner.type_param(a_info);
+    let b_info = TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: Some(a_type),
+        default: None,
+        is_const: false,
+    };
+    let b_type = interner.type_param(b_info);
+
+    let q_info = TypeParamInfo {
+        name: interner.intern_string("Q"),
+        constraint: Some(a_type),
+        default: None,
+        is_const: false,
+    };
+    let q_type = interner.type_param(q_info);
+    let source_name = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("p_")),
+        TemplateSpan::Type(q_type),
+    ]);
+    let source = interner.mapped(MappedType {
+        type_param: q_info,
+        constraint: a_type,
+        name_type: Some(source_name),
+        template: u_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let p_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(b_type),
+        default: None,
+        is_const: false,
+    };
+    let p_type = interner.type_param(p_info);
+    let target_name = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("p_")),
+        TemplateSpan::Type(p_type),
+    ]);
+    let target = interner.mapped(MappedType {
+        type_param: p_info,
+        constraint: b_type,
+        name_type: Some(target_name),
+        template: t_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(source, target),
+        "wider source key set with narrower value type should satisfy target keys"
+    );
+    assert!(
+        !checker.is_subtype_of(target, source),
+        "narrower source key set must not satisfy wider target keys"
+    );
 }
 
 #[derive(Debug)]
@@ -613,6 +699,75 @@ fn test_recursive_generic_extension_uses_structural_expansion_not_variance_arg_c
     assert!(
         checker.check_subtype(source, target).is_true(),
         "Recursive expansion currently treats this pair as subtype-compatible"
+    );
+}
+
+#[test]
+fn test_unwitnessed_recursive_type_parameter_cycle_accepts_differing_args() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let a_def = DefId(210);
+    let b_def = DefId(211);
+
+    let a_t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let a_t_type = interner.intern(TypeData::TypeParameter(a_t_param));
+    let b_t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let b_t_type = interner.intern(TypeData::TypeParameter(b_t_param));
+
+    // type A<T> = B<T>
+    let a_body = interner.application(interner.lazy(b_def), vec![a_t_type]);
+    env.insert_def_with_params(a_def, a_body, vec![a_t_param]);
+    env.insert_def_kind(a_def, DefKind::TypeAlias);
+
+    // interface B<T> { prop: A<T> }
+    //
+    // The only occurrence of T is through the same recursive A/B cycle. Tsc
+    // treats B<number> and B<3> as compatible because no concrete member ever
+    // witnesses the type argument difference.
+    let b_body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("prop"),
+        interner.application(interner.lazy(a_def), vec![b_t_type]),
+    )]);
+    env.insert_def_with_params(b_def, b_body, vec![b_t_param]);
+    env.insert_def_kind(b_def, DefKind::Interface);
+
+    let source = interner.application(interner.lazy(a_def), vec![TypeId::NUMBER]);
+    let target = interner.application(interner.lazy(a_def), vec![interner.literal_number(3.0)]);
+    let resolved_source = interner.application(interner.lazy(b_def), vec![TypeId::NUMBER]);
+    let resolved_target =
+        interner.application(interner.lazy(b_def), vec![interner.literal_number(3.0)]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(
+        checker.check_subtype(source, target).is_true(),
+        "unwitnessed recursive type parameter differences should not reject assignability"
+    );
+    assert!(
+        checker
+            .check_subtype(resolved_source, resolved_target)
+            .is_true(),
+        "resolved unwitnessed recursive applications should also be compatible"
+    );
+    assert!(
+        checker.check_subtype(source, resolved_target).is_true(),
+        "alias/interface mixed unwitnessed recursive applications should be compatible"
+    );
+
+    let mut compat = CompatChecker::with_resolver(&interner, &env);
+    assert!(
+        compat.is_assignable(resolved_source, resolved_target),
+        "assignability must also accept resolved unwitnessed recursive applications"
     );
 }
 

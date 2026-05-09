@@ -6,23 +6,21 @@ use crate::diagnostics::{
 };
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+    ResolvedDiagnosticAnchor,
 };
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Report an argument not assignable error using solver diagnostics with source tracking.
-    /// When solver failure analysis identifies a specific reason (e.g. missing property),
-    /// the detailed diagnostic is emitted as related information matching tsc's behavior.
-    pub fn error_argument_not_assignable_at(
+    pub(crate) fn should_suppress_argument_not_assignable_diagnostic(
         &mut self,
         arg_type: TypeId,
         param_type: TypeId,
-        idx: NodeIndex,
-    ) {
+    ) -> bool {
         // Suppress when types are identical or either is a special escape-hatch type.
         if arg_type == param_type
             || arg_type == TypeId::ERROR
@@ -34,23 +32,74 @@ impl<'a> CheckerState<'a> {
             || arg_type == TypeId::UNKNOWN
             || param_type == TypeId::UNKNOWN
         {
+            return true;
+        }
+
+        if crate::query_boundaries::assignability::are_types_structurally_identical(
+            self.ctx.types,
+            &self.ctx,
+            arg_type,
+            param_type,
+        ) {
+            return true;
+        }
+
+        self.same_non_class_nominal_display(arg_type, param_type)
+    }
+
+    fn same_non_class_nominal_display(&mut self, arg_type: TypeId, param_type: TypeId) -> bool {
+        let arg_display = self.format_type_diagnostic(arg_type);
+        if arg_display != self.format_type_diagnostic(param_type)
+            || !arg_display.contains('<')
+            || arg_display.starts_with("typeof ")
+        {
+            return false;
+        }
+
+        match (
+            self.non_class_nominal_def(arg_type),
+            self.non_class_nominal_def(param_type),
+        ) {
+            (Some(arg_def), Some(param_def)) => arg_def == param_def,
+            (Some(_), None) | (None, Some(_)) => true,
+            (None, None) => false,
+        }
+    }
+
+    fn non_class_nominal_def(&mut self, type_id: TypeId) -> Option<tsz_solver::DefId> {
+        let def_id = self.nominal_def_for_argument_display(type_id).or_else(|| {
+            let evaluated = self.evaluate_type_for_assignability(type_id);
+            self.nominal_def_for_argument_display(evaluated)
+        })?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        (!matches!(def.kind, tsz_solver::def::DefKind::Class)).then_some(def_id)
+    }
+
+    fn nominal_def_for_argument_display(&self, type_id: TypeId) -> Option<tsz_solver::DefId> {
+        crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+            .and_then(|app| crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base))
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id))
+    }
+
+    /// Report an argument not assignable error using solver diagnostics with source tracking.
+    /// When solver failure analysis identifies a specific reason (e.g. missing property),
+    /// the detailed diagnostic is emitted as related information matching tsc's behavior.
+    pub fn error_argument_not_assignable_at(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
             return;
         }
 
-        // Suppress TS2345 when either type contains unresolved inference placeholders
-        // (`__infer_*`). These arise when generic call inference didn't fully resolve
-        // type parameters. tsc would have resolved them or used their constraints;
-        // comparing against raw placeholders produces false mismatches.
-        if crate::query_boundaries::common::contains_infer_types(
-            self.ctx.types.as_type_database(),
-            arg_type,
-        ) || crate::query_boundaries::common::contains_infer_types(
-            self.ctx.types.as_type_database(),
-            param_type,
-        ) {
+        if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
             return;
         }
-        if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
+        if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
+            arg_type, param_type, idx,
+        ) {
             return;
         }
         if self.is_callback_like_argument(idx)
@@ -77,8 +126,16 @@ impl<'a> CheckerState<'a> {
         // When contextual typing DID resolve concrete types and the mismatch
         // persists, the error is real — e.g., individual params `(a: 1|2, b: "1"|"2")`
         // vs a readonly tuple union rest parameter `(...args: readonly [1, "1"] | readonly [2, "2"])`.
+        //
+        // Additionally, only suppress when the target signature actually has a
+        // parameter at every position the source callback declares. If the
+        // target has fewer parameters than the source (and no rest), contextual
+        // typing cannot supply types for the extra source parameters and the
+        // parameter-count mismatch ("Target signature provides too few
+        // arguments") must surface as TS2345 — see issue #4027.
         if self.arg_is_callback_with_unannotated_params(idx)
             && self.callback_type_params_are_unresolved(arg_type)
+            && self.target_can_contextually_type_callback_params(idx, param_type)
         {
             return;
         }
@@ -149,20 +206,43 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let arg_str = self.format_type_for_diagnostic_role(
+        let mut arg_str = self.format_type_for_diagnostic_role(
             arg_type,
             DiagnosticTypeDisplayRole::CallArgument {
                 parameter: param_type,
                 argument_idx: idx,
             },
         );
-        let param_str = self.format_type_for_diagnostic_role(
+        if param_type == TypeId::BOOLEAN && matches!(arg_str.as_str(), "true[]" | "false[]") {
+            arg_str = "boolean[]".to_string();
+        }
+        let mut param_str = self.format_type_for_diagnostic_role(
             param_type,
             DiagnosticTypeDisplayRole::CallParameter {
                 argument: arg_type,
                 argument_idx: idx,
             },
         );
+        if let Some(display) = self.mapped_property_mismatch_parameter_display(
+            &param_str,
+            analysis.failure_reason.as_ref(),
+        ) {
+            param_str = display;
+        }
+        if let Some(display) =
+            self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
+        {
+            param_str = display;
+        }
+        if arg_str.starts_with('{') && param_str.contains("<{") {
+            param_str = Self::widen_object_member_literals_inside_generic_display(&param_str);
+        }
+        if let Some((generic_arg_str, generic_param_str)) =
+            self.generic_direct_primitive_mismatch_display(arg_type, param_type, idx)
+        {
+            arg_str = generic_arg_str;
+            param_str = generic_param_str;
+        }
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
@@ -188,6 +268,110 @@ impl<'a> CheckerState<'a> {
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    pub(in crate::error_reporter::call_errors) fn mapped_property_mismatch_parameter_display(
+        &mut self,
+        param_display: &str,
+        failure_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Option<String> {
+        if !param_display.trim_start().starts_with("{ [") {
+            return None;
+        }
+        let tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+            property_name,
+            target_property_type,
+            ..
+        } = failure_reason?
+        else {
+            return None;
+        };
+
+        let mut property = tsz_solver::PropertyInfo::new(*property_name, *target_property_type);
+        property.optional = Self::type_includes_undefined(self.ctx.types, *target_property_type);
+        let display_type = self.ctx.types.factory().object(vec![property]);
+        Some(self.format_type_for_assignability_message(display_type))
+    }
+
+    fn type_includes_undefined(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+        ty == TypeId::UNDEFINED
+            || crate::query_boundaries::common::union_members(db, ty)
+                .is_some_and(|members| members.contains(&TypeId::UNDEFINED))
+    }
+
+    fn widen_object_member_literals_inside_generic_display(display: &str) -> String {
+        let bytes = display.as_bytes();
+        let mut out = String::with_capacity(display.len());
+        let mut i = 0;
+        let mut angle_depth = 0usize;
+        let mut object_depth = 0usize;
+
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            match ch {
+                '<' => {
+                    angle_depth += 1;
+                    out.push(ch);
+                    i += 1;
+                }
+                '>' => {
+                    angle_depth = angle_depth.saturating_sub(1);
+                    out.push(ch);
+                    i += 1;
+                }
+                '{' if angle_depth > 0 => {
+                    object_depth += 1;
+                    out.push(ch);
+                    i += 1;
+                }
+                '}' if object_depth > 0 => {
+                    object_depth -= 1;
+                    out.push(ch);
+                    i += 1;
+                }
+                ':' if angle_depth > 0 && object_depth > 0 => {
+                    out.push(ch);
+                    i += 1;
+                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                    if i >= bytes.len() {
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        i += 1;
+                        while i < bytes.len() {
+                            if bytes[i] == b'\\' {
+                                i = (i + 2).min(bytes.len());
+                                continue;
+                            }
+                            if bytes[i] == b'"' {
+                                i += 1;
+                                break;
+                            }
+                            i += 1;
+                        }
+                        out.push_str("string");
+                    } else if display[i..].starts_with("true") {
+                        i += 4;
+                        out.push_str("boolean");
+                    } else if display[i..].starts_with("false") {
+                        i += 5;
+                        out.push_str("boolean");
+                    } else {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                }
+                _ => {
+                    out.push(ch);
+                    i += 1;
+                }
+            }
+        }
+
+        out
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
@@ -339,6 +523,48 @@ impl<'a> CheckerState<'a> {
                     != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
             })
             .collect();
+        let callback_body_failure_span = if !argument_failures.is_empty() {
+            let callback_spans: Vec<(u32, u32)> = self
+                .logical_call_argument_nodes(idx)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|&arg_idx| self.is_callback_like_argument(arg_idx))
+                .flat_map(|arg_idx| self.callback_body_spans(arg_idx))
+                .collect();
+            let mut shared = None;
+            let mut all_callback_body_spans = !callback_spans.is_empty();
+            for failure in &argument_failures {
+                let Some(span) = failure.span.as_ref() else {
+                    all_callback_body_spans = false;
+                    break;
+                };
+                if !callback_spans
+                    .iter()
+                    .any(|(start, end)| span.start >= *start && span.start < *end)
+                {
+                    all_callback_body_spans = false;
+                    break;
+                }
+                if let Some((start, length)) = shared {
+                    if start != span.start || length != span.length {
+                        all_callback_body_spans = false;
+                        break;
+                    }
+                } else {
+                    shared = Some((span.start, span.length));
+                }
+            }
+            all_callback_body_spans
+                .then_some(shared)
+                .flatten()
+                .map(|(start, length)| ResolvedDiagnosticAnchor {
+                    node_idx: idx,
+                    start,
+                    length,
+                })
+        } else {
+            None
+        };
         let remaining_failures_are_count_mismatches = remaining_failures.iter().all(|failure| {
             matches!(
                 failure.code,
@@ -353,6 +579,10 @@ impl<'a> CheckerState<'a> {
             });
         let anchor_argument_from_first_argument_mismatch = all_failures_are_argument_mismatches
             && shared_argument_anchor.is_none()
+            && !(self.overload_callee_is_property_like(idx)
+                && self
+                    .logical_call_argument_nodes(idx)
+                    .is_some_and(|args| args.len() > 1))
             && self.first_argument_mismatches_all_overload_expected_types(idx, &argument_failures);
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
@@ -365,6 +595,11 @@ impl<'a> CheckerState<'a> {
         // each overload rejects a different excess property on the same
         // literal. For non-object-literal arguments (e.g., `fn(true)` vs
         // `(x:string)|(x:number)`), tsc still anchors at the argument.
+        let is_tagged_template_call = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION);
         let shared_argument_is_object_literal = shared_argument_anchor.is_some_and(|anchor_idx| {
             self.ctx
                 .arena
@@ -415,6 +650,7 @@ impl<'a> CheckerState<'a> {
         let anchor_argument_from_all_failures = all_failures_are_argument_mismatches
             && shared_argument_anchor.is_some()
             && (!shared_argument_is_object_literal
+                || is_tagged_template_call
                 || identical_argument_failures
                 || shared_excess_property_name);
         let raw_argument_anchor =
@@ -444,19 +680,6 @@ impl<'a> CheckerState<'a> {
             .and_then(|call_expr| call_expr.arguments.as_ref())
             .is_some_and(|args| args.nodes.len() == 1);
         let is_new_call = self.is_new_expression(idx);
-        let is_assignment_rhs_call = self
-            .ctx
-            .arena
-            .get_extended(idx)
-            .and_then(|ext| self.ctx.arena.get(ext.parent))
-            .and_then(|parent| {
-                (parent.kind == syntax_kind_ext::BINARY_EXPRESSION)
-                    .then(|| self.ctx.arena.get_binary_expr(parent))
-                    .flatten()
-            })
-            .is_some_and(|binary| {
-                binary.right == idx && self.is_assignment_operator(binary.operator_token)
-            });
         let is_bind_method_call = self
             .ctx
             .arena
@@ -502,9 +725,10 @@ impl<'a> CheckerState<'a> {
             && all_failures_are_argument_mismatches
             && callback_overloads_are_callable_only
             && !callback_argument_has_prior_diagnostics;
-        let allow_new_argument_anchor = is_new_call && anchor_argument_from_all_failures;
+        let allow_new_argument_anchor = is_new_call
+            && anchor_argument_from_all_failures
+            && !self.is_weak_collection_constructor_new(idx);
         let anchor_first_argument = (!is_new_call || allow_new_argument_anchor)
-            && !is_assignment_rhs_call
             && (!argument_anchor_is_callback || allow_callback_argument_anchor)
             && !is_bind_method_call
             && (identical_argument_failures
@@ -513,8 +737,20 @@ impl<'a> CheckerState<'a> {
                 || anchor_argument_from_mixed_failures
                 || anchor_argument_from_all_failures
                 || anchor_argument_from_first_argument_mismatch);
-
-        let anchor_kind = if literal_anchor.is_some() {
+        let tagged_generic_overload_anchor = if is_tagged_template_call
+            && self.tagged_template_callee_has_generic_call_signature(idx)
+        {
+            self.tagged_template_generic_overload_anchor(idx)
+        } else {
+            None
+        };
+        let anchor_kind = if let Some(anchor_idx) = tagged_generic_overload_anchor {
+            if anchor_idx == idx {
+                DiagnosticAnchorKind::OverloadPrimary
+            } else {
+                DiagnosticAnchorKind::Exact
+            }
+        } else if literal_anchor.is_some() {
             DiagnosticAnchorKind::Exact
         } else if anchor_first_argument {
             shared_argument_anchor
@@ -524,7 +760,9 @@ impl<'a> CheckerState<'a> {
         } else {
             DiagnosticAnchorKind::OverloadPrimary
         };
-        let anchor_idx = if let Some(anchor_idx) = literal_anchor {
+        let anchor_idx = if let Some(anchor_idx) = tagged_generic_overload_anchor {
+            anchor_idx
+        } else if let Some(anchor_idx) = literal_anchor {
             anchor_idx
         } else if anchor_first_argument {
             let raw_anchor = raw_argument_anchor.unwrap_or(idx);
@@ -536,7 +774,9 @@ impl<'a> CheckerState<'a> {
         } else {
             idx
         };
-        let Some(anchor) = self.resolve_diagnostic_anchor(anchor_idx, anchor_kind) else {
+        let Some(anchor) = callback_body_failure_span
+            .or_else(|| self.resolve_diagnostic_anchor(anchor_idx, anchor_kind))
+        else {
             return;
         };
         let mut related = Vec::new();
@@ -574,6 +814,53 @@ impl<'a> CheckerState<'a> {
                 RelatedInformationPolicy::OVERLOAD_FAILURES,
             ),
         );
+    }
+
+    fn tagged_template_callee_has_generic_call_signature(&mut self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(tagged) = self.ctx.arena.get_tagged_template(node).cloned() else {
+            return false;
+        };
+        let tag_type = self.get_type_of_node(tagged.tag);
+        let tag_type = self.resolve_ref_type(tag_type);
+        let tag_type = self.resolve_lazy_type(tag_type);
+        crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, tag_type)
+            .is_some_and(|shape| {
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| !sig.type_params.is_empty())
+            })
+    }
+
+    fn is_weak_collection_constructor_new(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_call_expr(node)
+            .and_then(|call| self.ctx.arena.get_identifier_text(call.expression))
+            .is_some_and(|name| matches!(name, "WeakMap" | "WeakSet"))
+    }
+
+    fn tagged_template_generic_overload_anchor(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let args = self.logical_call_argument_nodes(idx)?;
+        let first_substitution = args.get(1).copied()?;
+        let first_node = self.ctx.arena.get(first_substitution)?;
+        if first_node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
+            || first_node.kind == tsz_scanner::SyntaxKind::TrueKeyword as u16
+            || first_node.kind == tsz_scanner::SyntaxKind::FalseKeyword as u16
+        {
+            Some(first_substitution)
+        } else {
+            Some(idx)
+        }
     }
 
     /// Report TS2693: type parameter used as value
@@ -615,8 +902,12 @@ impl<'a> CheckerState<'a> {
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use tsz_parser::parser::syntax_kind_ext;
 
-        // Suppress cascade errors from unresolved types
-        if type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
+        // Suppress cascade errors from unresolved types.
+        // In strictNullChecks mode, TS18046 is preferred for `unknown`;
+        // in non-strict mode, `unknown` should emit a TS2349 callability error.
+        if type_id == TypeId::ERROR
+            || (type_id == TypeId::UNKNOWN && self.ctx.compiler_options.strict_null_checks)
+        {
             return;
         }
 

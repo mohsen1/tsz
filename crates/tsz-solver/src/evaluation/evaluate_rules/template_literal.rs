@@ -43,31 +43,47 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // PERF: Pre-evaluate all type spans once and cache results.
         // This avoids double evaluation in the size-check loop and expansion loop.
-        let mut evaluated_spans = Vec::with_capacity(span_list.len());
+        let mut evaluated_strings = Vec::with_capacity(span_list.len());
+        let mut normalized_spans = Vec::with_capacity(span_list.len());
         let mut total_combinations: usize = 1;
 
+        let mut can_fully_expand = true;
         for span in span_list.iter() {
             match span {
-                TemplateSpan::Text(_atom) => {
-                    evaluated_spans.push(None); // Marker for text span
+                TemplateSpan::Text(atom) => {
+                    evaluated_strings.push(None); // Marker for text span
+                    normalized_spans.push(TemplateSpan::Text(*atom));
                 }
                 TemplateSpan::Type(type_id) => {
                     let evaluated = self.evaluate(*type_id);
+                    normalized_spans.push(TemplateSpan::Type(evaluated));
                     let strings = self.extract_literal_strings(evaluated);
+                    let span_count = self
+                        .template_span_complexity_cardinality(evaluated)
+                        .or_else(|| (!strings.is_empty()).then_some(strings.len()));
+
+                    if let Some(span_count) = span_count {
+                        total_combinations = total_combinations.saturating_mul(span_count);
+                        if total_combinations >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                            self.interner().mark_union_too_complex();
+                            return TypeId::STRING;
+                        }
+                    }
 
                     if strings.is_empty() {
-                        // Contains non-literal types, can't fully evaluate
-                        return self.interner().template_literal(span_list.to_vec());
+                        // Contains non-literal types. Keep scanning the remaining
+                        // spans first so mixed template unions can still trip TS2590.
+                        can_fully_expand = false;
+                        evaluated_strings.push(None);
+                    } else {
+                        evaluated_strings.push(Some(strings));
                     }
-
-                    total_combinations = total_combinations.saturating_mul(strings.len());
-                    if total_combinations > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                        // Would exceed limit - keep unexpanded
-                        return self.interner().template_literal(span_list.to_vec());
-                    }
-                    evaluated_spans.push(Some(strings));
                 }
             }
+        }
+
+        if !can_fully_expand {
+            return self.interner().template_literal(normalized_spans);
         }
 
         // Check if we can fully evaluate to a union of literals
@@ -82,7 +98,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 TemplateSpan::Type(_) => {
-                    let string_values = evaluated_spans[i]
+                    let string_values = evaluated_strings[i]
                         .as_ref()
                         .expect("Type spans always have evaluated values at matching index");
                     let new_size = combinations.len() * string_values.len();
@@ -128,6 +144,67 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     fn extract_literal_strings(&self, type_id: TypeId) -> Vec<String> {
         self.extract_literal_strings_impl(type_id, 0)
+    }
+
+    fn template_span_complexity_cardinality(&self, type_id: TypeId) -> Option<usize> {
+        self.template_span_complexity_cardinality_impl(type_id, 0)
+    }
+
+    fn template_span_complexity_cardinality_impl(
+        &self,
+        type_id: TypeId,
+        depth: u32,
+    ) -> Option<usize> {
+        if depth > Self::MAX_LITERAL_COUNT_DEPTH {
+            return None;
+        }
+
+        if type_id == TypeId::BOOLEAN {
+            return Some(2);
+        }
+        if type_id == TypeId::BOOLEAN_TRUE
+            || type_id == TypeId::BOOLEAN_FALSE
+            || type_id == TypeId::NULL
+            || type_id == TypeId::UNDEFINED
+            || type_id == TypeId::VOID
+        {
+            return Some(1);
+        }
+        if type_id.is_intrinsic() {
+            return None;
+        }
+
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Literal(_)) | Some(TypeData::StringIntrinsic { .. }) => Some(1),
+            Some(TypeData::Enum(_, structural_type)) => {
+                self.template_span_complexity_cardinality_impl(structural_type, depth + 1)
+            }
+            Some(TypeData::Union(members_id)) => {
+                let members = self.interner().type_list(members_id);
+                let mut count = 0usize;
+                for &member in members.iter() {
+                    count = count.checked_add(
+                        self.template_span_complexity_cardinality_impl(member, depth + 1)?,
+                    )?;
+                }
+                Some(count)
+            }
+            Some(TypeData::TemplateLiteral(spans_id)) => {
+                let spans = self.interner().template_list(spans_id);
+                let mut total = 1usize;
+                for span in spans.iter() {
+                    let span_count = match span {
+                        TemplateSpan::Text(_) => 1,
+                        TemplateSpan::Type(type_id) => self
+                            .template_span_complexity_cardinality_impl(*type_id, depth + 1)
+                            .unwrap_or(1),
+                    };
+                    total = total.saturating_mul(span_count);
+                }
+                Some(total)
+            }
+            _ => None,
+        }
     }
 
     /// Internal implementation with depth tracking.

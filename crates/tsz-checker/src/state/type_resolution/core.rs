@@ -173,6 +173,30 @@ impl<'a> CheckerState<'a> {
                     |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                // Name-based DefId fallback for qualified names whose
+                // NodeIndex resolver path can't see imported namespace
+                // members (e.g. cross-file `util.OmitKeys` references inside
+                // an alias body whose TypeReference node was bound in a
+                // sibling file). Without this fallback the lowering writes
+                // `Application(UnresolvedTypeName("util.OmitKeys"), args)`,
+                // which silently disappears from downstream object spread
+                // and intersection reduction.
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                        .or_else(|| {
+                            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                                type_name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
+                        })
+                };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -180,7 +204,8 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &value_resolver,
                 )
-                .with_type_param_bindings(type_param_bindings);
+                .with_type_param_bindings(type_param_bindings)
+                .with_name_def_id_resolver(&name_resolver);
                 let mut type_id = lowering.lower_type(idx);
                 if query::get_application_info(self.ctx.types, type_id).is_none()
                     && let Some(args) = &type_ref.type_arguments
@@ -230,10 +255,16 @@ impl<'a> CheckerState<'a> {
                     let should_check_depth = is_class || !args_have_type_params;
                     if should_check_depth {
                         self.ctx.depth_exceeded.set(false);
-                        let _ = self.evaluate_type_with_env_uncached(type_id);
+                        // Use the regular evaluator for ordinary type-reference
+                        // probes. The TS2589-specific evaluator treats any repeated
+                        // Application cycle as overflow, which is too aggressive for
+                        // bounded recursive conditional aliases.
+                        let exceeded = {
+                            let _ = self.evaluate_type_with_env_uncached(type_id);
+                            self.ctx.depth_exceeded.get()
+                        };
 
                         // TS2589: emit at the type reference node if depth was exceeded
-                        let exceeded = self.ctx.depth_exceeded.get();
 
                         // Also detect circular mapped-type aliases that the evaluator
                         // can't expand: if the alias body is a mapped type that
@@ -261,11 +292,21 @@ impl<'a> CheckerState<'a> {
 
                         if exceeded || circular_mapped {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.error_at_node(
-                                idx,
-                                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                            );
+                            let (message, code) = if exceeded
+                                && is_type_alias
+                                && self.type_alias_symbol_contains_tuple_spread(sym_id)
+                            {
+                                (
+                                    diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                    diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                )
+                            } else {
+                                (
+                                    diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                    diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                )
+                            };
+                            self.error_at_node(idx, message, code);
 
                             // TS2615: When a circular mapped type is involved,
                             // also emit the property-circularity diagnostic.
@@ -407,8 +448,7 @@ impl<'a> CheckerState<'a> {
             let is_known_global = self.is_well_known_lib_type_name(name);
 
             if has_type_args {
-                let is_builtin_array =
-                    name == "Array" || name == "ReadonlyArray" || name == "ConcatArray";
+                let is_array_like_name = matches!(name, "Array" | "ReadonlyArray" | "ConcatArray");
                 let type_param = self.lookup_type_parameter(name);
                 if type_param.is_some() {
                     self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
@@ -460,6 +500,9 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
+                let is_builtin_array = is_array_like_name
+                    && type_param.is_none()
+                    && sym_id.is_none_or(|sym_id| self.ctx.symbol_is_from_actual_lib(sym_id));
                 if let Some(sym_id) = sym_id
                     && self.symbol_is_namespace_only(sym_id)
                 {
@@ -477,6 +520,58 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::ERROR;
                 }
+
+                // Canonical built-in `Array<T>` / `ReadonlyArray<T>` form: lower
+                // via the solver `array` factory (and `readonly_type` for
+                // ReadonlyArray) so the generic-form annotation interns to the
+                // same TypeId as the shorthand `T[]` / `readonly T[]`. Without
+                // this, `Array<T>` becomes `Application(Lazy(GlobalArrayDef),
+                // [T])` and bidirectional identity comparisons against `T[]`
+                // fail (false TS2403 on redeclarations like
+                // `var a: Array<X>; var a: X[]`).
+                //
+                // Skipped when the name is shadowed by a user-defined type
+                // alias (e.g. `type Array<T> = { custom: T };`). The existing
+                // `is_builtin_array` predicate uses `symbol_is_from_actual_lib`
+                // which is unreliable here — the binder often registers a
+                // local proxy symbol for unshadowed lib references — so we
+                // detect shadowing structurally via the resolved symbol's
+                // `TYPE_ALIAS` flag instead. A locally-merged `interface
+                // Array<T> { ... }` is declaration merging with the lib's
+                // Array, not shadowing, so it still canonicalizes.
+                //
+                // ConcatArray is excluded — it's a distinct lib interface, not
+                // an alias for `T[]`.
+                let array_is_unshadowed = (name == "Array" || name == "ReadonlyArray")
+                    && type_param.is_none()
+                    && match sym_id {
+                        None => true,
+                        Some(sid) => {
+                            use tsz_binder::symbols::symbol_flags;
+                            let lib_binders = self.get_lib_binders();
+                            let symbol = self.ctx.binder.get_symbol_with_libs(sid, &lib_binders);
+                            !symbol.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS))
+                        }
+                    };
+                if array_is_unshadowed
+                    && let Some(args) = &type_ref.type_arguments
+                    && let Some(&first_arg) = args.nodes.first()
+                {
+                    // Process all type-argument nodes so their referenced
+                    // symbols get registered (matching the lowering path's
+                    // side effects). Only the first arg is used semantically.
+                    for &arg_idx in &args.nodes {
+                        let _ = self.get_type_from_type_node(arg_idx);
+                    }
+                    let elem_type = self.get_type_from_type_node(first_arg);
+                    let factory = self.ctx.types.factory();
+                    let array_type = factory.array(elem_type);
+                    if name == "ReadonlyArray" {
+                        return factory.readonly_type(array_type);
+                    }
+                    return array_type;
+                }
+
                 // Compiler-intrinsic types (NoInfer, string manipulation) must go
                 // through the lowering path which creates the correct TypeData
                 // variants (NoInfer, StringIntrinsic). The lib binder fallback
@@ -673,6 +768,24 @@ impl<'a> CheckerState<'a> {
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                 let lazy_type_params_resolver =
                     |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+                // Name-based DefId fallback (see sibling lowering above for
+                // rationale).
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                        .or_else(|| {
+                            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                                type_name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
+                        })
+                };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -681,7 +794,8 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings)
-                .with_lazy_type_params_resolver(&lazy_type_params_resolver);
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+                .with_name_def_id_resolver(&name_resolver);
                 let mut result = lowering.lower_type(idx);
 
                 // Ensure Application types from lib types have their base DefId
@@ -774,10 +888,16 @@ impl<'a> CheckerState<'a> {
                         if !args_have_type_params {
                             // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
                             self.ctx.depth_exceeded.set(false);
-                            let _ = self.evaluate_type_with_env_uncached(result);
+                            // Use the regular evaluator for ordinary type-reference
+                            // probes. The TS2589-specific evaluator treats any repeated
+                            // Application cycle as overflow, which is too aggressive for
+                            // bounded recursive conditional aliases.
+                            let exceeded = {
+                                let _ = self.evaluate_type_with_env_uncached(result);
+                                self.ctx.depth_exceeded.get()
+                            };
 
                             // TS2589: emit at the type reference node if depth was exceeded
-                            let exceeded = self.ctx.depth_exceeded.get();
 
                             // Also detect circular mapped-type aliases that the evaluator
                             // can't expand: if the alias body is a mapped type that
@@ -786,32 +906,43 @@ impl<'a> CheckerState<'a> {
                             // any concrete instantiation is infinitely recursive.
                             // Check unconditionally (even when exceeded) so we can
                             // emit TS2615 alongside TS2589.
-                            let circular_mapped =
+                            let application_alias_symbol =
                                 query::get_application_info(self.ctx.types, result)
                                     .and_then(|(base, _)| {
                                         query::get_lazy_def_id(self.ctx.types, base)
                                     })
-                                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
-                                    .is_some_and(|ref_sym| {
-                                        // The base is a type alias whose body is a mapped
-                                        // type that references itself in its template
-                                        self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
-                                            symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-                                                && symbol.declarations.iter().any(|&decl_idx| {
-                                                    self.alias_has_self_referencing_mapped_body(
-                                                        ref_sym, decl_idx,
-                                                    )
-                                                })
+                                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id));
+                            let circular_mapped = application_alias_symbol.is_some_and(|ref_sym| {
+                                // The base is a type alias whose body is a mapped
+                                // type that references itself in its template
+                                self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
+                                    symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                                        && symbol.declarations.iter().any(|&decl_idx| {
+                                            self.alias_has_self_referencing_mapped_body(
+                                                ref_sym, decl_idx,
+                                            )
                                         })
-                                    });
+                                })
+                            });
+                            let tuple_spread_alias =
+                                application_alias_symbol.is_some_and(|ref_sym| {
+                                    self.type_alias_symbol_contains_tuple_spread(ref_sym)
+                                });
 
                             if exceeded || circular_mapped {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                self.error_at_node(
-                                    idx,
-                                    diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                    diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                );
+                                let (message, code) = if exceeded && tuple_spread_alias {
+                                    (
+                                        diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                        diagnostic_codes::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
+                                    )
+                                } else {
+                                    (
+                                        diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                        diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                    )
+                                };
+                                self.error_at_node(idx, message, code);
 
                                 // TS2615: When a circular mapped type is involved,
                                 // also emit the property-circularity diagnostic.
@@ -1002,6 +1133,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
                     && self.is_in_static_class_member_context(type_name_idx)
                     && enclosing_class.type_param_names.iter().any(|n| n == name)
+                    && !self
+                        .type_parameter_name_is_shadowed_before_static_member(name, type_name_idx)
                 {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
@@ -1039,6 +1172,11 @@ impl<'a> CheckerState<'a> {
         type_name_idx: NodeIndex,
     ) -> TypeId {
         if self.is_mapped_type_utility(name) {
+            if self.ctx.compiler_options.no_lib {
+                self.report_missing_lib_type_name(name, type_name_idx);
+                return TypeId::ANY;
+            }
+
             if let Some(args) = &type_ref.type_arguments {
                 let type_args: Vec<TypeId> = args
                     .nodes
@@ -1065,11 +1203,9 @@ impl<'a> CheckerState<'a> {
                     });
                 }
 
-                if self.ctx.has_lib_loaded() {
-                    let (base_type, _) = self.resolve_lib_type_with_params(name);
-                    if let Some(base_type) = base_type {
-                        return self.ctx.types.factory().application(base_type, type_args);
-                    }
+                let (base_type, _) = self.resolve_lib_type_with_params(name);
+                if let Some(base_type) = base_type {
+                    return self.ctx.types.factory().application(base_type, type_args);
                 }
             }
             return TypeId::ANY;
@@ -1077,7 +1213,8 @@ impl<'a> CheckerState<'a> {
 
         self.report_missing_lib_type_name(name, type_name_idx);
 
-        if self.is_promise_like_name(name)
+        if !self.ctx.compiler_options.no_lib
+            && self.is_promise_like_name(name)
             && let Some(args) = &type_ref.type_arguments
         {
             let type_args: Vec<TypeId> = args

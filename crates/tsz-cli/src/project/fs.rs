@@ -2,6 +2,13 @@ use anyhow::{Context, Result, bail};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use tsz_common::file_extensions::{
+    default_discovery_include_patterns, include_pattern_has_supported_extension, is_json_file,
+    strip_ts_declaration_extension_from_path, strip_ts_source_extension_from_path,
+};
+pub(crate) use tsz_common::file_extensions::{
+    is_js_file, is_ts_file, is_valid_module_file, is_valid_module_or_js_file,
+};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::config::TsConfig;
@@ -81,75 +88,67 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
             Some(build_globset(&exclude_patterns).context("failed to build exclude globset")?)
         };
 
-        let walker = WalkDir::new(&options.base_dir)
-            .follow_links(options.follow_links)
-            .into_iter()
-            .filter_entry(|entry| allow_entry(entry, &options.base_dir, exclude_set.as_ref()));
+        for walk_root in include_walk_roots(&options.base_dir, &include_patterns) {
+            let walker = WalkDir::new(&walk_root)
+                .follow_links(options.follow_links)
+                .into_iter()
+                .filter_entry(|entry| allow_entry(entry, &walk_root, exclude_set.as_ref()));
 
-        for entry in walker {
-            let entry = entry.context("failed to read directory entry")?;
-            if !entry.file_type().is_file() {
-                continue;
-            }
-
-            let path = entry.path();
-            if !(is_ts_file(path)
-                || (options.allow_js && is_js_file(path))
-                || (options.resolve_json_module && is_json_file(path)))
-            {
-                continue;
-            }
-
-            // tsc never includes config files (tsconfig.json, jsconfig.json) as
-            // program inputs, even when resolveJsonModule is enabled. Skip them
-            // during pattern-based discovery.
-            if is_json_file(path) && is_config_json(path) {
-                continue;
-            }
-
-            let rel_path = path.strip_prefix(&options.base_dir).unwrap_or(path);
-            if !include_set.is_match(rel_path) {
-                continue;
-            }
-
-            if let Some(exclude) = exclude_set.as_ref()
-                && exclude.is_match(rel_path)
-            {
-                continue;
-            }
-
-            // Avoid canonicalizing package-link paths whose lexical path is
-            // outside node_modules but whose real target lives under
-            // node_modules. Ordinary resolved package files should still
-            // canonicalize so tempdir aliases like /var -> /private/var
-            // collapse to a stable path.
-            let resolved = if options.follow_links {
-                let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-                let path_has_node_modules = path.components().any(|component| {
-                    matches!(
-                        component,
-                        std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                    )
-                });
-                let canonical_has_node_modules = canonical.components().any(|component| {
-                    matches!(
-                        component,
-                        std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                    )
-                });
-                let preserve_symlink_identity =
-                    !path_has_node_modules && canonical_has_node_modules;
-                if preserve_symlink_identity
-                    || path_has_symlinked_package_ancestor(path, &options.base_dir)
-                {
-                    path.to_path_buf()
-                } else {
-                    canonical
+            for entry in walker {
+                let entry = entry.context("failed to read directory entry")?;
+                if !entry.file_type().is_file() {
+                    continue;
                 }
-            } else {
-                path.to_path_buf()
-            };
-            files.insert(resolved);
+
+                let path = entry.path();
+                if !(is_ts_file(path) || (options.allow_js && is_js_file(path))) {
+                    continue;
+                }
+
+                if !matches_discovery_patterns(path, &options.base_dir, &walk_root, &include_set) {
+                    continue;
+                }
+
+                if let Some(exclude) = exclude_set.as_ref()
+                    && matches_discovery_patterns(path, &options.base_dir, &walk_root, exclude)
+                {
+                    continue;
+                }
+
+                // Avoid canonicalizing package-link paths whose lexical path is
+                // outside node_modules but whose real target lives under
+                // node_modules. Ordinary resolved package files should still
+                // canonicalize so tempdir aliases like /var -> /private/var
+                // collapse to a stable path.
+                let resolved = if options.follow_links {
+                    let canonical =
+                        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+                    let path_has_node_modules = path.components().any(|component| {
+                        matches!(
+                            component,
+                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                        )
+                    });
+                    let canonical_has_node_modules = canonical.components().any(|component| {
+                        matches!(
+                            component,
+                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+                        )
+                    });
+                    let preserve_symlink_identity =
+                        !path_has_node_modules && canonical_has_node_modules;
+                    if preserve_symlink_identity
+                        || path_has_symlinked_package_ancestor(path, &options.base_dir)
+                    {
+                        path.to_path_buf()
+                    } else {
+                        canonical
+                    }
+                } else {
+                    path.to_path_buf()
+                };
+                files.insert(resolved);
+            }
         }
     }
 
@@ -185,6 +184,54 @@ fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
     }
     false
 }
+
+fn include_walk_roots(base_dir: &Path, include_patterns: &[String]) -> Vec<PathBuf> {
+    let mut roots = BTreeSet::new();
+    for pattern in include_patterns {
+        if is_absolute_pattern(pattern) {
+            roots.insert(fixed_pattern_prefix(pattern));
+        } else {
+            roots.insert(base_dir.to_path_buf());
+        }
+    }
+    roots.into_iter().collect()
+}
+
+fn is_absolute_pattern(pattern: &str) -> bool {
+    Path::new(pattern).is_absolute()
+}
+
+fn fixed_pattern_prefix(pattern: &str) -> PathBuf {
+    let mut prefix = PathBuf::new();
+    for component in Path::new(pattern).components() {
+        let text = component.as_os_str().to_string_lossy();
+        if text.contains('*') || text.contains('?') || text.contains('[') {
+            break;
+        }
+        prefix.push(component.as_os_str());
+    }
+    if prefix.as_os_str().is_empty() {
+        PathBuf::from("/")
+    } else {
+        prefix
+    }
+}
+
+fn matches_discovery_patterns(
+    path: &Path,
+    base_dir: &Path,
+    walk_root: &Path,
+    patterns: &GlobSet,
+) -> bool {
+    patterns.is_match(path)
+        || path
+            .strip_prefix(base_dir)
+            .is_ok_and(|rel| patterns.is_match(rel))
+        || path
+            .strip_prefix(walk_root)
+            .is_ok_and(|rel| patterns.is_match(rel))
+}
+
 fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
     match options.include.as_ref() {
         Some(patterns) if patterns.is_empty() => Vec::new(),
@@ -203,35 +250,7 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
 }
 
 pub fn default_include_patterns(allow_js: bool, resolve_json_module: bool) -> Vec<String> {
-    // tsc's default include is `["**/*"]` which matches all files, then filters
-    // by supported extensions. Our explicit patterns must cover all TypeScript
-    // extensions including `.mts` and `.cts` (ESM/CJS module variants).
-    let mut patterns = vec![
-        "*.ts".to_string(),
-        "*.tsx".to_string(),
-        "*.mts".to_string(),
-        "*.cts".to_string(),
-        "**/*.ts".to_string(),
-        "**/*.tsx".to_string(),
-        "**/*.mts".to_string(),
-        "**/*.cts".to_string(),
-    ];
-    if allow_js {
-        patterns.extend([
-            "*.js".to_string(),
-            "*.jsx".to_string(),
-            "*.mjs".to_string(),
-            "*.cjs".to_string(),
-            "**/*.js".to_string(),
-            "**/*.jsx".to_string(),
-            "**/*.mjs".to_string(),
-            "**/*.cjs".to_string(),
-        ]);
-    }
-    if resolve_json_module {
-        patterns.extend(["*.json".to_string(), "**/*.json".to_string()]);
-    }
-    patterns
+    default_discovery_include_patterns(allow_js, resolve_json_module)
 }
 
 /// The display string for default include patterns, matching tsc's output.
@@ -251,15 +270,7 @@ fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
     let mut expanded = Vec::new();
     for pattern in patterns {
         // If pattern already has glob metacharacters with extensions, use as-is
-        if pattern.ends_with(".ts")
-            || pattern.ends_with(".tsx")
-            || pattern.ends_with(".js")
-            || pattern.ends_with(".jsx")
-            || pattern.ends_with(".mts")
-            || pattern.ends_with(".cts")
-            || pattern.ends_with(".mjs")
-            || pattern.ends_with(".cjs")
-        {
+        if include_pattern_has_supported_extension(pattern) {
             expanded.push(pattern.clone());
             continue;
         }
@@ -270,11 +281,23 @@ fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
             continue;
         }
 
+        if is_terminal_wildcard_pattern(pattern) {
+            let base = pattern.trim_end_matches('/');
+            expanded.push(base.to_string());
+            expanded.push(format!("{base}/**/*"));
+            continue;
+        }
+
         // Directory pattern (no extension or glob at end) - expand to match all files
         let base = pattern.trim_end_matches('/');
         expanded.push(format!("{base}/**/*"));
     }
     expanded
+}
+
+fn is_terminal_wildcard_pattern(pattern: &str) -> bool {
+    let pattern = pattern.trim_end_matches('/');
+    pattern == "*" || pattern.ends_with("/*")
 }
 
 fn build_exclude_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
@@ -358,6 +381,9 @@ fn allow_entry(entry: &DirEntry, base_dir: &Path, exclude: Option<&GlobSet>) -> 
     if path == base_dir {
         return true;
     }
+    if exclude.is_match(path) {
+        return false;
+    }
 
     // Use safe path handling instead of unwrap_or for panic hardening
     let rel_path = match path.strip_prefix(base_dir) {
@@ -392,62 +418,6 @@ fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn is_js_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("js") | Some("jsx") | Some("mjs") | Some("cjs")
-    )
-}
-
-pub(crate) fn is_ts_file(path: &Path) -> bool {
-    let name = match path.file_name().and_then(|name| name.to_str()) {
-        Some(name) => name,
-        None => return false,
-    };
-
-    if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
-        return true;
-    }
-
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("ts") | Some("tsx") | Some("mts") | Some("cts")
-    )
-}
-
-/// Check if a path is a valid module file for module resolution purposes.
-/// This includes TypeScript files AND .json files (which can be imported with resolveJsonModule).
-/// NOTE: This intentionally excludes JS files (.js/.jsx/.mjs/.cjs). For export map
-/// resolution, tsc does not accept raw JS files as valid targets — the package author
-/// must provide declaration files via a `types` condition. JS files are only accepted
-/// as resolution targets in non-export contexts (e.g., `imports` field, `main` field)
-/// via `is_valid_module_or_js_file`.
-pub(crate) fn is_valid_module_file(path: &Path) -> bool {
-    is_ts_file(path) || is_json_file(path)
-}
-
-/// Like `is_valid_module_file` but also accepts JavaScript files.
-/// Used in non-export resolution paths (package.json `imports` field, `main` field,
-/// direct file resolution) where tsc will resolve to JS source files during
-/// import-following for source discovery.
-pub(crate) fn is_valid_module_or_js_file(path: &Path) -> bool {
-    is_ts_file(path) || is_js_file(path) || is_json_file(path)
-}
-
-fn is_json_file(path: &Path) -> bool {
-    matches!(path.extension().and_then(|ext| ext.to_str()), Some("json"))
-}
-
-/// Returns true for tsconfig.json / jsconfig.json files, which tsc excludes
-/// from program inputs even when resolveJsonModule is enabled.
-fn is_config_json(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|f| f.to_str())
-        .is_some_and(|name| {
-            name.eq_ignore_ascii_case("tsconfig.json") || name.eq_ignore_ascii_case("jsconfig.json")
-        })
-}
-
 /// When both a `.d.ts` declaration file and a `.ts`/`.tsx` source file exist
 /// with the same stem, tsc excludes the declaration file from the program.
 /// This replicates that behavior: for each `.d.ts`/`.d.mts`/`.d.cts` file in
@@ -461,16 +431,7 @@ fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<Path
     // Build a set of all non-declaration stems for O(1) lookup.
     let mut source_stems: BTreeSet<PathBuf> = BTreeSet::new();
     for path in &files {
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n,
-            None => continue,
-        };
-        // Skip declaration files.
-        if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
-            continue;
-        }
-        // Strip the source extension to get the stem path (dir + stem).
-        if let Some(stem) = strip_source_extension(path, name) {
+        if let Some(stem) = strip_ts_source_extension_from_path(path) {
             source_stems.insert(stem);
         }
     }
@@ -478,11 +439,7 @@ fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<Path
     files
         .into_iter()
         .filter(|path| {
-            let name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n,
-                None => return true,
-            };
-            if let Some(decl_stem) = strip_declaration_extension(path, name) {
+            if let Some(decl_stem) = strip_ts_declaration_extension_from_path(path) {
                 // Keep the declaration file only if no source file shares its stem.
                 !source_stems.contains(&decl_stem)
             } else {
@@ -490,37 +447,6 @@ fn exclude_shadowed_declaration_files(files: BTreeSet<PathBuf>) -> BTreeSet<Path
             }
         })
         .collect()
-}
-
-/// Strip a source extension (.ts, .tsx, .mts, .cts) from a path and return the
-/// parent-joined stem.  Returns `None` for non-source extensions.
-fn strip_source_extension(path: &Path, name: &str) -> Option<PathBuf> {
-    let stem = if let Some(s) = name.strip_suffix(".tsx") {
-        s
-    } else if let Some(s) = name.strip_suffix(".mts") {
-        s
-    } else if let Some(s) = name.strip_suffix(".cts") {
-        s
-    } else if let Some(s) = name.strip_suffix(".ts") {
-        // Don't match `.d.ts` — that's a declaration extension.
-        if s.ends_with(".d") {
-            return None;
-        }
-        s
-    } else {
-        return None;
-    };
-    Some(path.with_file_name(stem))
-}
-
-/// Strip a declaration extension (.d.ts, .d.mts, .d.cts) and return the
-/// parent-joined stem.
-fn strip_declaration_extension(path: &Path, name: &str) -> Option<PathBuf> {
-    let stem = name
-        .strip_suffix(".d.ts")
-        .or_else(|| name.strip_suffix(".d.mts"))
-        .or_else(|| name.strip_suffix(".d.cts"))?;
-    Some(path.with_file_name(stem))
 }
 
 fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {
@@ -598,16 +524,7 @@ mod tests {
         assert_eq!(
             build_include_patterns(&options),
             vec![
-                "*.ts",
-                "*.tsx",
-                "*.mts",
-                "*.cts",
-                "**/*.ts",
-                "**/*.tsx",
-                "**/*.mts",
-                "**/*.cts",
-                "*.json",
-                "**/*.json"
+                "*.ts", "*.tsx", "*.mts", "*.cts", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts",
             ]
         );
     }
@@ -629,6 +546,7 @@ mod tests {
         let expanded = expand_include_patterns(&[
             "src".to_string(),
             "tests/".to_string(),
+            "src/*".to_string(),
             "already/**/*".to_string(),
             "index.ts".to_string(),
             "subdir/*.tsx".to_string(),
@@ -639,11 +557,45 @@ mod tests {
             vec![
                 "src/**/*".to_string(),
                 "tests/**/*".to_string(),
+                "src/*".to_string(),
+                "src/*/**/*".to_string(),
                 "already/**/*".to_string(),
                 "index.ts".to_string(),
                 "subdir/*.tsx".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_discover_terminal_include_star_matches_direct_files() {
+        let dir = unique_temp_dir("terminal_include_star");
+        fs::create_dir_all(dir.join("src/nested")).unwrap();
+        fs::write(dir.join("src/a.js"), "const direct = 1;").unwrap();
+        fs::write(dir.join("src/nested/b.js"), "const nested = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: Vec::new(),
+            files_explicitly_set: false,
+            include: Some(vec!["src/*".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|path| path.ends_with("src/a.js")),
+            "terminal include star should match direct files, got: {result:?}"
+        );
+        assert!(
+            result.iter().any(|path| path.ends_with("src/nested/b.js")),
+            "terminal include star should also recurse through matched directories, got: {result:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -866,7 +818,35 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_pattern_matched_json_file_requires_resolve_json_module() {
+    fn test_discover_absolute_include_walks_pattern_prefix() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_absolute_include");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("base/src")).unwrap();
+        fs::create_dir_all(dir.join("app")).unwrap();
+        fs::write(dir.join("base/src/a.ts"), "export const x = 1;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.join("app"),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(vec![
+                dir.join("base/src/**/*.ts").to_string_lossy().into_owned(),
+            ]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert_eq!(result, vec![dir.join("base/src/a.ts")]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_pattern_matched_json_file_is_not_a_root() {
         let dir = std::env::temp_dir().join("tsz_fs_test_pattern_json");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src")).unwrap();
@@ -888,7 +868,7 @@ mod tests {
         let result = discover_ts_files(&options).unwrap();
         assert!(
             !result.iter().any(|p| p.ends_with("data.json")),
-            ".json file should NOT be included from pattern without resolveJsonModule"
+            ".json file should not be included from patterns"
         );
 
         let options_with_json = FileDiscoveryOptions {
@@ -897,15 +877,15 @@ mod tests {
         };
         let result_with_json = discover_ts_files(&options_with_json).unwrap();
         assert!(
-            result_with_json.iter().any(|p| p.ends_with("data.json")),
-            ".json file should be included from pattern with resolveJsonModule"
+            !result_with_json.iter().any(|p| p.ends_with("data.json")),
+            "resolveJsonModule should not make pattern-matched JSON files roots"
         );
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_discover_excludes_tsconfig_json_even_with_resolve_json_module() {
+    fn test_discover_excludes_json_from_default_include_even_with_resolve_json_module() {
         let dir = std::env::temp_dir().join("tsz_fs_test_config_json_excluded");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -931,9 +911,44 @@ mod tests {
             result.iter().any(|p| p.ends_with("app.ts")),
             "should discover .ts files"
         );
+        assert!(!result.iter().any(|p| p.ends_with("data.json")));
         assert!(
-            result.iter().any(|p| p.ends_with("data.json")),
-            "should discover regular .json files with resolveJsonModule"
+            !result.iter().any(|p| p.ends_with("tsconfig.json")),
+            "tsconfig.json must not be included as program input"
+        );
+        assert!(
+            !result.iter().any(|p| p.ends_with("jsconfig.json")),
+            "jsconfig.json must not be included as program input"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_excludes_json_for_explicit_json_include() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_explicit_config_json_excluded");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("tsconfig.json"), r#"{ "compilerOptions": {} }"#).unwrap();
+        fs::write(dir.join("jsconfig.json"), r#"{ "compilerOptions": {} }"#).unwrap();
+        fs::write(dir.join("data.json"), r#"{ "key": "value" }"#).unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: Some(vec!["*.json".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: true,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            !result.iter().any(|p| p.ends_with("data.json")),
+            "explicit JSON include should not make JSON files roots"
         );
         assert!(
             !result.iter().any(|p| p.ends_with("tsconfig.json")),
@@ -942,6 +957,39 @@ mod tests {
         assert!(
             !result.iter().any(|p| p.ends_with("jsconfig.json")),
             "jsconfig.json must not be included as program input"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_treats_d_tsx_as_tsx_source_not_shadowed_declaration() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_d_tsx_source");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.tsx"), "export const x = <div />;").unwrap();
+        fs::write(dir.join("index.d.tsx"), "export const y = <div />;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            files_explicitly_set: false,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|p| p.ends_with("index.tsx")),
+            "regular .tsx source should be discovered"
+        );
+        assert!(
+            result.iter().any(|p| p.ends_with("index.d.tsx")),
+            ".d.tsx should be discovered as a .tsx source, not dropped as a declaration"
         );
 
         let _ = fs::remove_dir_all(&dir);

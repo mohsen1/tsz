@@ -12,6 +12,10 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+pub(crate) use super::lib_decls::{
+    collect_lib_decls_with_arenas, collect_lib_decls_with_arenas_in_contexts, dedup_decl_arenas,
+    resolve_lib_context_fallback_arena, resolve_lib_fallback_arena,
+};
 use super::lib_name_text::{entity_name_text_from_decl_arenas, entity_name_text_in_arena};
 use super::lib_scoped_heritage::LibHeritageBase;
 
@@ -59,79 +63,6 @@ pub(crate) fn keyword_name_to_type_id(name: &str) -> Option<TypeId> {
         "bigint" => Some(TypeId::BIGINT),
         _ => None,
     }
-}
-
-/// Resolve fallback arena for a lib symbol from merged binders/lib contexts.
-pub(crate) fn resolve_lib_fallback_arena<'a>(
-    binder: &'a tsz_binder::BinderState,
-    sym_id: tsz_binder::SymbolId,
-    lib_contexts: &'a [crate::context::LibContext],
-    user_arena: &'a NodeArena,
-) -> &'a NodeArena {
-    binder
-        .symbol_arenas
-        .get(&sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
-        .unwrap_or(user_arena)
-}
-
-/// Resolve fallback arena for a lib symbol within a single lib context.
-pub(crate) fn resolve_lib_context_fallback_arena<'a>(
-    binder: &'a tsz_binder::BinderState,
-    sym_id: tsz_binder::SymbolId,
-    lib_arena: &'a NodeArena,
-) -> &'a NodeArena {
-    binder
-        .symbol_arenas
-        .get(&sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .unwrap_or(lib_arena)
-}
-
-/// Build `(NodeIndex, &NodeArena)` pairs for a symbol's declarations.
-/// Uses `declaration_arenas`, then falls back to user or lib arena.
-pub(crate) fn collect_lib_decls_with_arenas<'a>(
-    binder: &'a tsz_binder::BinderState,
-    sym_id: tsz_binder::SymbolId,
-    declarations: &[NodeIndex],
-    fallback_arena: &'a NodeArena,
-    user_arena: Option<&'a NodeArena>,
-) -> Vec<(NodeIndex, &'a NodeArena)> {
-    declarations
-        .iter()
-        .flat_map(|&decl_idx| {
-            if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                arenas
-                    .iter()
-                    .map(|arc| (decl_idx, arc.as_ref()))
-                    .collect::<Vec<_>>()
-            } else if let Some(ua) = user_arena
-                && ua.get(decl_idx).is_some()
-            {
-                // User augmentations are not in declaration_arenas.
-                vec![(decl_idx, ua)]
-            } else {
-                vec![(decl_idx, fallback_arena)]
-            }
-        })
-        .collect()
-}
-
-/// Deduplicate declaration-arena pairs by `(NodeIndex, arena pointer)`.
-pub(crate) fn dedup_decl_arenas<'a>(
-    decls: &[(NodeIndex, &'a NodeArena)],
-) -> Vec<(NodeIndex, &'a NodeArena)> {
-    let mut seen = Vec::with_capacity(decls.len());
-    let mut out = Vec::with_capacity(decls.len());
-    for &(idx, arena) in decls {
-        let key = (idx, arena as *const NodeArena);
-        if !seen.contains(&key) {
-            seen.push(key);
-            out.push((idx, arena));
-        }
-    }
-    out
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via the merged binder.
@@ -221,7 +152,9 @@ pub(crate) fn resolve_lib_node_in_arenas(
     decl_arenas: &[(NodeIndex, &NodeArena)],
     fallback_arena: &NodeArena,
 ) -> Option<tsz_binder::SymbolId> {
-    if let Some(sym_id) = binder.get_node_symbol(node_idx) {
+    if let Some(sym_id) =
+        resolve_node_symbol_in_decl_arenas(binder, node_idx, decl_arenas, fallback_arena)
+    {
         return Some(sym_id);
     }
     for (_, arena) in decl_arenas {
@@ -249,6 +182,32 @@ pub(crate) fn resolve_lib_node_in_arenas(
         }
     }
     None
+}
+
+fn resolve_node_symbol_in_decl_arenas(
+    binder: &tsz_binder::BinderState,
+    node_idx: NodeIndex,
+    decl_arenas: &[(NodeIndex, &NodeArena)],
+    fallback_arena: &NodeArena,
+) -> Option<tsz_binder::SymbolId> {
+    for (_, arena) in decl_arenas {
+        if let Some(sym_id) = resolve_node_symbol_in_arena(binder, arena, node_idx) {
+            return Some(sym_id);
+        }
+    }
+    resolve_node_symbol_in_arena(binder, fallback_arena, node_idx)
+}
+
+fn resolve_node_symbol_in_arena(
+    binder: &tsz_binder::BinderState,
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+) -> Option<tsz_binder::SymbolId> {
+    let arena_ptr = arena as *const NodeArena as usize;
+    binder
+        .cross_file_node_symbols
+        .get(&arena_ptr)
+        .and_then(|node_symbols| node_symbols.get(&node_idx.0).copied())
 }
 
 /// Walk a binder's scope chain from the enclosing scope of `node_idx` up to the
@@ -513,11 +472,12 @@ impl<'a> CheckerState<'a> {
         let fallback_arena =
             resolve_lib_fallback_arena(self.ctx.binder, sym_id, &lib_contexts, self.ctx.arena);
 
-        let decls_with_arenas = collect_lib_decls_with_arenas(
+        let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
             self.ctx.binder,
             sym_id,
             &symbol.declarations,
             fallback_arena,
+            &lib_contexts,
             Some(self.ctx.arena),
         );
 
@@ -537,6 +497,7 @@ impl<'a> CheckerState<'a> {
         });
 
         if !has_any_heritage {
+            self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
         }
@@ -713,7 +674,9 @@ impl<'a> CheckerState<'a> {
         if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
             return type_id;
         }
-        if let Some(ty) = self.resolve_lib_type_by_name(name) {
+        if !self.ctx.file_local_type_shadow_for_lib_name(name)
+            && let Some(ty) = self.resolve_lib_type_by_name(name)
+        {
             return ty;
         }
         // Preserve unresolved lib heritage args as symbolic type params
@@ -751,7 +714,24 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
+        if name == "Array"
+            && self.ctx.share_owner_symbol_type_results
+            && !self.lib_name_has_local_augmentation(name)
+            && let Some(ty) = self
+                .ctx
+                .types
+                .get_array_display_base_type()
+                .or_else(|| tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types))
+        {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(name.to_string(), Some(ty));
+            return Some(ty);
+        }
+
+        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name)
+            && self.cached_lib_type_is_usable(name, *cached)
+        {
             return *cached;
         }
         // Skip shared cache when this checker locally augments `name`.
@@ -760,13 +740,23 @@ impl<'a> CheckerState<'a> {
             && let Some(entry) = shared.get(name)
         {
             let cached = *entry;
-            self.ctx
-                .lib_type_resolution_cache
-                .insert(name.to_string(), cached);
-            return cached;
+            if self.cached_lib_type_is_usable(name, cached) {
+                self.ctx
+                    .lib_type_resolution_cache
+                    .insert(name.to_string(), cached);
+                return cached;
+            }
         }
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
+        // Mark this name as in-progress. Recursive lib graphs such as
+        // `Promise`/`PromiseLike` can re-enter through generic-reference
+        // prewarming before the final cache write below; returning `None` for
+        // the in-progress edge breaks that cycle and the completed result
+        // overwrites this sentinel.
+        self.ctx
+            .lib_type_resolution_cache
+            .insert(name.to_string(), None);
         let mut lib_type_id: Option<TypeId> = None;
         let factory = self.ctx.types.factory();
         let mut symbol_has_interface = false;
@@ -783,7 +773,12 @@ impl<'a> CheckerState<'a> {
         // Using lib_ctx.binder's SymbolIds with self.ctx.get_or_create_def_id causes
         // SymbolId collisions and wrong type resolution.
         let lib_binders = self.get_lib_binders();
-        let sym_id = self.ctx.binder.file_locals.get(name).or_else(|| {
+        let sym_id = if self.ctx.file_local_type_shadow_for_lib_name(name) {
+            None
+        } else {
+            self.ctx.binder.file_locals.get(name)
+        }
+        .or_else(|| {
             self.ctx
                 .binder
                 .get_global_type_with_libs(name, &lib_binders)
@@ -800,11 +795,12 @@ impl<'a> CheckerState<'a> {
                     self.ctx.arena,
                 );
 
-                let decls_with_arenas = collect_lib_decls_with_arenas(
+                let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
                     self.ctx.binder,
                     sym_id,
                     &symbol.declarations,
                     fallback_arena,
+                    &lib_contexts,
                     Some(self.ctx.arena),
                 );
                 let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();
@@ -821,6 +817,24 @@ impl<'a> CheckerState<'a> {
                                 .type_arguments
                                 .as_ref()
                                 .is_some_and(|args| !args.nodes.is_empty());
+                            if has_type_args
+                                && let Some(ref_sym_id) = resolve_lib_node_in_arenas(
+                                    self.ctx.binder,
+                                    type_ref.type_name,
+                                    &decls_with_arenas,
+                                    fallback_arena,
+                                )
+                                && ref_sym_id != sym_id
+                            {
+                                let ref_name = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol_with_libs(ref_sym_id, &lib_binders)
+                                    .map(|symbol| symbol.escaped_name.clone());
+                                if let Some(ref_name) = ref_name {
+                                    let _ = self.resolve_lib_type_by_name(&ref_name);
+                                }
+                            }
                             if !has_type_args
                                 && let Some(name_node) = decl_arena.get(type_ref.type_name)
                                 && name_node.kind == SyntaxKind::Identifier as u16
@@ -985,6 +999,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        for ty in lib_types.iter().copied() {
+            if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty).is_some() {
+                continue;
+            }
+            self.ensure_relation_input_ready(ty);
         }
 
         // Merge repeated lib interface declarations using interface-merge
@@ -1197,135 +1218,16 @@ impl<'a> CheckerState<'a> {
 
         lib_type_id
     }
-
-    /// Lower augmentation declarations from a given arena and return the resulting `TypeId`.
-    ///
-    /// This is the shared implementation for global-augmentation lowering used by both
-    /// `resolve_lib_type_by_name` and `resolve_lib_type_with_params`. It builds the
-    /// standard resolver triplet (node → SymbolId, node → DefId, name → DefId) using
-    /// [`resolve_augmentation_node`] and [`CheckerContext::get_lib_def_id`], then
-    /// delegates to `TypeLowering::lower_interface_declarations`.
-    ///
-    /// Callers merge the returned type into their running `lib_type_id` via intersection.
-    pub(crate) fn lower_augmentation_for_arena(
-        &self,
-        arena_ref: &NodeArena,
-        decls: &[NodeIndex],
-        lib_contexts: &[crate::context::LibContext],
-    ) -> TypeId {
-        let binder_ref = self.ctx.binder;
-        let decl_binder = self
-            .ctx
-            .get_binder_for_arena(arena_ref)
-            .unwrap_or(binder_ref);
-        let global_idx = self.ctx.global_file_locals_index.as_deref();
-        let all_binders_slice = self.ctx.all_binders.as_ref().map(|v| v.as_slice());
-        let resolver = |node_idx: NodeIndex| -> Option<u32> {
-            resolve_augmentation_node(
-                decl_binder,
-                arena_ref,
-                node_idx,
-                global_idx,
-                all_binders_slice,
-                lib_contexts,
-            )
-            .map(|sym_id| sym_id.0)
-        };
-        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-            augmentation_def_id_from_node(
-                &self.ctx,
-                decl_binder,
-                arena_ref,
-                node_idx,
-                global_idx,
-                all_binders_slice,
-                lib_contexts,
-            )
-        };
-        let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
-        };
-        let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
-            arena_ref,
-            self.ctx.types,
-            &resolver,
-            &def_id_resolver,
-            &no_value_resolver,
-        )
-        .with_name_def_id_resolver(&name_resolver);
-        lowering.lower_interface_declarations(decls)
-    }
-
-    /// Merge global augmentations for `name` into `lib_type_id`.
-    ///
-    /// This consolidates the augmentation-merge pattern that was previously
-    /// duplicated between `resolve_lib_type_by_name` and
-    /// `resolve_lib_type_with_params`. Both callers group augmentation
-    /// declarations by arena (current-file vs cross-file), lower each group
-    /// via [`lower_augmentation_for_arena`], and merge via intersection.
-    pub(crate) fn merge_global_augmentations(
-        &self,
-        name: &str,
-        lib_type_id: Option<TypeId>,
-        lib_contexts: &[crate::context::LibContext],
-    ) -> Option<TypeId> {
-        let augmentation_decls = self.ctx.binder.global_augmentations.get(name)?;
-        if augmentation_decls.is_empty() {
-            return lib_type_id;
-        }
-
-        let factory = self.ctx.types.factory();
-        let current_arena: &NodeArena = self.ctx.arena;
-        let mut result = lib_type_id;
-
-        // Group augmentation declarations by arena.
-        let mut current_file_decls: Vec<NodeIndex> = Vec::new();
-        let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
-            FxHashMap::default();
-
-        for aug in augmentation_decls {
-            if let Some(ref arena) = aug.arena {
-                let key = Arc::as_ptr(arena) as usize;
-                cross_file_groups
-                    .entry(key)
-                    .or_insert_with(|| (Arc::clone(arena), Vec::new()))
-                    .1
-                    .push(aug.node);
-            } else {
-                current_file_decls.push(aug.node);
-            }
-        }
-
-        // Lower current-file augmentations.
-        if !current_file_decls.is_empty() {
-            let aug_type =
-                self.lower_augmentation_for_arena(current_arena, &current_file_decls, lib_contexts);
-            result = Some(if let Some(lib_type) = result {
-                factory.intersection2(lib_type, aug_type)
-            } else {
-                aug_type
-            });
-        }
-
-        // Lower cross-file augmentations (each group uses its own arena).
-        for (arena, decls) in cross_file_groups.values() {
-            let aug_type = self.lower_augmentation_for_arena(arena.as_ref(), decls, lib_contexts);
-            result = Some(if let Some(lib_type) = result {
-                factory.intersection2(lib_type, aug_type)
-            } else {
-                aug_type
-            });
-        }
-
-        result
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ---- keyword_syntax_to_type_id ----
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::type_construction::TypeInterner;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_solver::{QueryDatabase, TypeParamInfo};
 
     #[test]
     fn keyword_syntax_maps_string() {
@@ -1425,12 +1327,9 @@ mod tests {
 
     #[test]
     fn keyword_syntax_returns_none_for_non_keyword() {
-        // Use an arbitrary non-keyword kind value
         assert_eq!(keyword_syntax_to_type_id(0), None);
         assert_eq!(keyword_syntax_to_type_id(9999), None);
     }
-
-    // ---- keyword_name_to_type_id ----
 
     #[test]
     fn keyword_name_maps_all_primitives() {
@@ -1455,13 +1354,12 @@ mod tests {
     fn keyword_name_returns_none_for_non_keyword() {
         assert_eq!(keyword_name_to_type_id("Promise"), None);
         assert_eq!(keyword_name_to_type_id("Array"), None);
-        assert_eq!(keyword_name_to_type_id("String"), None); // capital S
+        assert_eq!(keyword_name_to_type_id("String"), None);
         assert_eq!(keyword_name_to_type_id(""), None);
     }
 
     #[test]
     fn keyword_name_and_syntax_agree() {
-        // Verify both mapping functions return the same TypeId for each keyword
         let pairs = [
             ("string", SyntaxKind::StringKeyword),
             ("number", SyntaxKind::NumberKeyword),
@@ -1484,8 +1382,6 @@ mod tests {
             );
         }
     }
-
-    // ---- dedup_decl_arenas ----
 
     #[test]
     fn dedup_empty() {
@@ -1550,6 +1446,62 @@ mod tests {
         assert_eq!(super::no_value_resolver(NodeIndex(0)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(42)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(u32::MAX)), None);
+    }
+
+    #[test]
+    fn shared_array_name_resolution_reuses_registered_base_type() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let array_base = types.factory().object(Vec::new());
+        types.set_array_base_type(
+            array_base,
+            vec![TypeParamInfo {
+                name: types.intern_string("T"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            }],
+        );
+
+        let mut checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.share_owner_symbol_type_results = true;
+
+        assert_eq!(checker.resolve_lib_type_by_name("Array"), Some(array_base));
+    }
+
+    #[test]
+    fn known_global_constructor_cache_rejects_non_constructable_type() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let non_constructable = types.factory().object(Vec::new());
+
+        assert!(
+            !checker.cached_lib_type_is_usable("ErrorConstructor", Some(non_constructable)),
+            "known global constructor cache entries must actually be constructable"
+        );
+        assert!(
+            checker.cached_lib_type_is_usable("Error", Some(non_constructable)),
+            "non-constructor lib cache entries are not filtered by constructability"
+        );
+        assert!(
+            !checker.cached_lib_type_is_usable("Error", Some(TypeId(10_000))),
+            "cached non-intrinsic TypeIds must belong to the current interner"
+        );
     }
 }
 
@@ -1923,11 +1875,8 @@ mod integration_tests {
         let _codes = check_source_codes("declare function iter(): AsyncIterable<string>;");
     }
 
-    // ---- lib ref lowering: heritage chain depth ----
-
     #[test]
     fn array_method_access_no_crash() {
-        // Array extends ReadonlyArray — exercises heritage chain merging
         let _codes =
             check_source_codes("let a: Array<number> = [1, 2, 3]; let b = a.map(x => x + 1);");
     }
@@ -1939,11 +1888,8 @@ mod integration_tests {
 
     #[test]
     fn symbol_iterator_no_crash() {
-        // Symbol.iterator exercises deep lib heritage chains
         let _codes = check_source_codes("let s = Symbol.iterator;");
     }
-
-    // ---- lib ref + global augmentation patterns ----
 
     #[test]
     fn declare_global_interface_augmentation_no_crash() {
@@ -1961,11 +1907,8 @@ mod integration_tests {
         );
     }
 
-    // ---- keyword type consistency ----
-
     #[test]
     fn keyword_types_in_generic_position_no_crash() {
-        // Keyword types used as generic arguments should resolve correctly
         let codes = check_source_codes(
             "type Box<T> = { value: T }; \
              let a: Box<string>; let b: Box<number>; let c: Box<boolean>;",

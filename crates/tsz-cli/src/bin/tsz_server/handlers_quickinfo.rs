@@ -485,7 +485,7 @@ impl Server {
         };
         let generic_params: Vec<String> = signature_name
             .find('<')
-            .and_then(|start| signature_name.rfind('>').map(|end| (start, end)))
+            .zip(signature_name.rfind('>'))
             .and_then(|(start, end)| {
                 (end > start + 1).then(|| {
                     signature_name[start + 1..end]
@@ -1405,7 +1405,7 @@ impl Server {
                     {
                         return Some(serde_json::json!({
                             "displayString": display_string,
-                            "documentation": serde_json::json!([]),
+                            "documentation": "",
                             "kind": "class",
                             "kindModifiers": "",
                             "tags": [],
@@ -1434,6 +1434,7 @@ impl Server {
                     .unwrap_or_default()
             };
             display_string = text::normalize_quickinfo_display_string(&display_string);
+            display_string = text::repair_utf8_mojibake(&display_string);
             let base_offset = line_map
                 .position_to_offset(position, &source_text)
                 .or_else(|| {
@@ -1503,21 +1504,9 @@ impl Server {
                 })
                 .collect();
 
-            // Return documentation as a structured display parts array when non-empty,
-            // or empty string when there's no documentation. The SessionClient handles
-            // string documentation by wrapping in [{kind:"text", text:doc}].
-            // When doc is "", that creates [{kind:"text",text:""}] (length 1) which
-            // causes an unwanted blank line in baseline output.
-            // Return as empty array [] to avoid the blank line.
-            let doc_value: serde_json::Value = if documentation.is_empty() {
-                serde_json::json!([])
-            } else {
-                serde_json::json!([{"kind": "text", "text": documentation}])
-            };
-
             Some(serde_json::json!({
                 "displayString": display_string,
-                "documentation": doc_value,
+                "documentation": documentation,
                 "kind": kind,
                 "kindModifiers": kind_modifiers,
                 "tags": tags,
@@ -1526,34 +1515,6 @@ impl Server {
             }))
         })();
 
-        // When quickinfo fails to resolve, return a response with valid start/end
-        // spans. The harness accesses body.start.line and body.end.line, so an
-        // empty object {} would cause "Cannot read properties of undefined".
-        let fallback = (|| -> Option<serde_json::Value> {
-            let (_, line, offset) = Self::extract_file_position(&request.arguments)?;
-            let position = Self::tsserver_to_lsp_position(line, offset);
-            Some(serde_json::json!({
-                "displayString": "",
-                "documentation": "",
-                "kind": "",
-                "kindModifiers": "",
-                "tags": [],
-                "start": Self::lsp_to_tsserver_position(position),
-                "end": Self::lsp_to_tsserver_position(position),
-            }))
-        })();
-        self.stub_response(
-            seq,
-            request,
-            result.or(fallback).or(Some(serde_json::json!({
-                "displayString": "",
-                "documentation": "",
-                "kind": "",
-                "kindModifiers": "",
-                "tags": [],
-                "start": {"line": 1, "offset": 1},
-                "end": {"line": 1, "offset": 1},
-            }))),
-        )
+        self.stub_response(seq, request, result)
     }
 }

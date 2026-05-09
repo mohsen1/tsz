@@ -12,6 +12,10 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+thread_local! {
+    static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 pub(crate) const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
 pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
 pub(crate) const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
@@ -47,6 +51,18 @@ fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> O
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn enter_cross_arena_interface_delegation() {
+        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get() + 1));
+    }
+
+    pub(crate) fn leave_cross_arena_interface_delegation() {
+        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+
+    pub(crate) fn in_cross_arena_interface_delegation() -> bool {
+        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.get() > 0)
+    }
+
     fn resolve_cross_file_global_type_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
         let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
         let lib_binders = self.get_lib_binders();
@@ -623,9 +639,13 @@ impl<'a> CheckerState<'a> {
 
         if should_delegate {
             // PERF: count cross-arena delegation calls for the perf plan.
-            // See `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+            // See `docs/plan/PERFORMANCE_PLAN.md`.
             let perf = tsz_common::perf_counters::counters();
             tsz_common::perf_counters::inc(&perf.delegate_cross_arena_calls);
+            // Track the running peak recursion depth via an RAII guard. Drop
+            // decrements when this call returns / unwinds. Per
+            // PERFORMANCE_PLAN.md §4.1.1 site #11.
+            let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
             // Fast path: check lib delegation cache by SymbolId.
             // Each lib SymbolId is delegated at most once; subsequent lookups
@@ -850,6 +870,11 @@ impl<'a> CheckerState<'a> {
 
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
+            let result_params = checker
+                .ctx
+                .get_existing_def_id(sym_id)
+                .and_then(|def_id| checker.ctx.get_def_type_params(def_id))
+                .unwrap_or_default();
 
             // Collect child data before dropping (child borrows from self.ctx.types).
 
@@ -984,13 +1009,13 @@ impl<'a> CheckerState<'a> {
                     sym_id,
                     target_file_idx as u32,
                     result,
-                    Vec::new(),
+                    result_params.clone(),
                 );
             }
 
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
-            return Some((result, Vec::new()));
+            return Some((result, result_params));
         }
 
         None
@@ -1006,15 +1031,35 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         // Find the symbol's home arena
-        let delegate_arena: Option<&tsz_parser::NodeArena> = self
+        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx
             .binder
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        let mut delegate_file_idx = None;
+
+        let needs_cross_file_delegation = delegate_arena
+            .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
+            && self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| {
+                    let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    !std::ptr::eq(target_arena, self.ctx.arena)
+                });
+
+        if needs_cross_file_delegation {
+            let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
+                "needs_cross_file_delegation derived from resolve_symbol_file_index returning true",
+            );
+            delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
+            delegate_file_idx = Some(file_idx);
+        }
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
-        let query_file_idx = self.ctx.get_file_idx_for_arena(symbol_arena);
+        let query_file_idx =
+            delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
         if let Some(file_idx) = query_file_idx
             && let Some((cached_type, cached_params)) = self
                 .ctx
@@ -1043,10 +1088,15 @@ impl<'a> CheckerState<'a> {
         // Use the target file's binder when available so that node→symbol
         // lookups (e.g. `get_node_symbol` for private member `parent_id`)
         // resolve correctly instead of returning `None`.
-        let delegate_binder = self
-            .ctx
-            .get_binder_for_arena(symbol_arena)
-            .unwrap_or(self.ctx.binder);
+        let delegate_binder = if let Some(file_idx) = delegate_file_idx {
+            self.ctx
+                .get_binder_for_file(file_idx)
+                .unwrap_or(self.ctx.binder)
+        } else {
+            self.ctx
+                .get_binder_for_arena(symbol_arena)
+                .unwrap_or(self.ctx.binder)
+        };
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
@@ -1058,6 +1108,7 @@ impl<'a> CheckerState<'a> {
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.class_instance_resolution_set {
             checker.ctx.class_instance_resolution_set.insert(id);
         }
@@ -1216,6 +1267,8 @@ impl<'a> CheckerState<'a> {
         // colliding cache entry from the caller's file.
         checker.ctx.symbol_types.remove(&sym_id);
         checker.ctx.symbol_instance_types.remove(&sym_id);
+        checker.ctx.symbol_to_def.borrow_mut().clear();
+        checker.ctx.def_to_symbol.borrow_mut().clear();
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
                 checker.ctx.symbol_resolution_set.insert(id);
@@ -1233,7 +1286,9 @@ impl<'a> CheckerState<'a> {
 
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.
+        Self::enter_cross_arena_interface_delegation();
         let mut result = checker.compute_interface_type_from_declarations(sym_id);
+        Self::leave_cross_arena_interface_delegation();
         if result == TypeId::ERROR {
             result = checker.get_type_of_symbol(sym_id);
         }
@@ -1459,13 +1514,20 @@ impl<'a> CheckerState<'a> {
 
         let substitution = type_args
             .filter(|type_args| {
-                !interface_params.is_empty() && interface_params.len() == type_args.len()
+                !interface_params.is_empty() && type_args.len() <= interface_params.len()
+            })
+            .and_then(|type_args| {
+                crate::query_boundaries::type_defaults::fill_application_defaults(
+                    checker.ctx.types,
+                    type_args,
+                    &interface_params,
+                )
             })
             .map(|type_args| {
                 crate::query_boundaries::common::TypeSubstitution::from_args(
                     checker.ctx.types,
                     &interface_params,
-                    type_args,
+                    &type_args,
                 )
             });
 

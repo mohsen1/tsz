@@ -2,6 +2,8 @@
 //! Centralizes logic for converting `TypeIds` and `TypeDatas` to human-readable strings.
 
 mod compound;
+mod display_simplification;
+mod intrinsic;
 // `test_tracing` exercises `debug!` / `debug_span!` / `trace_span!`. The
 // workspace `tracing` dep filters those macros out at compile time when
 // `debug_assertions` is off (via the `release_max_level_warn` feature), so
@@ -16,13 +18,14 @@ mod tests;
 pub mod tracing_helpers;
 
 use crate::TypeDatabase;
-use crate::def::DefinitionStore;
+use crate::def::{DefId, DefinitionStore};
 use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
     get_message_template,
 };
 use crate::types::{
-    IntrinsicKind, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
+    MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -90,6 +93,8 @@ pub struct TypeFormatter<'a> {
     /// This should be set for error-message formatting (tsc doesn't optionalize
     /// union members in diagnostics, only in quickinfo/hover).
     skip_union_optionalize: bool,
+    /// When true, format types using tsc's diagnostic display surface.
+    diagnostic_mode: bool,
     /// When true, preserve the declared surface syntax of optional properties
     /// instead of appending synthetic `| undefined`.
     preserve_optional_property_surface_syntax: bool,
@@ -115,6 +120,19 @@ pub struct TypeFormatter<'a> {
     /// Application (e.g., `type Foo = Id<{...}>`). In assignability error messages,
     /// tsc shows the Application form `Id<{...}>` rather than the outer alias `Foo`.
     skip_application_alias_names: bool,
+    /// Internal guard used while formatting helper application arguments that
+    /// should show structural inputs instead of chasing nested application
+    /// display aliases.
+    skip_application_display_alias_chase: bool,
+    /// Specific non-generic type aliases whose name should not be used for
+    /// diagnostic display. This is used for `typeof` aliases in assignability
+    /// messages where tsc prints the target's structural type rather than the
+    /// alias name.
+    skip_type_alias_def_ids: FxHashSet<DefId>,
+    /// Type aliases currently being expanded through `skip_type_alias_def_ids`.
+    /// This lets a recursive alias expand one structural layer before nested
+    /// self-references elide as `...`.
+    skipped_type_alias_expansion_visiting: FxHashSet<DefId>,
     /// When true, don't follow `display_alias` when it points to an Intersection
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
@@ -129,13 +147,81 @@ pub struct TypeFormatter<'a> {
     /// `string`, `Boolean` instead of `boolean`. tsc always uses the capitalized
     /// forms for primitive members in intersection type display.
     capitalize_primitive_intersection_members: bool,
+    /// When true, do not follow `display_alias` when the current type is an
+    /// `Object` / `ObjectWithIndex`. Used for diagnostics like the JS
+    /// prototype "property does not exist on type `{...}`" message where tsc
+    /// shows the literal's structural shape regardless of any
+    /// constructor-prototype symbol aliasing recorded by the type system.
+    skip_object_display_alias: bool,
     /// When true, preserve a longer generic alias prefix while eliding nested
     /// structural object branches. Used for long property receiver diagnostics.
     long_property_receiver_display: bool,
     long_property_receiver_object_elision_end_depth: u32,
+    /// When true, generic mapped type aliases that evaluate to scalar types are
+    /// displayed as their evaluated result. Used for assignability diagnostics.
+    expand_scalar_mapped_alias_applications: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
+    fn is_primitive_key_union_data(&self, key: &TypeData) -> bool {
+        let TypeData::Union(list_id) = key else {
+            return false;
+        };
+        let members = self.interner.type_list(*list_id);
+        members.len() == 3
+            && members.contains(&TypeId::STRING)
+            && members.contains(&TypeId::NUMBER)
+            && members.contains(&TypeId::SYMBOL)
+    }
+
+    fn scalar_mapped_alias_application_display(
+        &self,
+        type_id: TypeId,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        if !self.expand_scalar_mapped_alias_applications {
+            return None;
+        }
+
+        let def_store = self.def_store?;
+        let def_id = match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => def_store.find_def_for_type(base)?,
+        };
+        let def = def_store.get(def_id)?;
+        if def.kind != crate::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = crate::evaluation::evaluate::evaluate_type(self.interner, def.body?);
+        let mapped_id = match self.interner.lookup(body) {
+            Some(TypeData::Mapped(mapped_id)) => mapped_id,
+            _ => return None,
+        };
+        let identity_info =
+            crate::type_queries::mapped::classify_identity_mapped(self.interner, mapped_id)?;
+        let source_arg_index = def
+            .type_params
+            .iter()
+            .position(|param| param.name == identity_info.source_param_name)?;
+        let evaluated = crate::type_queries::mapped::evaluate_identity_mapped_passthrough(
+            self.interner,
+            mapped_id,
+            *args.get(source_arg_index)?,
+        )?;
+        if evaluated == type_id
+            || evaluated == TypeId::ERROR
+            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
+        {
+            return None;
+        }
+
+        (crate::visitor::is_primitive_type(self.interner, evaluated)
+            || matches!(self.interner.lookup(evaluated), Some(TypeData::Literal(_)))
+            || evaluated == TypeId::NEVER)
+            .then_some(evaluated)
+    }
+
     /// For Application-arg display: when the arg is an `IndexAccess(obj, idx)`
     /// whose `obj` is fully concrete (no type parameters, no infer
     /// placeholders) and `idx` is a literal, resolve the indexed access for
@@ -159,7 +245,12 @@ impl<'a> TypeFormatter<'a> {
         // a generic key would also be deferred even when the obj is concrete.
         if !matches!(
             self.interner.lookup(idx),
-            Some(TypeData::Literal(_) | TypeData::Union(_))
+            Some(
+                TypeData::Literal(_)
+                    | TypeData::Union(_)
+                    | TypeData::UniqueSymbol(_)
+                    | TypeData::TypeQuery(_)
+            )
         ) {
             return arg;
         }
@@ -168,6 +259,82 @@ impl<'a> TypeFormatter<'a> {
             return arg;
         }
         resolved
+    }
+
+    /// If `obj` is a homomorphic identity mapped type
+    /// (`{ [P in keyof X]: X[P] }`, with optional/readonly modifier variants)
+    /// then `obj[idx]` displays as `X[idx]`, plus `| undefined` when the
+    /// mapped's optional modifier is `+`. Returns `None` for any other
+    /// mapped shape so non-homomorphic mapped types continue to print
+    /// with their full structural form.
+    ///
+    /// This mirrors tsc's display: `Partial<U>[K]` shows as `U[K] | undefined`,
+    /// `Readonly<U>[K]` shows as `U[K]`, regardless of the user-chosen
+    /// iteration variable name in the alias body.
+    fn try_format_homomorphic_mapped_index_access(
+        &mut self,
+        obj: TypeId,
+        idx: TypeId,
+    ) -> Option<String> {
+        let mapped_id = match self.interner.lookup(obj) {
+            Some(TypeData::Mapped(id)) => id,
+            _ => return None,
+        };
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // `as` clauses (name remapping) change the key relationship; bail.
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        // Constraint must be `keyof <source>`.
+        let source = match self.interner.lookup(mapped.constraint) {
+            Some(TypeData::KeyOf(operand)) => operand,
+            _ => return None,
+        };
+
+        // Template body must be `IndexAccess(source, P)` where P is the
+        // mapped's own iteration parameter — i.e. the homomorphic-identity
+        // shape that tsc treats as `Partial<source>` / `Readonly<source>`.
+        let (template_obj, template_idx) = match self.interner.lookup(mapped.template) {
+            Some(TypeData::IndexAccess(o, i)) => (o, i),
+            _ => return None,
+        };
+        if template_obj != source {
+            return None;
+        }
+        match self.interner.lookup(template_idx) {
+            Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name => {}
+            _ => return None,
+        }
+
+        // Format `source[idx]`, parenthesizing source only when needed for
+        // unions / intersections that actually render with operators.
+        let source_str = self.format(source);
+        let needs_parens = matches!(
+            self.interner.lookup(source),
+            Some(TypeData::Union(_) | TypeData::Intersection(_))
+        ) && (source_str.contains(" & ") || source_str.contains(" | "));
+        let idx_for_display = match self.interner.lookup(idx) {
+            Some(TypeData::TypeParameter(tp)) if tp.name == mapped.type_param.name => {
+                mapped.constraint
+            }
+            _ => idx,
+        };
+        let idx_str = self.format(idx_for_display);
+        let core = if needs_parens {
+            format!("({source_str})[{idx_str}]")
+        } else {
+            format!("{source_str}[{idx_str}]")
+        };
+
+        // Optional + adds `| undefined`; readonly is a property-level
+        // modifier and does not change the value type at an index access.
+        if mapped.optional_modifier == Some(MappedModifier::Add) {
+            Some(format!("{core} | undefined"))
+        } else {
+            Some(core)
+        }
     }
 
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
@@ -184,6 +351,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            diagnostic_mode: false,
             preserve_optional_property_surface_syntax: false,
             preserve_optional_parameter_surface_syntax: true,
             use_display_properties: false,
@@ -191,11 +359,16 @@ impl<'a> TypeFormatter<'a> {
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_application_display_alias_chase: false,
+            skip_type_alias_def_ids: FxHashSet::default(),
+            skipped_type_alias_expansion_visiting: FxHashSet::default(),
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
+            skip_object_display_alias: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
+            expand_scalar_mapped_alias_applications: false,
         }
     }
 
@@ -233,17 +406,36 @@ impl<'a> TypeFormatter<'a> {
         // For distributive conditionals, `boolean` distributes as `true | false`.
         // Mirrors the instantiation policy in instantiate.rs that expands
         // `BOOLEAN` to `[BOOLEAN_TRUE, BOOLEAN_FALSE]` before substitution.
-        let members: Vec<TypeId> = if check_arg == TypeId::BOOLEAN {
+        let mut members: Vec<TypeId> = if check_arg == TypeId::BOOLEAN {
             vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
         } else if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check_arg) {
-            let list = self.interner.type_list(member_list_id);
-            if list.len() < 2 {
-                return None;
+            if let Some(origin) = self.interner.get_union_origin(check_arg) {
+                if origin.len() < 2 {
+                    return None;
+                }
+                origin.to_vec()
+            } else {
+                let list = self.interner.type_list(member_list_id);
+                if list.len() < 2 {
+                    return None;
+                }
+                list.to_vec()
             }
-            list.to_vec()
         } else {
             return None;
         };
+
+        if let Some(def_store) = self.def_store {
+            let positions: Vec<_> = members
+                .iter()
+                .map(|&member| self.get_source_position_for_type(member, def_store))
+                .collect();
+            if positions.iter().all(|&(tier, _, _)| tier < 2) {
+                let mut pairs: Vec<_> = members.iter().copied().zip(positions).collect();
+                pairs.sort_by_key(|&(_, pos)| pos);
+                members = pairs.into_iter().map(|(member, _)| member).collect();
+            }
+        }
 
         // Only evaluate the distributed branches when the *other* type args are
         // fully concrete. If any non-check arg carries free type parameters
@@ -289,7 +481,9 @@ impl<'a> TypeFormatter<'a> {
                 }
             })
             .collect();
-        Some(self.interner.union(distributed))
+        let union = self.interner.union(distributed.clone());
+        self.interner.store_union_origin(union, distributed);
+        Some(union)
     }
 
     /// Returns `true` when the application points to a distributive conditional
@@ -370,6 +564,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            diagnostic_mode: false,
             preserve_optional_property_surface_syntax: false,
             preserve_optional_parameter_surface_syntax: true,
             use_display_properties: false,
@@ -377,11 +572,16 @@ impl<'a> TypeFormatter<'a> {
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
+            skip_application_display_alias_chase: false,
+            skip_type_alias_def_ids: FxHashSet::default(),
+            skipped_type_alias_expansion_visiting: FxHashSet::default(),
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
+            skip_object_display_alias: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
+            expand_scalar_mapped_alias_applications: false,
         }
     }
 
@@ -432,6 +632,7 @@ impl<'a> TypeFormatter<'a> {
     /// Should be set when formatting types for error messages (not hover/quickinfo).
     pub const fn with_diagnostic_mode(mut self) -> Self {
         self.skip_union_optionalize = true;
+        self.diagnostic_mode = true;
         self
     }
 
@@ -452,7 +653,7 @@ impl<'a> TypeFormatter<'a> {
     /// Preserve enough generic alias context for very long TS2339 receiver types
     /// while still eliding nested structural object branches.
     pub const fn with_long_property_receiver_display(mut self) -> Self {
-        self.max_depth = 64;
+        self.max_depth = 192;
         self.long_property_receiver_display = true;
         self
     }
@@ -491,6 +692,12 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Skip one specific type alias name and display its evaluated body instead.
+    pub fn with_skip_type_alias_def_id(mut self, def_id: DefId) -> Self {
+        self.skip_type_alias_def_ids.insert(def_id);
+        self
+    }
+
     /// Don't follow `display_alias` when it points to an Intersection type
     /// and the current type is an Object. tsc shows the merged object form
     /// in TS2741 messages, not the intersection form.
@@ -512,6 +719,15 @@ impl<'a> TypeFormatter<'a> {
     /// display for branded primitives in error messages.
     pub const fn with_capitalize_primitive_intersection_members(mut self) -> Self {
         self.capitalize_primitive_intersection_members = true;
+        self
+    }
+
+    /// Don't follow `display_alias` when the current type is an `Object` or
+    /// `ObjectWithIndex`. Used for diagnostics where the structural literal
+    /// shape is the desired display, even if the type system recorded an
+    /// alias to a named symbol (e.g. a JS constructor's `prototype` property).
+    pub const fn with_skip_object_display_alias(mut self) -> Self {
+        self.skip_object_display_alias = true;
         self
     }
 
@@ -543,6 +759,46 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_display_properties(mut self) -> Self {
         self.use_display_properties = true;
         self
+    }
+
+    /// Expand mapped type aliases like `{ [K in keyof T]: T[K] }` when a
+    /// concrete instantiation reduces to a scalar type. This is intentionally
+    /// opt-in for error-message contexts that need tsc's assignability surface.
+    pub const fn with_expand_scalar_mapped_alias_applications(mut self) -> Self {
+        self.expand_scalar_mapped_alias_applications = true;
+        self
+    }
+
+    fn format_skipped_type_alias_body(&mut self, def_id: DefId, body: TypeId) -> Cow<'static, str> {
+        if !self.skipped_type_alias_expansion_visiting.insert(def_id) {
+            return Cow::Borrowed("...");
+        }
+
+        let body_was_visiting = self.format_visiting.remove(&body);
+        let formatted = self.format(body);
+        if body_was_visiting {
+            self.format_visiting.insert(body);
+        }
+
+        self.skipped_type_alias_expansion_visiting.remove(&def_id);
+        formatted
+    }
+
+    fn skipped_type_alias_body_by_name(&self, name: Atom) -> Option<(DefId, TypeId)> {
+        let def_store = self.def_store?;
+        def_store
+            .find_defs_by_name(name)?
+            .into_iter()
+            .find_map(|def_id| {
+                if !self.skip_type_alias_def_ids.contains(&def_id) {
+                    return None;
+                }
+                let def = def_store.get(def_id)?;
+                if def.kind != crate::def::DefKind::TypeAlias {
+                    return None;
+                }
+                Some((def_id, def.body?))
+            })
     }
 
     fn atom(&mut self, atom: Atom) -> Arc<str> {
@@ -693,6 +949,20 @@ impl<'a> TypeFormatter<'a> {
                         && shape.number_index.is_none()
                 }
         );
+        // A truly anonymous empty object (a user-written `{}` annotation)
+        // has no symbol stamp on its shape. Class instance types whose
+        // bodies happen to be empty (e.g., `class B<T> { constructor() {} }`)
+        // keep their shape symbol and remain distinguishable, so they may
+        // still use the def-name path with type params (`B<T>`). The
+        // generic-interface/class skip below gates on this distinction to
+        // avoid repainting bare `{}` annotations as unrelated def names
+        // without losing class identity for empty-body classes.
+        let is_empty_anonymous_object = is_empty_object
+            && matches!(
+                &key,
+                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)
+                    if self.interner.object_shape(*shape_id).symbol.is_none()
+            );
 
         // For composite types that might be named (interfaces, type aliases, classes),
         // check if this TypeId maps to a definition name. This handles:
@@ -708,20 +978,28 @@ impl<'a> TypeFormatter<'a> {
         // Restricted to composite shapes to avoid false positives where a primitive
         // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
         // Nested-if reads more cleanly than a long &&-chained let-chain here.
+        // When `skip_object_display_alias` is set, do not redirect Object/
+        // ObjectWithIndex types to a named definition (e.g. a JS constructor's
+        // `prototype` property def whose body is this literal). Diagnostics
+        // that opt into this mode want the literal's structural shape.
+        let skip_object_def_lookup = self.skip_object_display_alias
+            && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
         #[allow(clippy::collapsible_if)]
-        if matches!(
-            &key,
-            TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::Union(_)
-                | TypeData::Intersection(_)
-                | TypeData::Tuple(_)
-                | TypeData::Callable(_)
-                | TypeData::Function(_)
-                | TypeData::Mapped(_)
-                | TypeData::Conditional(_)
-                | TypeData::IndexAccess(_, _)
-        ) && let Some(def_store) = self.def_store
+        if !skip_object_def_lookup
+            && matches!(
+                &key,
+                TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Union(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Function(_)
+                    | TypeData::Mapped(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::IndexAccess(_, _)
+            )
+            && let Some(def_store) = self.def_store
         {
             if let Some(def_id) = def_store.find_def_for_type(type_id)
                 && let Some(def) = def_store.get(def_id)
@@ -730,8 +1008,46 @@ impl<'a> TypeFormatter<'a> {
                 // reduction or conditional evaluation. tsc shows the expanded
                 // form for these types, not the alias name.
                 use crate::def::DefKind;
-                let skip_alias = if def.kind == DefKind::TypeAlias {
-                    def.body.is_some_and(|b| def_store.is_computed_body(b))
+                let shape_is_non_empty = |shape: &ObjectShape| -> bool {
+                    !shape.properties.is_empty()
+                        || shape.string_index.is_some()
+                        || shape.number_index.is_some()
+                };
+                let def_represents_non_empty_object = def
+                    .instance_shape
+                    .as_ref()
+                    .is_some_and(|s| shape_is_non_empty(s.as_ref()))
+                    || def
+                        .static_shape
+                        .as_ref()
+                        .is_some_and(|s| shape_is_non_empty(s.as_ref()));
+                let def_kind_matches_type_shape = def.kind == DefKind::TypeAlias
+                    || matches!(
+                        (&key, def.kind),
+                        (
+                            TypeData::Object(_) | TypeData::ObjectWithIndex(_),
+                            DefKind::Interface
+                                | DefKind::Class
+                                | DefKind::Namespace
+                                | DefKind::Enum
+                                | DefKind::ClassConstructor
+                                | DefKind::Function
+                                | DefKind::Variable
+                        ) | (
+                            TypeData::Callable(_) | TypeData::Function(_),
+                            DefKind::Interface
+                                | DefKind::ClassConstructor
+                                | DefKind::Function
+                                | DefKind::Variable
+                        ) | (TypeData::Enum(_, _), DefKind::Enum)
+                    );
+                let unproven_primitive_key_union_alias =
+                    def.kind == DefKind::TypeAlias && self.is_primitive_key_union_data(&key);
+                let skip_alias = if !def_kind_matches_type_shape {
+                    true
+                } else if def.kind == DefKind::TypeAlias {
+                    self.skip_type_alias_def_ids.contains(&def_id)
+                        || def.body.is_some_and(|b| def_store.is_computed_body(b))
                         || (!def.type_params.is_empty()
                             && def.body.is_some_and(|b| {
                                 matches!(
@@ -747,12 +1063,43 @@ impl<'a> TypeFormatter<'a> {
                         // program (`{}` is the universal empty-shape target of
                         // interning). Following the alias name here would
                         // repaint user-written `{}` annotations; tsc shows `{}`
-                        // structurally in that case, so we do too. Classes and
-                        // interfaces are unaffected: they keep their name and
-                        // remain distinguishable via `shape.symbol`.
+                        // structurally in that case, so we do too.
                         || is_empty_object
+                        // The canonical property-key union (`keyof any`) is a shared
+                        // structural TypeId. Ambient or local aliases with the same
+                        // body must not repaint constraint diagnostics.
+                        || unproven_primitive_key_union_alias
                 } else {
-                    false
+                    // Interfaces and classes are also subject to the universal
+                    // empty-shape interning: a non-empty interface/class def
+                    // (e.g. `interface Promise<T> { then; catch; ... }`) may
+                    // have been registered against the canonical empty `{}`
+                    // TypeId during lib resolution. When the type we're
+                    // rendering is the truly anonymous empty `{}` (no shape
+                    // symbol stamp), do not repaint it as the unrelated def
+                    // name.
+                    //
+                    // Two skip cases (both gated on `is_empty_anonymous_object`):
+                    //   1. The def's recorded shape is itself non-empty.
+                    //   2. The def is generic (has type params) and has no
+                    //      `display_alias` provenance for this TypeId. The
+                    //      fall-through path would render `Promise<T>` from
+                    //      the bare type-param names, which is wrong: there
+                    //      is no concrete instantiation, just the universal
+                    //      `{}` shape that happens to share the TypeId.
+                    //
+                    // Empty interfaces (`interface I {}`) keep their name:
+                    // `def_represents_non_empty_object` is false for them and
+                    // they have no type params.
+                    //
+                    // Class instance types with empty bodies but a shape
+                    // symbol stamp (e.g., `class B<T> { constructor() {} }`)
+                    // keep `B<T>`: `is_empty_anonymous_object` is false
+                    // because the shape carries the class's symbol.
+                    is_empty_anonymous_object
+                        && (def_represents_non_empty_object
+                            || (!def.type_params.is_empty()
+                                && self.interner.get_display_alias(type_id).is_none()))
                 };
                 if skip_alias {
                     // Fall through to format the structural type
@@ -778,7 +1125,9 @@ impl<'a> TypeFormatter<'a> {
                     // type parameter names from the definition (like `A<T>`).
                     // The display_alias is set when an Application type is evaluated,
                     // and preserves the concrete type arguments from the instantiation.
-                    if !def.type_params.is_empty() {
+                    let prefer_array_shorthand =
+                        name == "Array" && matches!(&key, TypeData::Array(_));
+                    if !def.type_params.is_empty() && !prefer_array_shorthand {
                         if let Some(alias_origin) = self.interner.get_display_alias(type_id)
                             && self.display_alias_visiting.insert(alias_origin)
                         {
@@ -897,6 +1246,23 @@ impl<'a> TypeFormatter<'a> {
                     self.interner.lookup(alias_origin),
                     Some(TypeData::Application(_))
                 )
+                && !if let TypeData::Union(member_list_id) = &key {
+                    let members = self.interner.type_list(*member_list_id);
+                    !members.is_empty()
+                        && members.iter().all(|&m| {
+                            matches!(
+                                self.interner.lookup(m),
+                                Some(
+                                    TypeData::TemplateLiteral(_)
+                                        | TypeData::StringIntrinsic { .. }
+                                        | TypeData::Literal(_)
+                                        | TypeData::Intrinsic(_)
+                                )
+                            )
+                        })
+                } else {
+                    false
+                }
                 && if let TypeData::Union(member_list_id) = &key {
                     let members = self.interner.type_list(*member_list_id);
                     members.iter().any(|&m| {
@@ -906,6 +1272,18 @@ impl<'a> TypeFormatter<'a> {
                                 | None
                         )
                     })
+                } else {
+                    false
+                };
+            let use_lazy_type_alias =
+                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(alias_origin) {
+                    self.def_store
+                        .and_then(|ds| ds.get(def_id).map(|def| (ds, def)))
+                        .is_some_and(|(ds, def)| {
+                            def.kind == crate::def::DefKind::TypeAlias
+                                && def.type_params.is_empty()
+                                && !def.body.is_some_and(|body| ds.is_computed_body(body))
+                        })
                 } else {
                     false
                 };
@@ -936,11 +1314,29 @@ impl<'a> TypeFormatter<'a> {
             // reductions can point many unrelated annotations at the same TypeId.
             // Named generic interfaces/classes with empty bodies still need their
             // application display (e.g. `AsyncGenerator<number, void, unknown>`).
+            let skip_object_alias = self.skip_object_display_alias
+                && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
+            let skip_primitive_key_union_type_alias = self.is_primitive_key_union_data(&key)
+                && matches!(
+                    self.interner.lookup(alias_origin),
+                    Some(TypeData::Lazy(def_id))
+                        if self
+                            .def_store
+                            .and_then(|ds| ds.get(def_id))
+                            .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
+                );
             let skip_alias_chase = skip_intersection_alias
                 || skip_distributive_alias
+                || skip_object_alias
+                || skip_primitive_key_union_type_alias
+                || (self.skip_application_display_alias_chase
+                    && matches!(
+                        self.interner.lookup(alias_origin),
+                        Some(TypeData::Application(_))
+                    ))
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
-            if (!is_simple_type || use_keyof_alias || use_application_alias)
+            if (!is_simple_type || use_keyof_alias || use_application_alias || use_lazy_type_alias)
                 && !skip_alias_chase
                 && self.display_alias_visiting.insert(alias_origin)
             {
@@ -974,12 +1370,15 @@ impl<'a> TypeFormatter<'a> {
 
     fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
         match key {
-            TypeData::Intrinsic(kind) => Cow::Borrowed(self.format_intrinsic(*kind)),
+            TypeData::Intrinsic(kind) => Cow::Borrowed(intrinsic::format_intrinsic(*kind)),
             TypeData::Literal(lit) => self.format_literal(lit).into(),
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
+                }
+                if let Some(record_display) = self.format_in_operator_record(&shape) {
+                    return record_display.into();
                 }
                 // Use display properties (pre-widened literal types) when enabled.
                 if self.use_display_properties
@@ -991,6 +1390,9 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                if let Some(record_display) = self.format_in_operator_record(&shape) {
+                    return record_display.into();
+                }
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
@@ -1004,6 +1406,9 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
+                if self.diagnostic_mode && self.is_primitive_key_union_data(key) {
+                    return Cow::Borrowed("PropertyKey");
+                }
                 // tsc preserves top-level alias names that would otherwise be
                 // lost during union flattening (e.g., `T | null` should not
                 // expand to T's body). The checker records the unflattened
@@ -1027,10 +1432,9 @@ impl<'a> TypeFormatter<'a> {
                 self.format_intersection(members.as_ref()).into()
             }
             TypeData::Array(elem) => {
-                // tsc preserves `Array<T>` in type-parameter constraints
-                if self.preserve_array_generic_form {
-                    let ef = self.format(*elem);
-                    return format!("Array<{ef}>").into();
+                if self.preserve_array_generic_form && !elem.is_intrinsic() {
+                    let elem_formatted = self.format(*elem);
+                    return format!("Array<{elem_formatted}>").into();
                 }
                 let elem_formatted = self.format(*elem);
                 let needs_parens = matches!(
@@ -1079,8 +1483,23 @@ impl<'a> TypeFormatter<'a> {
                 self.format_callable(shape.as_ref()).into()
             }
             TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
-            TypeData::UnresolvedTypeName(name) => Cow::Owned(self.atom(*name).to_string()),
-            TypeData::Lazy(def_id) => self.format_def_id_with_type_params(*def_id, "Lazy").into(),
+            TypeData::UnresolvedTypeName(name) => {
+                if let Some((def_id, body)) = self.skipped_type_alias_body_by_name(*name) {
+                    return self.format_skipped_type_alias_body(def_id, body);
+                }
+                Cow::Owned(self.atom(*name).to_string())
+            }
+            TypeData::Lazy(def_id) => {
+                if self.skip_type_alias_def_ids.contains(def_id)
+                    && let Some(def_store) = self.def_store
+                    && let Some(def) = def_store.get(*def_id)
+                    && def.kind == crate::def::DefKind::TypeAlias
+                    && let Some(body) = def.body
+                {
+                    return self.format_skipped_type_alias_body(*def_id, body);
+                }
+                self.format_def_id_with_type_params(*def_id, "Lazy").into()
+            }
             TypeData::Recursive(idx) => format!("Recursive({idx})").into(),
             TypeData::BoundParameter(idx) => format!("BoundParameter({idx})").into(),
             TypeData::Application(app) => {
@@ -1111,6 +1530,12 @@ impl<'a> TypeFormatter<'a> {
                 // already signals the underlying failure.
                 if app.base == TypeId::ERROR || matches!(base_key, Some(TypeData::Error)) {
                     return Cow::Borrowed("error");
+                }
+
+                if let Some(evaluated) =
+                    self.scalar_mapped_alias_application_display(type_id, app.base, &app.args)
+                {
+                    return self.format(evaluated);
                 }
 
                 if let Some(distributed) =
@@ -1183,7 +1608,12 @@ impl<'a> TypeFormatter<'a> {
                 // Skipped in constraint context (preserve_array_generic_form).
                 if app.args.len() == 1 && !self.preserve_array_generic_form {
                     let single_arg = app.args[0];
-                    if base_str == "Array" {
+                    if base_str == "Array"
+                        && self
+                            .interner
+                            .get_array_base_type()
+                            .is_some_and(|array_base| app.base == array_base)
+                    {
                         // Array<T> -> T[]
                         let elem_formatted = self.format(single_arg);
                         let needs_parens = matches!(
@@ -1313,10 +1743,11 @@ impl<'a> TypeFormatter<'a> {
                     let mut n = display_args.len();
                     while n > 0 {
                         let idx = n - 1;
-                        let Some(default) = params[idx].default else {
-                            break;
-                        };
-                        if display_args[idx] != default {
+                        if let Some(default) = params[idx].default {
+                            if display_args[idx] != default {
+                                break;
+                            }
+                        } else if display_args[idx] != TypeId::ANY {
                             break;
                         }
                         n -= 1;
@@ -1326,12 +1757,42 @@ impl<'a> TypeFormatter<'a> {
                     display_args.len()
                 };
 
-                let args: Vec<Cow<'static, str>> = display_args
+                let previous_skip_application_display_alias_chase =
+                    self.skip_application_display_alias_chase;
+                if self.skip_application_alias_names && base_str.as_ref() == "Omit" {
+                    self.skip_application_display_alias_chase = true;
+                }
+                let mut args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
-                    .map(|&arg| self.format(self.resolve_concrete_index_access_for_display(arg)))
+                    .map(|&arg| self.format(self.simplify_application_arg_for_display(arg)))
                     .collect();
-                let result = if args.is_empty() {
+                self.skip_application_display_alias_chase =
+                    previous_skip_application_display_alias_chase;
+                if base_str.as_ref() == "Defaultize"
+                    && args.first().is_some_and(|arg| arg.len() > 120)
+                {
+                    for (idx, arg) in display_args
+                        .iter()
+                        .take(visible_arg_count)
+                        .enumerate()
+                        .skip(1)
+                    {
+                        if matches!(
+                            self.interner.lookup(*arg),
+                            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                        ) {
+                            args[idx] = Cow::Borrowed("{ ...; }");
+                        }
+                    }
+                }
+                let result = if args.is_empty()
+                    && matches!(
+                        base_str.as_ref(),
+                        "Iterable" | "IterableIterator" | "AsyncIterable" | "AsyncIterableIterator"
+                    ) {
+                    format!("{base_str}<any>")
+                } else if args.is_empty() {
                     base_str.to_string()
                 } else {
                     format!("{}<{}>", base_str, args.join(", "))
@@ -1348,7 +1809,46 @@ impl<'a> TypeFormatter<'a> {
                 self.format_mapped(mapped.as_ref()).into()
             }
             TypeData::IndexAccess(obj, idx) => {
-                let obj_str = self.format(*obj);
+                let resolved = self.resolve_concrete_index_access_for_display(type_id);
+                if resolved != type_id {
+                    return self.format(resolved);
+                }
+                // Homomorphic mapped indexed access simplification:
+                // tsc displays `M[K]` for a homomorphic identity Mapped
+                // `M = { [P in keyof X]: X[P] }` (e.g. `Partial<X>`,
+                // `Readonly<X>`) as `X[K]`, with `| undefined` appended when
+                // the mapped's optional modifier is `+`. The structural
+                // mapped form still appears when M is formatted directly,
+                // but in indexed-access position tsc collapses to the
+                // simpler X[K] form.
+                if let Some(simplified) =
+                    self.try_format_homomorphic_mapped_index_access(*obj, *idx)
+                {
+                    return simplified.into();
+                }
+                let obj_for_display = self
+                    .interner
+                    .get_display_alias(*obj)
+                    .filter(|&alias| {
+                        matches!(self.interner.lookup(alias), Some(TypeData::Application(_)))
+                    })
+                    .unwrap_or(*obj);
+                let obj_str = if obj_for_display == *obj
+                    && matches!(self.interner.lookup(*obj), Some(TypeData::Mapped(_)))
+                    && let Some(def_store) = self.def_store
+                    && let Some(def_id) = def_store.find_def_for_type(*obj)
+                    && let Some(def) = def_store.get(def_id)
+                    && !def.type_params.is_empty()
+                {
+                    let params: Vec<String> = def
+                        .type_params
+                        .iter()
+                        .map(|tp| self.atom(tp.name).to_string())
+                        .collect();
+                    format!("{}<{}>", self.format_def_name(&def), params.join(", "))
+                } else {
+                    self.format(obj_for_display).into_owned()
+                };
                 // Parenthesize the object when it's a union or intersection AND
                 // the formatted string actually shows the compound form (contains
                 // ` & ` or ` | `). Named type aliases like `Errors<T>` may be
@@ -1406,18 +1906,22 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::KeyOf(operand) => {
-                // `keyof null`, `keyof undefined`, `keyof void`, `keyof never`
-                // all evaluate to `never`. tsc displays the reduced form, so
+                // `keyof null`, `keyof undefined`, and `keyof void` all
+                // evaluate to `never`. tsc displays the reduced form, so
                 // collapse to `never` whenever the operand evaluates there.
                 // This catches both the direct intrinsic case and substituted
                 // forms where a type parameter was bound to a nullish type.
-                if matches!(
-                    *operand,
-                    TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::NEVER
-                ) || crate::evaluation::evaluate::evaluate_keyof(self.interner, *operand)
-                    == TypeId::NEVER
+                if matches!(*operand, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID)
+                    || crate::evaluation::evaluate::evaluate_keyof(self.interner, *operand)
+                        == TypeId::NEVER
                 {
                     return self.format(TypeId::NEVER);
+                }
+                if *operand == TypeId::NEVER {
+                    return self.format(crate::evaluation::evaluate::evaluate_keyof(
+                        self.interner,
+                        *operand,
+                    ));
                 }
                 // For anonymous concrete object operands, evaluate `keyof` eagerly
                 // so diagnostics show the literal key union (e.g. `"x"`) instead
@@ -1624,27 +2128,32 @@ impl<'a> TypeFormatter<'a> {
         }
     }
 
+    fn format_in_operator_record(&mut self, shape: &ObjectShape) -> Option<String> {
+        if !shape.flags.contains(ObjectFlags::IN_OPERATOR_RECORD)
+            || shape.properties.len() != 1
+            || shape.string_index.is_some()
+            || shape.number_index.is_some()
+        {
+            return None;
+        }
+
+        let prop = &shape.properties[0];
+        if prop.type_id != TypeId::UNKNOWN || prop.optional || prop.is_method {
+            return None;
+        }
+
+        let key = self.atom(prop.name);
+        let key_display = if prop.is_symbol_named || key.parse::<f64>().is_ok() {
+            key.to_string()
+        } else {
+            format!("\"{key}\"")
+        };
+        Some(format!("Record<{key_display}, unknown>"))
+    }
+
     /// Strip TypeScript/JavaScript file extensions from module specifier
     /// display names. TSC omits extensions in `typeof import("mod")` output.
     fn strip_module_extension(module_name: &str) -> &str {
         tsz_common::file_extensions::strip_known_extension(module_name)
-    }
-
-    const fn format_intrinsic(&self, kind: IntrinsicKind) -> &'static str {
-        match kind {
-            IntrinsicKind::Any => "any",
-            IntrinsicKind::Unknown => "unknown",
-            IntrinsicKind::Never => "never",
-            IntrinsicKind::Void => "void",
-            IntrinsicKind::Null => "null",
-            IntrinsicKind::Undefined => "undefined",
-            IntrinsicKind::Boolean => "boolean",
-            IntrinsicKind::Number => "number",
-            IntrinsicKind::String => "string",
-            IntrinsicKind::Bigint => "bigint",
-            IntrinsicKind::Symbol => "symbol",
-            IntrinsicKind::Object => "object",
-            IntrinsicKind::Function => "Function",
-        }
     }
 }

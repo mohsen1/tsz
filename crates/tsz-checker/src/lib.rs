@@ -144,11 +144,23 @@ mod heritage_type_only_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "../tests/isolated_declarations_unannotated_param_tests.rs"]
+mod isolated_declarations_unannotated_param_tests;
+#[cfg(test)]
+#[path = "../tests/js_property_write_self_declaration_tests.rs"]
+mod js_property_write_self_declaration_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_postfix_nullable_type_tests.rs"]
 mod jsdoc_postfix_nullable_type_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_prototype_assignment_literal_display.rs"]
+mod jsdoc_prototype_assignment_literal_display;
+#[cfg(test)]
 #[path = "../tests/jsdoc_prototype_assignment_target_display.rs"]
 mod jsdoc_prototype_assignment_target_display;
+#[cfg(test)]
+#[path = "../tests/jsdoc_this_arrow_tests.rs"]
+mod jsdoc_this_arrow_tests;
 #[cfg(test)]
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
@@ -309,6 +321,9 @@ mod ts6133_private_name_tests;
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
+#[path = "../tests/ts7006_broad_jsdoc_type_cast.rs"]
+mod ts7006_broad_jsdoc_type_cast;
+#[cfg(test)]
 #[path = "../tests/ts7006_iife_arg_implicit_any.rs"]
 mod ts7006_iife_arg_implicit_any;
 #[cfg(test)]
@@ -326,6 +341,9 @@ mod tuple_index_access_tests;
 #[cfg(test)]
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
+#[cfg(test)]
+#[path = "../tests/using_binding_pattern_diagnostics_tests.rs"]
+mod using_binding_pattern_diagnostics_tests;
 #[cfg(test)]
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
@@ -349,6 +367,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
+mod assertion_type_predicate_diagnostics_tests;
+#[cfg(test)]
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
@@ -358,17 +379,20 @@ mod class_duplicate_extends_skip_resolution_tests;
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
+#[path = "tests/class_static_init_self_new_tests.rs"]
+mod class_static_init_self_new_tests;
+#[cfg(test)]
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
-#[path = "../tests/conditional_infer_tests.rs"]
-mod conditional_infer_tests;
-#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
+#[cfg(test)]
+#[path = "tests/const_asserted_return_type_tests.rs"]
+mod const_asserted_return_type_tests;
 #[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
@@ -388,11 +412,17 @@ mod dynamic_import_ts2307_per_callsite_tests;
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
+#[path = "tests/excess_prop_object_union_display_tests.rs"]
+mod excess_prop_object_union_display_tests;
+#[cfg(test)]
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
 #[cfg(test)]
 #[path = "../tests/for_in_narrowing_tests.rs"]
 mod for_in_narrowing_tests;
+#[cfg(test)]
+#[path = "tests/generic_callback_outer_context_tests.rs"]
+mod generic_callback_outer_context_tests;
 #[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
@@ -421,6 +451,9 @@ mod jsdoc_cast_and_define_property_widening_tests;
 #[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
 mod jsdoc_cross_file_typedef_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_enum_circular_tests.rs"]
+mod jsdoc_enum_circular_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_function_return_type_anchor_tests.rs"]
 mod jsdoc_function_return_type_anchor_tests;
 #[cfg(test)]
@@ -444,6 +477,9 @@ mod jsdoc_type_tag_tests;
 #[cfg(test)]
 #[path = "tests/jsdoc_typedef_distinct_alias_names_tests.rs"]
 mod jsdoc_typedef_distinct_alias_names_tests;
+#[cfg(test)]
+#[path = "../tests/jsdoc_typedef_module_export_tests.rs"]
+mod jsdoc_typedef_module_export_tests;
 #[cfg(test)]
 #[path = "tests/jsx_element_type_constraint_tests.rs"]
 mod jsx_element_type_constraint_tests;
@@ -475,6 +511,12 @@ mod member_access_architecture_boundary_tests;
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
+#[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
+mod mutable_binding_widening_from_const_literal_tests;
+#[cfg(test)]
+#[path = "../tests/never_initializer_falls_through_tests.rs"]
+mod never_initializer_falls_through_tests;
+#[cfg(test)]
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
 #[cfg(test)]
@@ -493,6 +535,9 @@ mod private_brands;
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
 #[cfg(test)]
+#[path = "../tests/recursive_alias_application_target_display_tests.rs"]
+mod recursive_alias_application_target_display_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
@@ -504,6 +549,15 @@ mod strict_callback_param_method_tests;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
+#[cfg(test)]
+#[path = "tests/string_literal_union_display_order_tests.rs"]
+mod string_literal_union_display_order_tests;
+#[cfg(test)]
+#[path = "../tests/symbol_index_signature_tests.rs"]
+mod symbol_index_signature_tests;
+#[cfg(test)]
+#[path = "tests/synthetic_unique_atom_union_display_tests.rs"]
+mod synthetic_unique_atom_union_display_tests;
 #[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
@@ -538,8 +592,14 @@ mod union_multi_overload_unified_sig_tests;
 #[path = "../tests/variadic_tuple_elaboration_tests.rs"]
 mod variadic_tuple_elaboration_tests;
 #[cfg(test)]
+#[path = "../tests/variadic_tuple_readonly_relation_tests.rs"]
+mod variadic_tuple_readonly_relation_tests;
+#[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
+#[cfg(test)]
+#[path = "tests/zod_type_query_regression_tests.rs"]
+mod zod_type_query_regression_tests;
 
 // Re-export key types
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
@@ -556,3 +616,64 @@ pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;
 pub use type_node::TypeNodeChecker;
+
+/// Run the JS-only `TS8xxx` grammar pass on a parsed source file and return any
+/// diagnostics it emits. The pass is normally invoked as part of the regular
+/// `check_source_file` walk; this entry point lets callers (notably the CLI's
+/// `--noCheck` parse-only path) surface those grammar diagnostics without
+/// running the full type-checking pipeline. Returns an empty vector for non-JS
+/// files (the underlying pass no-ops via `is_js_file`).
+#[must_use]
+pub fn run_js_grammar_pass(
+    arena: &tsz_parser::NodeArena,
+    binder: &tsz_binder::BinderState,
+    source_file: tsz_parser::NodeIndex,
+    file_name: String,
+    options: context::CheckerOptions,
+) -> Vec<diagnostics::Diagnostic> {
+    let Some(source) = arena.get_source_file_at(source_file) else {
+        return Vec::new();
+    };
+    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    if statements.is_empty() {
+        return Vec::new();
+    }
+    let interner = tsz_solver::TypeInterner::new();
+    let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
+    checker.check_js_grammar_statements(&statements);
+    checker.ctx.diagnostics
+}
+
+/// Run only the `--isolatedDeclarations` grammar pass on a parsed source file
+/// and return any TS9007/TS9011/TS9012/etc. diagnostics it emits. The CLI's
+/// `--noCheck` shortcut otherwise skips the regular checker entirely; tsc
+/// still emits these declaration-emit-prerequisite diagnostics in that mode
+/// because they gate `.d.ts` emission, not type checking.
+///
+/// Returns an empty vector when `isolated_declarations` is false in `options`
+/// or the file is a `.d.ts` (the underlying pass no-ops in those cases).
+#[must_use]
+pub fn run_isolated_declarations_pass(
+    arena: &tsz_parser::NodeArena,
+    binder: &tsz_binder::BinderState,
+    source_file: tsz_parser::NodeIndex,
+    file_name: String,
+    options: context::CheckerOptions,
+) -> Vec<diagnostics::Diagnostic> {
+    if !options.isolated_declarations {
+        return Vec::new();
+    }
+    let Some(source) = arena.get_source_file_at(source_file) else {
+        return Vec::new();
+    };
+    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    if statements.is_empty() {
+        return Vec::new();
+    }
+    let interner = tsz_solver::TypeInterner::new();
+    let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
+    checker.check_isolated_declarations(&statements);
+    checker.check_isolated_decl_class_expressions(&statements);
+    checker.check_isolated_decl_augmentations(&statements);
+    checker.ctx.diagnostics
+}

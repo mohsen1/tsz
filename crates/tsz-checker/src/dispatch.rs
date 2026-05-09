@@ -86,101 +86,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .checker
                 .get_type_of_identifier_with_request(idx, request),
             k if k == SyntaxKind::RegularExpressionLiteral as u16 => {
-                if let Some(literal) = self.checker.ctx.arena.get_literal(node)
-                    && let Some(raw_text) = literal.raw_text.as_deref()
-                {
-                    let bytes = raw_text.as_bytes();
-                    let mut body_end = bytes.len();
-                    let mut in_escape = false;
-                    let mut in_character_class = false;
-
-                    for (i, ch) in bytes.iter().enumerate().skip(1) {
-                        let ch = *ch;
-                        if in_escape {
-                            in_escape = false;
-                            continue;
-                        }
-                        if ch == b'\\' {
-                            in_escape = true;
-                        } else if ch == b'[' && !in_character_class {
-                            in_character_class = true;
-                        } else if ch == b']' && in_character_class {
-                            in_character_class = false;
-                        } else if ch == b'/' && !in_character_class {
-                            body_end = i;
-                            break;
-                        }
-                    }
-
-                    let mut group_names = std::collections::BTreeSet::new();
-                    let mut i = 1usize;
-                    let target_supports_named_groups =
-                        self.checker.ctx.compiler_options.target.supports_es2018();
-
-                    while i < body_end {
-                        if bytes[i] == b'\\' {
-                            if i + 2 < body_end && bytes[i + 1] == b'k' && bytes[i + 2] == b'<' {
-                                let name_start = i + 3;
-                                let mut name_end = name_start;
-                                while name_end < body_end && bytes[name_end] != b'>' {
-                                    name_end += 1;
-                                }
-                                if name_end < body_end {
-                                    let name = &raw_text[name_start..name_end];
-                                    if !group_names.contains(name) {
-                                        let message = tsz_common::diagnostics::format_message(
-                                            tsz_common::diagnostics::diagnostic_messages::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
-                                            &[name],
-                                        );
-                                        self.checker.error_at_position(
-                                            node.pos + name_start as u32,
-                                            1,
-                                            &message,
-                                            tsz_common::diagnostics::diagnostic_codes::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
-                                        );
-                                    }
-                                    i = name_end + 1;
-                                    continue;
-                                }
-                            }
-                            i += 2;
-                            continue;
-                        }
-
-                        if i + 3 < body_end
-                            && bytes[i] == b'('
-                            && bytes[i + 1] == b'?'
-                            && bytes[i + 2] == b'<'
-                            && !matches!(bytes[i + 3], b'=' | b'!')
-                        {
-                            if !target_supports_named_groups {
-                                self.checker.error_at_position(
-                                    node.pos + (i + 2) as u32,
-                                    1,
-                                    tsz_common::diagnostics::diagnostic_messages::NAMED_CAPTURING_GROUPS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ES2018_OR_LATER,
-                                    tsz_common::diagnostics::diagnostic_codes::NAMED_CAPTURING_GROUPS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ES2018_OR_LATER,
-                                );
-                            }
-
-                            let name_start = i + 3;
-                            let mut name_end = name_start;
-                            while name_end < body_end && bytes[name_end] != b'>' {
-                                name_end += 1;
-                            }
-                            if name_end < body_end {
-                                group_names.insert(raw_text[name_start..name_end].to_string());
-                                i = name_end + 1;
-                                continue;
-                            }
-                        }
-
-                        i += 1;
-                    }
-                }
-
-                self.checker
-                    .resolve_lib_type_by_name("RegExp")
-                    .unwrap_or(TypeId::ANY)
+                self.dispatch_regular_expression_literal(idx)
             }
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 {
@@ -296,6 +202,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     return self
                         .checker
                         .apply_flow_narrowing(idx, class_member_this_type);
+                }
+                if self.checker.is_js_file()
+                    && let Some(func_idx) = self.checker.find_enclosing_non_arrow_function(idx)
+                    && let Some(jsdoc) = self.checker.get_jsdoc_for_function(func_idx)
+                    && let Some(this_expr) =
+                        CheckerState::extract_jsdoc_tag_type_expression(&jsdoc, "this")
+                    && let Some(this_type) = self.checker.resolve_jsdoc_reference(this_expr)
+                {
+                    return self.checker.apply_flow_narrowing(idx, this_type);
                 }
                 if let Some(this_type) = self.checker.current_this_type() {
                     let transient_this_marker =
@@ -514,9 +429,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .checker
                 .get_type_of_binary_expression_with_request(idx, request),
             // Call expressions
-            k if k == syntax_kind_ext::CALL_EXPRESSION => self
-                .checker
-                .get_type_of_call_expression_with_request(idx, request),
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let ty = self
+                    .checker
+                    .get_type_of_call_expression_with_request(idx, request);
+                self.checker
+                    .report_untyped_this_references_in_find_callback(idx);
+                ty
+            }
             // Tagged template expressions (e.g., `tag\`hello ${x}\``)
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => self
                 .checker
@@ -1466,6 +1386,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                                 effective_asserted,
                                             );
                                     }
+                                    if have_overlap
+                                        && self
+                                            .object_literal_this_property_blocks_assertion_overlap(
+                                                assertion.expression,
+                                                effective_asserted,
+                                            )
+                                    {
+                                        have_overlap = false;
+                                    }
                                     if !have_overlap {
                                         // tsc anchors TS2352 at the full assertion node
                                         // (`<T>expr` / `expr as T`), not just the inner
@@ -1507,11 +1436,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::UNION_TYPE
                 || k == syntax_kind_ext::INTERSECTION_TYPE
                 || k == syntax_kind_ext::ARRAY_TYPE
+                || k == syntax_kind_ext::TUPLE_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
                 || k == syntax_kind_ext::FUNCTION_TYPE
                 || k == syntax_kind_ext::CONSTRUCTOR_TYPE
                 || k == syntax_kind_ext::TYPE_LITERAL
                 || k == syntax_kind_ext::TYPE_QUERY
-                || k == syntax_kind_ext::TYPE_OPERATOR =>
+                || k == syntax_kind_ext::TYPE_OPERATOR
+                || k == syntax_kind_ext::CONDITIONAL_TYPE
+                || k == syntax_kind_ext::INFER_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::THIS_TYPE
+                || k == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                || k == syntax_kind_ext::MAPPED_TYPE
+                || k == syntax_kind_ext::LITERAL_TYPE
+                || k == syntax_kind_ext::NAMED_TUPLE_MEMBER
+                || k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE
+                || k == syntax_kind_ext::IMPORT_TYPE =>
             {
                 let mut checker = crate::TypeNodeChecker::new(&mut self.checker.ctx);
                 checker.check(idx)
@@ -1887,7 +1829,46 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             let _ = self.checker.get_type_from_type_node(type_arg);
                         }
                     }
-                    self.checker.get_type_of_node(data.expression)
+                    let expr_type = self.checker.get_type_of_node(data.expression);
+                    if self
+                        .checker
+                        .ctx
+                        .arena
+                        .parent_of(idx)
+                        .and_then(|parent| self.checker.ctx.arena.get(parent))
+                        .is_some_and(|parent| parent.kind == syntax_kind_ext::HERITAGE_CLAUSE)
+                    {
+                        return expr_type;
+                    }
+                    if let Some(type_arguments) = &data.type_arguments {
+                        for &type_arg in &type_arguments.nodes {
+                            let _ = self.checker.get_type_from_type_node(type_arg);
+                        }
+                        if let Some(error_type) = self
+                            .checker
+                            .instantiation_expression_applicability_error_type(
+                                expr_type,
+                                type_arguments.nodes.len(),
+                            )
+                        {
+                            if let Some(error_node) = type_arguments.nodes.first().copied() {
+                                self.checker
+                                    .error_no_applicable_signatures_for_type_args_with_base(
+                                        error_type,
+                                        error_node,
+                                        data.expression,
+                                    );
+                            }
+                            TypeId::ERROR
+                        } else {
+                            self.checker.apply_type_arguments_to_callable_type(
+                                expr_type,
+                                Some(type_arguments),
+                            )
+                        }
+                    } else {
+                        expr_type
+                    }
                 } else {
                     TypeId::ERROR
                 }
@@ -1899,33 +1880,68 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
                 };
 
-                let invalid_context = match self.checker.find_enclosing_non_arrow_function(idx) {
-                    Some(owner_idx) => self.checker.ctx.arena.get(owner_idx).is_none_or(|owner| {
-                        !matches!(
-                            owner.kind,
-                            CONSTRUCTOR | FUNCTION_DECLARATION | FUNCTION_EXPRESSION
-                        )
-                    }),
-                    None => true,
-                };
+                let owner_idx = self.checker.find_enclosing_non_arrow_function(idx);
+                let owner_kind = owner_idx.and_then(|owner_idx| {
+                    self.checker
+                        .ctx
+                        .arena
+                        .get(owner_idx)
+                        .map(|owner| owner.kind)
+                });
+                let invalid_context = owner_kind.is_none_or(|kind| {
+                    !matches!(
+                        kind,
+                        CONSTRUCTOR | FUNCTION_DECLARATION | FUNCTION_EXPRESSION
+                    )
+                });
                 if invalid_context {
                     self.checker.error_at_node(
                         idx,
                         diagnostic_messages::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
                         diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
                     );
+                    return TypeId::ANY;
                 }
-                // new.target returns the constructor function or undefined.
-                // Return any as a safe fallback.
-                //
-                // Robustness audit (PR #J, item 10): emit a structured trace
-                // so the rate of `new.target` ANY fallbacks is visible.
-                tracing::debug!(
-                    site = "dispatch::new_target_meta_property",
-                    idx = idx.0,
-                    "TypeId::ANY fallback (new.target meta-property)"
-                );
-                TypeId::ANY
+                match (owner_idx, owner_kind) {
+                    (Some(owner_idx), Some(kind))
+                        if kind == FUNCTION_DECLARATION || kind == FUNCTION_EXPRESSION =>
+                    {
+                        let function_type = self.checker.get_type_of_function(owner_idx);
+                        if let (Some(name), Some(sym_id)) = (
+                            self.checker.get_function_name_from_node(owner_idx),
+                            self.checker.ctx.binder.get_node_symbol(owner_idx),
+                        ) {
+                            self.checker.augment_callable_type_with_expandos(
+                                &name,
+                                sym_id,
+                                function_type,
+                            )
+                        } else {
+                            function_type
+                        }
+                    }
+                    (Some(owner_idx), Some(CONSTRUCTOR)) => {
+                        if let Some(class_idx) = self.checker.nearest_enclosing_class(owner_idx)
+                            && let Some(class_node) = self.checker.ctx.arena.get(class_idx)
+                            && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
+                        {
+                            self.checker
+                                .get_class_constructor_type(class_idx, class_data)
+                        } else {
+                            TypeId::ANY
+                        }
+                    }
+                    _ => TypeId::ANY,
+                }
+            }
+            // Structural statement/import/export nodes can be reached by broad
+            // expression walks in real projects. They do not have a value type,
+            // but they also should not poison checking with TypeId::ERROR.
+            k if k == syntax_kind_ext::BLOCK
+                || k == syntax_kind_ext::NAMED_IMPORTS
+                || k == syntax_kind_ext::NAMED_EXPORTS =>
+            {
+                TypeId::VOID
             }
             // Default case - unknown node kind is an error
             _ => {

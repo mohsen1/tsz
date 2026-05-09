@@ -240,10 +240,10 @@ fn test_symbol_named_properties_do_not_satisfy_string_index_signatures() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("__unique_7"),
-        TypeId::NUMBER,
-    )]);
+    let source = interner.object(vec![PropertyInfo {
+        is_symbol_named: true,
+        ..PropertyInfo::new(interner.intern_string("__unique_7"), TypeId::NUMBER)
+    }]);
     let target = interner.object_with_index(crate::types::ObjectShape {
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),
@@ -268,10 +268,10 @@ fn test_symbol_index_signatures_check_symbol_named_properties() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let source = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("__unique_7"),
-        TypeId::NUMBER,
-    )]);
+    let source = interner.object(vec![PropertyInfo {
+        is_symbol_named: true,
+        ..PropertyInfo::new(interner.intern_string("__unique_7"), TypeId::NUMBER)
+    }]);
     let target = interner.object_with_index(crate::types::ObjectShape {
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),
@@ -443,9 +443,20 @@ fn test_index_access_never_key() {
 
     let index_access = interner.index_access(obj, TypeId::NEVER);
 
-    let _result = evaluate_type(&interner, index_access);
-    // obj[never] - behavior depends on implementation
-    // Could be never or could be an error type
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(result, TypeId::NEVER, "obj[never] should be never");
+}
+
+#[test]
+fn test_index_access_keyof_empty_object_is_never() {
+    let interner = TypeInterner::new();
+
+    let empty_obj = interner.object(vec![]);
+    let keyof_empty = interner.keyof(empty_obj);
+    let index_access = interner.index_access(empty_obj, keyof_empty);
+
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(result, TypeId::NEVER, "{{}}[keyof {{}}] should be never");
 }
 
 // =============================================================================

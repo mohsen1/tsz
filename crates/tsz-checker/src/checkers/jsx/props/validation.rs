@@ -111,11 +111,240 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 }
             })
             .collect();
         self.ctx.types.factory().object(properties)
+    }
+
+    pub(in crate::checkers_domain::jsx) fn check_jsx_generic_spread_attrs_assignability(
+        &mut self,
+        attributes_idx: NodeIndex,
+        props_type: TypeId,
+        display_target: &str,
+        tag_name_idx: NodeIndex,
+    ) {
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, props_type)
+            || !crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                props_type,
+            )
+        {
+            return;
+        }
+
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return;
+        };
+
+        let mut generic_spreads = Vec::new();
+        let mut explicit_attrs = Vec::new();
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                    continue;
+                };
+                let spread_type = self.compute_type_of_node(spread_data.expression);
+                if !matches!(spread_type, TypeId::ANY | TypeId::ERROR)
+                    && (crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        spread_type,
+                    ) || (display_target.contains("Readonly<")
+                        && spread_type == TypeId::UNKNOWN))
+                {
+                    generic_spreads.push(spread_type);
+                }
+                continue;
+            }
+            if attr_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
+                continue;
+            }
+            let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                continue;
+            };
+            let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
+                continue;
+            };
+            if attr_name == "key" || attr_name == "ref" {
+                continue;
+            }
+
+            let attr_type = if attr_data.initializer.is_none() {
+                TypeId::BOOLEAN_TRUE
+            } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
+                let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                    self.ctx
+                        .arena
+                        .get_jsx_expression(init_node)
+                        .map(|e| e.expression)
+                        .unwrap_or(attr_data.initializer)
+                } else {
+                    attr_data.initializer
+                };
+                self.compute_type_of_node(value_idx)
+            } else {
+                TypeId::ANY
+            };
+            explicit_attrs.push((attr_name, attr_type));
+        }
+
+        if generic_spreads.is_empty() || explicit_attrs.is_empty() {
+            return;
+        }
+
+        let props_for_access = self.normalize_jsx_required_props_target(props_type);
+        let has_explicit_mismatch = explicit_attrs.iter().any(|(name, attr_type)| {
+            use crate::query_boundaries::common::PropertyAccessResult;
+            if matches!(*attr_type, TypeId::ANY | TypeId::ERROR) {
+                return false;
+            }
+            let expected_type = match self.resolve_property_access_with_env(props_for_access, name)
+            {
+                PropertyAccessResult::Success { type_id, .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(type_id),
+                    ..
+                } => Some(type_id),
+                _ => crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    props_for_access,
+                )
+                .and_then(|shape| {
+                    shape.properties.iter().find_map(|prop| {
+                        (self.ctx.types.resolve_atom(prop.name) == name.as_str())
+                            .then_some(prop.type_id)
+                    })
+                }),
+            };
+            let expected_type = expected_type.or_else(|| {
+                self.jsx_concrete_prop_expected_type(props_for_access, name, &mut Vec::new())
+            });
+            let Some(expected_type) = expected_type else {
+                return false;
+            };
+            let expected =
+                crate::query_boundaries::common::remove_undefined(self.ctx.types, expected_type);
+            !self.is_assignable_to(*attr_type, expected)
+        });
+        let explicit_type = self.build_jsx_provided_attrs_object_type(&explicit_attrs);
+        generic_spreads.push(explicit_type);
+        let attrs_type = self.ctx.types.factory().intersection(generic_spreads);
+        if !has_explicit_mismatch {
+            let managed_readonly_target = display_target.contains("Readonly<");
+            if !managed_readonly_target {
+                return;
+            }
+            let source_retains_explicit_object = self.format_type(attrs_type).contains('{');
+            if !source_retains_explicit_object && self.is_assignable_to(attrs_type, props_type) {
+                return;
+            }
+        }
+
+        self.report_jsx_synthesized_props_assignability_error(
+            attrs_type,
+            display_target,
+            tag_name_idx,
+        );
+    }
+
+    pub(in crate::checkers_domain::jsx) fn jsx_concrete_prop_expected_type(
+        &mut self,
+        type_id: TypeId,
+        attr_name: &str,
+        visited: &mut Vec<TypeId>,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::{self, PropertyAccessResult};
+
+        if visited.contains(&type_id) {
+            return None;
+        }
+        visited.push(type_id);
+
+        if let Some(app) = common::type_application(self.ctx.types, type_id)
+            && app.args.len() == 1
+            && matches!(self.format_type(app.base).as_str(), "Readonly" | "Element")
+        {
+            return self.jsx_concrete_prop_expected_type(app.args[0], attr_name, visited);
+        }
+
+        let resolved = self.resolve_type_for_property_access(type_id);
+        let resolved = self.resolve_lazy_type(resolved);
+        if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, resolved) {
+            return self.jsx_concrete_prop_expected_type(inner, attr_name, visited);
+        }
+        if let Some(app) = common::type_application(self.ctx.types, resolved)
+            && app.args.len() == 1
+            && matches!(self.format_type(app.base).as_str(), "Readonly" | "Element")
+        {
+            return self.jsx_concrete_prop_expected_type(app.args[0], attr_name, visited);
+        }
+
+        let normalized = self.normalize_jsx_required_props_target(resolved);
+        for call_target in [resolved, normalized] {
+            let Some(signatures) = common::call_signatures_for_type(self.ctx.types, call_target)
+            else {
+                continue;
+            };
+            for signature in signatures {
+                let Some(first_param) = signature.params.first() else {
+                    continue;
+                };
+                let param_type = common::remove_undefined(self.ctx.types, first_param.type_id);
+                if param_type == call_target {
+                    continue;
+                }
+                if let Some(expected) =
+                    self.jsx_concrete_prop_expected_type(param_type, attr_name, visited)
+                {
+                    return Some(expected);
+                }
+            }
+        }
+
+        let members = common::intersection_members(self.ctx.types, resolved)
+            .or_else(|| common::intersection_members(self.ctx.types, normalized));
+        if let Some(members) = members {
+            for member in members {
+                if common::is_type_parameter_like(self.ctx.types, member) {
+                    continue;
+                }
+                if let Some(expected) =
+                    self.jsx_concrete_prop_expected_type(member, attr_name, visited)
+                {
+                    return Some(expected);
+                }
+            }
+        }
+
+        if common::is_type_parameter_like(self.ctx.types, normalized)
+            || common::contains_type_parameters(self.ctx.types, normalized)
+        {
+            return None;
+        }
+
+        match self.resolve_property_access_with_env(normalized, attr_name) {
+            PropertyAccessResult::Success { type_id, .. }
+            | PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => common::object_shape_for_type(self.ctx.types, normalized).and_then(|shape| {
+                shape.properties.iter().find_map(|prop| {
+                    (self.ctx.types.resolve_atom(prop.name) == attr_name).then_some(prop.type_id)
+                })
+            }),
+        }
     }
 
     pub(in crate::checkers_domain::jsx) fn jsx_children_display_type(
@@ -190,12 +419,15 @@ impl<'a> CheckerState<'a> {
     fn format_jsx_missing_props_target_type(
         &mut self,
         target_type: TypeId,
+        display_source_type: TypeId,
         preferred_target_display: Option<&str>,
     ) -> String {
         let target_display = self.format_type(target_type);
 
         if let Some(display) = preferred_target_display
             && !display.contains("children?:")
+            && !display.contains("propTypes: infer")
+            && !display.contains("defaultProps: infer")
         {
             if display.starts_with("IntrinsicClassAttributes<")
                 && let Some(alias_display) =
@@ -204,6 +436,41 @@ impl<'a> CheckerState<'a> {
                 return alias_display;
             }
             return display.to_string();
+        }
+
+        if let Some(display) = preferred_target_display
+            && display.contains("IntrinsicClassAttributes<")
+            && display.contains("children?:")
+        {
+            let bare_props = display.split(" & ").find(|part| {
+                !part.starts_with("IntrinsicAttributes")
+                    && !part.starts_with("IntrinsicClassAttributes<")
+                    && !part.starts_with("{ children?:")
+            });
+            if let Some(bare_props) = bare_props
+                && !bare_props.is_empty()
+            {
+                return bare_props.to_string();
+            }
+        }
+
+        if let Some(display) = self.jsx_library_managed_structural_props_display(target_type) {
+            return display;
+        }
+        if display_source_type != target_type
+            && let Some(display) =
+                self.jsx_library_managed_structural_props_display(display_source_type)
+        {
+            return display;
+        }
+
+        let stripped_display_type =
+            self.strip_jsx_children_injection_for_display(display_source_type);
+        if stripped_display_type != display_source_type {
+            let stripped_display = self.format_type(stripped_display_type);
+            if !stripped_display.starts_with('{') && !stripped_display.is_empty() {
+                return stripped_display;
+            }
         }
 
         if preferred_target_display.is_none()
@@ -391,12 +658,30 @@ impl<'a> CheckerState<'a> {
         &mut self,
         props_type: TypeId,
     ) -> TypeId {
+        let alias_hint = self.ctx.types.get_display_alias(props_type).or_else(|| {
+            crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_type)
+                .then_some(props_type)
+        });
         let normalized = self.evaluate_application_type(props_type);
         let normalized = self.evaluate_type_with_env(normalized);
         let normalized = self.resolve_type_for_property_access(normalized);
         let normalized = self.resolve_lazy_type(normalized);
         let normalized = self.evaluate_application_type(normalized);
-        self.evaluate_type_with_env(normalized)
+        let normalized = self.evaluate_type_with_env(normalized);
+        if normalized != props_type
+            && normalized != TypeId::ERROR
+            && self.ctx.types.get_display_alias(normalized).is_none()
+            && let Some(alias_hint) = alias_hint
+        {
+            let alias_evaluated = self.evaluate_type_with_env(alias_hint);
+            if alias_evaluated != TypeId::ERROR
+                && self.is_assignable_to(alias_evaluated, normalized)
+                && self.is_assignable_to(normalized, alias_evaluated)
+            {
+                self.ctx.types.store_display_alias(normalized, alias_hint);
+            }
+        }
+        normalized
     }
 
     pub(in crate::checkers_domain::jsx) fn get_jsx_special_attribute_expected_type(
@@ -680,6 +965,7 @@ impl<'a> CheckerState<'a> {
         let source_type = self.format_jsx_provided_attrs_source_type(provided_attrs);
         let target_type = self.format_jsx_missing_props_target_type(
             preferred_target,
+            props_type,
             preferred_target_display.filter(|display| !display.is_empty()),
         );
 
@@ -1202,17 +1488,42 @@ impl<'a> CheckerState<'a> {
         declared_type_id: TypeId,
         prop_is_optional_in_anonymous_source: bool,
     ) -> TypeId {
-        if !prop_is_optional_in_anonymous_source {
-            return write_check_type;
-        }
-        if write_check_type == declared_type_id {
+        let display_type = if !prop_is_optional_in_anonymous_source {
+            write_check_type
+        } else if write_check_type == declared_type_id {
             self.ctx
                 .types
                 .factory()
                 .union2(write_check_type, TypeId::UNDEFINED)
         } else {
             declared_type_id
+        };
+
+        if crate::query_boundaries::checkers::jsx::contains_index_access_type(
+            self.ctx.types,
+            display_type,
+        ) {
+            let alias_hint =
+                crate::query_boundaries::checkers::jsx::index_access_type_arg_alias_hint(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    display_type,
+                );
+            let evaluated = self.evaluate_type_with_env(display_type);
+            if evaluated != display_type && evaluated != TypeId::ERROR {
+                if let Some(alias_hint) = alias_hint {
+                    let alias_evaluated = self.evaluate_type_with_env(alias_hint);
+                    if self.is_assignable_to(alias_evaluated, evaluated)
+                        && self.is_assignable_to(evaluated, alias_evaluated)
+                    {
+                        self.ctx.types.store_display_alias(evaluated, alias_hint);
+                    }
+                }
+                return evaluated;
+            }
         }
+
+        display_type
     }
 
     /// JSX bare-string-literal attribute write to an optional anonymous prop:

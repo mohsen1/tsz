@@ -19,7 +19,7 @@ use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 #[allow(unused_imports)]
 use tsz_parser::parser::ParserState;
 #[allow(unused_imports)]
-use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena, NodeView};
 #[allow(unused_imports)]
 use tsz_parser::parser::syntax_kind_ext;
 #[allow(unused_imports)]
@@ -223,7 +223,129 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(sym_id) = binder.file_locals.get(&name) {
             return used.contains_key(&sym_id);
         }
-        false
+        self.namespace_member_referenced_by_exported_object_literal(decl_idx, &name)
+    }
+
+    pub(crate) fn namespace_member_referenced_by_exported_object_literal(
+        &self,
+        _decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            let Some(module_block) = self.arena.get_module_block(node) else {
+                return false;
+            };
+            let Some(statements) = module_block.statements.as_ref() else {
+                return false;
+            };
+            statements.nodes.iter().copied().any(|stmt_idx| {
+                self.exported_variable_statement_initializer_references_name(stmt_idx, name)
+            })
+        }) || self.object_literal_member_references_name(name)
+    }
+
+    fn object_literal_member_references_name(&self, name: &str) -> bool {
+        self.arena.nodes.iter().any(|node| {
+            let Some(object) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            object.elements.nodes.iter().copied().any(|member_idx| {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                if let Some(shorthand) = self.arena.get_shorthand_property(member_node) {
+                    return self.get_identifier_text(shorthand.name).as_deref() == Some(name);
+                }
+                if let Some(property) = self.arena.get_property_assignment(member_node) {
+                    return self.get_identifier_text(property.initializer).as_deref() == Some(name);
+                }
+                false
+            })
+        })
+    }
+
+    fn exported_variable_statement_initializer_references_name(
+        &self,
+        stmt_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+        let has_export_modifier = self.stmt_has_export_modifier(stmt_node)
+            || self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            || self
+                .get_source_slice(stmt_node.pos, stmt_node.end)
+                .is_some_and(|text| text.trim_start().starts_with("export "));
+        if !has_export_modifier {
+            return false;
+        }
+        var_stmt
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .any(|decl_list_idx| {
+                self.arena
+                    .get(decl_list_idx)
+                    .and_then(|decl_list_node| self.arena.get_variable(decl_list_node))
+                    .is_some_and(|decl_list| {
+                        decl_list
+                            .declarations
+                            .nodes
+                            .iter()
+                            .copied()
+                            .any(|var_decl_idx| {
+                                self.exported_variable_initializer_references_name(
+                                    var_decl_idx,
+                                    name,
+                                )
+                            })
+                    })
+            })
+    }
+
+    fn exported_variable_initializer_references_name(
+        &self,
+        var_decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(var_decl_node) = self.arena.get(var_decl_idx) else {
+            return false;
+        };
+        let Some(var_decl) = self.arena.get_variable_declaration(var_decl_node) else {
+            return false;
+        };
+        if !var_decl.initializer.is_some() {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+
+        object.elements.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if let Some(shorthand) = self.arena.get_shorthand_property(member_node) {
+                return self.get_identifier_text(shorthand.name).as_deref() == Some(name);
+            }
+            if let Some(property) = self.arena.get_property_assignment(member_node) {
+                return self.get_identifier_text(property.initializer).as_deref() == Some(name);
+            }
+            false
+        })
     }
 
     /// Extract the name `NodeIndex` from a declaration node.
@@ -443,14 +565,323 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
-        // Fall back to root scope table
-        let Some(root_scope) = binder.scopes.first() else {
+        // Fall back to scope tables. Namespace members can be declared outside
+        // file_locals, and UsageAnalyzer marks those symbols from exported
+        // namespace member types.
+        binder.scopes.iter().any(|scope| {
+            scope
+                .table
+                .get(&name_ident.escaped_text)
+                .is_some_and(|scope_sym_id| used.contains_key(&scope_sym_id))
+        })
+    }
+
+    pub(crate) fn declared_ambient_value_dependency_is_initializer_only(
+        &self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        if !self.public_api_filter_enabled() || initializer.is_some() || type_annotation.is_none() {
+            return false;
+        }
+        let Some(_usage_kind) = self.public_api_dependency_usage_kind(name_idx) else {
             return false;
         };
-        let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text) else {
+        let Some(name) = self.get_identifier_text(name_idx) else {
             return false;
         };
-        used.contains_key(&scope_sym_id)
+        !self.public_api_type_surface_contains_typeof_name(&name)
+            && !self.public_api_export_specifier_exports_name(&name)
+    }
+
+    fn public_api_dependency_usage_kind(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<super::super::usage_analyzer::UsageKind> {
+        if !self.public_api_filter_enabled() {
+            return Some(
+                super::super::usage_analyzer::UsageKind::TYPE
+                    | super::super::usage_analyzer::UsageKind::VALUE,
+            );
+        }
+        let used = self.used_symbols.as_ref()?;
+        let binder = self.binder?;
+        let name_node = self.arena.get(name_idx)?;
+        let name_ident = self.arena.get_identifier(name_node)?;
+
+        if let Some(sym_id) = binder.node_symbols.get(&name_idx.0)
+            && let Some(kind) = used.get(sym_id)
+        {
+            return Some(*kind);
+        }
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text)
+            && let Some(kind) = used.get(&sym_id)
+        {
+            return Some(*kind);
+        }
+        for scope in binder.scopes.iter() {
+            if let Some(sym_id) = scope.table.get(&name_ident.escaped_text)
+                && let Some(kind) = used.get(&sym_id)
+            {
+                return Some(*kind);
+            }
+        }
+        None
+    }
+
+    fn public_api_type_surface_contains_typeof_name(&self, name: &str) -> bool {
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))
+        else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                let is_public_surface = self.stmt_has_export_modifier(stmt_node)
+                    || stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT;
+                is_public_surface
+                    && (self.node_subtree_contains_type_query_name(stmt_idx, name)
+                        || self.node_subtree_contains_computed_property_name(stmt_idx, name))
+            })
+    }
+
+    /// Walk a node subtree looking for a `[<expr>]` computed property name
+    /// where `<expr>` (after stripping parens / `as` / non-null) is the
+    /// identifier we are tracking. tsc keeps the supporting
+    /// `declare const a: symbol;` declaration alive whenever an exported
+    /// class member is declared with `[a]() {…}` because the d.ts
+    /// emission renders the same identifier in member position.
+    fn node_subtree_contains_computed_property_name(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(node)
+        {
+            let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+            if self.entity_name_contains_identifier(expr_idx, name) {
+                return true;
+            }
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_computed_property_name(child_idx, name))
+    }
+
+    fn node_subtree_contains_type_query_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(type_query) = self.arena.get_type_query(node)
+            && self.entity_name_contains_identifier(type_query.expr_name, name)
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_type_query_name(child_idx, name))
+    }
+
+    fn entity_name_contains_identifier(&self, name_idx: NodeIndex, name: &str) -> bool {
+        if self.get_identifier_text(name_idx).as_deref() == Some(name) {
+            return true;
+        }
+        self.arena
+            .get_children(name_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.entity_name_contains_identifier(child_idx, name))
+    }
+
+    fn public_api_export_specifier_exports_name(&self, name: &str) -> bool {
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))
+        else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                match stmt_node.kind {
+                    k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                        // `export default <expr>` is also represented as an
+                        // EXPORT_DECLARATION (with `is_default_export: true`
+                        // and the expression placed in `export_clause`).
+                        // When the default-exported expression is the
+                        // identifier `name`, that's the value-side export
+                        // we need to keep the local declaration alive for.
+                        if let Some(export) = self.arena.get_export_decl(stmt_node)
+                            && export.is_default_export
+                            && export.export_clause.is_some()
+                            && self.entity_name_contains_identifier(export.export_clause, name)
+                        {
+                            return true;
+                        }
+                        self.node_subtree_contains_export_specifier_name(stmt_idx, name)
+                    }
+                    // `export = X` (commonjs) exports the value-side of `X`
+                    // as the entire module. Without this branch a non-exported
+                    // declaration whose only public-API consumer is an
+                    // `export = X` assignment would be filtered out by the
+                    // initializer-only-dependency check.
+                    k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => self
+                        .arena
+                        .get_export_assignment(stmt_node)
+                        .is_some_and(|assignment| {
+                            self.entity_name_contains_identifier(assignment.expression, name)
+                        }),
+                    _ => false,
+                }
+            })
+    }
+
+    fn node_subtree_contains_export_specifier_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+            && let Some(specifier) = self.arena.get_specifier(node)
+            && (self.get_identifier_text(specifier.name).as_deref() == Some(name)
+                || self.get_identifier_text(specifier.property_name).as_deref() == Some(name))
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .iter()
+            .copied()
+            .any(|child_idx| self.node_subtree_contains_export_specifier_name(child_idx, name))
+    }
+
+    pub(crate) fn public_api_dependency_is_type_only_exported_type_side(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        if self.current_file_has_exported_type_side_named(&name_ident.escaped_text) {
+            return true;
+        }
+
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let mut symbol_ids = Vec::new();
+        if let Some(sym_id) = binder.node_symbols.get(&name_idx.0).copied() {
+            symbol_ids.push(sym_id);
+        }
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text) {
+            symbol_ids.push(sym_id);
+        }
+        symbol_ids.extend(
+            binder
+                .scopes
+                .iter()
+                .filter_map(|scope| scope.table.get(&name_ident.escaped_text)),
+        );
+
+        symbol_ids
+            .iter()
+            .copied()
+            .any(|sym_id| self.symbol_has_exported_type_side(sym_id, binder))
+    }
+
+    fn symbol_has_exported_type_side(&self, sym_id: SymbolId, binder: &BinderState) -> bool {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.flags & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS) == 0 {
+            return false;
+        }
+
+        symbol
+            .declarations
+            .iter()
+            .copied()
+            .any(|decl_idx| self.declaration_is_exported_type_side(decl_idx))
+    }
+
+    fn current_file_has_exported_type_side_named(&self, name: &str) -> bool {
+        let Some(source_idx) = self.current_source_file_idx else {
+            return false;
+        };
+        let Some(source_node) = self.arena.get(source_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_node) else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                    return export.module_specifier.is_none()
+                        && self.declaration_is_type_side_named(export.export_clause, Some(name));
+                }
+                match stmt_node.kind {
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        let Some(iface) = self.arena.get_interface(stmt_node) else {
+                            return false;
+                        };
+                        self.arena
+                            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                            && self.get_identifier_text(iface.name).as_deref() == Some(name)
+                    }
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        let Some(alias) = self.arena.get_type_alias(stmt_node) else {
+                            return false;
+                        };
+                        self.arena
+                            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                            && self.get_identifier_text(alias.name).as_deref() == Some(name)
+                    }
+                    _ => false,
+                }
+            })
     }
 
     /// Walk a binding pattern's leaf identifiers and return true if any one
@@ -483,6 +914,58 @@ impl<'a> DeclarationEmitter<'a> {
                         return false;
                     };
                     self.binding_pattern_has_used_identifier(elem.name)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn declaration_is_exported_type_side(&self, decl_idx: NodeIndex) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        if let Some(export) = self.arena.get_export_decl(decl_node) {
+            return export.module_specifier.is_none()
+                && self.declaration_is_type_side_named(export.export_clause, None);
+        }
+        // Direct interface/type-alias declaration: require the `export`
+        // modifier so a non-exported `type fn = …` does not falsely mark a
+        // value-side const named `fn` as "type-only re-exported".
+        let has_export = match decl_node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(decl_node).is_some_and(|iface| {
+                    self.arena
+                        .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(decl_node).is_some_and(|alias| {
+                    self.arena
+                        .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            _ => false,
+        };
+        has_export && self.declaration_is_type_side_named(decl_idx, None)
+    }
+
+    fn declaration_is_type_side_named(&self, decl_idx: NodeIndex, name: Option<&str>) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        match decl_node.kind {
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(decl_node).is_some_and(|iface| {
+                    name.is_none_or(|name| {
+                        self.get_identifier_text(iface.name).as_deref() == Some(name)
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(decl_node).is_some_and(|alias| {
+                    name.is_none_or(|name| {
+                        self.get_identifier_text(alias.name).as_deref() == Some(name)
+                    })
                 })
             }
             _ => false,
@@ -584,11 +1067,10 @@ impl<'a> DeclarationEmitter<'a> {
         // Try to get as function first
         let name_node = if let Some(func) = self.arena.get_function(func_node) {
             self.arena.get(func.name)?
-        // Try to get as method
-        } else if let Some(method) = self.arena.get_method_decl(func_node) {
-            self.arena.get(method.name)?
         } else {
-            return None;
+            // Try to get as method
+            let method = self.arena.get_method_decl(func_node)?;
+            self.arena.get(method.name)?
         };
 
         // Extract identifier names directly
@@ -742,7 +1224,12 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                 {
                     if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
-                        if self.imported_name_is_used(binder, used, bindings.name) {
+                        if self.imported_name_is_used(binder, used, bindings.name)
+                            || self.namespace_import_needed_for_shadowed_self_type(
+                                bindings.name,
+                                import.module_specifier,
+                            )
+                        {
                             named_count = 1;
                         }
                     } else {
@@ -772,12 +1259,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // Type-only imports are likely needed for type references
                 let is_type_only = clause.is_type_only;
 
-                // Default import - keep for type-only, skip otherwise without tracking
-                default_count = if is_type_only {
-                    usize::from(clause.name.is_some())
-                } else {
-                    0
-                };
+                // Default imports can be used only in declaration types even
+                // when the original import was not written as `import type`.
+                // Without usage tracking, preserve them conservatively.
+                default_count = usize::from(clause.name.is_some());
 
                 // Named bindings: check if there are actually any specifiers
                 if clause.named_bindings.is_some() {
@@ -785,10 +1270,14 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                     {
                         if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
-                            // Namespace import (import * as ns): skip in fallback mode
-                            // These are almost exclusively for value-level code (ns.method())
-                            // and rarely needed in .d.ts output
-                            named_count = 0;
+                            // Namespace import (import * as ns): in noCheck fallback,
+                            // preserve type-only namespace imports so declaration output
+                            // can still reference the namespace type alias (e.g. ns.Foo).
+                            named_count = usize::from(
+                                clause.is_type_only
+                                    && self
+                                        .import_alias_targets_type_entity(import.module_specifier),
+                            );
                         } else if is_type_only {
                             // Type-only named imports - keep all
                             named_count = bindings.elements.nodes.len();
@@ -977,7 +1466,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.public_api_scope_depth = 0;
         if let Some(state) = &self.source_map_state {
             self.writer.enable_source_map(state.output_name.clone());
-            let content = self.source_map_text.map(std::string::ToString::to_string);
+            let content = state
+                .include_sources_content
+                .then(|| self.source_map_text.map(std::string::ToString::to_string))
+                .flatten();
             self.writer.add_source(state.source_name.clone(), content);
         }
     }

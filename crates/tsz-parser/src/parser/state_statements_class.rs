@@ -2,7 +2,8 @@
 
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
-    CONTEXT_FLAG_IN_CLASS, CONTEXT_FLAG_PARAMETER_DEFAULT, ParserState,
+    CONTEXT_FLAG_IN_CLASS, CONTEXT_FLAG_PARAMETER_BINDING_PATTERN, CONTEXT_FLAG_PARAMETER_DEFAULT,
+    ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -48,6 +49,122 @@ impl ParserState {
             self.parse_error_at(pos, 0, "')' expected.", diagnostic_codes::EXPECTED);
             self.suppress_next_missing_close_paren_error_once = true;
         }
+    }
+
+    fn report_definite_assignment_parameter_tail_recovery(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !self.is_token(SyntaxKind::CloseParenToken) {
+            return;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        let saved_scanner_diagnostics_high_water_mark = self.scanner_diagnostics_high_water_mark;
+        let close_start = self.token_pos();
+        let close_length = self.token_end().saturating_sub(close_start);
+
+        self.next_token();
+        if !self.is_token(SyntaxKind::ColonToken) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+            self.scanner_diagnostics_high_water_mark = saved_scanner_diagnostics_high_water_mark;
+            return;
+        }
+
+        self.parse_error_at(
+            close_start,
+            close_length,
+            "Expression expected.",
+            diagnostic_codes::EXPRESSION_EXPECTED,
+        );
+        self.parse_error_at_current_token(
+            "Declaration or statement expected.",
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        );
+        self.next_token();
+
+        let mut reported_empty_element_access = false;
+        let mut saw_for_keyword = false;
+        let mut saw_for_await = false;
+        let mut pending_for_await_header = false;
+        let mut for_header_paren_depth = 0u32;
+        let mut reported_for_await_expression = false;
+        let mut reported_for_body_property = false;
+
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if saw_for_keyword {
+                if self.is_token(SyntaxKind::AwaitKeyword) {
+                    saw_for_keyword = false;
+                    saw_for_await = true;
+                    self.next_token();
+                    continue;
+                }
+                saw_for_keyword = false;
+            }
+
+            if saw_for_await {
+                if self.is_token(SyntaxKind::OpenParenToken) {
+                    if !reported_for_await_expression {
+                        self.parse_error_at(
+                            self.token_end(),
+                            0,
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                        reported_for_await_expression = true;
+                    }
+                    saw_for_await = false;
+                    pending_for_await_header = true;
+                    for_header_paren_depth = 1;
+                    self.next_token();
+                    continue;
+                }
+                saw_for_await = false;
+            }
+
+            if pending_for_await_header {
+                match self.token() {
+                    SyntaxKind::OpenParenToken => {
+                        for_header_paren_depth += 1;
+                    }
+                    SyntaxKind::CloseParenToken => {
+                        for_header_paren_depth = for_header_paren_depth.saturating_sub(1);
+                    }
+                    SyntaxKind::OpenBraceToken
+                        if for_header_paren_depth == 0 && !reported_for_body_property =>
+                    {
+                        self.parse_error_at_current_token(
+                            "Property assignment expected.",
+                            diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+                        );
+                        reported_for_body_property = true;
+                        pending_for_await_header = false;
+                    }
+                    _ => {}
+                }
+            }
+
+            match self.token() {
+                SyntaxKind::CloseBracketToken if !reported_empty_element_access => {
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                    );
+                    reported_empty_element_access = true;
+                }
+                SyntaxKind::ForKeyword => {
+                    saw_for_keyword = true;
+                }
+                _ => {}
+            }
+
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
     }
 
     /// Parse class expression: class {} or class Name {}
@@ -123,6 +240,8 @@ impl ParserState {
         let mut emitted_rest_error = false;
         let mut rest_param_start: u32 = 0;
         let mut rest_param_length: u32 = 0;
+        let mut recover_tail_from_stray_colon = false;
+        let mut recover_tail_from_definite_assignment_colon = false;
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
             // If we see `=>` before any parameters were parsed, this is likely a
@@ -216,6 +335,19 @@ impl ParserState {
             }
 
             if !has_comma {
+                if recover_tail_from_stray_colon && self.is_token(SyntaxKind::EndOfFileToken) {
+                    if let Some(node) = self.arena.get(param) {
+                        self.parse_error_at(
+                            node.end,
+                            0,
+                            "')' expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                        self.suppress_next_missing_close_paren_error_once = true;
+                    }
+                    break;
+                }
+
                 // Recovery: in malformed parameter initializers like
                 // `function* f(a = yield => yield) {}` or
                 // `async function f(a = await => await) {}`
@@ -237,7 +369,92 @@ impl ParserState {
                 if !self.is_token(SyntaxKind::CloseParenToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    self.error_comma_expected();
+                    if recover_tail_from_definite_assignment_colon
+                        && matches!(
+                            self.token(),
+                            SyntaxKind::LessThanToken | SyntaxKind::GreaterThanToken
+                        )
+                    {
+                        self.parse_companion_error_at_current_token(
+                            "',' expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                    } else {
+                        self.error_comma_expected();
+                    }
+                    // Definite-assignment marker (`!`) is invalid on a
+                    // parameter. tsc anchors TS1005 at the `!` (emitted just
+                    // above) and TS1138 at the following `:`, then keeps
+                    // recovering the tail as parameter-list elements. That is
+                    // observable for generic tails like `x!: A<T>`, where the
+                    // `<T>` and return type produce further recovery
+                    // diagnostics instead of being consumed as a clean type
+                    // annotation.
+                    if self.is_token(SyntaxKind::ExclamationToken) {
+                        let snapshot = self.scanner.save_state();
+                        let saved_token = self.current_token;
+                        self.next_token();
+                        if self.is_token(SyntaxKind::ColonToken) {
+                            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.parse_error_at_current_token(
+                                diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                                diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+                            );
+                            self.next_token();
+                            recover_tail_from_definite_assignment_colon = true;
+                            continue;
+                        }
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                    }
+                    if recover_tail_from_definite_assignment_colon
+                        && self.is_token(SyntaxKind::LessThanToken)
+                    {
+                        self.next_token();
+                        continue;
+                    }
+                    if self.is_token(SyntaxKind::ColonToken) {
+                        self.next_token();
+                        if self.can_token_start_type() {
+                            self.parse_type();
+                        } else if !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::CloseParenToken
+                                | SyntaxKind::OpenBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.next_token();
+                        }
+                        if self.is_parameter_start() {
+                            if self.is_token(SyntaxKind::OpenBraceToken) {
+                                self.parse_error_at_current_token(
+                                    "',' expected.",
+                                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                                );
+                                recover_tail_from_stray_colon = true;
+                            }
+                            continue;
+                        }
+                    }
+                    if self.is_token(SyntaxKind::IsKeyword) {
+                        // `function f(a: b is A)` is not a legal parameter type
+                        // predicate. TSC treats both `is` and the following type
+                        // name as list elements missing commas.
+                        self.next_token();
+                        if !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::CloseParenToken
+                                | SyntaxKind::OpenBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.parse_companion_error_at_current_token(
+                                "',' expected.",
+                                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                            );
+                        }
+                    }
                     if is_rest_param && self.is_parameter_start() {
                         // `...public rest: T` is invalid, but tsc recovers as if
                         // a comma separated the malformed rest parameter from
@@ -272,6 +489,9 @@ impl ParserState {
                             self.next_token();
                         }
                     }
+                }
+                if recover_tail_from_definite_assignment_colon {
+                    self.report_definite_assignment_parameter_tail_recovery();
                 }
                 break;
             }
@@ -463,6 +683,86 @@ impl ParserState {
         }
     }
 
+    fn report_this_parameter_initializer_recovery(&mut self) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        let saved_state = self.scanner.save_state();
+        let saved_token = self.current_token;
+
+        self.next_token();
+        if self.is_token(SyntaxKind::NewKeyword) {
+            let new_start = self.token_pos();
+            self.parse_error_at(
+                new_start,
+                self.token_end().saturating_sub(new_start),
+                "Identifier expected. 'new' is a reserved word that cannot be used here.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+            );
+            self.next_token();
+
+            if self.is_identifier_or_keyword() {
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::OpenParenToken) {
+                let open_start = self.token_pos();
+                self.parse_error_at(
+                    open_start,
+                    self.token_end().saturating_sub(open_start),
+                    "',' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                let close_start = self.token_pos();
+                self.parse_error_at(
+                    close_start,
+                    self.token_end().saturating_sub(close_start),
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                let close_start = self.token_pos();
+                self.parse_error_at(
+                    close_start,
+                    self.token_end().saturating_sub(close_start),
+                    "';' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_token(SyntaxKind::ColonToken) {
+                let colon_start = self.token_pos();
+                self.parse_error_at(
+                    colon_start,
+                    self.token_end().saturating_sub(colon_start),
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.next_token();
+            }
+
+            if self.is_identifier_or_keyword() {
+                let type_start = self.token_pos();
+                self.parse_error_at(
+                    type_start,
+                    self.token_end().saturating_sub(type_start),
+                    "Unexpected keyword or identifier.",
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+            }
+        }
+
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+    }
+
     /// Parse a single parameter
     pub(crate) fn parse_parameter(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -537,7 +837,10 @@ impl ParserState {
 
         let parameter_name_is_reserved_word =
             self.is_reserved_word() && !self.is_token(SyntaxKind::DefaultKeyword);
-        let is_this_parameter = self.is_token(SyntaxKind::ThisKeyword);
+        let is_invalid_rest_this_parameter =
+            dot_dot_dot_token && self.is_token(SyntaxKind::ThisKeyword);
+        let is_this_parameter =
+            self.is_token(SyntaxKind::ThisKeyword) && !is_invalid_rest_this_parameter;
         // Literal reserved words (`null`, `true`, `false`) cannot form parameter
         // names at all. tsc still parses the type annotation but anchors a
         // TS1138 `Parameter declaration expected.` diagnostic at the following
@@ -550,9 +853,32 @@ impl ParserState {
 
         // Parse parameter name - can be an identifier, keyword, or binding pattern
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_object_binding_pattern()
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_PARAMETER_BINDING_PATTERN;
+            let pattern = self.parse_object_binding_pattern();
+            self.context_flags = saved_flags;
+            pattern
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
-            self.parse_array_binding_pattern()
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_PARAMETER_BINDING_PATTERN;
+            let pattern = self.parse_array_binding_pattern();
+            self.context_flags = saved_flags;
+            pattern
+        } else if is_invalid_rest_this_parameter {
+            let reserved_start = self.token_pos();
+            let reserved_end = self.token_end();
+            self.error_reserved_word_identifier();
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                reserved_start,
+                reserved_end,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else if self.is_token(SyntaxKind::ThisKeyword) {
             let start_pos = self.token_pos();
             let end_pos = self.token_end();
@@ -567,9 +893,17 @@ impl ParserState {
                 | SyntaxKind::WhileKeyword
                 | SyntaxKind::ForKeyword
         ) {
+            let keyword = self.token();
             let reserved_start = self.token_pos();
             let reserved_end = self.token_end();
-            self.error_reserved_word_in_parameter_name();
+            if dot_dot_dot_token {
+                self.error_reserved_word_identifier();
+                if matches!(keyword, SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword) {
+                    self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+                }
+            } else {
+                self.error_reserved_word_in_parameter_name();
+            }
             self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
                 reserved_start,
@@ -640,32 +974,42 @@ impl ParserState {
         // Parse optional question mark
         let question_pos = self.token_pos();
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
+        if is_this_parameter && question_token {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(question_pos, 1, "',' expected.", diagnostic_codes::EXPECTED);
+        }
 
-        let type_annotation =
-            if parameter_name_is_literal_reserved_word && self.is_token(SyntaxKind::ColonToken) {
-                // Emit TS1138 at the colon to match tsc's reserved-literal recovery,
-                // then still consume `: <type>` so we don't cascade into TS1005.
-                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.parse_error_at_current_token(
-                    diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
-                    diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
-                );
-                self.next_token();
-                self.parse_type()
-            } else if parameter_name_is_reserved_word && !is_this_parameter {
-                NodeIndex::NONE
-            } else if self.parse_optional(SyntaxKind::ColonToken) {
-                // Parameter type annotations do NOT allow type predicates (matching tsc).
-                // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
-                // Type predicates are only valid in return type positions.
-                // `this is T` is still parsed as a type predicate here because
-                // parse_type() always allows `this is T` (tsc: parseThisTypeOrThisTypePredicate).
-                self.parse_type()
-            } else {
-                NodeIndex::NONE
-            };
+        let type_annotation = if parameter_name_is_literal_reserved_word
+            && self.is_token(SyntaxKind::ColonToken)
+        {
+            // Emit TS1138 at the colon to match tsc's reserved-literal recovery,
+            // then still consume `: <type>` so we don't cascade into TS1005.
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token(
+                diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            );
+            self.next_token();
+            self.parse_type()
+        } else if is_invalid_rest_this_parameter && self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else if parameter_name_is_reserved_word && !is_this_parameter {
+            NodeIndex::NONE
+        } else if self.parse_optional(SyntaxKind::ColonToken) {
+            // Parameter type annotations do NOT allow type predicates (matching tsc).
+            // In tsc, parseParameterType() calls parseType(), not parseTypeOrTypePredicate().
+            // Type predicates are only valid in return type positions.
+            // `this is T` is still parsed as a type predicate here because
+            // parse_type() always allows `this is T` (tsc: parseThisTypeOrThisTypePredicate).
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
 
-        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+        let initializer = if is_this_parameter && self.is_token(SyntaxKind::EqualsToken) {
+            self.report_this_parameter_initializer_recovery();
+            NodeIndex::NONE
+        } else if self.parse_optional(SyntaxKind::EqualsToken) {
             // NOTE: TS1015 (Parameter cannot have question mark and initializer)
             // is a grammar check emitted by the checker, not the parser.
             // See CheckerState::check_parameter_ordering.

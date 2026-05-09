@@ -2,7 +2,7 @@ use crate::type_queries::{
     get_function_shape, replace_function_return_type, rewrite_function_error_slots_to_any,
     unpack_tuple_rest_parameter,
 };
-use crate::{FunctionShape, ParamInfo, TupleElement, TypeId, TypeInterner};
+use crate::{FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeId, TypeInterner};
 
 #[test]
 fn rewrite_function_error_slots_to_any_rewrites_error_param_and_return() {
@@ -26,6 +26,36 @@ fn rewrite_function_error_slots_to_any_rewrites_error_param_and_return() {
     let shape = get_function_shape(&db, rewritten).expect("function expected");
     assert_eq!(shape.params[0].type_id, TypeId::ANY);
     assert_eq!(shape.return_type, TypeId::ANY);
+}
+
+#[test]
+fn rewrite_function_error_slots_to_any_rewrites_nested_object_return_errors() {
+    let db = TypeInterner::new();
+    let bool_name = db.intern_string("bool");
+    let str_name = db.intern_string("str");
+    let return_ty = db.object(vec![
+        PropertyInfo::new(bool_name, TypeId::ERROR),
+        PropertyInfo::new(str_name, TypeId::NUMBER),
+    ]);
+    let fn_ty = db.function(FunctionShape::new(Vec::new(), return_ty));
+
+    let rewritten = rewrite_function_error_slots_to_any(&db, fn_ty);
+    let shape = get_function_shape(&db, rewritten).expect("function expected");
+    let return_shape =
+        crate::type_queries::get_object_shape(&db, shape.return_type).expect("object expected");
+    let bool_prop = return_shape
+        .properties
+        .iter()
+        .find(|prop| prop.name == bool_name)
+        .expect("bool property expected");
+    let str_prop = return_shape
+        .properties
+        .iter()
+        .find(|prop| prop.name == str_name)
+        .expect("str property expected");
+
+    assert_eq!(bool_prop.type_id, TypeId::ANY);
+    assert_eq!(str_prop.type_id, TypeId::NUMBER);
 }
 
 #[test]

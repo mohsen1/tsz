@@ -976,6 +976,56 @@ fn estimated_size_bytes_grows_with_content() {
 }
 
 #[test]
+fn interner_round_trips_via_serde_json() {
+    let mut original = Interner::new();
+    let a_hello = original.intern("hello");
+    let a_world = original.intern("world");
+    let a_long = original.intern("a_long_identifier_that_exists_in_lib_files_with_some_text_too");
+    // Re-intern the same string returns the same atom — the round-tripped
+    // interner must preserve this property.
+    let a_hello_again = original.intern("hello");
+    assert_eq!(a_hello, a_hello_again);
+
+    let json = serde_json::to_string(&original).expect("Interner should serialize via serde_json");
+    let restored: Interner =
+        serde_json::from_str(&json).expect("Interner should deserialize via serde_json");
+
+    // Resolution must still work for previously-interned atoms.
+    assert_eq!(restored.resolve(Atom::NONE), "");
+    assert_eq!(restored.resolve(a_hello), "hello");
+    assert_eq!(restored.resolve(a_world), "world");
+    assert_eq!(
+        restored.resolve(a_long),
+        "a_long_identifier_that_exists_in_lib_files_with_some_text_too"
+    );
+
+    // Length matches.
+    assert_eq!(restored.len(), original.len());
+
+    // The lookup map must be rebuilt: re-interning an existing string after
+    // round-trip must return the original atom (not a newly-allocated one).
+    let mut restored_mut = restored;
+    let a_hello_after = restored_mut.intern("hello");
+    let a_world_after = restored_mut.intern("world");
+    assert_eq!(a_hello_after, a_hello);
+    assert_eq!(a_world_after, a_world);
+
+    // A brand-new string must allocate fresh.
+    let a_new = restored_mut.intern("brand_new_after_restore");
+    assert_eq!(a_new.0 as usize, original.len());
+}
+
+#[test]
+fn interner_round_trips_empty() {
+    let original = Interner::new();
+    let json = serde_json::to_string(&original).expect("empty Interner should serialize");
+    let restored: Interner =
+        serde_json::from_str(&json).expect("empty Interner should deserialize");
+    assert_eq!(restored.len(), 1); // Only the empty string.
+    assert_eq!(restored.resolve(Atom::NONE), "");
+}
+
+#[test]
 fn common_strings_has_no_duplicates() {
     use std::collections::HashSet;
     let mut seen: HashSet<&'static str> = HashSet::new();

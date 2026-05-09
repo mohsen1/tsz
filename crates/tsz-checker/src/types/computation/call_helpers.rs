@@ -10,6 +10,77 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn recover_declared_type_for_tdz_callee(
+        &mut self,
+        callee_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(callee_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(callee_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+            || symbol
+                .has_any_flags(tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::ENUM)
+        {
+            return None;
+        }
+
+        if !self.is_class_or_enum_used_before_declaration(sym_id, callee_idx) {
+            return None;
+        }
+
+        let value_decl = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(value_decl)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        if var_decl.type_annotation.is_none() {
+            return None;
+        }
+        if self.type_annotation_is_direct_typeof_symbol(var_decl.type_annotation, sym_id) {
+            return None;
+        }
+
+        let declared_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+        if declared_type == TypeId::ERROR || declared_type == TypeId::ANY {
+            return None;
+        }
+
+        Some(declared_type)
+    }
+
+    fn type_annotation_is_direct_typeof_symbol(
+        &self,
+        annotation_idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(annotation_node) = self.ctx.arena.get(annotation_idx) else {
+            return false;
+        };
+        if annotation_node.kind != syntax_kind_ext::TYPE_QUERY {
+            return false;
+        }
+        let Some(type_query) = self.ctx.arena.get_type_query(annotation_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) else {
+            return false;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.ctx
+            .binder
+            .get_node_symbol(type_query.expr_name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, type_query.expr_name)
+            })
+            == Some(sym_id)
+    }
+
     fn current_arena_value_declaration_belongs_to_symbol(
         &self,
         sym_id: SymbolId,
@@ -563,6 +634,13 @@ impl<'a> CheckerState<'a> {
             {
                 return jsdoc_type;
             }
+            if self.ctx.is_js_file()
+                && self.ctx.should_resolve_jsdoc()
+                && let Some(init_expr) =
+                    Self::checked_js_constructor_initializer_expression(self.ctx.arena, decl_idx)
+            {
+                return self.get_type_of_node(init_expr);
+            }
             let root_name = self
                 .ctx
                 .arena
@@ -595,6 +673,14 @@ impl<'a> CheckerState<'a> {
                 return init_type;
             }
             return TypeId::ANY;
+        }
+
+        if self.ctx.is_js_file()
+            && self.ctx.should_resolve_jsdoc()
+            && let Some(init_expr) =
+                Self::checked_js_constructor_initializer_expression(self.ctx.arena, decl_idx)
+        {
+            return self.get_type_of_node(init_expr);
         }
 
         if self.ctx.arena.get_function(node).is_some() {
@@ -1333,23 +1419,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Get the function shape for the target property
-                let target_fn_shape =
-                    common::function_shape_for_type(self.ctx.types, target_prop_type);
-                let Some(target_fn) = target_fn_shape else {
+                let Some((contextual_fn_type, _target_params, target_return_type)) = self
+                    .inference_callable_context_for_property_target(
+                        target_prop_type,
+                        type_param_names,
+                    )
+                else {
                     continue;
                 };
-
-                // Check if ALL function parameter types are concrete (don't contain the
-                // type parameters being inferred). Return type MAY contain them - that's
-                // what we want to infer FROM.
-                let params_are_concrete = target_fn.params.iter().all(|param| {
-                    !self.type_contains_any_type_param(param.type_id, type_param_names)
-                });
-
-                if !params_are_concrete {
-                    continue;
-                }
 
                 // When the return type contains unresolved type parameters AND the
                 // function body has context-sensitive return expressions (e.g., nested
@@ -1359,12 +1436,27 @@ impl<'a> CheckerState<'a> {
                 // diagnostics are rolled back, the resulting cached type pollutes the
                 // inference. The full contextual type (with substituted type params)
                 // will be applied in Round 2.
-                if self.type_contains_any_type_param(target_fn.return_type, type_param_names)
+                if self.type_contains_any_type_param(target_return_type, type_param_names)
                     && super::contextual::expression_needs_contextual_return_type(
                         self,
                         prop.initializer,
                     )
                 {
+                    // Conditional-return callbacks can still contribute their
+                    // concrete branch return without unresolved contextual T.
+                    let conditional_branch_can_seed = self
+                        .callback_first_conditional_branch(prop.initializer)
+                        .is_some_and(|branch_idx| !is_contextually_sensitive(self, branch_idx));
+                    let zero_param_can_seed = self
+                        .unannotated_zero_param_callback_return_expression(prop.initializer)
+                        .is_some_and(|return_idx| !is_contextually_sensitive(self, return_idx));
+                    if conditional_branch_can_seed || zero_param_can_seed {
+                        let value_type =
+                            self.speculative_type_of_node(prop.initializer, &TypingRequest::NONE);
+                        if !self.type_contains_any_type_param(value_type, type_param_names) {
+                            properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                        }
+                    }
                     continue;
                 }
 
@@ -1375,14 +1467,14 @@ impl<'a> CheckerState<'a> {
                 // (the params WILL get contextual types in the final pass).
                 let value_type = self.speculative_type_of_node(
                     prop.initializer,
-                    &TypingRequest::with_contextual_type(target_prop_type),
+                    &TypingRequest::with_contextual_type(contextual_fn_type),
                 );
 
                 // If the speculative result still contains any of the type parameters
                 // being inferred, skip it. Including such types in the partial can
                 // poison Round 1 inference by creating self-referential constraints
                 // (e.g., T appearing in both source and target positions).
-                // This happens when a zero-param callback's return type references T
+                // This happens when a callback's return type references T
                 // through the un-instantiated contextual return type.
                 if self.type_contains_any_type_param(value_type, type_param_names) {
                     continue;
@@ -1417,23 +1509,18 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let target_fn_shape =
-                    common::function_shape_for_type(self.ctx.types, target_prop_type);
-                let Some(target_fn) = target_fn_shape else {
+                let Some((contextual_fn_type, _target_params, _target_return_type)) = self
+                    .inference_callable_context_for_property_target(
+                        target_prop_type,
+                        type_param_names,
+                    )
+                else {
                     continue;
                 };
 
-                let params_are_concrete = target_fn.params.iter().all(|param| {
-                    !self.type_contains_any_type_param(param.type_id, type_param_names)
-                });
-
-                if !params_are_concrete {
-                    continue;
-                }
-
                 let value_type = self.speculative_type_of_function(
                     elem_idx,
-                    &TypingRequest::with_contextual_type(target_prop_type),
+                    &TypingRequest::with_contextual_type(contextual_fn_type),
                 );
 
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
@@ -1445,6 +1532,41 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.ctx.types.factory().object_fresh(properties))
+    }
+
+    fn inference_callable_context_for_property_target(
+        &self,
+        target_prop_type: TypeId,
+        type_param_names: &[tsz_common::Atom],
+    ) -> Option<(TypeId, Vec<tsz_solver::ParamInfo>, TypeId)> {
+        let mut candidates = Vec::new();
+        if let Some(members) = common::union_members(self.ctx.types, target_prop_type) {
+            candidates.extend(members);
+        } else {
+            candidates.push(target_prop_type);
+        }
+
+        for candidate in candidates {
+            if let Some(target_fn) = common::function_shape_for_type(self.ctx.types, candidate)
+                && target_fn.params.iter().all(|param| {
+                    !self.type_contains_any_type_param(param.type_id, type_param_names)
+                })
+            {
+                return Some((candidate, target_fn.params.clone(), target_fn.return_type));
+            }
+
+            if let Some(signatures) = common::call_signatures_for_type(self.ctx.types, candidate) {
+                for sig in signatures {
+                    if sig.params.iter().all(|param| {
+                        !self.type_contains_any_type_param(param.type_id, type_param_names)
+                    }) {
+                        return Some((candidate, sig.params, sig.return_type));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Extract inference from an object literal whose target type is a mapped type.

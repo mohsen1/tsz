@@ -156,23 +156,25 @@ impl<'a> CheckerState<'a> {
             .ctx
             .declared_modules_contains(self.ctx.binder, module_name)
         {
+            let wrong_context_allows_module_semantics = self
+                .is_in_non_module_element_context(stmt_idx)
+                && !self.is_inside_function_body(stmt_idx)
+                && !self.is_inside_namespace_declaration(stmt_idx);
+            if !self.is_in_non_module_element_context(stmt_idx)
+                || wrong_context_allows_module_semantics
+            {
+                self.validate_reexported_members(export_decl, module_name, resolution_mode);
+            }
             self.ctx.import_resolution_stack.pop();
             return;
         }
 
-        // Suppress TS2792/TS2307 for System/AMD modules and classic resolution.
-        // tsc does not report module-not-found errors for non-relative specifiers
-        // under these module kinds — the runtime handles module loading.
-        {
-            let module_kind = self.ctx.compiler_options.module;
-            let is_system_or_amd = matches!(
-                module_kind,
-                tsz_common::common::ModuleKind::System | tsz_common::common::ModuleKind::AMD
-            );
-            if is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution {
-                self.ctx.import_resolution_stack.pop();
-                return;
-            }
+        // AMD/System/classic-resolution: same suppression rule as imports
+        // (issue #3077) — surface the missing-module diagnostic only when
+        // TS5107 is silenced via `ignoreDeprecations`.
+        if self.deprecated_mode_suppresses_module_not_found() {
+            self.ctx.import_resolution_stack.pop();
+            return;
         }
 
         // Emit module-not-found diagnostic for unresolved export specifiers.
@@ -476,8 +478,19 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the module's canonical export surface.
-        let module_exports =
-            self.resolve_effective_module_exports_with_mode(module_name, resolution_mode);
+        let module_exports = self
+            .resolve_effective_module_exports_with_mode(module_name, resolution_mode)
+            .or_else(|| {
+                (self
+                    .ctx
+                    .declared_modules_contains(self.ctx.binder, module_name)
+                    && !self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(module_name))
+                .then(tsz_binder::SymbolTable::new)
+            });
         // TSC includes source-level quotes in module diagnostic messages
         let quoted_module = format!("\"{module_name}\"");
         let has_json_default_export =
@@ -534,10 +547,43 @@ impl<'a> CheckerState<'a> {
 
             // Check if this name is exported from the source module
             if export_name != "*" && !module_exports.has(&export_name) {
-                if has_json_default_export
+                let has_default_like_export = has_json_default_export
                     || module_exports.has("default")
                     || module_exports.has("export=")
-                {
+                    || module_exports.has("module.exports");
+                if module_exports.has("module.exports") && has_default_like_export {
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                        &[&quoted_module, &export_name],
+                    );
+                    self.error_at_node(
+                        specifier_idx,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                    );
+                    continue;
+                }
+
+                // Check for spelling suggestions (TS2724) before TS2305 and TS2614.
+                let export_names: Vec<&str> = module_exports
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                if let Some(suggestion) = tsz_parser::parser::spelling::get_spelling_suggestion(
+                    &export_name,
+                    &export_names,
+                ) {
+                    // TS2724: did you mean?
+                    let message = format_message(
+                        diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+                        &[&quoted_module, &export_name, suggestion],
+                    );
+                    self.error_at_node(
+                        specifier_idx,
+                        &message,
+                        diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+                    );
+                } else if has_default_like_export {
                     // TS2614: Symbol doesn't exist but a default export does
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
@@ -549,37 +595,16 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
                     );
                 } else {
-                    // Check for spelling suggestions (TS2724) before TS2305
-                    let export_names: Vec<&str> = module_exports
-                        .iter()
-                        .map(|(name, _)| name.as_str())
-                        .collect();
-                    if let Some(suggestion) = tsz_parser::parser::spelling::get_spelling_suggestion(
-                        &export_name,
-                        &export_names,
-                    ) {
-                        // TS2724: did you mean?
-                        let message = format_message(
-                            diagnostic_messages::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
-                            &[&quoted_module, &export_name, suggestion],
-                        );
-                        self.error_at_node(
-                            specifier_idx,
-                            &message,
-                            diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
-                        );
-                    } else {
-                        // TS2305: Module has no exported member
-                        let message = format_message(
-                            diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                            &[&quoted_module, &export_name],
-                        );
-                        self.error_at_node(
-                            specifier_idx,
-                            &message,
-                            diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        );
-                    }
+                    // TS2305: Module has no exported member
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                        &[&quoted_module, &export_name],
+                    );
+                    self.error_at_node(
+                        specifier_idx,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                    );
                 }
             }
         }
@@ -672,6 +697,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                     declaration_order,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -712,6 +738,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: 0,
                             is_string_named: false,
+                            is_symbol_named: false,
                             single_quoted_name: false,
                         });
                     }
@@ -738,6 +765,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: 1,
                         is_string_named: false,
+                        is_symbol_named: false,
                         single_quoted_name: false,
                     });
                 }
@@ -1546,6 +1574,20 @@ impl<'a> CheckerState<'a> {
                 let Some(decl_idx) = sym.primary_declaration() else {
                     continue;
                 };
+                let fallback_span = sym
+                    .first_declaration_span
+                    .or_else(|| {
+                        sym.stable_value_declaration.is_known().then_some((
+                            sym.stable_value_declaration.pos,
+                            sym.stable_value_declaration.end,
+                        ))
+                    })
+                    .or_else(|| {
+                        sym.stable_declarations
+                            .iter()
+                            .find(|stable| stable.is_known())
+                            .map(|stable| (stable.pos, stable.end))
+                    });
 
                 let mut error_node_idx = decl_idx;
 
@@ -1575,11 +1617,12 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
                     &[&sym.escaped_name],
                 );
-                self.error_at_node(
-                    error_node_idx,
-                    &message,
-                    diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                );
+                let code = diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS;
+                if self.get_node_span(error_node_idx).is_some() {
+                    self.error_at_node(error_node_idx, &message, code);
+                } else if let Some((start, end)) = fallback_span {
+                    self.error(start, end.saturating_sub(start), message, code);
+                }
             }
         }
     }

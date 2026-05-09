@@ -10,6 +10,18 @@ use tsz_binder::SymbolId;
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
+    pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        self.binder.file_locals.get(name).is_some_and(|sym_id| {
+            !self.symbol_is_from_actual_lib(sym_id)
+                && self
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        })
+    }
+
     /// Check if the Promise constructor VALUE is available.
     /// The ES5 lib declares `interface Promise<T>` (type only) but NOT
     /// `declare var Promise: PromiseConstructor` (value). ES2015+ libs declare both.
@@ -138,5 +150,39 @@ impl<'a> CheckerContext<'a> {
             .iter()
             .take(self.actual_lib_file_count)
             .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
+    }
+
+    /// Check if a symbol originates from an actual standard lib file, including
+    /// driver paths where binding and checking use separately parsed lib arenas.
+    pub fn symbol_is_from_actual_or_cloned_lib(&self, sym_id: SymbolId) -> bool {
+        // `merge_lib_contexts_into_binder` remaps standard-lib symbols into the
+        // file binder and records those new ids here. Arena-pointer checks below
+        // can miss those local clones.
+        if self.binder.lib_symbol_ids.contains(&sym_id) {
+            return true;
+        }
+
+        if self.symbol_is_from_actual_lib(sym_id) {
+            return true;
+        }
+
+        if !self.has_lib_loaded() || self.all_arenas.is_none() {
+            return false;
+        }
+
+        let Some(symbol_arena) = self.binder.symbol_arenas.get(&sym_id) else {
+            return self.binder.symbols.get(sym_id).is_some_and(|symbol| {
+                symbol.decl_file_idx == u32::MAX
+                    && self.binder.file_locals.get(symbol.escaped_name.as_str()) == Some(sym_id)
+            });
+        };
+
+        let symbol_arena_ptr = Arc::as_ptr(symbol_arena) as usize;
+        let current_arena_ptr = self.arena as *const _ as usize;
+        if symbol_arena_ptr == current_arena_ptr {
+            return false;
+        }
+
+        self.get_file_idx_for_arena(symbol_arena.as_ref()).is_none()
     }
 }

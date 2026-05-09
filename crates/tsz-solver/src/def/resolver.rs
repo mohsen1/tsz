@@ -128,6 +128,21 @@ pub trait TypeResolver {
         None
     }
 
+    /// Whether this `DefId` is the standard library `ReadonlyArray` interface.
+    fn is_builtin_readonly_array_def(&self, _def_id: DefId) -> bool {
+        false
+    }
+
+    /// Resolve an `UnresolvedTypeName(atom)` text to a `DefId`, when the
+    /// resolver has access to a wider binder graph than the lowering pass
+    /// did. Used by the type evaluator to recover from
+    /// `Application(UnresolvedTypeName(name), args)` where the name now
+    /// resolves cleanly through the merged binder. Returns `None` when the
+    /// name still cannot be resolved.
+    fn resolve_unresolved_type_name(&self, _name: &str) -> Option<DefId> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
     /// For example, `IntrinsicKind::Number` -> `TypeId` of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.
@@ -296,6 +311,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         (**self).get_def_name(def_id)
     }
 
+    fn is_builtin_readonly_array_def(&self, def_id: DefId) -> bool {
+        (**self).is_builtin_readonly_array_def(def_id)
+    }
+
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         (**self).get_boxed_type(kind)
     }
@@ -406,6 +425,12 @@ pub struct TypeEnvironment {
     /// The concrete type that `ThisType` should resolve to in the current context.
     /// Set by the checker when performing relation checks inside a class scope.
     this_type: Option<TypeId>,
+    /// Cache of `UnresolvedTypeName(name)` -> `DefId` resolutions populated by
+    /// the checker once the merged binder graph is available. Lets the
+    /// solver-side type evaluator reduce cross-file qualified-name residue
+    /// (e.g. `Application(UnresolvedTypeName("util.OmitKeys"), args)`) without
+    /// needing access to the full checker context.
+    unresolved_name_resolutions: FxHashMap<String, DefId>,
 }
 
 impl TypeEnvironment {
@@ -431,7 +456,21 @@ impl TypeEnvironment {
             instance_type_to_class: FxHashMap::default(),
             definition_store: None,
             this_type: None,
+            unresolved_name_resolutions: FxHashMap::default(),
         }
+    }
+
+    /// Record a `name -> DefId` mapping recovered by a wider resolver
+    /// (typically `CheckerContext`) so the next solver-side evaluator
+    /// pass can reduce `Application(UnresolvedTypeName(name), args)`.
+    pub fn insert_unresolved_resolution(&mut self, name: String, def_id: DefId) {
+        self.unresolved_name_resolutions.insert(name, def_id);
+    }
+
+    /// Look up a previously-recorded resolution for an `UnresolvedTypeName`
+    /// name. Returns `None` when no mapping has been recorded yet.
+    pub fn unresolved_resolution(&self, name: &str) -> Option<DefId> {
+        self.unresolved_name_resolutions.get(name).copied()
     }
 
     /// Set the concrete type that `ThisType` should resolve to.
@@ -769,6 +808,10 @@ impl TypeEnvironment {
 impl TypeResolver for TypeEnvironment {
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         self.get(symbol)
+    }
+
+    fn resolve_unresolved_type_name(&self, name: &str) -> Option<DefId> {
+        self.unresolved_resolution(name)
     }
 
     fn resolve_type_query(

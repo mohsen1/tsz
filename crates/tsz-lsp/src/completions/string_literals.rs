@@ -20,19 +20,7 @@ impl<'a> Completions<'a> {
         let interner = self.interner?;
         let file_name = self.file_name.as_ref()?;
         let mut cache_ref = type_cache;
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
                 CheckerState::with_cache(
@@ -501,19 +489,7 @@ impl<'a> Completions<'a> {
         }
 
         let mut cache_ref = type_cache;
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
                 CheckerState::with_cache(

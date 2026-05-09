@@ -118,6 +118,16 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if self
+            .call_expression_reused_type_text(initializer)
+            .is_some_and(|type_text| {
+                Self::type_text_starts_with_import_type(&type_text)
+                    && !self.import_type_uses_private_package_subpath(&type_text)
+            })
+        {
+            return;
+        }
+
         // Get the callee's type from the type cache
         let Some(interner) = self.type_interner else {
             return;
@@ -291,7 +301,34 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 let mut i = 0usize;
                 let bytes = return_type_text.as_bytes();
+                let mut quote: Option<u8> = None;
+                let mut escaped = false;
                 while i < bytes.len() {
+                    if let Some(active_quote) = quote {
+                        if escaped {
+                            escaped = false;
+                            i += 1;
+                            continue;
+                        }
+                        if bytes[i] == b'\\' {
+                            escaped = true;
+                            i += 1;
+                            continue;
+                        }
+                        if bytes[i] == active_quote {
+                            quote = None;
+                        }
+                        i += 1;
+                        continue;
+                    }
+
+                    if matches!(bytes[i], b'\'' | b'"' | b'`') {
+                        quote = Some(bytes[i]);
+                        escaped = false;
+                        i += 1;
+                        continue;
+                    }
+
                     let ch = bytes[i] as char;
                     if !Self::is_type_text_identifier_start(ch) {
                         i += 1;
@@ -305,8 +342,30 @@ impl<'a> DeclarationEmitter<'a> {
                         i += 1;
                     }
                     let ident = &return_type_text[start..i];
+                    if ident == "import"
+                        && !Self::type_text_import_starts_mapped_key(&return_type_text, start)
+                        && let Some((import_module, type_name)) =
+                            self.parse_import_type_text(&return_type_text[start..])
+                    {
+                        let arena_addr = source_arena as *const NodeArena as usize;
+                        if let Some(source_path) = self.arena_to_path.get(&arena_addr)
+                            && !import_module.starts_with('.')
+                            && !import_module.starts_with('/')
+                            && let Some(from_path) =
+                                self.transitive_dependency_from_import(source_path, &import_module)
+                        {
+                            self.emit_non_portable_named_reference_diagnostic(
+                                decl_name, file, pos, length, &from_path, &type_name,
+                            );
+                            return;
+                        }
+                    }
                     if Self::is_non_type_text_identifier_candidate(ident)
                         || Self::type_text_identifier_is_member_name(&return_type_text, i)
+                        || Self::type_text_identifier_is_mapped_key_import_member(
+                            &return_type_text,
+                            start,
+                        )
                     {
                         continue;
                     }
@@ -315,8 +374,10 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(from_path) =
                             self.check_nested_transitive_import(type_sym_id, binder)
                     {
+                        let type_name =
+                            Self::canonical_import_alias_reference_name(binder, type_sym_id, ident);
                         self.emit_non_portable_named_reference_diagnostic(
-                            decl_name, file, pos, length, &from_path, ident,
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -330,8 +391,14 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(from_path) =
                             self.transitive_dependency_from_import(source_path, &import_module)
                     {
+                        let type_name = self
+                            .find_symbol_in_arena_by_name(source_arena, ident)
+                            .map(|sym_id| {
+                                Self::canonical_import_alias_reference_name(binder, sym_id, ident)
+                            })
+                            .unwrap_or(ident);
                         self.emit_non_portable_named_reference_diagnostic(
-                            decl_name, file, pos, length, &from_path, ident,
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -425,13 +492,13 @@ impl<'a> DeclarationEmitter<'a> {
                         &mut visited_declaration_symbols,
                         &mut visited_nodes,
                     ) {
-                        self.emit_non_portable_named_reference_diagnostic(
-                            decl_name,
-                            file,
-                            pos,
-                            length,
-                            &from_path,
+                        let type_name = Self::canonical_import_alias_reference_name(
+                            binder,
+                            type_sym_id,
                             &type_name_text,
+                        );
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -445,13 +512,13 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(from_path) =
                         self.check_nested_transitive_import(type_sym_id, binder)
                     {
-                        self.emit_non_portable_named_reference_diagnostic(
-                            decl_name,
-                            file,
-                            pos,
-                            length,
-                            &from_path,
+                        let type_name = Self::canonical_import_alias_reference_name(
+                            binder,
+                            type_sym_id,
                             &type_name_text,
+                        );
+                        self.emit_non_portable_named_reference_diagnostic(
+                            decl_name, file, pos, length, &from_path, type_name,
                         );
                         return;
                     }
@@ -675,6 +742,18 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn canonical_import_alias_reference_name<'b>(
+        binder: &'b BinderState,
+        sym_id: SymbolId,
+        fallback: &'b str,
+    ) -> &'b str {
+        binder
+            .symbols
+            .get(sym_id)
+            .and_then(|symbol| symbol.import_name.as_deref())
+            .unwrap_or(fallback)
+    }
+
     pub(in crate::declaration_emitter) fn matching_module_export_paths<'b>(
         &self,
         binder: &'b BinderState,
@@ -697,6 +776,10 @@ impl<'a> DeclarationEmitter<'a> {
                             .is_some_and(|without_index| without_index == module_specifier)
                 } else {
                     self.node_modules_path_matches_import_specifier(module_path, module_specifier)
+                        || self.path_mapping_module_path_matches_import_specifier(
+                            module_path,
+                            module_specifier,
+                        )
                 };
                 matches.then_some(module_path.as_str())
             })
@@ -710,6 +793,42 @@ impl<'a> DeclarationEmitter<'a> {
         matches
     }
 
+    fn path_mapping_module_path_matches_import_specifier(
+        &self,
+        module_path: &str,
+        module_specifier: &str,
+    ) -> bool {
+        if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+            return false;
+        }
+
+        let mut parts = module_specifier.split('/').collect::<Vec<_>>();
+        if parts.is_empty() {
+            return false;
+        }
+
+        let package_name = if parts[0].starts_with('@') {
+            if parts.len() < 2 {
+                return false;
+            }
+            let package = parts[1].to_string();
+            parts.drain(0..2);
+            package
+        } else {
+            parts.remove(0).to_string()
+        };
+        let subpath = parts.join("/");
+
+        let normalized = self.strip_ts_extensions(module_path).replace('\\', "/");
+        if subpath.is_empty() {
+            return normalized.ends_with(&format!("/{package_name}/src/index"))
+                || normalized.ends_with(&format!("/{package_name}/index"));
+        }
+
+        normalized.ends_with(&format!("/{package_name}/src/{subpath}"))
+            || normalized.ends_with(&format!("/{package_name}/{subpath}"))
+    }
+
     pub(in crate::declaration_emitter) fn node_modules_path_matches_import_specifier(
         &self,
         module_path: &str,
@@ -718,80 +837,89 @@ impl<'a> DeclarationEmitter<'a> {
         use std::path::{Component, Path};
 
         let components: Vec<_> = Path::new(module_path).components().collect();
-        let Some(nm_idx) = components.iter().position(|component| {
-            matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
-        }) else {
-            return false;
-        };
-
-        let pkg_start = nm_idx + 1;
-        let pkg_len = if components.get(pkg_start).is_some_and(|component| {
-            matches!(component, Component::Normal(part) if part.to_str().is_some_and(|text| text.starts_with('@')))
-        }) {
-            2
-        } else {
-            1
-        };
-        if components.len() < pkg_start + pkg_len {
-            return false;
-        }
-
-        let package_name = components[pkg_start..pkg_start + pkg_len]
+        components
             .iter()
-            .filter_map(|component| match component {
-                Component::Normal(part) => part.to_str(),
-                _ => None,
+            .enumerate()
+            .filter_map(|(idx, component)| {
+                matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
+                    .then_some(idx)
             })
-            .collect::<Vec<_>>()
-            .join("/");
+            .any(|nm_idx| {
+                let pkg_start = nm_idx + 1;
+                let pkg_len = if components.get(pkg_start).is_some_and(|component| {
+                    matches!(component, Component::Normal(part) if part.to_str().is_some_and(|text| text.starts_with('@')))
+                }) {
+                    2
+                } else {
+                    1
+                };
+                if components.len() < pkg_start + pkg_len {
+                    return false;
+                }
 
-        let subpath_start = pkg_start + pkg_len;
-        if subpath_start >= components.len() {
-            return false;
-        }
+                let package_name = components[pkg_start..pkg_start + pkg_len]
+                    .iter()
+                    .filter_map(|component| match component {
+                        Component::Normal(part) => part.to_str(),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/");
 
-        let relative_path = components[subpath_start..]
-            .iter()
-            .filter_map(|component| match component {
-                Component::Normal(part) => part.to_str(),
-                _ => None,
+                let subpath_start = pkg_start + pkg_len;
+                if subpath_start >= components.len() {
+                    return false;
+                }
+
+                let relative_path = components[subpath_start..]
+                    .iter()
+                    .filter_map(|component| match component {
+                        Component::Normal(part) => part.to_str(),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let Some(runtime_subpath) =
+                    self.declaration_runtime_relative_path(&relative_path)
+                else {
+                    return false;
+                };
+                let mut runtime_subpath = runtime_subpath.trim_start_matches("./").to_string();
+                if runtime_subpath.ends_with("/index.js") {
+                    runtime_subpath.truncate(runtime_subpath.len() - "/index.js".len());
+                } else if runtime_subpath == "index.js" {
+                    runtime_subpath.clear();
+                }
+                if module_specifier == package_name {
+                    if !runtime_subpath.is_empty() {
+                        return false;
+                    }
+
+                    let package_root = components[..subpath_start].iter().fold(
+                        std::path::PathBuf::new(),
+                        |mut path, component| {
+                            path.push(component.as_os_str());
+                            path
+                        },
+                    );
+                    return self
+                        .reverse_export_specifier_for_runtime_path(&package_root, "./index.ts")
+                        .is_some()
+                        || self
+                            .reverse_export_specifier_for_runtime_path(&package_root, "./index.d.ts")
+                            .is_some()
+                        || std::fs::read_to_string(package_root.join("package.json"))
+                            .ok()
+                            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                            .is_none_or(|package_json| package_json.get("exports").is_none());
+                }
+                let candidate = if runtime_subpath.is_empty() {
+                    package_name
+                } else {
+                    format!("{package_name}/{runtime_subpath}")
+                };
+                module_specifier == candidate
             })
-            .collect::<Vec<_>>()
-            .join("/");
-        let Some(runtime_subpath) = self.declaration_runtime_relative_path(&relative_path) else {
-            return false;
-        };
-        let mut runtime_subpath = runtime_subpath.trim_start_matches("./").to_string();
-        if runtime_subpath.ends_with("/index.js") {
-            runtime_subpath.truncate(runtime_subpath.len() - "/index.js".len());
-        } else if runtime_subpath == "index.js" {
-            runtime_subpath.clear();
-        }
-        if module_specifier == package_name {
-            if !runtime_subpath.is_empty() {
-                return false;
-            }
-
-            let package_root = components[..subpath_start].iter().fold(
-                std::path::PathBuf::new(),
-                |mut path, component| {
-                    path.push(component.as_os_str());
-                    path
-                },
-            );
-            return self
-                .reverse_export_specifier_for_runtime_path(&package_root, "./index.ts")
-                .is_some()
-                || self
-                    .reverse_export_specifier_for_runtime_path(&package_root, "./index.d.ts")
-                    .is_some();
-        }
-        let candidate = if runtime_subpath.is_empty() {
-            package_name
-        } else {
-            format!("{package_name}/{runtime_subpath}")
-        };
-        module_specifier == candidate
     }
 
     pub(in crate::declaration_emitter) fn module_export_path_rank(
@@ -1136,7 +1264,6 @@ impl<'a> DeclarationEmitter<'a> {
 
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(printed_type_text) = self.emit_type_node_text(node_idx)
-            && printed_type_text.starts_with("import(\"")
             && let Some(sym_id) = self.find_symbol_for_import_type_text(&printed_type_text)
         {
             if let Some(binder) = self.binder
@@ -1175,8 +1302,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if let Some(identifier) = arena.get_identifier(node) {
-            let skip_direct_identifier_portability =
-                self.is_indexed_access_object_subtree_node(arena, node_idx);
+            let skip_direct_identifier_portability = self
+                .is_indexed_access_object_subtree_node(arena, node_idx)
+                || self.is_namespace_qualifier_node(arena, node_idx);
             let sym_id = self
                 .binder
                 .and_then(|binder| {
@@ -1394,6 +1522,28 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
+    fn is_namespace_qualifier_node(&self, arena: &NodeArena, node_idx: NodeIndex) -> bool {
+        let mut current_idx = node_idx;
+        while let Some(ext) = arena.get_extended(current_idx) {
+            let parent_idx = ext.parent;
+            let Some(parent) = arena.get(parent_idx) else {
+                break;
+            };
+            if let Some(qn) = arena.get_qualified_name(parent)
+                && qn.left == current_idx
+            {
+                return true;
+            }
+            if let Some(access) = arena.get_access_expr(parent)
+                && access.expression == current_idx
+            {
+                return true;
+            }
+            current_idx = parent_idx;
+        }
+        false
+    }
+
     pub(crate) fn emit_non_portable_initializer_declaration_diagnostics(
         &mut self,
         expr_idx: NodeIndex,
@@ -1438,6 +1588,38 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_non_portable_symbol_declaration_diagnostic(sym_id, decl_name, file, pos, length)
     }
 
+    fn type_text_identifier_is_mapped_key_import_member(type_text: &str, start: usize) -> bool {
+        let before_ident = &type_text[..start];
+        let Some(dot_pos) = before_ident.rfind('.') else {
+            return false;
+        };
+        if !before_ident[dot_pos + 1..]
+            .chars()
+            .all(|ch| ch.is_ascii_whitespace())
+        {
+            return false;
+        }
+
+        let before_dot = before_ident[..dot_pos].trim_end();
+        let Some(import_start) = before_dot.rfind("import(") else {
+            return false;
+        };
+        let Some((start_in_candidate, _, tail)) =
+            Self::next_import_type_text(&before_dot[import_start..])
+        else {
+            return false;
+        };
+        if start_in_candidate != 0 || !tail.trim().is_empty() {
+            return false;
+        }
+
+        before_dot[..import_start].trim_end().ends_with(" in")
+    }
+
+    fn type_text_import_starts_mapped_key(type_text: &str, start: usize) -> bool {
+        type_text[..start].trim_end().ends_with(" in")
+    }
+
     pub(crate) fn emit_non_portable_import_type_text_diagnostics(
         &mut self,
         printed_type_text: &str,
@@ -1446,6 +1628,18 @@ impl<'a> DeclarationEmitter<'a> {
         pos: u32,
         length: u32,
     ) -> bool {
+        if let Some((module_specifier, _)) = self.parse_import_type_text(printed_type_text)
+            && !module_specifier.starts_with('.')
+            && !module_specifier.starts_with('/')
+            && let Some(binder) = self.binder
+            && self
+                .matching_module_export_paths(binder, file, &module_specifier)
+                .into_iter()
+                .any(|module_path| !module_path.contains("node_modules"))
+        {
+            return false;
+        }
+
         let Some(sym_id) = self.find_symbol_for_import_type_text(printed_type_text) else {
             if let Some((from_path, type_name)) =
                 self.private_import_type_package_root_reference(printed_type_text)

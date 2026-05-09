@@ -600,6 +600,103 @@ fn discriminant_exclude_any_member_preserved() {
     assert_eq!(narrowed, expected);
 }
 
+#[test]
+fn discriminant_exclude_any_property_fast_single_exclusion_preserved() {
+    let interner = TypeInterner::new();
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member_any = interner.object(vec![
+        PropertyInfo::new(kind, TypeId::ANY),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_a = interner.object(vec![PropertyInfo::new(kind, kind_a)]);
+    let member_b = interner.object(vec![PropertyInfo::new(kind, kind_b)]);
+    let union = interner.union(vec![member_any, member_a, member_b]);
+
+    let ctx = NarrowingContext::new(&interner);
+
+    // The fast single-exclusion path must not treat `any` as proving the
+    // property is always the excluded literal.
+    let narrowed = ctx.narrow_by_excluding_discriminant(union, &[kind], kind_a);
+    let expected = interner.union(vec![member_any, member_b]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn discriminant_exclude_any_property_fast_general_fallback_preserved() {
+    let interner = TypeInterner::new();
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member_any = interner.object(vec![
+        PropertyInfo::new(kind, TypeId::ANY),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_a_number = interner.object(vec![
+        PropertyInfo::new(kind, kind_a),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_a_string = interner.object(vec![
+        PropertyInfo::new(kind, kind_a),
+        PropertyInfo::new(value, TypeId::STRING),
+    ]);
+    let member_b = interner.object(vec![PropertyInfo::new(kind, kind_b)]);
+    let union = interner.union(vec![member_any, member_a_number, member_a_string, member_b]);
+
+    let ctx = NarrowingContext::new(&interner);
+
+    // Multiple concrete exclusions force the fast path's general loop fallback.
+    // That path also needs to preserve any-typed discriminant properties.
+    let narrowed = ctx.narrow_by_excluding_discriminant(union, &[kind], kind_a);
+    let expected = interner.union(vec![member_any, member_b]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn discriminant_index_positive_keeps_any_property_member() {
+    // The index-path positive narrowing (members.len() >= 8) used to bucket a
+    // member with `kind: any` under the `ANY` key, where it was invisible to
+    // literal-value lookups. It should instead match every bucket — just like
+    // a top-level any/unknown member — because `kind: any` can hold any value.
+    let interner = TypeInterner::new();
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+
+    // Build 8 distinct concrete members with literal `kind` discriminants,
+    // plus one member whose `kind` is `any`. Total = 9 (>= 8 triggers index).
+    let kinds: Vec<TypeId> = (0..8)
+        .map(|i| interner.literal_string(&format!("k{i}")))
+        .collect();
+    let mut members: Vec<TypeId> = kinds
+        .iter()
+        .map(|&k| {
+            interner.object(vec![
+                PropertyInfo::new(kind, k),
+                PropertyInfo::new(value, TypeId::NUMBER),
+            ])
+        })
+        .collect();
+    let member_any = interner.object(vec![
+        PropertyInfo::new(kind, TypeId::ANY),
+        PropertyInfo::new(value, TypeId::STRING),
+    ]);
+    members.push(member_any);
+
+    let union = interner.union(members.clone());
+    let ctx = NarrowingContext::new(&interner);
+
+    // Positive narrowing by `kind === "k0"` must include both the literal-
+    // matching member and the `kind: any` member.
+    let narrowed = ctx.narrow_by_discriminant(union, &[kind], kinds[0]);
+    let expected = interner.union(vec![members[0], member_any]);
+    assert_eq!(narrowed, expected);
+}
+
 // =============================================================================
 // Discriminant No-Match Returns Never
 // =============================================================================
@@ -1045,9 +1142,11 @@ fn property_truthiness_narrows_union() {
     let member2 = interner.object(vec![PropertyInfo::new(age, TypeId::NUMBER)]);
     let union = interner.union(vec![member1, member2]);
 
-    // x.name is truthy (only member1 has "name")
+    // x.name is an invalid access for member2, not useful truthiness
+    // evidence. Keep member2 so downstream diagnostics can still report
+    // the missing property branch.
     let narrowed = ctx.narrow_by_property_truthiness(union, &[name], true);
-    assert_eq!(narrowed, member1);
+    assert_eq!(narrowed, union);
 }
 
 #[test]

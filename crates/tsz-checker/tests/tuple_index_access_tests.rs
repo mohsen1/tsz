@@ -5,6 +5,36 @@
 use tsz_checker::test_utils::check_source_diagnostics;
 
 #[test]
+fn readonly_variadic_tuple_to_mutable_variadic_tuple_emits_ts4104() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function f<T extends unknown[]>(m: [...T], r: readonly [...T]) {
+    m = r;
+}
+declare let concrete: [string];
+declare let readonlyConcrete: readonly [string];
+concrete = readonlyConcrete;
+",
+    );
+    let ts4104_messages = diagnostics
+        .iter()
+        .filter(|d| d.code == 4104)
+        .map(|d| d.message_text.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        ts4104_messages.len() >= 2
+            && ts4104_messages
+                .iter()
+                .any(|message| message.contains("readonly [...T]")),
+        "Expected TS4104 for both readonly variadic and concrete tuple assignments, got {ts4104_messages:?}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_type_level_tuple_out_of_bounds_ts2493() {
     let diagnostics = check_source_diagnostics(
         r"
@@ -227,6 +257,79 @@ declare let c: any;
         diagnostics
             .iter()
             .filter(|d| d.code == 2339)
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Regression for `restParameterWithBindingPattern3.ts`: object binding
+/// patterns whose property name is a numeric literal (`{0: a, 3: d}`) on
+/// a tuple type must emit TS2493 for any out-of-bounds index. Equivalent
+/// to element access via `tuple[3]` — both go through the destructuring
+/// path for parameter destructuring, but only the array-binding path was
+/// previously bounds-checked. Object-binding numeric keys had no check.
+#[test]
+fn ts2493_object_binding_pattern_numeric_property_on_tuple_out_of_bounds() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function c(...{0: a, length, 3: d}: [boolean, string, number]) { }
+",
+    );
+    let ts2493_messages: Vec<String> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2493)
+        .map(|d| d.message_text.clone())
+        .collect();
+    assert!(
+        ts2493_messages.iter().any(|m| m.contains("at index '3'")),
+        "Expected TS2493 for out-of-bounds object-binding property '3' on \
+         tuple of length 3, got: {ts2493_messages:?}"
+    );
+}
+
+/// Companion regression: the bounds check is structural (per-tuple), not
+/// keyed off the user's identifier names. Different binding names with a
+/// different out-of-bounds key still surface TS2493 (locks the rule per
+/// CLAUDE.md §25 anti-hardcoding directive).
+#[test]
+fn ts2493_object_binding_pattern_numeric_property_on_tuple_param_name_independent() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function fn(...{2: x, 5: y}: [boolean, string]) { }
+",
+    );
+    let ts2493_count = diagnostics.iter().filter(|d| d.code == 2493).count();
+    assert!(
+        ts2493_count >= 2,
+        "Expected TS2493 for both out-of-bounds keys '2' and '5' on tuple \
+         of length 2, got {}: {:?}",
+        ts2493_count,
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2493)
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Inverse rule: in-bounds numeric properties (and non-numeric keys like
+/// `length`) on a fixed tuple do NOT emit TS2493. This locks that the
+/// new check fires ONLY on out-of-bounds numeric keys.
+#[test]
+fn ts2493_object_binding_pattern_numeric_property_in_bounds_does_not_fire() {
+    let diagnostics = check_source_diagnostics(
+        r"
+function ok(...{0: a, 1: b, 2: c, length}: [boolean, string, number]) { }
+",
+    );
+    let ts2493_count = diagnostics.iter().filter(|d| d.code == 2493).count();
+    assert_eq!(
+        ts2493_count,
+        0,
+        "Did not expect TS2493 for in-bounds numeric properties, got: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2493)
             .map(|d| d.message_text.clone())
             .collect::<Vec<_>>()
     );

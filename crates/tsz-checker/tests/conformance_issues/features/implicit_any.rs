@@ -1,6 +1,27 @@
 use super::super::core::*;
 
 #[test]
+fn test_generic_function_argument_return_context_suppresses_inner_arrow_ts7006() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+const f = <F extends (...args: any[]) => <G>(x: G) => void>(_: F): F => _;
+const a = f(<K extends string>(_: K) => _ => ({}));
+        "#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 for an inner arrow typed by a generic function return context. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts7022_not_emitted_for_destructured_parameter_with_concrete_default_source() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -281,6 +302,161 @@ const value = box({
     assert!(
         has_error(&diagnostics, 7023),
         "Should emit TS7023 on the named property callback.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7022_and_ts7023_emitted_for_nested_call_in_contextual_return() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type ObjectType<Source> = {
+  kind: "object";
+  __source: (source: Source) => void;
+};
+
+type Field<Source, Key extends string> = {
+  __key: (key: Key) => void;
+  __source: (source: Source) => void;
+};
+
+declare const object: <Source>() => <
+  Fields extends {
+    [Key in keyof Fields]: Field<Source, Key & string>;
+  }
+>(config: {
+  name: string;
+  fields: Fields | (() => Fields);
+}) => ObjectType<Source>;
+
+type InferValueFromObjectType<Type extends ObjectType<any>> =
+  Type extends ObjectType<infer Source> ? Source : never;
+
+type FieldResolver<Source, TType extends ObjectType<any>> = (
+  source: Source
+) => InferValueFromObjectType<TType>;
+
+type FieldFuncArgs<Source, Type extends ObjectType<any>> = {
+  type: Type;
+  resolve: FieldResolver<Source, Type>;
+};
+
+declare const field: <Source, Type extends ObjectType<any>, Key extends string>(
+  field: FieldFuncArgs<Source, Type>
+) => Field<Source, Key>;
+
+type Something = { foo: number };
+
+const A = object<Something>()({
+  name: "A",
+  fields: () => ({
+    a: field({
+      type: A,
+      resolve() {
+        return {
+          foo: 100,
+        };
+      },
+    }),
+  }),
+});
+        "#,
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 for the callback-driven circular initializer.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 on the contextual fields callback.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should suppress downstream TS2322 once circularity recovers to any.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts7022_and_ts7023_emitted_for_switch_return_nested_call_in_contextual_return() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type ObjectType<Source> = {
+  kind: "object";
+  __source: (source: Source) => void;
+};
+
+type Field<Source, Key extends string> = {
+  __key: (key: Key) => void;
+  __source: (source: Source) => void;
+};
+
+declare const object: <Source>() => <
+  Fields extends {
+    [Key in keyof Fields]: Field<Source, Key & string>;
+  }
+>(config: {
+  name: string;
+  fields: Fields | (() => Fields);
+}) => ObjectType<Source>;
+
+type InferValueFromObjectType<Type extends ObjectType<any>> =
+  Type extends ObjectType<infer Source> ? Source : never;
+
+type FieldResolver<Source, TType extends ObjectType<any>> = (
+  source: Source
+) => InferValueFromObjectType<TType>;
+
+type FieldFuncArgs<Source, Type extends ObjectType<any>> = {
+  type: Type;
+  resolve: FieldResolver<Source, Type>;
+};
+
+declare const field: <Source, Type extends ObjectType<any>, Key extends string>(
+  field: FieldFuncArgs<Source, Type>
+) => Field<Source, Key>;
+
+type Something = { foo: number };
+
+const A = object<Something>()({
+  name: "A",
+  fields: () => {
+    switch ("a") {
+      default:
+        return {
+          a: field({
+            type: A,
+            resolve() {
+              return {
+                foo: 100,
+              };
+            },
+          }),
+        };
+    }
+  },
+});
+        "#,
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 when the callback-driven circular initializer is returned from a switch clause.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 on the contextual fields callback returned from a switch clause.\nActual errors: {diagnostics:#?}"
     );
 }
 
@@ -803,6 +979,59 @@ function f() {
     assert!(
         !has_error(&diagnostics, 7005),
         "Should NOT emit TS7005 after same-scope array mutation stabilizes the element type.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_evolving_array_push_snapshots_and_branch_merges_match_tsc() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function cond(): boolean;
+
+function f6() {
+    let x;
+    if (cond()) {
+        x = [];
+        x.push(5);
+        x.push("hello");
+    }
+    else {
+        x = [true];
+    }
+    x.push(99);
+}
+
+function f7() {
+    let x = [];
+    x.push(5);
+    let y = x;
+    x.push("hello");
+    y.push("hello");
+}
+        "#,
+        opts,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains("Argument of type '99'")
+                && message.contains("parameter of type 'never'")
+        }),
+        "Expected TS2345 for pushing 99 into the merged boolean[] | (string | number)[] array.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains("Argument of type 'string'")
+                && message.contains("parameter of type 'number'")
+        }),
+        "Expected TS2345 for pushing string into the number[] snapshot.\nActual errors: {diagnostics:#?}"
     );
 }
 

@@ -27,6 +27,7 @@ const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 const DTS_DISCOVERY_CACHE = path.join(CACHE_DIR, 'dts-baseline-index.json');
+const DTS_DISCOVERY_CACHE_VERSION = 2;
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -89,8 +90,10 @@ interface TestCase {
   preserveValueImports: boolean;
   removeComments: boolean;
   stripInternal: boolean;
+  baseUrl?: string;
   outFile?: string;
   outDir?: string;
+  declarationDir?: string;
   rootDir?: string;
   emitDeclarationOnly: boolean;
   declarationMap: boolean;
@@ -126,6 +129,7 @@ interface CacheEntry {
 }
 
 interface DtsDiscoveryEntry {
+  version: number;
   mtimeMs: number;
   size: number;
   hasDts: boolean;
@@ -186,8 +190,10 @@ function getCacheKey(
   preserveValueImports: boolean = false,
   removeComments: boolean = false,
   stripInternal: boolean = false,
+  baseUrl: string = '',
   outFile: string = '',
   outDir: string = '',
+  declarationDir: string = '',
   rootDir: string = '',
   declarationMap: boolean = false,
 ): string {
@@ -240,8 +246,10 @@ function getCacheKey(
     preserveValueImports,
     removeComments,
     stripInternal,
+    baseUrl,
     outFile,
     outDir,
+    declarationDir,
     rootDir,
     declarationMap,
     engineSalt,
@@ -315,7 +323,7 @@ interface ParsedSourceTest {
   links: LinkInput[];
 }
 
-function parseSourceTest(content: string): ParsedSourceTest {
+function parseSourceTest(content: string, defaultSourceFileName?: string): ParsedSourceTest {
   const options: Record<string, unknown> = {};
   const sourceFiles: Array<{ name: string; content: string }> = [];
   const links: LinkInput[] = [];
@@ -387,6 +395,42 @@ function parseSourceTest(content: string): ParsedSourceTest {
 
   flushCurrentFile();
 
+  if (sourceFiles.length === 0 && defaultSourceFileName) {
+    // The first contiguous block of `// @directive` lines at the very top of
+    // the file is the test-harness header. Once any non-directive, non-empty
+    // line appears, subsequent `// @directive`-shaped comments are real source
+    // code (e.g. `// @internal` JSDoc-style annotations) and must be preserved
+    // verbatim. Without this, in-source `// @internal` comments get silently
+    // stripped and tests like `declarationEmitWorkWithInlineComments` see a
+    // different source than tsc did.
+    const directiveRegex = /^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i;
+    const singleFileContent: string[] = [];
+    let inHeader = true;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (inHeader) {
+        if (
+          directiveRegex.test(trimmed)
+          && !/^\/\/\s*@internal\s*$/i.test(trimmed)
+        ) {
+          continue;
+        }
+        if (trimmed === '') {
+          // Blank lines inside the header zone are part of the header until
+          // the first real content line.
+          singleFileContent.push(line);
+          continue;
+        }
+        inHeader = false;
+      }
+      singleFileContent.push(line);
+    }
+    sourceFiles.push({
+      name: defaultSourceFileName,
+      content: singleFileContent.join('\n').trim(),
+    });
+  }
+
   const isEntryCandidate = (file: { name: string; content: string }) => {
     return (
       file.content.length > 0 &&
@@ -447,13 +491,13 @@ async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
     const fullPath = path.join(BASELINES_DIR, file);
     const stat = await fs.promises.stat(fullPath);
     const entry = cached[file];
-    if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
+    if (entry && entry.version === DTS_DISCOVERY_CACHE_VERSION && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
       return { file, hasDts: entry.hasDts };
     }
 
     const content = await readLimit(() => fs.promises.readFile(fullPath, 'utf-8'));
-    const hasDts = /\[\s*[^\]]+\.d\.ts\s*]/i.test(content);
-    updated[file] = { mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
+    const hasDts = parseBaseline(content).dts !== null;
+    updated[file] = { version: DTS_DISCOVERY_CACHE_VERSION, mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
     return { file, hasDts };
   })));
 
@@ -517,7 +561,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       } else {
         try {
           const testFileContent = await readTypeScriptTestFile(baseline.testPath);
-          const parsedSource = parseSourceTest(testFileContent);
+          const parsedSource = parseSourceTest(testFileContent, path.basename(baseline.testPath));
           directives = parsedSource.options;
           if (parsedSource.sourceFiles.length > 0) {
             sourceFiles = parsedSource.sourceFiles;
@@ -556,10 +600,14 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const tsconfigModule = tsconfigOptions.module
       ? parseModule(String(tsconfigOptions.module))
       : undefined;
+    const hasEmbeddedTsconfig = Object.keys(tsconfigOptions).length > 0;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
       : tsconfigModule !== undefined ? tsconfigModule
-      : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
+      // Project-style tsconfig baselines inherit tsc's compiler-option default:
+      // unspecified `module` remains CommonJS, independent of `target`.
+      : hasEmbeddedTsconfig ? parseModule('commonjs')
+      : inferDefaultModule(target);
     const lib = parseLibList(directives.lib) ?? parseLibList(tsconfigOptions.lib);
 
     // TS6: alwaysStrict defaults to true unless explicitly set to false.
@@ -626,7 +674,11 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : directives.rewriterelativeimportextensions === true;
     const isolatedModules = variant.isolatedmodules !== undefined
       ? variant.isolatedmodules === 'true'
-      : directives.isolatedmodules === true;
+      : directives.isolatedmodules === true
+        ? true
+        : typeof tsconfigOptions.isolatedModules === 'boolean'
+          ? (tsconfigOptions.isolatedModules as boolean)
+          : false;
     const importsNotUsedAsValues = typeof directives.importsnotusedasvalues === 'string'
       ? directives.importsnotusedasvalues : undefined;
     const preserveValueImports = directives.preservevalueimports === true;
@@ -640,13 +692,16 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     // only handles `out.js` by default, so we fix up the expected output for
     // custom outFile names (e.g., dummy.js, output.js).
     const outFile = typeof directives.outfile === 'string' ? directives.outfile : undefined;
+    const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
+    const baseUrl = typeof tsconfigOptions.baseUrl === 'string' ? tsconfigOptions.baseUrl : undefined;
     const outDir = typeof tsconfigOptions.outDir === 'string' ? tsconfigOptions.outDir : undefined;
+    const declarationDir = typeof tsconfigOptions.declarationDir === 'string' ? tsconfigOptions.declarationDir : undefined;
     const rootDir = typeof tsconfigOptions.rootDir === 'string' ? tsconfigOptions.rootDir : undefined;
-    if (outFile && outFile !== 'out.js' && baseline.files.has(outFile)) {
-      baseline.js = baseline.files.get(outFile) ?? baseline.js;
-      baseline.jsFileName = outFile;
+    if (normalizedOutFile && normalizedOutFile !== 'out.js' && baseline.files.has(normalizedOutFile)) {
+      baseline.js = baseline.files.get(normalizedOutFile) ?? baseline.js;
+      baseline.jsFileName = normalizedOutFile;
     }
-    const outDtsFile = outFile?.replace(/\.js$/, '.d.ts');
+    const outDtsFile = normalizedOutFile?.replace(/\.js$/, '.d.ts');
     if (outDtsFile && outDtsFile !== 'out.d.ts' && baseline.files.has(outDtsFile)) {
       baseline.dts = baseline.files.get(outDtsFile) ?? baseline.dts;
       baseline.dtsFileName = outDtsFile;
@@ -662,6 +717,38 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       if (baseline.files.has(expectedJsName)) {
         baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
         baseline.jsFileName = expectedJsName;
+      }
+    }
+    if (!outFile && sourceFileName && baseline.jsFileName) {
+      const jsSourceBasenames = new Set(
+        sourceFiles
+          .filter(file => /\.(js|jsx|mjs|cjs)$/.test(file.name))
+          .map(file => path.basename(file.name)),
+      );
+      const expectedJsLooksLikeSourceInput =
+        /\.(js|jsx|mjs|cjs)$/.test(baseline.jsFileName) &&
+        jsSourceBasenames.has(baseline.jsFileName);
+      if (expectedJsLooksLikeSourceInput) {
+        const sourceBase = path.basename(sourceFileName).replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+        const sourceExt = sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
+        const expectedJsExt =
+          sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
+          sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
+          sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
+        const expectedJsName = `${sourceBase}.${expectedJsExt}`;
+        if (baseline.files.has(expectedJsName) && !jsSourceBasenames.has(expectedJsName)) {
+          baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
+          baseline.jsFileName = expectedJsName;
+        } else {
+          for (const [name, fileContent] of baseline.files) {
+            if (!/\.(js|jsx|mjs|cjs)$/.test(name) || jsSourceBasenames.has(path.basename(name))) {
+              continue;
+            }
+            baseline.js = fileContent;
+            baseline.jsFileName = name;
+            break;
+          }
+        }
       }
     }
 
@@ -708,8 +795,10 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       preserveValueImports,
       removeComments,
       stripInternal,
+      baseUrl,
       outFile,
       outDir,
+      declarationDir,
       rootDir,
       emitDeclarationOnly,
       declarationMap,
@@ -723,20 +812,37 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 async function readTypeScriptTestFile(testPath: string): Promise<string> {
   const testFilePath = path.join(TS_DIR, testPath);
   try {
-    return await fs.promises.readFile(testFilePath, 'utf-8');
+    return decodeTypeScriptTestFile(await fs.promises.readFile(testFilePath));
   } catch (readError) {
     try {
       const normalizedPath = testPath.replace(/\\/g, '/');
       const { stdout } = await execFile(
         'git',
         ['-C', TS_DIR, 'show', `HEAD:${normalizedPath}`],
-        { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
+        { encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 },
       );
-      return stdout;
+      return decodeTypeScriptTestFile(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout));
     } catch {
       throw readError;
     }
   }
+}
+
+function decodeTypeScriptTestFile(bytes: Buffer): string {
+  if (bytes.length >= 2) {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+      return bytes.subarray(2).toString('utf16le');
+    }
+    if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+      let text = '';
+      for (let i = 2; i + 1 < bytes.length; i += 2) {
+        text += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
+      }
+      return text;
+    }
+  }
+
+  return bytes.toString('utf8');
 }
 
 // ============================================================================
@@ -839,8 +945,10 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.preserveValueImports,
       testCase.removeComments,
       testCase.stripInternal,
+      testCase.baseUrl ?? '',
       testCase.outFile ?? '',
       testCase.outDir ?? '',
+      testCase.declarationDir ?? '',
       testCase.rootDir ?? '',
       testCase.declarationMap,
     );
@@ -884,8 +992,10 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         preserveValueImports: testCase.preserveValueImports,
         removeComments: testCase.removeComments,
         stripInternal: testCase.stripInternal,
+        baseUrl: testCase.baseUrl,
         outFile: testCase.outFile,
         outDir: testCase.outDir,
+        declarationDir: testCase.declarationDir,
         rootDir: testCase.rootDir,
         declarationMap: testCase.declarationMap,
         sourceFiles: testCase.sourceFiles,

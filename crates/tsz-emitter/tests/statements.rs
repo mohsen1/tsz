@@ -1,3 +1,4 @@
+use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
 use crate::output::printer::{PrintOptions, Printer, lower_and_print};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::ParserState;
@@ -15,6 +16,46 @@ fn parse_and_lower_print(source: &str, opts: PrintOptions) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     lower_and_print(&parser.arena, root, opts).code
+}
+
+fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
+    let output = parse_and_emit_strict_es2015("~< <\n", "a.js");
+    assert_eq!(output.trim_end(), "\"use strict\";\n~< /> <\n;");
+}
+
+#[test]
+fn invalid_jsx_closing_fragment_drops_recovered_slash() {
+    let output = parse_and_emit_strict_es2015("</>;", "a.tsx");
+    assert_eq!(output.trim_end(), "\"use strict\";\n > ;");
+}
+
+#[test]
+fn js_satisfies_binary_expression_is_erased() {
+    let output = parse_and_emit_strict_es2015("var v = undefined satisfies 1;", "a.js");
+    assert_eq!(output.trim_end(), "\"use strict\";\nvar v = undefined;");
+}
+
+#[test]
+fn recovered_regex_close_bracket_slash_tail_emits_slash_statement() {
+    let output = parse_and_emit_strict_es2015("var v = /[]/]/", "a.ts");
+    assert_eq!(output.trim_end(), "\"use strict\";\nvar v = /[]/;\n/;");
 }
 
 /// Case clause with a single non-block statement on the same source line
@@ -1069,6 +1110,40 @@ fn namespace_export_declaration_inline_comment_erased() {
 }
 
 #[test]
+fn declare_prefix_identifiers_keep_recovered_expression_statements() {
+    let source = "declare interfaceX;\ndeclare typeName;\ndeclare className;\ndeclare asyncValue;\ndeclare interface I {}\nconst keep = 1;\n";
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            target: ScriptTarget::ES2020,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    for ident in ["interfaceX", "typeName", "className", "asyncValue"] {
+        let expected = format!("declare;\n{ident};");
+        assert!(
+            output.contains(&expected),
+            "`declare;` expression before `{ident}` should be preserved.\nOutput:\n{output}"
+        );
+    }
+    assert!(
+        !output.contains("interface I"),
+        "true `declare interface` artifact should still be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const keep = 1;"),
+        "following statements should still emit.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_unicode_identifier_initializer_emits_as_statement() {
     let subscript_one = '\u{2081}';
     let source = format!("var a{subscript_one} = \"hello\"; alert(a{subscript_one})");
@@ -1106,6 +1181,67 @@ fn recovered_typeof_member_type_tail_emits_as_statement() {
     assert!(
         output.contains("typeof (this.foo);"),
         "Recovered `.typeof(...)` type tail should emit as a runtime typeof statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn typeof_text_inside_string_literal_type_is_erased() {
+    let source = r#"var a: ".typeof(foo)";"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("var a;"),
+        "String-literal type annotation should erase to a declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("typeof (foo);"),
+        "Recovery must not scan `.typeof(...)` inside string-literal type text.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn valid_typeof_property_call_does_not_emit_extra_statement() {
+    // A method literally named `typeof` is a valid JS property. The emitter must
+    // not treat it as a recovered type-annotation tail and emit a duplicate
+    // `typeof (arg);` statement.
+    let source = r#"const obj = {
+    typeof(value) {
+        return value;
+    }
+};
+const result = obj.typeof("ok");
+result;"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains(r#"obj.typeof("ok")"#),
+        "Valid .typeof() property call should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"typeof ("ok");"#),
+        "Valid .typeof() call must not produce a spurious typeof statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arrow_recovery_ignores_string_literal_initializer() {
+    let source = r#"var x = "async (a): Foo = await =>";"#;
+
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains(r#"var x = "async (a): Foo = await =>";"#),
+        "String literal initializer should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(", Foo"),
+        "Recovery must not add a return-type binding from string contents.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{\n}"),
+        "Recovery must not emit an extra block from string contents.\nOutput:\n{output}"
     );
 }
 

@@ -4,68 +4,14 @@
 //! Verifies that @type annotations are used for type checking initializers
 //! and that @type function types provide parameter types in JS files.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::context::LibContext;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{check_source, check_source_with_libs, load_default_lib_files};
 
+#[derive(Debug)]
 struct Diag {
     code: u32,
-}
-
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
-        "es5.d.ts",
-        "es2015.d.ts",
-        "es2015.core.d.ts",
-        "es2015.collection.d.ts",
-        "es2015.iterable.d.ts",
-        "es2015.generator.d.ts",
-        "es2015.promise.d.ts",
-        "es2015.proxy.d.ts",
-        "es2015.reflect.d.ts",
-        "es2015.symbol.d.ts",
-        "es2015.symbol.wellknown.d.ts",
-        "dom.d.ts",
-        "dom.generated.d.ts",
-        "dom.iterable.d.ts",
-        "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                lib_files.push(Arc::new(LibFile::from_source(
-                    file_name.to_string(),
-                    content,
-                )));
-                break;
-            }
-        }
-    }
-
-    lib_files
+    message_text: String,
 }
 
 fn check_js_internal(source: &str, with_libs: bool) -> Vec<Diag> {
@@ -75,53 +21,17 @@ fn check_js_internal(source: &str, with_libs: bool) -> Vec<Diag> {
         strict: true,
         ..CheckerOptions::default()
     };
-
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let lib_files = if with_libs {
-        load_lib_files_for_test()
+    let libs = if with_libs {
+        load_default_lib_files()
     } else {
         Vec::new()
     };
-
-    let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), root);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-    }
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-
-    if lib_files.is_empty() {
-        checker.ctx.set_lib_contexts(Vec::new());
-    } else {
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d: &Diagnostic| Diag { code: d.code })
+    check_source_with_libs(source, "test.js", options, &libs)
+        .into_iter()
+        .map(|d| Diag {
+            code: d.code,
+            message_text: d.message_text,
+        })
         .collect()
 }
 
@@ -133,6 +43,29 @@ fn check_js_with_libs(source: &str) -> Vec<Diag> {
     check_js_internal(source, true)
 }
 
+#[test]
+fn test_jsdoc_unknown_intrinsic_does_not_emit_ts2304() {
+    let source = r#"
+/** @type {unknown} */
+let x;
+
+/** @type {{ value: unknown, cb: function(unknown): unknown }} */
+let y;
+
+/** @type {Record<string, unknown>} */
+let z;
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let ts2304_unknown: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2304 && diag.message_text.contains("'unknown'"))
+        .collect();
+    assert!(
+        ts2304_unknown.is_empty(),
+        "JSDoc unknown should resolve as an intrinsic, got: {diagnostics:#?}"
+    );
+}
+
 fn check_js_with_exact_optional(source: &str) -> Vec<Diag> {
     let options = CheckerOptions {
         allow_js: true,
@@ -141,28 +74,12 @@ fn check_js_with_exact_optional(source: &str) -> Vec<Diag> {
         exact_optional_property_types: true,
         ..CheckerOptions::default()
     };
-
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d: &Diagnostic| Diag { code: d.code })
+    check_source(source, "test.js", options)
+        .into_iter()
+        .map(|d| Diag {
+            code: d.code,
+            message_text: d.message_text,
+        })
         .collect()
 }
 
@@ -181,6 +98,27 @@ class A {
         ts2322 >= 1,
         "Expected TS2322 for number assigned to boolean @type field, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn jsdoc_numeric_literal_type_accepts_exponent_syntax() {
+    let source = r#"
+// @ts-check
+/** @type {1e3} */
+let bad = 999;
+"#;
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2322 && d.message_text.contains("'999'") && d.message_text.contains("'1000'")
+        }),
+        "Expected TS2322 from JSDoc numeric literal type 1e3, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -238,6 +176,39 @@ x(1);
     );
 }
 
+#[test]
+fn test_jsdoc_typedef_before_paren_does_not_suppress_implicit_any() {
+    let source = r#"
+/** @typedef {object} Alias */
+({ fn: x => x });
+"#;
+    let diagnostics = check_js(source);
+    let ts7006 = diagnostics.iter().filter(|d| d.code == 7006).count();
+    assert!(
+        ts7006 >= 1,
+        "Expected TS7006 for @typedef before parenthesized expression, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_inline_jsdoc_typedef_does_not_type_parameter() {
+    let source = r#"
+function f(/** @typedef {string} Alias */ value) {
+    return value;
+}
+
+f(1);
+"#;
+    let diagnostics = check_js(source);
+    let ts7006 = diagnostics.iter().filter(|d| d.code == 7006).count();
+    assert!(
+        ts7006 >= 1,
+        "Expected TS7006 for parameter with inline @typedef, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// JSDoc `@type {Object<K, V>}` is a record-shaped indexed type; it must not
 /// emit TS2315 ("Type 'Object' is not generic") in JS files even though the
 /// lib `interface Object` declaration has no type parameters.
@@ -255,6 +226,51 @@ tagCounts["x"] = 1;
         0,
         "Object<K, V> must not emit TS2315 in JS, got codes: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_dot_generic_array_resolves_base_name() {
+    let source = r#"
+/**
+ * @param {Array.<string>} files
+ */
+function load(files) {
+    files.push(1);
+}
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let unresolved_array: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("Array.<string>"))
+        .collect();
+    assert!(
+        unresolved_array.is_empty(),
+        "JSDoc Array.<T> should resolve through Array, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345),
+        "Expected Array.<string> to type the parameter and reject push(1), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_object_record_preserves_nested_value_type() {
+    let source = r#"
+// @ts-check
+
+/** @type {Object.<string, Object.<string, number>>} */
+const table = {
+  row: {
+    count: "wrong",
+  },
+};
+"#;
+    let diagnostics = check_js(source);
+    let codes = diagnostics.iter().map(|d| d.code).collect::<Vec<_>>();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for nested Object value type, got: {codes:?}"
     );
 }
 
@@ -507,6 +523,84 @@ var props = {};
     );
 }
 
+#[test]
+fn test_jsdoc_type_predicate_cast_emits_ts1228() {
+    let source = r#"
+// @ts-check
+/** @type {number | string} */
+var value;
+if (/** @type {value is string} */ (value === undefined)) {
+}
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1228),
+        "Expected TS1228 for a type predicate in a JSDoc @type cast, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_any_cast_string_concat_redeclaration_no_ts2403() {
+    let source = r#"
+// @ts-check
+/** @type {string} */
+var s;
+var s = "" + /** @type {*} */ (4);
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2403),
+        "Did not expect TS2403 when string concatenation with a JSDoc-any cast redeclares a string var, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_js_constructor_instance_assignment_source_uses_constructor_name() {
+    let source = r#"
+// @ts-check
+class SomeBase {
+    constructor() {
+        this.p = 42;
+    }
+}
+class SomeDerived extends SomeBase {
+    constructor() {
+        super();
+        this.x = 42;
+    }
+}
+function SomeFakeClass() {
+    /** @type {string|number} */
+    this.p = "bar";
+}
+var someBase = new SomeBase();
+var someDerived = new SomeDerived();
+var someFakeClass = new SomeFakeClass();
+someFakeClass = someBase;
+someFakeClass = someDerived;
+someBase = someFakeClass;
+"#;
+    let diagnostics = check_js(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2322 for assigning a checked-JS constructor instance to SomeBase, got: {:?}",
+                diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type 'SomeFakeClass' is not assignable to type 'SomeBase'."),
+        "TS2322 should use the constructor instance source name, got: {}",
+        ts2322.message_text
+    );
+}
+
 /// JS function declarations annotated with a generic `@type {<T>(...) => T}`
 /// must inherit the contextual type parameters — JS syntax has no way to
 /// declare `<T>` on a function declaration, so without this inheritance the
@@ -557,6 +651,35 @@ inJsArrow(2);
         0,
         "Expected no TS2345 for call on generic JSDoc @type arrow, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_jsdoc_type_tag_arrow_generic_constraint_accepts_tab_whitespace() {
+    let source = "\
+// @ts-check
+
+/** @type {<T extends\tstring>(value: T) => T} */
+const echo = (value) => value;
+
+echo(123);
+";
+    let diagnostics = check_js(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2345 for number argument against tab-whitespace JSDoc generic constraint, got: {:?}",
+                diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+            )
+        });
+    assert!(
+        ts2345
+            .message_text
+            .contains("Argument of type 'number' is not assignable to parameter of type 'string'."),
+        "TS2345 should report the string constraint, got: {}",
+        ts2345.message_text
     );
 }
 
@@ -640,37 +763,14 @@ const a = { value: undefined };
         exact_optional_property_types: true,
         ..CheckerOptions::default()
     };
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
+    let diagnostics = check_source(source, "test.js", options);
 
-    let ts2375: Vec<&Diagnostic> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2375)
-        .collect();
+    let ts2375: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2375).collect();
     assert_eq!(
         ts2375.len(),
         1,
         "Expected exactly one TS2375 for the typedef-aliased target, got: {:?}",
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .map(|d| d.code)
-            .collect::<Vec<_>>()
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
     let msg = &ts2375[0].message_text;
     assert!(
@@ -703,37 +803,14 @@ const b = { flag: undefined };
         exact_optional_property_types: true,
         ..CheckerOptions::default()
     };
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
+    let diagnostics = check_source(source, "test.js", options);
 
-    let ts2375: Vec<&Diagnostic> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2375)
-        .collect();
+    let ts2375: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2375).collect();
     assert_eq!(
         ts2375.len(),
         1,
         "Expected exactly one TS2375 for the inline-typedef alias target, got: {:?}",
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .map(|d| d.code)
-            .collect::<Vec<_>>()
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
     let msg = &ts2375[0].message_text;
     assert!(

@@ -5,9 +5,39 @@ use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
+    text.strip_prefix(keyword).is_some_and(|tail| {
+        tail.chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+    })
+}
+
 impl<'a> Printer<'a> {
     pub(super) const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
+    }
+
+    pub(in crate::emitter) fn has_recovered_accessor_modifier(&self, node: &Node) -> bool {
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let mut end = std::cmp::min(node.pos as usize, source_text.len());
+        let bytes = source_text.as_bytes();
+
+        while end > 0 && matches!(bytes[end - 1], b' ' | b'\t') {
+            end -= 1;
+        }
+        if end == 0 || matches!(bytes[end - 1], b'\n' | b'\r') {
+            return false;
+        }
+
+        let mut start = end;
+        while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
+            start -= 1;
+        }
+
+        &source_text[start..end] == "accessor"
     }
 
     // =========================================================================
@@ -77,12 +107,15 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit a node as a declaration name (suppress namespace qualification).
+    /// Emit a node as a declaration name (suppress namespace/import qualification).
     pub(super) fn emit_decl_name(&mut self, idx: NodeIndex) {
-        let prev = self.suppress_ns_qualification;
+        let prev_ns = self.suppress_ns_qualification;
+        let prev_cjs_import = self.suppress_commonjs_named_import_substitution;
         self.suppress_ns_qualification = true;
+        self.suppress_commonjs_named_import_substitution = true;
         self.emit(idx);
-        self.suppress_ns_qualification = prev;
+        self.suppress_commonjs_named_import_substitution = prev_cjs_import;
+        self.suppress_ns_qualification = prev_ns;
     }
 
     /// Write a single character.
@@ -97,11 +130,23 @@ impl<'a> Printer<'a> {
     }
 
     /// Write a runtime helper call name (e.g. `__awaiter`).
-    /// When `importHelpers` is active and the module is CJS, this prefixes with `tslib_1.`.
+    /// When `importHelpers` is active and the module is CJS, this prefixes with
+    /// the per-file collision-free `tslib` import binding.
     /// For ESM with importHelpers, the helpers are imported directly so no prefix is needed.
+    /// If the helper was renamed at the import site (e.g., `__decorate as __decorate_1`)
+    /// because of a local-identifier collision, write the alias instead.
     pub(super) fn write_helper(&mut self, name: &str) {
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
-            self.write("tslib_1.");
+            let binding = self.commonjs_tslib_import_binding.clone();
+            self.write(&binding);
+            self.write(".");
+            self.write(name);
+            return;
+        }
+        if let Some(alias) = self.helper_import_aliases.get(name) {
+            let alias_owned = alias.clone();
+            self.write(&alias_owned);
+            return;
         }
         self.write(name);
     }
@@ -453,7 +498,9 @@ impl<'a> Printer<'a> {
         let saved_preallocated_logical_value_temps =
             std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
         let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
+        let saved_block_scoped_private_temps = std::mem::take(&mut self.block_scoped_private_temps);
         let saved_value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
+        let saved_for_of_temps = std::mem::take(&mut self.hoisted_for_of_temps);
         self.temp_scope_stack.push(super::TempScopeState {
             temp_var_counter: saved_counter,
             generated_temp_names: saved_names,
@@ -463,6 +510,8 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
             hoisted_assignment_value_temps: saved_value_temps,
             hoisted_assignment_temps: saved_hoisted,
+            block_scoped_private_temps: saved_block_scoped_private_temps,
+            hoisted_for_of_temps: saved_for_of_temps,
         });
         self.ctx.destructuring_state.temp_var_counter = 0;
         self.first_for_of_emitted = false;
@@ -480,6 +529,8 @@ impl<'a> Printer<'a> {
                 state.preallocated_logical_assignment_value_temps;
             self.hoisted_assignment_value_temps = state.hoisted_assignment_value_temps;
             self.hoisted_assignment_temps = state.hoisted_assignment_temps;
+            self.block_scoped_private_temps = state.block_scoped_private_temps;
+            self.hoisted_for_of_temps = state.hoisted_for_of_temps;
         }
     }
 
@@ -887,6 +938,18 @@ impl<'a> Printer<'a> {
 
         if let Some(expr) = self.arena.get_expr_type_args(node) {
             // ExpressionWithTypeArguments wrapper.
+            if self
+                .arena
+                .get(expr.expression)
+                .is_some_and(|inner| inner.is_identifier())
+                && self.get_identifier_text_idx(expr.expression) == "await"
+                && let Some(ref type_args) = expr.type_arguments
+                && let Some(&first_type_arg) = type_args.nodes.first()
+            {
+                self.emit(first_type_arg);
+                return;
+            }
+
             // When the inner expression is an optional chain (A?.B) and target < ES2020,
             // the chain is lowered to a conditional expression that needs parens in extends.
             let needs_parens = self.heritage_expr_needs_optional_chain_parens(expr.expression);
@@ -937,6 +1000,12 @@ impl<'a> Printer<'a> {
         let Some(name) = self.arena.identifier_text_owned(idx) else {
             return false;
         };
+        if self
+            .namespace_current_class_fn_enum_names
+            .contains(name.as_str())
+        {
+            return false;
+        }
 
         let namespace_matches = |namespace: &String| {
             namespace == &parent
@@ -1006,7 +1075,8 @@ impl<'a> Printer<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     self.arena
                         .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
-                        || func.body.is_none()
+                        || (func.body.is_none()
+                            && !self.has_recovered_declaration_trailing_comma(node))
                 } else {
                     false
                 }
@@ -1033,9 +1103,13 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
-                    self.arena
+                    if self
+                        .arena
                         .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-                        || !self.is_instantiated_module(module.body)
+                    {
+                        return !self.is_recovered_anonymous_declare_module(module);
+                    }
+                    !self.is_instantiated_module(module.body)
                 } else {
                     false
                 }
@@ -1116,6 +1190,9 @@ impl<'a> Printer<'a> {
                 let Some(import_data) = self.arena.get_import_decl(node) else {
                     return false;
                 };
+                if self.recovered_module_syntax_block_depth > 0 {
+                    return false;
+                }
                 let Some(clause_node) = self.arena.get(import_data.import_clause) else {
                     return false;
                 };
@@ -1210,6 +1287,9 @@ impl<'a> Printer<'a> {
                             module_node.kind == SyntaxKind::StringLiteral as u16
                                 || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                         });
+                if self.recovered_module_syntax_block_depth > 0 {
+                    return !is_external;
+                }
                 // TS1147: import = require() inside a namespace is always invalid;
                 // tsc erases these regardless of usage.
                 if is_external && self.in_namespace_iife {
@@ -1270,6 +1350,7 @@ impl<'a> Printer<'a> {
                 is_es_module_output
                     && self.function_scope_depth == 0
                     && !self.in_namespace_iife
+                    && self.recovered_module_syntax_block_depth == 0
                     && self
                         .arena
                         .get_export_assignment(node)
@@ -1293,6 +1374,41 @@ impl<'a> Printer<'a> {
             }
             _ => false,
         }
+    }
+
+    pub(in crate::emitter) fn is_recovered_anonymous_declare_module(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> bool {
+        self.arena
+            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            && self.get_identifier_text_idx(module.name).is_empty()
+            && self
+                .arena
+                .get(module.body)
+                .is_some_and(|body| body.kind == syntax_kind_ext::MODULE_BLOCK)
+    }
+
+    pub(super) fn has_recovered_declaration_trailing_comma(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        if start < end && text[start..end].trim_end().ends_with(',') {
+            return true;
+        }
+
+        let bytes = text.as_bytes();
+        let mut pos = end;
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b',' => return true,
+                b' ' | b'\t' => pos += 1,
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Check if a `declare;` expression statement is an artifact of the parser not
@@ -1329,26 +1445,32 @@ impl<'a> Printer<'a> {
         if pos >= bytes.len() || bytes[pos] == b'\n' || bytes[pos] == b'\r' || bytes[pos] == b';' {
             return false;
         }
-        // Check if the next token is a keyword that `declare` should modify
+        // Check if the next token is a keyword that `declare` should modify.
+        // Prefix matches such as `interfaceX` are ordinary identifiers and must
+        // keep the preceding `declare;` expression in recovery emit.
         let remaining = &text[pos..];
-        remaining.starts_with("import")
-            || remaining.starts_with("export")
-            || remaining.starts_with("declare")
-            || remaining.starts_with("function")
-            || remaining.starts_with("class")
-            || remaining.starts_with("abstract")
-            || remaining.starts_with("interface")
-            || remaining.starts_with("type")
-            || remaining.starts_with("enum")
-            || remaining.starts_with("namespace")
-            || remaining.starts_with("module")
-            || remaining.starts_with("var")
-            || remaining.starts_with("let")
-            || remaining.starts_with("const")
-            || remaining.starts_with("async")
-            || remaining.starts_with("await")
-            || remaining.starts_with("using")
-            || remaining.starts_with("global")
+        [
+            "import",
+            "export",
+            "declare",
+            "function",
+            "class",
+            "abstract",
+            "interface",
+            "type",
+            "enum",
+            "namespace",
+            "module",
+            "var",
+            "let",
+            "const",
+            "async",
+            "await",
+            "using",
+            "global",
+        ]
+        .iter()
+        .any(|keyword| starts_with_keyword_token(remaining, keyword))
     }
 
     /// Check if a module/namespace has any value-producing (instantiated) members.

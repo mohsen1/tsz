@@ -16,7 +16,7 @@ use crate::types::{
     IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
 };
 use crate::utils;
-use crate::visitor::{application_id, object_shape_id};
+use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -36,6 +36,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let app_id = application_id(self.interner, type_id)?;
         let app = self.interner.type_application(app_id);
         app.args.first().copied()
+    }
+
+    fn shape_or_receiver_requires_declared_index_signature(
+        &self,
+        shape: &ObjectShape,
+        receiver: Option<TypeId>,
+    ) -> bool {
+        let is_named_non_enum = |shape: &ObjectShape| {
+            shape.symbol.is_some() && !shape.flags.contains(ObjectFlags::ENUM_NAMESPACE)
+        };
+        if is_named_non_enum(shape) {
+            return true;
+        }
+
+        let Some(receiver) = receiver else {
+            return false;
+        };
+
+        let receiver_shape = object_with_index_shape_id(self.interner, receiver).or_else(|| {
+            let app_id = application_id(self.interner, receiver)?;
+            let app = self.interner.type_application(app_id);
+            object_with_index_shape_id(self.interner, app.base)
+        });
+
+        receiver_shape
+            .map(|shape_id| self.interner.object_shape(shape_id))
+            .is_some_and(|shape| is_named_non_enum(&shape))
     }
 
     fn has_compatible_symbol_iterator_methods(
@@ -488,6 +515,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // apply to recursive structural comparisons of property types.
         let prev_in_property_check = self.in_property_check;
         self.in_property_check = true;
+        let generic_args_start = self.instantiated_generic_method_args.len();
+        if allow_bivariant {
+            self.extend_instantiated_generic_method_args(source_receiver);
+            self.extend_instantiated_generic_method_args(target_receiver);
+        }
         let result = self.check_property_types(
             source,
             target,
@@ -497,8 +529,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             target_read,
             allow_bivariant,
         );
+        self.instantiated_generic_method_args
+            .truncate(generic_args_start);
         self.in_property_check = prev_in_property_check;
         result
+    }
+
+    fn extend_instantiated_generic_method_args(&mut self, receiver: Option<TypeId>) {
+        let Some(receiver) = receiver else {
+            return;
+        };
+        let application = match self.interner.lookup(receiver) {
+            Some(crate::types::TypeData::Application(app_id)) => Some(app_id),
+            _ => self.interner.get_display_alias(receiver).and_then(|alias| {
+                match self.interner.lookup(alias) {
+                    Some(crate::types::TypeData::Application(app_id)) => Some(app_id),
+                    _ => None,
+                }
+            }),
+        };
+
+        if let Some(app_id) = application {
+            let app = self.interner.type_application(app_id);
+            self.instantiated_generic_method_args
+                .extend(app.args.iter().copied());
+        }
     }
 
     /// Inner property type comparison with `in_property_check` already set.
@@ -868,7 +923,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // for anonymous object types and enum namespaces. Named class/interface
                 // instance types must declare a real number/string index signature.
                 // Check if source is a named type that ISN'T an enum namespace.
-                if source.symbol.is_some() && !source.flags.contains(ObjectFlags::ENUM_NAMESPACE) {
+                if self.shape_or_receiver_requires_declared_index_signature(source, source_receiver)
+                {
                     return SubtypeResult::False;
                 }
 
@@ -1246,8 +1302,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // vs `{ [k: number]: string }` fails on `string | undefined <: string`).
             // For STRING index signatures, tsc strips the implicit `| undefined`
             // so `{ b?: number }` is assignable to `{ [k: string]: number }`.
+            //
+            // But when the property type is itself `undefined` (e.g.
+            // `k1?: undefined`), stripping yields `never`, which is
+            // vacuously assignable to anything and silences a real
+            // mismatch. Use the original property type in that case so
+            // the check still fires (tsc emits TS2322 for
+            // `{ k1?: undefined }` against `{ [key: string]: string }`).
             let string_prop_type = if prop.optional {
-                crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+                let stripped =
+                    crate::narrowing::utils::remove_undefined(self.interner, prop.type_id);
+                if stripped == TypeId::NEVER {
+                    prop.type_id
+                } else {
+                    stripped
+                }
             } else {
                 prop.type_id
             };

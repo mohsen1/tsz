@@ -187,7 +187,7 @@ fn lib_loader_clear_cache_resets_size() {
 /// case so future refactors don't accidentally re-include it.
 #[test]
 fn is_es2015_plus_type_excludes_promise_like() {
-    // PromiseLike is in ES2015_PLUS_TYPES but explicitly returns false.
+    // PromiseLike should follow regular unresolved-name behavior (TS2304).
     assert!(!is_es2015_plus_type("PromiseLike"));
 
     // Sibling Promise-family entries still report true.

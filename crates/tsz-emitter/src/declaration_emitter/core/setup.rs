@@ -47,6 +47,9 @@ impl<'a> DeclarationEmitter<'a> {
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
             enclosing_namespace_symbol: None,
+            current_namespace_self_import_alias: None,
+            current_namespace_self_export_names: FxHashSet::default(),
+            current_namespace_shadowed_default_name: None,
             inside_non_ambient_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
@@ -141,6 +144,9 @@ impl<'a> DeclarationEmitter<'a> {
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
             enclosing_namespace_symbol: None,
+            current_namespace_self_import_alias: None,
+            current_namespace_self_export_names: FxHashSet::default(),
+            current_namespace_shadowed_default_name: None,
             inside_non_ambient_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
@@ -204,6 +210,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_map_state = Some(SourceMapState {
             output_name: output_name.to_string(),
             source_name: source_name.to_string(),
+            include_sources_content: true,
+        });
+    }
+
+    pub fn enable_source_map_without_sources_content(
+        &mut self,
+        output_name: &str,
+        source_name: &str,
+    ) {
+        self.source_map_state = Some(SourceMapState {
+            output_name: output_name.to_string(),
+            source_name: source_name.to_string(),
+            include_sources_content: false,
         });
     }
 

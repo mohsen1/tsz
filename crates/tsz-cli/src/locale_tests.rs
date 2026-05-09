@@ -49,8 +49,27 @@ fn test_load_german_locale() {
 }
 
 #[test]
-fn test_get_message_returns_fallback_for_borrowed_api_even_when_translation_exists() {
+fn test_get_message_returns_translation_when_available() {
     let locale = LocaleMessages::load("ja").expect("ja locale should load");
+    let fallback = "Cannot find name '{0}'.";
+
+    let message = locale.get_message(2304, fallback);
+    assert_ne!(message, fallback);
+    assert!(message.contains("名前"));
+    assert_eq!(message, locale.get_message_owned(2304, fallback).as_str());
+}
+
+#[test]
+fn test_get_message_returns_fallback_when_translation_missing() {
+    let locale = LocaleMessages::load("ja").expect("ja locale should load");
+    let fallback = "Unknown error";
+
+    assert_eq!(locale.get_message(99999, fallback), fallback);
+}
+
+#[test]
+fn test_get_message_returns_fallback_for_default_locale() {
+    let locale = LocaleMessages::default();
     let fallback = "Cannot find name '{0}'.";
 
     assert_eq!(locale.get_message(2304, fallback), fallback);
@@ -105,6 +124,30 @@ fn test_substitute_params_from_english_replaces_placeholders_in_order() {
     assert_eq!(
         substituted,
         "型 'string' を型 'number' に割り当てることはできません。"
+    );
+}
+
+#[test]
+fn test_substitute_params_from_english_replaces_unquoted_numeric_placeholders() {
+    let template = "{0} Argumente wurden erwartet, empfangen wurden aber {1}.";
+    let english = "Expected 1 arguments, but got 0.";
+    let substituted = substitute_params_from_english(2554, template, english);
+
+    assert_eq!(
+        substituted,
+        "1 Argumente wurden erwartet, empfangen wurden aber 0."
+    );
+}
+
+#[test]
+fn test_substitute_params_from_english_replaces_bare_template_placeholders() {
+    let template = "Importiert ueber {0} aus Datei '{1}'";
+    let english = "Imported via packageJson from file '/tmp/index.ts'";
+    let substituted = substitute_params_from_english(1393, template, english);
+
+    assert_eq!(
+        substituted,
+        "Importiert ueber packageJson aus Datei '/tmp/index.ts'"
     );
 }
 

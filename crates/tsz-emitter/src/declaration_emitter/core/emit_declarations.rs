@@ -100,6 +100,19 @@ impl<'a> DeclarationEmitter<'a> {
             self.retain_synthetic_class_extends_alias_dependencies_in_statements(
                 &source_file.statements,
             );
+            self.retain_export_default_expression_type_dependencies_in_statements(
+                &source_file.statements,
+            );
+            self.retain_synthetic_function_return_dependencies_in_statements(
+                &source_file.statements,
+            );
+            self.retain_synthetic_variable_declaration_dependencies_in_statements(
+                &source_file.statements,
+            );
+            self.retain_asserted_class_property_type_dependencies_in_statements(
+                &source_file.statements,
+            );
+            self.retain_imported_static_call_dependencies_in_statements(&source_file.statements);
         }
 
         // Prepare aliases and build the import plan before emitting anything
@@ -289,6 +302,15 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;
                 };
+                // Function declarations whose JS-named-export is folded into
+                // an `export { foo }` statement are emitted at the export
+                // statement's source position via the unfold path. Hoisting
+                // them to the top would put them before sibling inline-
+                // exported declarations (`export const __esModule = false`)
+                // and produce an order that disagrees with tsc.
+                if self.js_deferred_named_export_statements.contains(&stmt_idx) {
+                    continue;
+                }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                     self.arena.get_function(stmt_node).is_some_and(|func| {
                         self.arena
@@ -311,6 +333,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        let mut deferred_js_import_declarations = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             if let Some(members) = nested_module_export_namespaces.get(&stmt_idx) {
                 if let Some((root_name, _)) = self.js_module_exports_property_assignment(stmt_idx) {
@@ -368,6 +391,20 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
+            if self.source_is_js_file
+                && self
+                    .arena
+                    .get(stmt_idx)
+                    .is_some_and(|stmt_node| stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION)
+                && self
+                    .arena
+                    .get(stmt_idx)
+                    .and_then(|stmt_node| self.arena.get_import_decl(stmt_node))
+                    .is_some_and(|import| import.import_clause.is_some())
+            {
+                deferred_js_import_declarations.push(stmt_idx);
+                continue;
+            }
             self.emit_statement(stmt_idx);
         }
         for &stmt_idx in &source_file.statements.nodes {
@@ -375,6 +412,11 @@ impl<'a> DeclarationEmitter<'a> {
                 && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
             {
                 self.emit_statement(stmt_idx);
+            }
+        }
+        for import_idx in deferred_js_import_declarations {
+            if self.emit_deferred_js_import_declaration(import_idx) {
+                self.emitted_module_indicator = true;
             }
         }
 
@@ -405,90 +447,113 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        self.writer.get_output().to_string()
-    }
-
-    /// Emits detached copyright comments (`/*! ... */`) at the top of the .d.ts file.
-    ///
-    /// TSC preserves `/*!` comments (copyright notices) at the very start of the file
-    /// in declaration output, even when `--removeComments` is set.
-    pub(in crate::declaration_emitter) fn emit_detached_copyright_comments(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        // Find the position of the first statement
-        let first_stmt_pos = source_file
-            .statements
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map(|n| n.pos);
-
-        for comment in &source_file.comments {
-            // Only consider comments that appear before the first statement
-            if let Some(stmt_pos) = first_stmt_pos
-                && comment.pos >= stmt_pos
-            {
-                break;
-            }
-
-            // Only preserve /*! ... */ copyright comments
-            if !comment.is_multi_line {
+        let mut output = self.writer.get_output().to_string();
+        for line in source_file.text.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("import ") else {
                 continue;
-            }
-            let text = comment.get_text(&source_file.text);
-            if !text.starts_with("/*!") {
+            };
+            let Some(named_start) = rest.find('{') else {
                 continue;
-            }
-
-            self.write(text);
-            self.write_line();
-        }
-    }
-
-    /// Emits triple-slash directives at the top of the .d.ts file.
-    ///
-    /// TypeScript uses triple-slash directives for:
-    /// - File references: `/// <reference path="other.ts" />`
-    /// - Type references: `/// <reference types="node" />`
-    /// - Lib references: `/// <reference lib="es2015" />`
-    /// - AMD directives: `/// <amd-module />`, `/// <amd-dependency />`
-    ///
-    /// These must appear at the very top of the file, before any imports or declarations.
-    pub(in crate::declaration_emitter) fn emit_triple_slash_directives(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        for comment in &source_file.comments {
-            let text = &source_file.text[comment.pos as usize..comment.end as usize];
-
-            // Triple-slash directives start with ///
-            if let Some(stripped) = text.strip_prefix("///") {
-                let trimmed = stripped.trim_start();
-
-                // Preserve `<amd-module>` and `<amd-dependency>` directives.
-                // Also preserve `<reference>` directives that have `preserve="true"`.
-                let should_emit = trimmed.starts_with("<amd-module")
-                    || trimmed.starts_with("<amd-dependency")
-                    || (trimmed.starts_with("<reference") && trimmed.contains("preserve=\"true\""));
-
-                if should_emit {
-                    // Normalize spacing to match tsc:
-                    // 1. Ensure space after `///`: `///<reference` → `/// <reference`
-                    // 2. Ensure space before `/>`: `/>` → ` />`
-                    let mut normalized = if !stripped.starts_with(' ') {
-                        format!("/// {}", stripped.trim_start())
-                    } else {
-                        text.to_string()
-                    };
-                    if normalized.ends_with("/>") && !normalized.ends_with(" />") {
-                        let base = &normalized[..normalized.len() - 2];
-                        normalized = format!("{base} />");
-                    }
-                    self.write(&normalized);
-                    self.write_line();
+            };
+            let Some(named_end) = rest[named_start + 1..].find('}') else {
+                continue;
+            };
+            let named = &rest[named_start + 1..named_start + 1 + named_end];
+            let Some((_, module_part)) =
+                rest[named_start + 1 + named_end + 1..].split_once(" from ")
+            else {
+                continue;
+            };
+            let module = module_part.trim().trim_end_matches(';').trim();
+            for specifier in named.split(',') {
+                let import_specifier = specifier.trim();
+                let name = import_specifier
+                    .split_once(" as ")
+                    .map_or(import_specifier, |(_, alias)| alias.trim());
+                if name.is_empty() {
+                    continue;
+                }
+                let import_line = format!("import {{ {import_specifier} }} from {module};");
+                if !output.contains(&import_line) && output.contains(&format!(": {name}<")) {
+                    output.insert_str(0, &(import_line + "\n"));
                 }
             }
+        }
+        output = Self::prune_unused_named_import_specifiers_from_output(&output);
+        output
+    }
+
+    fn prune_unused_named_import_specifiers_from_output(output: &str) -> String {
+        let lines = output.lines().collect::<Vec<_>>();
+        let mut changed = false;
+        let mut rewritten = Vec::with_capacity(lines.len());
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            let Some(rest) = trimmed.strip_prefix("import { ") else {
+                rewritten.push((*line).to_string());
+                continue;
+            };
+            let Some((named, module_part)) = rest.split_once(" } from ") else {
+                rewritten.push((*line).to_string());
+                continue;
+            };
+            let module_part = module_part.trim_end_matches(';');
+            if module_part.is_empty() {
+                rewritten.push((*line).to_string());
+                continue;
+            }
+
+            let body = lines
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, body_line)| (idx != line_idx).then_some(*body_line))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let kept = named
+                .split(',')
+                .filter_map(|specifier| {
+                    let specifier = specifier.trim();
+                    if specifier.is_empty() {
+                        return None;
+                    }
+                    let local_name = specifier
+                        .split_once(" as ")
+                        .map_or(specifier, |(_, alias)| alias.trim());
+                    Self::contains_whole_word_in_text(&body, local_name).then_some(specifier)
+                })
+                .collect::<Vec<_>>();
+
+            if kept.len()
+                == named
+                    .split(',')
+                    .filter(|part| !part.trim().is_empty())
+                    .count()
+            {
+                rewritten.push((*line).to_string());
+                continue;
+            }
+            changed = true;
+            if !kept.is_empty() {
+                let indent_len = line.len() - trimmed.len();
+                rewritten.push(format!(
+                    "{}import {{ {} }} from {};",
+                    &line[..indent_len],
+                    kept.join(", "),
+                    module_part
+                ));
+            }
+        }
+
+        if changed {
+            let mut text = rewritten.join("\n");
+            if output.ends_with('\n') {
+                text.push('\n');
+            }
+            text
+        } else {
+            output.to_string()
         }
     }
 
@@ -548,6 +613,11 @@ impl<'a> DeclarationEmitter<'a> {
             || has_synthetic_js_expression_declaration;
 
         if !is_declaration_kind {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+
+        if self.has_internal_annotation(stmt_node.pos) {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -779,9 +849,14 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        let used_by_exported_object_literal =
+            self.get_identifier_text(func.name).is_some_and(|name| {
+                self.namespace_member_referenced_by_exported_object_literal(func_idx, &name)
+            });
         if !is_exported
             && !self.should_emit_public_api_member(&func.modifiers)
             && !self.should_emit_public_api_dependency(func.name)
+            && !used_by_exported_object_literal
         {
             return;
         }
@@ -874,6 +949,9 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(return_type_text) = self.boolean_default_param_return_type_text(func) {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if func_body.is_some()
             && self.emit_js_returned_define_property_function_type(func_body)
         {
@@ -897,15 +975,26 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 let effective_return_type_id = if func_body.is_some() {
                     self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
+                        .or_else(|| {
+                            self.refine_object_rest_return_type_from_identifier(
+                                func_body,
+                                return_type_id,
+                            )
+                        })
                         .unwrap_or(return_type_id)
                 } else {
                     return_type_id
                 };
-                let preferred_return = if func_body.is_some() {
-                    self.function_body_preferred_return_type_text(func_body)
-                } else {
-                    None
-                };
+                let (preferred_return, direct_function_return) =
+                    self.function_body_return_hint(func, func_body);
+                let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
+                    let (type_text, substituted_parameter_type_query) =
+                        self.function_return_type_text_for_declaration_scope(func, type_text);
+                    (
+                        self.restore_mapped_return_type_param_constraints(func, &type_text),
+                        substituted_parameter_type_query,
+                    )
+                });
                 // If solver returned `any` OR `undefined` but the function body clearly
                 // returns void (every control-flow exit is a bare `return;` or falls
                 // off the end), prefer void. tsc's rule: an unannotated function whose
@@ -921,25 +1010,38 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
-                } else if let Some(type_text) = preferred_return.as_ref()
-                    && self
-                        .should_prefer_source_return_type_text(type_text, effective_return_type_id)
+                } else if let Some(type_text) = func_body
+                    .is_some()
+                    .then(|| {
+                        self.async_returned_function_initializer_promise_type_text(func, func_body)
+                    })
+                    .flatten()
                 {
                     self.write(": ");
-                    if let Some(ref tp) = func.type_parameters
-                        && !tp.nodes.is_empty()
-                    {
-                        let outer_names = self.collect_type_param_names(tp);
-                        self.write(&Self::rename_shadowed_type_params_in_text(
-                            type_text,
-                            &outer_names,
-                        ));
-                    } else {
-                        self.write(type_text);
-                    }
+                    self.write(&type_text);
+                } else if let Some((type_text, substituted_parameter_type_query)) =
+                    scoped_preferred_return.as_ref()
+                    && (direct_function_return
+                        || self.should_prefer_source_return_type_text(
+                            preferred_return.as_deref().unwrap_or(type_text),
+                            effective_return_type_id,
+                        )
+                        || self.source_return_type_is_function_type_param(func, type_text)
+                        || (*substituted_parameter_type_query && !type_text.contains("typeof ")))
+                {
+                    self.write(": ");
+                    self.write(type_text);
+                } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                    func,
+                    func_body,
+                    func_name,
+                    effective_return_type_id,
+                ) {
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && let Some(type_text) = preferred_return
                 {
+                    let (type_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, &type_text);
                     if let Some(returned_identifier) =
                         self.function_body_unique_return_identifier(func_body)
                         && let Some(return_type_id) =
@@ -976,17 +1078,7 @@ impl<'a> DeclarationEmitter<'a> {
                         );
                     }
                     self.write(": ");
-                    if let Some(ref tp) = func.type_parameters
-                        && !tp.nodes.is_empty()
-                    {
-                        let outer_names = self.collect_type_param_names(tp);
-                        self.write(&Self::rename_shadowed_type_params_in_text(
-                            &type_text,
-                            &outer_names,
-                        ));
-                    } else {
-                        self.write(&type_text);
-                    }
+                    self.write(&type_text);
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && func_body.is_some()
                     && self
@@ -1015,6 +1107,13 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         let printed_type_text =
                             self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
+                        let printed_type_text = self
+                            .restore_mapped_return_type_param_constraints(func, &printed_type_text);
+                        let printed_type_text = self
+                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                                func,
+                                &printed_type_text,
+                            );
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
@@ -1030,6 +1129,11 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     } else {
                         let printed_type_text = self.print_type_id(effective_return_type_id);
+                        let printed_type_text = self
+                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                                func,
+                                &printed_type_text,
+                            );
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
@@ -1048,9 +1152,15 @@ impl<'a> DeclarationEmitter<'a> {
             } else if func_body.is_some() {
                 if self.body_returns_void(func_body) {
                     self.write(": void");
-                } else if let Some(return_text) =
-                    self.function_body_preferred_return_type_text(func_body)
+                } else if let Some(type_text) =
+                    self.async_returned_function_initializer_promise_type_text(func, func_body)
                 {
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0
+                {
+                    let (return_text, _) =
+                        self.function_return_type_text_for_declaration_scope(func, &return_text);
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)
                         && let Some(file_path) = self.current_file_path.clone()
@@ -1083,9 +1193,14 @@ impl<'a> DeclarationEmitter<'a> {
             // No type cache available, but we can infer from the body
             if self.body_returns_void(func_body) {
                 self.write(": void");
-            } else if let Some(return_text) =
-                self.function_body_preferred_return_type_text(func_body)
+            } else if let Some(type_text) =
+                self.async_returned_function_initializer_promise_type_text(func, func_body)
             {
+                self.write(": ");
+                self.write(&type_text);
+            } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0 {
+                let (return_text, _) =
+                    self.function_return_type_text_for_declaration_scope(func, &return_text);
                 if let Some(name_text) = self.get_identifier_text(func_name)
                     && let Some(name_node) = self.arena.get(func_name)
                     && let Some(file_path) = self.current_file_path.clone()
@@ -1298,193 +1413,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn class_member_emit_order(
-        &self,
-        members: &tsz_parser::parser::NodeList,
-    ) -> Vec<NodeIndex> {
-        if !self.source_is_js_file {
-            return members.nodes.clone();
-        }
-
-        let mut static_members = Vec::new();
-        let mut constructors = Vec::new();
-        let mut instance_members = Vec::new();
-
-        for &member_idx in &members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                constructors.push(member_idx);
-                continue;
-            }
-
-            let is_static = if let Some(prop) = self.arena.get_property_decl(member_node) {
-                self.arena.is_static(&prop.modifiers)
-            } else if let Some(method) = self.arena.get_method_decl(member_node) {
-                self.arena.is_static(&method.modifiers)
-            } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                self.arena.is_static(&accessor.modifiers)
-            } else {
-                false
-            };
-
-            if is_static {
-                static_members.push(member_idx);
-            } else {
-                instance_members.push(member_idx);
-            }
-        }
-
-        static_members.extend(constructors);
-        static_members.extend(self.js_class_instance_member_emit_order(instance_members));
-        static_members
-    }
-
-    fn js_class_instance_member_emit_order(&self, members: Vec<NodeIndex>) -> Vec<NodeIndex> {
-        let mut backing_field_keys = FxHashSet::default();
-        for &member_idx in &members {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if (member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                || member_node.kind == syntax_kind_ext::SET_ACCESSOR)
-                && let Some(key_text) = self.accessor_this_element_key_text(member_idx)
-            {
-                backing_field_keys.insert(key_text);
-            }
-        }
-
-        let mut deferred_backing_fields = Vec::new();
-        let mut emitted = FxHashSet::default();
-        let mut ordered = Vec::new();
-
-        for &member_idx in &members {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                && let Some(name) = self.member_name_source_text(member_idx)
-                && self.class_members_have_setter_named(&members, &name)
-            {
-                continue;
-            }
-
-            if !emitted.insert(member_idx) {
-                continue;
-            }
-
-            if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                && self
-                    .class_computed_property_key_text(member_idx)
-                    .is_some_and(|key| backing_field_keys.contains(&key))
-            {
-                deferred_backing_fields.push(member_idx);
-                continue;
-            }
-
-            ordered.push(member_idx);
-
-            if member_node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(name) = self.member_name_source_text(member_idx)
-                && let Some(getter_idx) = self.class_members_getter_named(&members, &name)
-                && emitted.insert(getter_idx)
-            {
-                ordered.push(getter_idx);
-            }
-        }
-
-        ordered.extend(deferred_backing_fields);
-        ordered
-    }
-
-    fn member_name_source_text(&self, member_idx: NodeIndex) -> Option<String> {
-        let name_idx = self.get_member_name_idx(member_idx)?;
-        let name_node = self.arena.get(name_idx)?;
-        self.get_source_slice(name_node.pos, name_node.end)
-    }
-
-    fn class_members_have_setter_named(&self, members: &[NodeIndex], name: &str) -> bool {
-        self.class_members_getter_or_setter_named(members, name, syntax_kind_ext::SET_ACCESSOR)
-            .is_some()
-    }
-
-    fn class_members_getter_named(&self, members: &[NodeIndex], name: &str) -> Option<NodeIndex> {
-        self.class_members_getter_or_setter_named(members, name, syntax_kind_ext::GET_ACCESSOR)
-    }
-
-    fn class_members_getter_or_setter_named(
-        &self,
-        members: &[NodeIndex],
-        name: &str,
-        kind: u16,
-    ) -> Option<NodeIndex> {
-        members.iter().copied().find(|&member_idx| {
-            self.arena
-                .get(member_idx)
-                .is_some_and(|node| node.kind == kind)
-                && self.member_name_source_text(member_idx).as_deref() == Some(name)
-        })
-    }
-
-    /// Pre-scan class members: when a computed property name appears on both
-    /// a method implementation and a get/set accessor, tsc suppresses the
-    /// method in the .d.ts output (the accessor wins). This returns the set
-    /// of computed name texts that should be treated as "already declared"
-    /// so the method implementation is skipped.
-    pub(in crate::declaration_emitter) fn computed_names_shadowed_by_accessors(
-        &self,
-        members: &tsz_parser::parser::NodeList,
-    ) -> rustc_hash::FxHashSet<String> {
-        let mut accessor_names: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
-        let mut method_impl_names: Vec<String> = Vec::new();
-        for &m in &members.nodes {
-            let Some(mn) = self.arena.get(m) else {
-                continue;
-            };
-            let is_accessor = mn.kind == syntax_kind_ext::GET_ACCESSOR
-                || mn.kind == syntax_kind_ext::SET_ACCESSOR;
-            let is_method = mn.kind == syntax_kind_ext::METHOD_DECLARATION;
-            if !is_accessor && !is_method {
-                continue;
-            }
-            let name_idx = if is_accessor {
-                self.arena.get_accessor(mn).map(|a| a.name)
-            } else {
-                self.arena.get_method_decl(mn).map(|md| md.name)
-            };
-            let Some(name_idx) = name_idx else {
-                continue;
-            };
-            let Some(name_node) = self.arena.get(name_idx) else {
-                continue;
-            };
-            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                continue;
-            }
-            let Some(text) = self.get_source_slice(name_node.pos, name_node.end) else {
-                continue;
-            };
-            if is_accessor {
-                accessor_names.insert(text);
-            } else if self
-                .arena
-                .get_method_decl(mn)
-                .is_some_and(|md| md.body.is_some())
-            {
-                method_impl_names.push(text);
-            }
-        }
-        let mut result = rustc_hash::FxHashSet::default();
-        for name in method_impl_names {
-            if accessor_names.contains(&name) {
-                result.insert(name);
-            }
-        }
-        result
-    }
-
     pub(in crate::declaration_emitter) fn emit_class_member(&mut self, member_idx: NodeIndex) {
         let Some(member_node) = self.arena.get(member_idx) else {
             return;
@@ -1673,6 +1601,28 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&enum_type_text);
+            } else if let Some(typeof_text) =
+                self.shadowed_property_initializer_typeof_text(prop.name, prop.initializer)
+            {
+                self.write(": ");
+                self.write(&typeof_text);
+                if prop.question_token
+                    && self.strict_null_checks
+                    && !typeof_text.ends_with("| undefined")
+                {
+                    self.write(" | undefined");
+                }
+            } else if prop.initializer.is_some()
+                && let Some(type_text) = self.explicit_asserted_type_text(prop.initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if prop.initializer.is_some()
+                && let Some(type_text) =
+                    self.class_property_function_initializer_type_text(prop_idx, prop.initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 // For readonly properties with literal types, use `= value` form
                 // (same as const declarations in tsc)
@@ -1726,6 +1676,20 @@ impl<'a> DeclarationEmitter<'a> {
                     };
                     let type_text = self
                         .rewrite_recursive_static_class_expression_type(prop_idx, effective_type);
+                    let has_object_literal_initializer =
+                        self.arena.get(prop.initializer).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        });
+                    let type_text = if has_object_literal_initializer
+                        && (type_text == "any"
+                            || type_text.contains(": any;")
+                            || self.object_literal_prefers_syntax_type_text(prop.initializer))
+                    {
+                        self.allowlisted_initializer_type_text(prop.initializer)
+                            .unwrap_or(type_text)
+                    } else {
+                        type_text
+                    };
                     let mut emitted_any_for_truncation = false;
                     if let Some(name_node) = self.arena.get(prop.name)
                         && let Some(file_path) = self.current_file_path.clone()
@@ -1855,94 +1819,5 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_trailing_comment(prop_node_end);
         }
         self.write_line();
-    }
-
-    pub(in crate::declaration_emitter) fn rewrite_recursive_static_class_expression_type(
-        &self,
-        prop_idx: NodeIndex,
-        type_id: tsz_solver::types::TypeId,
-    ) -> String {
-        let printed = self.print_type_id(type_id);
-        let Some(prop_node) = self.arena.get(prop_idx) else {
-            return printed;
-        };
-        let Some(prop) = self.arena.get_property_decl(prop_node) else {
-            return printed;
-        };
-        let Some(property_name) = self
-            .arena
-            .get_identifier_at(prop.name)
-            .map(|ident| ident.escaped_text.clone())
-        else {
-            return printed;
-        };
-        if !self.property_initializer_is_recursive_class_expression(prop_idx, prop.initializer) {
-            return printed;
-        }
-        let Some(interner) = self.type_interner else {
-            return printed;
-        };
-        let Some(callable) = type_queries::get_callable_shape(interner, type_id) else {
-            return printed;
-        };
-        if !callable.properties.iter().any(|prop| {
-            interner.resolve_atom(prop.name) == property_name
-                && prop.type_id == tsz_solver::TypeId::ANY
-        }) {
-            return printed;
-        }
-
-        printed.replacen(
-            &format!("{property_name}: any;"),
-            &format!("{property_name}: /*elided*/ any;"),
-            1,
-        )
-    }
-
-    pub(in crate::declaration_emitter) fn property_initializer_is_recursive_class_expression(
-        &self,
-        prop_idx: NodeIndex,
-        initializer_idx: NodeIndex,
-    ) -> bool {
-        let Some(class_expr) = self.arena.get_class_at(initializer_idx) else {
-            return false;
-        };
-        let Some(enclosing_class_idx) = self
-            .arena
-            .get_extended(prop_idx)
-            .map(|extended| extended.parent)
-            .filter(|parent| {
-                self.arena
-                    .get(*parent)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
-            })
-        else {
-            return false;
-        };
-        let Some(enclosing_class_name) = self
-            .arena
-            .get_class_at(enclosing_class_idx)
-            .and_then(|class| self.arena.get_identifier_at(class.name))
-            .map(|ident| ident.escaped_text.clone())
-        else {
-            return false;
-        };
-        let Some(heritage_clauses) = class_expr.heritage_clauses.as_ref() else {
-            return false;
-        };
-
-        heritage_clauses.nodes.iter().copied().any(|clause_idx| {
-            self.arena
-                .get_heritage_clause_at(clause_idx)
-                .filter(|heritage| heritage.token == SyntaxKind::ExtendsKeyword as u16)
-                .and_then(|heritage| heritage.types.nodes.first().copied())
-                .map(|type_idx| {
-                    self.arena
-                        .get_expr_type_args_at(type_idx)
-                        .map_or(type_idx, |expr_type_args| expr_type_args.expression)
-                })
-                .and_then(|expr_idx| self.arena.get_identifier_at(expr_idx))
-                .is_some_and(|ident| ident.escaped_text == enclosing_class_name)
-        })
     }
 }

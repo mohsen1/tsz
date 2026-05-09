@@ -1,4 +1,5 @@
 use super::*;
+use crate::TypeEnvironment;
 use crate::TypeInterner;
 use crate::def::DefId;
 use crate::instantiation::instantiate::MAX_INSTANTIATION_DEPTH;
@@ -125,6 +126,62 @@ fn test_instantiate_union() {
 }
 
 #[test]
+fn test_instantiate_union_preserves_display_origin() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        type_param_t,
+    )]);
+    let union = interner.union(vec![type_param_t, object_member]);
+    interner.store_union_origin(union, vec![type_param_t, object_member]);
+
+    let array_number = interner.array(TypeId::NUMBER);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, array_number);
+    let result = instantiate_type(&interner, union, &subst);
+
+    let instantiated_object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        array_number,
+    )]);
+    let origin = interner
+        .get_union_origin(result)
+        .expect("instantiated union should preserve source display order");
+    assert_eq!(origin.as_ref(), &[array_number, instantiated_object]);
+}
+
+#[test]
+fn test_evaluate_union_preserves_display_origin() {
+    let interner = TypeInterner::new();
+    let array_def = DefId(1);
+    let array_member = interner.array(TypeId::NUMBER);
+    let lazy_member = interner.lazy(array_def);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let union = interner.union(vec![lazy_member, object_member]);
+    interner.replace_union_origin_for_display(union, vec![lazy_member, object_member]);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(array_def, array_member);
+    let mut evaluator = crate::TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(union);
+
+    let origin = interner
+        .get_union_origin(result)
+        .expect("evaluated union should preserve source display order");
+    assert_eq!(origin.as_ref(), &[array_member, object_member]);
+}
+
+#[test]
 fn test_instantiate_object() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
@@ -202,6 +259,44 @@ fn test_instantiate_function() {
         is_method: false,
     });
     assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_composite_noop_preserves_type_id() {
+    let interner = TypeInterner::new();
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(interner.intern_string("Unused"), TypeId::STRING);
+
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+    assert_eq!(instantiate_type(&interner, object, &subst), object);
+
+    let function = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    assert_eq!(instantiate_type(&interner, function, &subst), function);
+
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(TypeId::NUMBER)],
+            TypeId::STRING,
+        )],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("tag"),
+            TypeId::BOOLEAN,
+        )],
+        ..CallableShape::default()
+    });
+    assert_eq!(instantiate_type(&interner, callable, &subst), callable);
 }
 
 #[test]
@@ -1567,6 +1662,7 @@ fn test_object_property_does_not_contaminate_method_type_param() {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

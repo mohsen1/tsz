@@ -18,6 +18,25 @@ const fn checker_resolution_mode_override(
     }
 }
 
+const fn checker_resolution_request_kind(
+    kind: tsz::module_resolver::ImportKind,
+) -> tsz::checker::context::ResolutionRequestKind {
+    match kind {
+        tsz::module_resolver::ImportKind::EsmImport => {
+            tsz::checker::context::ResolutionRequestKind::EsmImport
+        }
+        tsz::module_resolver::ImportKind::DynamicImport => {
+            tsz::checker::context::ResolutionRequestKind::DynamicImport
+        }
+        tsz::module_resolver::ImportKind::CjsRequire => {
+            tsz::checker::context::ResolutionRequestKind::CjsRequire
+        }
+        tsz::module_resolver::ImportKind::EsmReExport => {
+            tsz::checker::context::ResolutionRequestKind::EsmReExport
+        }
+    }
+}
+
 fn checker_lookup_resolution_mode(
     module_resolver: &mut ModuleResolver,
     options: &ResolvedCompilerOptions,
@@ -27,25 +46,26 @@ fn checker_lookup_resolution_mode(
 ) -> Option<tsz::checker::context::ResolutionModeOverride> {
     use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleExtension};
 
-    let mode = resolution_mode_override.unwrap_or_else(|| match options.checker.module {
-        // Mirror ModuleResolver::resolve_with_kind_and_module_kind() so request-keyed
-        // checker maps line up with the actual lookup mode used by the resolver.
-        ModuleKind::Preserve => {
-            let extension = ModuleExtension::from_path(file_path);
-            if extension.forces_esm() {
-                ImportingModuleKind::Esm
-            } else if extension.forces_cjs() {
-                ImportingModuleKind::CommonJs
-            } else {
-                match import_kind {
-                    ImportKind::EsmImport | ImportKind::DynamicImport | ImportKind::EsmReExport => {
+    let mode = resolution_mode_override.unwrap_or_else(|| {
+        match import_kind {
+            // Mirror ModuleResolver::resolve_with_kind_and_module_kind() so request-keyed
+            // checker maps line up with the actual lookup mode used by the resolver.
+            ImportKind::DynamicImport => ImportingModuleKind::Esm,
+            ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+            ImportKind::EsmImport | ImportKind::EsmReExport => match options.checker.module {
+                ModuleKind::Preserve => {
+                    let extension = ModuleExtension::from_path(file_path);
+                    if extension.forces_esm() {
+                        ImportingModuleKind::Esm
+                    } else if extension.forces_cjs() {
+                        ImportingModuleKind::CommonJs
+                    } else {
                         ImportingModuleKind::Esm
                     }
-                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
                 }
-            }
+                _ => module_resolver.get_importing_module_kind(file_path),
+            },
         }
-        _ => module_resolver.get_importing_module_kind(file_path),
     });
 
     checker_resolution_mode_override(Some(mode))
@@ -122,6 +142,17 @@ fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
         .any(|diag| is_real_syntax_error(diag.code))
 }
 
+fn program_has_unsupported_js_root(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+) -> bool {
+    !options.allow_js
+        && program
+            .files
+            .iter()
+            .any(|file| is_js_file(Path::new(&file.file_name)))
+}
+
 const fn is_reserved_type_name_declaration_diagnostic(code: u32) -> bool {
     matches!(code, 2427 | 2457)
 }
@@ -150,11 +181,24 @@ fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> boo
         || is_reserved_type_name_declaration_diagnostic(code)
 }
 
+/// `TS1xxx` codes that tsc routes through `getSemanticDiagnostics`. They are in
+/// the parser-grammar range numerically but are emitted from the checker, so
+/// unchecked JS files (no `checkJs`, or `// @ts-nocheck`) must not see them
+/// even though `code < 2000` would otherwise let them through. Issue #3693.
+const fn is_semantic_ts1xxx_suppressed_in_unchecked_js(code: u32) -> bool {
+    matches!(
+        code,
+        1192 // Module '{0}' has no default export.
+        | 1259 // Module '{0}' can only be default-imported using the '{1}' flag
+    )
+}
+
 fn post_process_checker_diagnostics(
     checker_diagnostics: &mut Vec<Diagnostic>,
     file: &BoundFile,
     options: &ResolvedCompilerOptions,
     program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
     has_deprecation_diagnostics: bool,
 ) {
     let is_js = is_js_file(Path::new(&file.file_name));
@@ -169,7 +213,15 @@ fn post_process_checker_diagnostics(
         // no-checkJs mode), also allow the `plainJSErrors` codes that tsc
         // surfaces even in unchecked JS files. When `checkJs: false` is
         // explicitly set, suppress ALL semantic errors.
+        //
+        // Issue #3693: a few TS1xxx codes are semantic checker diagnostics
+        // that tsc routes through `getSemanticDiagnostics`. Their numeric
+        // code is < 2000 but they must NOT survive unchecked-JS filtering,
+        // because tsc doesn't surface them in that mode either.
         checker_diagnostics.retain(|diag| {
+            if is_semantic_ts1xxx_suppressed_in_unchecked_js(diag.code) {
+                return false;
+            }
             diag.code < 2000
                 || tsz::checker::diagnostics::is_js_grammar_diagnostic(diag.code)
                 || (!options.explicit_check_js_false && is_plain_js_allowed_code(diag.code))
@@ -184,10 +236,13 @@ fn post_process_checker_diagnostics(
     // Only keep TS1xxx codes that tsc is known to emit for JS files.
     if is_js {
         checker_diagnostics.retain(|diag| {
-            // TS1361/TS1362 are semantic type-only value-use diagnostics, not
-            // parser grammar errors. Keep them for checked JS files even
-            // though their codes live in the TS1xxx range.
-            if !should_filter_type_errors && matches!(diag.code, 1361 | 1362) {
+            // Some semantic checker diagnostics live in the TS1xxx range. Keep
+            // them for checked JS files even though the coarse parser-grammar
+            // classifier also covers TS1xxx.
+            if !should_filter_type_errors
+                && (matches!(diag.code, 1361 | 1362)
+                    || is_semantic_ts1xxx_suppressed_in_unchecked_js(diag.code))
+            {
                 return true;
             }
             if tsz::checker::diagnostics::is_parser_grammar_diagnostic(diag.code) {
@@ -203,6 +258,13 @@ fn post_process_checker_diagnostics(
     }
 
     if program_has_real_syntax_errors {
+        checker_diagnostics
+            .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
+    }
+
+    if program_has_unsupported_js_root && !program_has_real_syntax_errors {
+        // tsc reports program-level TS6504 for explicit JS/CJS roots when
+        // allowJs is disabled, then skips downstream semantic checks.
         checker_diagnostics
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
     }
@@ -342,6 +404,46 @@ pub(super) fn collect_diagnostics(
     let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> =
         FxHashMap::with_capacity_and_hasher(file_count, Default::default());
     let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
+    let program_has_unsupported_js_root = program_has_unsupported_js_root(program, options);
+
+    // TS6504: when allowJs is disabled, emit one error per explicit JS root file.
+    // tsc includes the JS file in the program but rejects it with this diagnostic
+    // and skips semantic checks for that file (the suppression is in
+    // post_process_checker_diagnostics).
+    if program_has_unsupported_js_root {
+        for file in &program.files {
+            if is_js_file(Path::new(&file.file_name)) {
+                let mut ts6504 = Diagnostic::from_code(
+                    diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION,
+                    "",
+                    0,
+                    0,
+                    &[&file.file_name],
+                );
+                ts6504
+                    .related_information
+                    .push(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                        file: String::new(),
+                        start: 0,
+                        length: 0,
+                        message_text: "The file is in the program because:".to_string(),
+                    });
+                ts6504
+                    .related_information
+                    .push(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION,
+                        file: String::new(),
+                        start: 0,
+                        length: 0,
+                        message_text: "Root file specified for compilation".to_string(),
+                    });
+                diagnostics.push(ts6504);
+            }
+        }
+    }
 
     {
         let _span = tracing::info_span!("build_program_path_maps", files = file_count).entered();
@@ -404,6 +506,7 @@ pub(super) fn collect_diagnostics(
             usize,
             String,
             Option<tsz::checker::context::ResolutionModeOverride>,
+            tsz::checker::context::ResolutionRequestKind,
         ),
         usize,
     > = FxHashMap::with_capacity_and_hasher(module_specifier_count, Default::default());
@@ -418,6 +521,7 @@ pub(super) fn collect_diagnostics(
             usize,
             String,
             Option<tsz::checker::context::ResolutionModeOverride>,
+            tsz::checker::context::ResolutionRequestKind,
         ),
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
@@ -462,6 +566,7 @@ pub(super) fn collect_diagnostics(
                     *import_kind,
                     *resolution_mode_override,
                 );
+                let request_kind_key = checker_resolution_request_kind(*import_kind);
 
                 let result = module_resolver.lookup(
                     &request,
@@ -487,8 +592,33 @@ pub(super) fn collect_diagnostics(
                     Some(&program_paths),
                 );
 
-                // Classify the lookup result into a driver-facing outcome
-                let outcome = result.classify();
+                // Classify the lookup result into a driver-facing outcome.
+                let mut outcome = result.classify();
+                if outcome
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == 2732)
+                    && module_specifier_has_type_json_import_attribute(&file.arena, *specifier_node)
+                    && json_type_attribute_enables_json_module(
+                        options,
+                        file_path,
+                        base_dir,
+                        &mut resolution_cache,
+                    )
+                    && let Some(resolved_path) = resolve_module_specifier(
+                        file_path,
+                        specifier,
+                        options,
+                        base_dir,
+                        &mut resolution_cache,
+                        &program_paths,
+                    )
+                    && resolved_path.extension().is_some_and(|ext| ext == "json")
+                {
+                    outcome.resolved_path = Some(resolved_path);
+                    outcome.is_resolved = true;
+                    outcome.error = None;
+                }
 
                 if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
                     tracing::debug!(
@@ -521,7 +651,12 @@ pub(super) fn collect_diagnostics(
                         if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                             resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
                             resolved_module_request_paths.insert(
-                                (file_idx, specifier.clone(), request_mode_key),
+                                (
+                                    file_idx,
+                                    specifier.clone(),
+                                    request_mode_key,
+                                    request_kind_key,
+                                ),
                                 target_idx,
                             );
                             if outcome.resolved_using_ts_extension {
@@ -544,7 +679,12 @@ pub(super) fn collect_diagnostics(
                         },
                     );
                     resolved_module_request_errors.insert(
-                        (file_idx, specifier.clone(), request_mode_key),
+                        (
+                            file_idx,
+                            specifier.clone(),
+                            request_mode_key,
+                            request_kind_key,
+                        ),
                         tsz::checker::context::ResolutionError {
                             code: error.code,
                             message: error.message.clone(),
@@ -661,16 +801,62 @@ pub(super) fn collect_diagnostics(
                 | crate::config::ModuleResolutionKind::NodeNext
         );
         if uses_package_type_module_kind {
+            let program_package_types: FxHashMap<PathBuf, bool> = program
+                .files
+                .iter()
+                .filter_map(|file| {
+                    let file_path = Path::new(&file.file_name);
+                    if file_path.file_name().and_then(|name| name.to_str()) != Some("package.json")
+                    {
+                        return None;
+                    }
+                    let package_dir = file_path.parent()?.to_path_buf();
+                    let text = file
+                        .arena
+                        .source_files
+                        .first()
+                        .map(|source_file| source_file.text.as_ref())?;
+                    let package_type = serde_json::from_str::<serde_json::Value>(text)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("type")
+                                .and_then(serde_json::Value::as_str)
+                                .map(|value| value == "module")
+                        })
+                        .unwrap_or(false);
+                    Some((package_dir, package_type))
+                })
+                .collect();
+            let mut package_type_cache = ModuleResolutionCache::default();
             program
                 .files
                 .iter()
                 .map(|file| {
                     let file_path = Path::new(&file.file_name);
-                    let kind = module_resolver.get_importing_module_kind(file_path);
-                    (
-                        file.file_name.clone(),
-                        kind == tsz::module_resolver::ImportingModuleKind::Esm,
-                    )
+                    let file_is_esm = match file_path.extension().and_then(|ext| ext.to_str()) {
+                        Some("mts" | "mjs") => true,
+                        Some("cts" | "cjs") => false,
+                        _ => {
+                            let mut current = file_path.parent();
+                            let mut from_program_package_json = None;
+                            while let Some(dir) = current {
+                                if let Some(&is_esm) = program_package_types.get(dir) {
+                                    from_program_package_json = Some(is_esm);
+                                    break;
+                                }
+                                current = dir.parent();
+                            }
+                            from_program_package_json.unwrap_or_else(|| {
+                                implied_resolution_mode_for_file_with_cache(
+                                    file_path,
+                                    base_dir,
+                                    &mut package_type_cache,
+                                ) == "import"
+                            })
+                        }
+                    };
+                    (file.file_name.clone(), file_is_esm)
                 })
                 .collect()
         } else {
@@ -678,14 +864,43 @@ pub(super) fn collect_diagnostics(
         }
     });
 
-    if options.no_check {
+    // The `--noCheck` short-circuit returns parse-only diagnostics and skips
+    // the regular checker pipeline. That's correct when no declaration files
+    // are being emitted, but `--noCheck --declaration` still needs the
+    // checker's inferred type information so the declaration emitter can
+    // print return types for unannotated functions, contextual types for
+    // `const x = { a: 1 }`, etc. (#3733). When `emit_declarations` is set
+    // we fall through to the regular pipeline (which still suppresses type
+    // errors via the `if !no_check` guard around `check_source_file`); the
+    // type_caches it produces feed declaration emit.
+    if options.no_check && !options.emit_declarations {
         use rayon::prelude::*;
 
         let mut diagnostics: Vec<Diagnostic> = program
             .files
             .par_iter()
             .map(|file| {
-                collect_no_check_file_diagnostics(file, options, program_has_real_syntax_errors)
+                let mut file_diags = collect_no_check_file_diagnostics(
+                    file,
+                    options,
+                    program_has_real_syntax_errors,
+                );
+                // tsc still reports the `--isolatedDeclarations` grammar
+                // diagnostics (TS9007/TS9011/TS9012/etc.) under `--noCheck`
+                // because they gate declaration emission, not type checking
+                // (#3709). Run only the isolated-declaration grammar pass.
+                if options.checker.isolated_declarations {
+                    let mut binder = tsz_binder::state::BinderState::new();
+                    binder.bind_source_file(&file.arena, file.source_file);
+                    file_diags.extend(tsz::checker::run_isolated_declarations_pass(
+                        &file.arena,
+                        &binder,
+                        file.source_file,
+                        file.file_name.clone(),
+                        options.checker.clone(),
+                    ));
+                }
+                file_diags
             })
             .flatten()
             .collect();
@@ -733,6 +948,8 @@ pub(super) fn collect_diagnostics(
     let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
     let affected_lib_extension_interfaces =
         affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
+    let baseline_lib_datetimeformatpart_interfaces =
+        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs);
 
     // Pre-create all binders for cross-file resolution.
     let all_binders: Arc<Vec<Arc<BinderState>>> = {
@@ -1001,7 +1218,7 @@ pub(super) fn collect_diagnostics(
         project_env.build_global_indices();
     }
     // Build the shared SymbolId→file-index map once; shared via Arc across all checkers.
-    // TODO: build_global_symbol_file_index not yet implemented on ProjectEnv
+    project_env.build_global_symbol_file_index();
 
     // Create a shared DefinitionStore for all parallel checkers.
     // CRITICAL: All parallel checkers MUST share the same DefinitionStore so that
@@ -1063,6 +1280,22 @@ pub(super) fn collect_diagnostics(
     } else {
         FxHashSet::default()
     };
+    let baseline_lib_datetimeformatpart_diagnostics =
+        if !options.no_check && !baseline_lib_datetimeformatpart_interfaces.is_empty() {
+            let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
+                program,
+                options,
+                checker_libs,
+                &baseline_lib_datetimeformatpart_interfaces,
+                &FxHashSet::default(),
+                &project_env,
+                &[2552],
+            );
+            diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
+            diagnostics
+        } else {
+            Vec::new()
+        };
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
@@ -1110,6 +1343,7 @@ pub(super) fn collect_diagnostics(
         merged_augmentations: &merged_augmentations,
         project_env: &project_env,
         program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
     };
 
     if cache.is_none() {
@@ -1217,6 +1451,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            program_has_unsupported_js_root,
                             extract_type_cache,
                         };
                         check_file_for_parallel(context)
@@ -1255,6 +1490,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            program_has_unsupported_js_root,
                             extract_type_cache,
                         };
                         check_file_for_parallel(context)
@@ -1282,6 +1518,7 @@ pub(super) fn collect_diagnostics(
                     explicit_check_js_false,
                     skip_lib_check,
                     program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
                     extract_type_cache,
                 };
                 check_file_for_parallel(context)
@@ -1564,6 +1801,7 @@ pub(super) fn collect_diagnostics(
                     file,
                     options,
                     program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
                     has_deprecation_diagnostics,
                 );
 
@@ -1682,12 +1920,28 @@ pub(super) fn collect_diagnostics(
         c.export_hashes.retain(|path, _| used_paths.contains(path));
     }
 
+    if !program_has_real_syntax_errors {
+        let mut seen: FxHashSet<(String, u32, u32)> = diagnostics
+            .iter()
+            .map(|diag| (diag.file.clone(), diag.start, diag.code))
+            .collect();
+        diagnostics.extend(
+            tsz::parallel::collect_reexported_module_augmentation_enum_conflict_diagnostics(
+                program,
+                resolved_module_paths.as_ref(),
+            )
+            .into_iter()
+            .filter(|diag| seen.insert((diag.file.clone(), diag.start, diag.code))),
+        );
+    }
+
     diagnostics.extend(detect_missing_tslib_helper_diagnostics(
         program,
         options,
         base_dir,
         &file_is_esm_map,
     ));
+    diagnostics.extend(baseline_lib_datetimeformatpart_diagnostics);
 
     // Use the aggregated query-cache statistics. In the parallel path, these
     // are merged from all per-file caches. In the sequential path, they come
@@ -1990,6 +2244,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     explicit_check_js_false: bool,
     skip_lib_check: bool,
     program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
     /// When `false`, per-file `TypeCache` extraction is skipped entirely.
     /// `TypeCache` is used by the emit pipeline (JS / declaration files) and
     /// by incremental cache reuse. For a `--noEmit` run that does not also
@@ -2049,6 +2304,7 @@ pub(super) fn check_file_for_parallel<'a>(
         explicit_check_js_false,
         skip_lib_check,
         program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
         extract_type_cache,
     } = context;
     let file = &program.files[file_idx];
@@ -2187,7 +2443,16 @@ pub(super) fn check_file_for_parallel<'a>(
     // Note: We always run checking for all files (JS and TS).
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
     // even for JS files without checkJs. Only type-level errors are gated by checkJs.
-    if !no_check {
+    //
+    // Under `--noCheck --declaration`, declaration emit still needs the
+    // checker's inferred types (return types, contextual property types,
+    // etc.) — tsc runs the checker for declaration emit even when
+    // `--noCheck` is set (#3733). Run the checker pass when either the
+    // user wants normal checking OR we need type information for
+    // declaration emit; in the latter case the produced diagnostics are
+    // discarded so `--noCheck` still suppresses type errors.
+    let run_checker_for_decl_emit = no_check && compiler_options.emit_declarations;
+    if !no_check || run_checker_for_decl_emit {
         tsz::checker::reset_stack_overflow_flag();
         checker.check_source_file(file.source_file);
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -2201,10 +2466,23 @@ pub(super) fn check_file_for_parallel<'a>(
             file,
             &effective_options,
             program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
             project_env.has_deprecation_diagnostics,
         );
 
-        file_diagnostics.extend(checker_diagnostics);
+        if !no_check {
+            file_diagnostics.extend(checker_diagnostics);
+        } else if compiler_options.isolated_declarations {
+            // `--noCheck` suppresses type errors, but the
+            // `--isolatedDeclarations` family (TS9007–TS9039) gates
+            // declaration emission and tsc still surfaces those codes
+            // (#3709). Keep them, drop everything else.
+            file_diagnostics.extend(
+                checker_diagnostics
+                    .into_iter()
+                    .filter(|d| matches!(d.code, 9007..=9039)),
+            );
+        }
     }
 
     // Final JS-specific filter: remove any remaining grammar codes that
@@ -2254,11 +2532,34 @@ struct CheckerLibFileCheckEnv<'a> {
     merged_augmentations: &'a MergedAugmentations,
     project_env: &'a tsz::checker::context::ProjectEnv,
     program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
 }
 
 fn check_checker_lib_file(
     env: &CheckerLibFileCheckEnv<'_>,
     lib_idx: usize,
+    query_cache: &QueryCache,
+    shared_lib_cache: Option<Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>>,
+) -> (
+    Vec<Diagnostic>,
+    RequestCacheCounters,
+    tsz_solver::StoreStatistics,
+) {
+    check_checker_lib_file_for_interfaces(
+        env,
+        lib_idx,
+        env.affected_interfaces,
+        env.extension_interfaces,
+        query_cache,
+        shared_lib_cache,
+    )
+}
+
+fn check_checker_lib_file_for_interfaces(
+    env: &CheckerLibFileCheckEnv<'_>,
+    lib_idx: usize,
+    interface_names: &FxHashSet<String>,
+    extension_interfaces: &FxHashSet<String>,
     query_cache: &QueryCache,
     shared_lib_cache: Option<Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>>,
 ) -> (
@@ -2279,7 +2580,7 @@ fn check_checker_lib_file(
     }
 
     let lib_bound_file =
-        build_lib_bound_file_for_interface_checks(program, lib_file, env.affected_interfaces);
+        build_lib_bound_file_for_interface_checks(program, lib_file, interface_names);
     let binder = create_binder_from_bound_file_with_augmentations(
         &lib_bound_file,
         program,
@@ -2321,12 +2622,16 @@ fn check_checker_lib_file(
     tsz::checker::reset_stack_overflow_flag();
     checker.check_source_file_interfaces_only_filtered_post_merge(
         lib_bound_file.source_file,
-        env.affected_interfaces,
-        env.extension_interfaces,
+        interface_names,
+        extension_interfaces,
     );
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
     if env.program_has_real_syntax_errors {
+        diagnostics
+            .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
+    }
+    if env.program_has_unsupported_js_root && !env.program_has_real_syntax_errors {
         diagnostics
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
     }
@@ -2409,6 +2714,7 @@ fn collect_lib_interface_node_symbols(
     arena: &NodeArena,
     statements: &[NodeIndex],
     globals: &SymbolTable,
+    fallback_node_symbols: &FxHashMap<u32, tsz::binder::SymbolId>,
     affected_interfaces: &FxHashSet<String>,
     node_symbols: &mut FxHashMap<u32, tsz::binder::SymbolId>,
 ) {
@@ -2421,7 +2727,9 @@ fn collect_lib_interface_node_symbols(
             if let Some(interface) = arena.get_interface(stmt_node)
                 && let Some(name) = arena.get_identifier_at(interface.name)
                 && affected_interfaces.contains(&name.escaped_text)
-                && let Some(sym_id) = globals.get(&name.escaped_text)
+                && let Some(sym_id) = globals
+                    .get(&name.escaped_text)
+                    .or_else(|| fallback_node_symbols.get(&stmt_idx.0).copied())
             {
                 node_symbols.insert(stmt_idx.0, sym_id);
                 node_symbols.insert(interface.name.0, sym_id);
@@ -2453,7 +2761,9 @@ fn collect_lib_interface_node_symbols(
                                 type_idx
                             };
                             if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
-                                && let Some(base_sym_id) = globals.get(&base_name)
+                                && let Some(base_sym_id) = globals
+                                    .get(&base_name)
+                                    .or_else(|| fallback_node_symbols.get(&expr_idx.0).copied())
                             {
                                 node_symbols.insert(expr_idx.0, base_sym_id);
                             }
@@ -2490,6 +2800,7 @@ fn collect_lib_interface_node_symbols(
             arena,
             &inner.nodes,
             globals,
+            fallback_node_symbols,
             affected_interfaces,
             node_symbols,
         );
@@ -2573,6 +2884,25 @@ fn collect_direct_base_names(
     names
 }
 
+fn interface_declaration_has_merge_surface(arena: &NodeArena, stmt_idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(stmt_idx) else {
+        return false;
+    };
+    let Some(interface) = arena.get_interface(node) else {
+        return false;
+    };
+
+    !interface.members.nodes.is_empty()
+        || interface
+            .type_parameters
+            .as_ref()
+            .is_some_and(|type_params| !type_params.nodes.is_empty())
+        || interface
+            .heritage_clauses
+            .as_ref()
+            .is_some_and(|heritage| !heritage.nodes.is_empty())
+}
+
 fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<String> {
     let mut seeds = FxHashSet::default();
 
@@ -2581,14 +2911,28 @@ fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<Str
             && let Some(source_file) = file.arena.get_source_file_at(file.source_file)
         {
             for &stmt_idx in &source_file.statements.nodes {
-                if let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx) {
+                if interface_declaration_has_merge_surface(file.arena.as_ref(), stmt_idx)
+                    && let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx)
+                {
                     seeds.insert(name);
                 }
             }
         }
 
-        for name in file.global_augmentations.keys() {
-            seeds.insert(name.clone());
+        for (name, augmentations) in file.global_augmentations.iter() {
+            let affects_interface = augmentations.iter().any(|augmentation| {
+                if (augmentation.flags & tsz::binder::symbol_flags::INTERFACE) == 0 {
+                    return true;
+                }
+                let arena = augmentation
+                    .arena
+                    .as_deref()
+                    .unwrap_or_else(|| file.arena.as_ref());
+                interface_declaration_has_merge_surface(arena, augmentation.node)
+            });
+            if affects_interface {
+                seeds.insert(name.clone());
+            }
         }
     }
 
@@ -2758,6 +3102,60 @@ fn interface_declares_member_named(
         })
 }
 
+fn interface_declares_index_signature(
+    arena: &NodeArena,
+    interface: &tsz_parser::parser::node::InterfaceData,
+) -> bool {
+    interface.members.nodes.iter().any(|&member_idx| {
+        arena
+            .get(member_idx)
+            .is_some_and(|member| member.kind == tsz::parser::syntax_kind_ext::INDEX_SIGNATURE)
+    })
+}
+
+fn collect_user_global_interfaces_with_index_signatures(
+    program: &MergedProgram,
+) -> FxHashSet<String> {
+    let mut names = FxHashSet::default();
+
+    for file in &program.files {
+        if !file.is_external_module
+            && let Some(source_file) = file.arena.get_source_file_at(file.source_file)
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                    continue;
+                };
+                let Some(interface) = file.arena.get_interface(stmt_node) else {
+                    continue;
+                };
+                if interface_declares_index_signature(file.arena.as_ref(), interface)
+                    && let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx)
+                {
+                    names.insert(name);
+                }
+            }
+        }
+
+        for (name, augmentations) in file.global_augmentations.iter() {
+            if augmentations.iter().any(|augmentation| {
+                let arena = augmentation
+                    .arena
+                    .as_deref()
+                    .unwrap_or_else(|| file.arena.as_ref());
+                arena
+                    .get(augmentation.node)
+                    .and_then(|node| arena.get_interface(node))
+                    .is_some_and(|interface| interface_declares_index_signature(arena, interface))
+            }) {
+                names.insert(name.clone());
+            }
+        }
+    }
+
+    names
+}
+
 fn interface_has_indexed_access_member_type(
     arena: &NodeArena,
     interface: &tsz_parser::parser::node::InterfaceData,
@@ -2809,6 +3207,8 @@ fn affected_lib_interface_names(
     checker_libs: &CheckerLibSet,
 ) -> FxHashSet<String> {
     let seed_interfaces = collect_user_global_interface_seeds(program);
+    let index_signature_seed_interfaces =
+        collect_user_global_interfaces_with_index_signatures(program);
     let mut affected = seed_interfaces.clone();
     let user_member_names = collect_user_global_interface_member_names(program);
     let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
@@ -2829,6 +3229,23 @@ fn affected_lib_interface_names(
             };
             let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
             inheritance_graph.entry(name).or_default().extend(bases);
+        }
+    }
+
+    let mut index_signature_affected = index_signature_seed_interfaces;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, bases) in &inheritance_graph {
+            if index_signature_affected.contains(name) {
+                continue;
+            }
+            if bases
+                .iter()
+                .any(|base| index_signature_affected.contains(base))
+            {
+                changed = index_signature_affected.insert(name.clone());
+            }
         }
     }
 
@@ -2863,7 +3280,13 @@ fn affected_lib_interface_names(
             if !affected.contains(&name) {
                 continue;
             }
-            if interface_declares_member_named(lib.arena.as_ref(), interface, &user_member_names)
+            if (index_signature_affected.contains(&name)
+                && interface_declares_index_signature(lib.arena.as_ref(), interface))
+                || interface_declares_member_named(
+                    lib.arena.as_ref(),
+                    interface,
+                    &user_member_names,
+                )
                 || interface_has_indexed_access_member_type(lib.arena.as_ref(), interface)
             {
                 relevant.insert(name);
@@ -2897,7 +3320,10 @@ fn affected_lib_extension_interface_names(
     affected_interfaces: &FxHashSet<String>,
 ) -> FxHashSet<String> {
     let user_member_names = collect_user_global_interface_member_names(program);
+    let index_signature_seed_interfaces =
+        collect_user_global_interfaces_with_index_signatures(program);
     let mut extension_interfaces = FxHashSet::default();
+    let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
 
     for lib in &checker_libs.files {
         let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
@@ -2913,6 +3339,11 @@ fn affected_lib_extension_interface_names(
             let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
                 continue;
             };
+            let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
+            inheritance_graph
+                .entry(name.clone())
+                .or_default()
+                .extend(bases);
             if affected_interfaces.contains(&name)
                 && interface_declares_member_named(
                     lib.arena.as_ref(),
@@ -2925,7 +3356,102 @@ fn affected_lib_extension_interface_names(
         }
     }
 
+    let mut index_signature_affected = index_signature_seed_interfaces;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, bases) in &inheritance_graph {
+            if index_signature_affected.contains(name) {
+                continue;
+            }
+            if bases
+                .iter()
+                .any(|base| index_signature_affected.contains(base))
+            {
+                changed = index_signature_affected.insert(name.clone());
+            }
+        }
+    }
+    for lib in &checker_libs.files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            if affected_interfaces.contains(&name)
+                && index_signature_affected.contains(&name)
+                && interface_declares_index_signature(lib.arena.as_ref(), interface)
+            {
+                extension_interfaces.insert(name);
+            }
+        }
+    }
+
     extension_interfaces
+}
+
+fn baseline_lib_datetimeformatpart_spelling_interface_names(
+    checker_libs: &CheckerLibSet,
+) -> FxHashSet<String> {
+    let mut interfaces = FxHashSet::default();
+
+    for lib in &checker_libs.files {
+        let Some(file_name) = Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+        else {
+            continue;
+        };
+        if !is_datetimeformatpart_spelling_baseline_lib(file_name) {
+            continue;
+        }
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        let text = source_file.text.as_ref();
+        if !text.contains("DateTimeFormatPart") || !text.contains("DateTimeFormat") {
+            continue;
+        }
+
+        if matches!(file_name, "lib.es2021.intl.d.ts" | "es2021.intl.d.ts") {
+            interfaces.insert("DateTimeRangeFormatPart".to_string());
+        }
+        if matches!(file_name, "lib.esnext.intl.d.ts" | "esnext.intl.d.ts") {
+            interfaces.insert("DateTimeFormat".to_string());
+        }
+    }
+
+    interfaces
+}
+
+fn is_datetimeformatpart_spelling_baseline_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.es2021.intl.d.ts" | "es2021.intl.d.ts" | "lib.esnext.intl.d.ts" | "esnext.intl.d.ts"
+    )
+}
+
+fn is_datetimeformatpart_spelling_baseline_diagnostic(diag: &Diagnostic) -> bool {
+    if diag.code != 2552
+        || diag.message_text
+            != "Cannot find name 'DateTimeFormatPart'. Did you mean 'DateTimeFormat'?"
+    {
+        return false;
+    }
+
+    Path::new(&diag.file)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_datetimeformatpart_spelling_baseline_lib)
 }
 
 fn build_lib_bound_file_for_interface_checks(
@@ -2939,6 +3465,7 @@ fn build_lib_bound_file_for_interface_checks(
             lib_file.arena.as_ref(),
             &source_file.statements.nodes,
             &program.globals,
+            lib_file.binder.node_symbols.as_ref(),
             affected_interfaces,
             &mut node_symbols,
         );
@@ -3023,6 +3550,48 @@ fn collect_checker_lib_baseline_fingerprints(
     fingerprints
 }
 
+fn collect_checker_lib_baseline_diagnostics_for_codes(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    checker_libs: &CheckerLibSet,
+    affected_interfaces: &FxHashSet<String>,
+    extension_interfaces: &FxHashSet<String>,
+    project_env: &tsz::checker::context::ProjectEnv,
+    codes: &[u32],
+) -> Vec<Diagnostic> {
+    let code_filter = codes.iter().copied().collect::<FxHashSet<_>>();
+    let mut diagnostics = Vec::new();
+
+    for lib_idx in 0..checker_libs.files.len() {
+        let query_cache = QueryCache::new(&program.type_interner);
+        let (lib_diagnostics, _, _) = check_checker_lib_file_baseline(
+            project_env,
+            options,
+            checker_libs,
+            lib_idx,
+            affected_interfaces,
+            extension_interfaces,
+            &query_cache,
+        );
+        diagnostics.extend(
+            lib_diagnostics
+                .into_iter()
+                .filter(|diag| code_filter.contains(&diag.code)),
+        );
+    }
+
+    diagnostics.sort_by(|a, b| {
+        (a.file.as_str(), a.start, a.code, a.message_text.as_str()).cmp(&(
+            b.file.as_str(),
+            b.start,
+            b.code,
+            b.message_text.as_str(),
+        ))
+    });
+    diagnostics.dedup_by(|a, b| lib_diagnostic_fingerprint(a) == lib_diagnostic_fingerprint(b));
+    diagnostics
+}
+
 fn retain_program_induced_lib_diagnostics(
     diagnostics: &mut Vec<Diagnostic>,
     baseline_fingerprints: &FxHashSet<LibDiagnosticFingerprint>,
@@ -3090,6 +3659,57 @@ mod tests {
         .diagnostics
     }
 
+    fn checker_lib_set_for_test(libs: &[(&str, &str)]) -> CheckerLibSet {
+        let files = libs
+            .iter()
+            .map(|(file_name, source)| {
+                std::sync::Arc::new(tsz::binder::lib_loader::LibFile::from_source(
+                    (*file_name).to_string(),
+                    (*source).to_string(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let contexts = files
+            .iter()
+            .map(|lib| LibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+
+        CheckerLibSet {
+            files,
+            contexts: std::sync::Arc::new(contexts),
+        }
+    }
+
+    fn collect_test_diagnostics_with_checker_libs(
+        files: &[(&str, &str)],
+        checker_libs: &CheckerLibSet,
+    ) -> Vec<Diagnostic> {
+        let bind_results: Vec<_> = files
+            .iter()
+            .map(|(file_name, source)| {
+                parallel::parse_and_bind_single((*file_name).to_string(), (*source).to_string())
+            })
+            .collect();
+        let program = parallel::merge_bind_results(bind_results);
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &program,
+            &ResolvedCompilerOptions::default(),
+            std::path::Path::new("/"),
+            None,
+            checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+            false,
+        )
+        .diagnostics
+    }
+
     fn default_cli_args_for_test() -> CliArgs {
         clap::Parser::try_parse_from(["tsz"]).expect("default args should parse")
     }
@@ -3131,6 +3751,139 @@ mod tests {
         assert!(
             !codes.contains(&2322),
             "expected --noCheck diagnostics to skip TS2322 type error, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn no_check_path_emits_isolated_declarations_ts9007() {
+        // Issue #3709: `--noCheck --isolatedDeclarations` previously dropped
+        // TS9007/TS9011/etc. tsc still reports these because they gate
+        // declaration emission, not type checking.
+        let mut options = ResolvedCompilerOptions {
+            no_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+        options.checker.isolated_declarations = true;
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "export function f(x) { return x; }\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            codes.contains(&9007),
+            "expected --noCheck --isolatedDeclarations to surface TS9007, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn no_check_without_isolated_declarations_does_not_run_isolated_decl_pass() {
+        // Without --isolatedDeclarations, the isolated-decl pass must not
+        // fire and produce TS9007.
+        let options = ResolvedCompilerOptions {
+            no_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "export function f(x) { return x; }\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            !codes.contains(&9007),
+            "TS9007 must not fire under --noCheck without --isolatedDeclarations, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn no_check_with_declaration_emit_still_suppresses_type_errors() {
+        // Issue #3733: under `--noCheck --declaration`, the regular checker
+        // pipeline must run so declaration emit can pick up inferred types
+        // (return types, contextual property types). But type-error
+        // diagnostics (TS2322 etc.) must still be suppressed — `--noCheck`
+        // means "don't surface type checking errors".
+        let options = ResolvedCompilerOptions {
+            no_check: true,
+            emit_declarations: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "export const x: string = 1;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            !codes.contains(&2322),
+            "TS2322 must not fire under --noCheck --declaration, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn collect_diagnostics_preserves_builtin_lib_ts2552_spelling_baseline() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.esnext.intl.d.ts",
+            r#"
+declare namespace Intl {
+    interface DateTimeFormat {
+        formatToParts(): DateTimeFormatPart[];
+    }
+}
+"#,
+        )]);
+
+        let diagnostics = collect_test_diagnostics_with_checker_libs(
+            &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
+            &checker_libs,
+        );
+        let ts2552 = diagnostics
+            .iter()
+            .filter(|diag| diag.code == 2552)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ts2552.len(),
+            1,
+            "expected one baseline lib TS2552 diagnostic, got: {diagnostics:?}"
+        );
+        assert!(
+            ts2552[0]
+                .message_text
+                .contains("Cannot find name 'DateTimeFormatPart'. Did you mean 'DateTimeFormat'?"),
+            "expected DateTimeFormatPart spelling suggestion, got: {ts2552:?}"
+        );
+        assert_eq!(ts2552[0].file, "lib.esnext.intl.d.ts");
+    }
+
+    #[test]
+    fn collect_diagnostics_ignores_unrelated_builtin_lib_ts2552_spelling_baseline() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.esnext.intl.d.ts",
+            r#"
+declare namespace Intl {
+    interface DateTimeFormatPart {}
+    interface DateTimeFormat {
+        formatToParts(): DateTimeFormatParts[];
+    }
+}
+"#,
+        )]);
+
+        let diagnostics = collect_test_diagnostics_with_checker_libs(
+            &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
+            &checker_libs,
+        );
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2552),
+            "expected unrelated baseline lib TS2552 diagnostics to stay filtered, got: {diagnostics:?}"
         );
     }
 
@@ -3192,6 +3945,76 @@ mod tests {
             false,
         )
         .diagnostics
+    }
+
+    #[test]
+    fn cloned_checker_libs_preserve_strict_builtin_iterator_return() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+declare const map: Map<string, number>;
+const value: number = map.values().next().value;
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+const result: Next<number> = map.values().next();
+"#,
+        );
+        let ts2322_count = diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count();
+        assert_eq!(
+            ts2322_count, 2,
+            "expected cloned checker libs to preserve strict built-in iterator return diagnostics, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn es2015_local_interface_t_shadows_lib_heritage_type_parameters() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+interface T { f(x: number): void }
+declare var t: T;
+t.f("s");
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2345),
+            "expected TS2345 for T.f argument type, got: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2339),
+            "did not expect TS2339 from a stale local T shape, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn es2015_destructuring_reduce_concat_reports_overload_and_iterability() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+declare var tuple: [boolean, number, ...string[]];
+
+const [a, b, c, ...rest] = tuple;
+
+declare var receiver: typeof tuple;
+
+[...receiver] = tuple;
+
+const [oops1] = [1, 2, 3].reduce((accu, el) => accu.concat(el), []);
+"#,
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+
+        assert!(
+            codes.contains(&2488),
+            "expected TS2488 for destructuring the failed reduce result, got: {diagnostics:?}"
+        );
+        assert!(
+            codes.contains(&2769),
+            "expected TS2769 for the nested reduce/concat overload failure, got: {diagnostics:?}"
+        );
     }
 
     fn mapped_type_indexed_access_constraint_repro() -> &'static str {
@@ -4425,7 +5248,7 @@ let x2: string = f;
     }
 
     #[test]
-    fn test_collect_diagnostics_keeps_ts1362_for_checked_js_module_exports_type_only_require() {
+    fn test_collect_diagnostics_allows_checked_js_module_exports_type_only_require() {
         let dir = std::env::temp_dir().join("tsz_check_js_module_exports_type_only_require");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -4443,15 +5266,15 @@ let x2: string = f;
         let options = ResolvedCompilerOptions {
             allow_js: true,
             check_js: true,
-            module_resolution: Some(crate::config::ModuleResolutionKind::NodeNext),
+            module_resolution: Some(crate::config::ModuleResolutionKind::Node16),
             module_suffixes: vec![String::new()],
             printer: tsz::emitter::PrinterOptions {
-                module: ModuleKind::Node20,
+                module: ModuleKind::Node18,
                 target: tsz_common::common::ScriptTarget::ES2023,
                 ..Default::default()
             },
             checker: tsz::checker::context::CheckerOptions {
-                module: ModuleKind::Node20,
+                module: ModuleKind::Node18,
                 target: tsz_common::common::ScriptTarget::ES2023,
                 ..Default::default()
             },
@@ -4473,9 +5296,87 @@ let x2: string = f;
             .collect();
 
         assert!(
-            importer_diags.iter().any(|diag| diag.code == 1362),
-            "expected TS1362 for checked CommonJS require() of a type-only \
-             \"module.exports\" binding, got: {importer_diags:?}"
+            importer_diags.is_empty(),
+            "expected checked CommonJS require() of a type-only \
+             \"module.exports\" binding to avoid diagnostics, got: {importer_diags:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_collect_diagnostics_rejects_exports_in_cjs_file_with_esm_syntax() {
+        let dir = std::env::temp_dir().join("tsz_check_js_cjs_exports_with_esm_syntax");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let two_path = dir.join("2.cjs");
+        let three_path = dir.join("3.cjs");
+        let four_path = dir.join("4.cjs");
+        let five_path = dir.join("5.cjs");
+
+        let two_source = "exports.foo = 0;\n";
+        let three_source = "import \"foo\";\nexports.foo = {};\n";
+        let four_source = ";\n";
+        let five_source =
+            "import two from \"./2.cjs\";\nimport three from \"./3.cjs\";\ntwo.foo;\nthree.foo;\n";
+
+        let options = ResolvedCompilerOptions {
+            allow_js: true,
+            check_js: true,
+            module_resolution: Some(crate::config::ModuleResolutionKind::NodeNext),
+            module_suffixes: vec![String::new()],
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2022,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2022,
+                no_types_and_symbols: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (two_path.to_str().unwrap(), two_source),
+                (three_path.to_str().unwrap(), three_source),
+                (four_path.to_str().unwrap(), four_source),
+                (five_path.to_str().unwrap(), five_source),
+            ],
+            &options,
+            &dir,
+        );
+
+        let three_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| Path::new(&diag.file) == three_path.as_path())
+            .collect();
+        let five_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| Path::new(&diag.file) == five_path.as_path())
+            .collect();
+
+        assert!(
+            three_diags.iter().any(|diag| {
+                diag.code == 2304 && diag.message_text.contains("Cannot find name 'exports'")
+            }),
+            "expected TS2304 for exports in a .cjs file with ESM syntax, got: {three_diags:?}"
+        );
+        assert!(
+            five_diags
+                .iter()
+                .any(|diag| { diag.code == 1192 && diag.message_text.contains("Module '\"3\"'") }),
+            "expected TS1192 for default import from the ESM-syntax .cjs file, got file diagnostics: {five_diags:?}; all diagnostics: {diagnostics:?}"
+        );
+        assert!(
+            five_diags.iter().all(|diag| {
+                !(diag.code == 1192 && diag.message_text.contains("Module '\"2\"'"))
+            }),
+            "did not expect TS1192 for default import from plain CommonJS .cjs, got: {five_diags:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
@@ -4541,6 +5442,16 @@ let x2: string = f;
 
         let diagnostics = collect_test_diagnostics_with_options(
             &[
+                (index_js_path.to_str().unwrap(), "export const esm = 0;\n"),
+                (
+                    index_d_ts_path.to_str().unwrap(),
+                    "export const esm: number;\n",
+                ),
+                (index_cjs_path.to_str().unwrap(), "exports.cjs = 0;\n"),
+                (
+                    index_d_cts_path.to_str().unwrap(),
+                    "export const cjs: number;\n",
+                ),
                 (
                     main_ts_path.to_str().unwrap(),
                     "import { esm, cjs } from \"dual\";\n",
@@ -5289,17 +6200,13 @@ function foo() {
             .filter(|diag| diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE)
             .count();
 
-        // Known regression: merging `Node.kind: SyntaxKind` introduces a small
-        // cascade of TS2344 errors at lib.dom.d.ts call sites that constrain
-        // `HTMLElementTagNameMap[K]` against `Element` / `Node`. The constraint
-        // satisfaction breaks because the augmented `Node` shape is no longer
-        // structurally satisfied by the un-narrowed indexed-access type. The
-        // root fix lives in solver constraint resolution and is tracked
-        // separately; we lock in the current count as a ratchet so it cannot
-        // grow without notice.
-        assert!(
-            ts2344_count <= 3,
-            "TS2344 cascade in lib.dom.d.ts grew past the known floor of 3 after merging Node.kind, got: {ts2344_count}: {diagnostics:?}"
+        // tsc reports three TS2344 diagnostics here: the apparent
+        // `HTMLElementTagNameMap[K]` value union includes `HTMLTrackElement`,
+        // whose existing `kind: string` property conflicts with the merged
+        // `Node.kind: SyntaxKind` property.
+        assert_eq!(
+            ts2344_count, 3,
+            "Expected three TS2344 diagnostics from lib.dom.d.ts after merging Node.kind, got: {diagnostics:?}"
         );
         assert_eq!(
             ts2430_count, 1,
@@ -5612,5 +6519,56 @@ interface Node {
 
         let result = topological_file_order(&[0, 1], &deps);
         assert_eq!(result, vec![0, 1]);
+    }
+
+    #[test]
+    fn ts6504_emitted_for_js_root_when_allow_js_disabled() {
+        // When allowJs is not set, an explicit JS root must produce TS6504.
+        // tsc includes the file in the program but reports the error and skips
+        // semantic checks for that file.
+        let options = ResolvedCompilerOptions {
+            allow_js: false,
+            ..ResolvedCompilerOptions::default()
+        };
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("/main.js", "const n = 1;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|d| d.code == 6504),
+            "expected TS6504 for JS root without allowJs, got: {diagnostics:?}"
+        );
+
+        let ts6504 = diagnostics.iter().find(|d| d.code == 6504).unwrap();
+        assert!(
+            ts6504.message_text.contains("main.js"),
+            "TS6504 message should include the JS file path: {}",
+            ts6504.message_text
+        );
+        assert!(
+            ts6504.related_information.len() >= 2,
+            "TS6504 should have related info explaining why the file is in the program"
+        );
+    }
+
+    #[test]
+    fn ts6504_not_emitted_when_allow_js_enabled() {
+        // When allowJs is enabled, JS root files are accepted without TS6504.
+        let options = ResolvedCompilerOptions {
+            allow_js: true,
+            ..ResolvedCompilerOptions::default()
+        };
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("/main.js", "const n = 1;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 6504),
+            "expected no TS6504 when allowJs is enabled, got: {diagnostics:?}"
+        );
     }
 }

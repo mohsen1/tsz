@@ -14,7 +14,37 @@ use crate::types::{
     TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::{debug, trace};
+
+// Reusable scratch `FxHashSet<TypeId>` for the five `type_contains_placeholder`
+// call-sites in this module. Each call previously allocated a fresh set;
+// pooling shaves the allocator round-trip plus 2–4 grows. Mirrors the pool
+// pattern from #4722 / #4790 / #4801 / #4805 / #4807.
+thread_local! {
+    static PLACEHOLDER_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_placeholder_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = PLACEHOLDER_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    PLACEHOLDER_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Structural walker to collect constraints: source <: target
@@ -422,6 +452,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let is_nullish = |ty: TypeId| ty.is_nullable();
 
+        if let (Some(source_elem), Some(target_elem)) = (
+            self.array_like_element_for_constraint(source),
+            self.array_like_element_for_constraint(target),
+        ) {
+            self.constrain_types(ctx, var_map, source_elem, target_elem, priority);
+            return;
+        }
+
         match (source_key, target_key) {
             (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner)))
             | (Some(TypeData::NoInfer(s_inner)), Some(TypeData::NoInfer(t_inner))) => {
@@ -492,8 +530,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else {
                     // keyof_inner is not a bare placeholder — it might contain
                     // placeholders deeper (e.g., keyof Application<T>). Try evaluating.
-                    let mut visited = FxHashSet::default();
-                    if self.type_contains_placeholder(keyof_inner, var_map, &mut visited) {
+                    let contains_placeholder = with_placeholder_visited(|visited| {
+                        self.type_contains_placeholder(keyof_inner, var_map, visited)
+                    });
+                    if contains_placeholder {
                         // Contains placeholders — skip for now, will be resolved later
                     } else {
                         // No placeholders — evaluate the keyof and retry
@@ -559,21 +599,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 } else {
-                    // When the conditional can't be evaluated and its check type is
-                    // an inference placeholder, skip inference entirely. This matches
-                    // tsc's inferToConditionalType: tsc only infers from a conditional
-                    // when its own `infer` type parameters include the check type
-                    // (i.e., `infer X` in the extends clause). When the check type is
-                    // an outer inference variable (from a generic function call), tsc
-                    // does NOT infer through the conditional, preventing false
-                    // candidates that would pollute the inferred type.
-                    if var_map.contains_key(&cond.check_type) {
-                        return;
-                    }
-                    let mut visited = FxHashSet::default();
-                    if self.type_contains_placeholder(target, var_map, &mut visited) {
-                        self.constrain_types(ctx, var_map, source, cond.true_type, priority);
-                        self.constrain_types(ctx, var_map, source, cond.false_type, priority);
+                    // Match tsc's `inferToConditionalType`: if the target conditional
+                    // cannot be evaluated yet, infer against both branch types. Direct
+                    // naked type-parameter branches are fallback evidence; structured
+                    // branches should win when they can infer more specific candidates.
+                    let contains_placeholder = with_placeholder_visited(|visited| {
+                        self.type_contains_placeholder(target, var_map, visited)
+                    });
+                    if contains_placeholder {
+                        if var_map.contains_key(&cond.check_type)
+                            && cond.true_type != TypeId::NEVER
+                            && cond.false_type != TypeId::NEVER
+                        {
+                            return;
+                        }
+                        let true_priority = if var_map.contains_key(&cond.true_type) {
+                            crate::types::InferencePriority::LowPriority
+                        } else {
+                            priority
+                        };
+                        let false_priority = if var_map.contains_key(&cond.false_type) {
+                            crate::types::InferencePriority::LowPriority
+                        } else {
+                            priority
+                        };
+                        self.constrain_types(ctx, var_map, source, cond.true_type, true_priority);
+                        self.constrain_types(ctx, var_map, source, cond.false_type, false_priority);
                     }
                 }
             }
@@ -639,14 +690,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // for the homomorphic parameter; we mirror that here.
                             if has_properties {
                                 let mut other_params_var_map = var_map.clone();
-                                other_params_var_map.remove(&keyof_target);
-                                self.constrain_template_against_properties(
-                                    ctx,
-                                    &other_params_var_map,
-                                    &source_obj.properties,
-                                    &mapped,
-                                    priority,
+                                self.remove_reverse_mapped_target_params(
+                                    &mut other_params_var_map,
+                                    keyof_target,
                                 );
+                                if !other_params_var_map.is_empty() {
+                                    self.constrain_template_against_properties(
+                                        ctx,
+                                        &other_params_var_map,
+                                        &source_obj.properties,
+                                        &mapped,
+                                        priority,
+                                    );
+                                }
                             }
                             return;
                         }
@@ -671,7 +727,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 var_map,
                                 names_union,
                                 mapped.constraint,
-                                priority,
+                                crate::types::InferencePriority::MappedType,
                             );
 
                             // Infer template (T) from property value types.
@@ -906,12 +962,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // `number` and `"FAILURE"`, constrain each against the Application
                         // individually, and infer T = number | "FAILURE" instead of T = number.
                         let t_app_args_clone = t_app.args.clone();
-                        let has_placeholder = {
-                            let mut visited = FxHashSet::default();
-                            t_app_args_clone.iter().any(|arg| {
-                                self.type_contains_placeholder(*arg, var_map, &mut visited)
-                            })
-                        };
+                        let has_placeholder = with_placeholder_visited(|visited| {
+                            t_app_args_clone
+                                .iter()
+                                .any(|arg| self.type_contains_placeholder(*arg, var_map, visited))
+                        });
                         if has_placeholder
                             && let Some(expanded) =
                                 self.checker.expand_type_alias_application(target)
@@ -1275,12 +1330,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         source_subst.insert(tp.name, placeholder_id);
                         source_var_map.insert(placeholder_id, var);
 
-                        // Add constraint as upper bound if it's concrete
+                        // Add constraint as an upper bound when it can be checked
+                        // without resolving the source placeholder from its own
+                        // self-referential bound. Source-only self constraints
+                        // are handled by the diagnostic compatibility path.
                         if let Some(constraint) = tp.constraint {
                             let inst_constraint =
                                 instantiate_type(self.interner, constraint, &source_subst);
                             src_placeholder_visited.clear();
-                            // Create combined var_map for type_contains_placeholder check
                             let combined_for_check: FxHashMap<_, _> = var_map
                                 .iter()
                                 .chain(source_var_map.iter())
@@ -1914,10 +1971,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // (e.g., T extends any[] → any[]), which makes TupleMapper<T>
                 // evaluate to Array(Wrap<any>) — losing the T connection.
                 {
-                    let mut visited = FxHashSet::default();
-                    let has_placeholder_arg = t_app_args
-                        .iter()
-                        .any(|arg| self.type_contains_placeholder(*arg, var_map, &mut visited));
+                    let has_placeholder_arg = with_placeholder_visited(|visited| {
+                        t_app_args
+                            .iter()
+                            .any(|arg| self.type_contains_placeholder(*arg, var_map, visited))
+                    });
                     if has_placeholder_arg
                         && let Some(expanded) = self.checker.expand_type_alias_application(target)
                         && expanded != target
@@ -2134,7 +2192,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let tuple_elements: Vec<TupleElement> = source_params[target_fixed_count..]
             .iter()
             .map(|p| TupleElement {
-                type_id: p.type_id,
+                type_id: if p.optional {
+                    self.interner.union2(p.type_id, TypeId::UNDEFINED)
+                } else {
+                    p.type_id
+                },
                 name: p.name,
                 optional: p.optional,
                 rest: p.rest,
@@ -2163,12 +2225,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         mapped: &MappedType,
         priority: crate::types::InferencePriority,
     ) {
+        if var_map.is_empty() {
+            return;
+        }
         let iter_param_name = mapped.type_param.name;
         for prop in properties {
             let key_literal = self.interner.literal_string_atom(prop.name);
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
             self.constrain_types(ctx, var_map, prop.type_id, instantiated_template, priority);
+        }
+    }
+
+    fn remove_reverse_mapped_target_params(
+        &self,
+        var_map: &mut FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        target: TypeId,
+    ) {
+        let candidates: Vec<TypeId> = var_map.keys().copied().collect();
+        for candidate in candidates {
+            if candidate == target {
+                var_map.remove(&candidate);
+                continue;
+            }
+
+            let Some(var) = var_map.get(&candidate).copied() else {
+                continue;
+            };
+            let mut probe_map = FxHashMap::default();
+            probe_map.insert(candidate, var);
+            let contains_placeholder = with_placeholder_visited(|visited| {
+                self.type_contains_placeholder(target, &probe_map, visited)
+            });
+            if contains_placeholder {
+                var_map.remove(&candidate);
+            }
         }
     }
 }

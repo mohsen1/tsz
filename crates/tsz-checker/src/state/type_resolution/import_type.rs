@@ -448,7 +448,18 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?.clone();
 
+        // Track whether any source file in the target arena declares a JSDoc
+        // typedef with this name. tsc treats such a typedef as a type-only
+        // exported member of the module, so even when the body fails to
+        // resolve we return `any` instead of `None` to avoid a false-positive
+        // TS2694 — matching tsc's behavior of silently using `any` for
+        // unresolved identifiers inside a JSDoc typedef body.
+        let mut typedef_exists_with_broken_body = false;
+
         for source_file in &target_arena.source_files {
+            if !Self::source_file_has_jsdoc_typedef_named(source_file, typedef_name) {
+                continue;
+            }
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
             let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
@@ -470,15 +481,18 @@ impl<'a> CheckerState<'a> {
 
             if let Some((ty, _)) =
                 checker.resolve_jsdoc_typedef_info(typedef_name, &comments, &source_text)
-                && ty != TypeId::ERROR
-                && ty != TypeId::UNKNOWN
             {
                 self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-                return Some(ty);
+                if ty != TypeId::ERROR && ty != TypeId::UNKNOWN {
+                    return Some(ty);
+                }
+                typedef_exists_with_broken_body = true;
+            } else {
+                typedef_exists_with_broken_body = true;
             }
         }
 
-        None
+        typedef_exists_with_broken_body.then_some(TypeId::ANY)
     }
 
     /// Resolve the type parameters (with constraints) of a JSDoc typedef in another file.
@@ -655,6 +669,40 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn maybe_emit_import_type_cjs_esm_resolution_mode_missing(
+        &mut self,
+        module_name: &str,
+        specifier_node: NodeIndex,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) {
+        let resolution_mode = resolution_mode_override.or_else(|| {
+            self.current_file_is_commonjs_for_node16_or_node18()
+                .then(|| self.current_file_emit_resolution_mode())
+        });
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                resolution_mode,
+            )
+            .or_else(|| self.ctx.resolve_import_target(module_name));
+
+        if let Some(target_idx) = target_idx
+            && self.type_only_cjs_esm_resolution_mode_is_missing(
+                target_idx,
+                resolution_mode_override.is_some(),
+            )
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                specifier_node,
+                diagnostic_messages::TYPE_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESOLUTIO,
+                diagnostic_codes::TYPE_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESOLUTIO,
+            );
+        }
+    }
+
     /// Check an import type expression for module resolution and emit TS2307 if needed.
     /// Returns the resolved type or `TypeId::ERROR`.
     pub(crate) fn check_import_type_and_resolve(
@@ -672,6 +720,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
+        self.maybe_emit_import_type_cjs_esm_resolution_mode_missing(
+            &module_name,
+            specifier_node,
+            resolution_mode_override,
+        );
         let member_segments = self.import_type_member_segments(type_name_idx);
         let is_bare_import_type = member_segments
             .as_ref()

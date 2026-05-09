@@ -12,39 +12,20 @@ struct Diag {
 }
 
 fn check_js(source: &str) -> Vec<Diag> {
-    let options = CheckerOptions {
-        check_js: true,
-        ..CheckerOptions::default()
-    };
-
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| Diag {
-            code: d.code,
-            message: d.message_text.clone(),
-        })
-        .collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| Diag {
+        code: d.code,
+        message: d.message_text,
+    })
+    .collect()
 }
 
 // =============================================================================
@@ -105,6 +86,90 @@ y = x;
     );
 }
 
+/// `@type {(v: unknown) => v is undefined}` must not flag the `unknown`
+/// keyword as TS2304. The unresolved-leaf walker treats
+/// `TypeId::UNKNOWN` as a "could not resolve" sentinel, so without an
+/// explicit allowlist for built-in primitive type names a JSDoc body
+/// referencing `unknown` would emit a spurious "Cannot find name
+/// 'unknown'" diagnostic at every leaf.
+#[test]
+fn jsdoc_walker_unknown_primitive_does_not_emit_ts2304() {
+    let diags = check_js(
+        r#"/** @type {(v: unknown) => v is undefined} */
+const isUndef = v => v === undefined;
+"#,
+    );
+    let unresolved_unknown: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304 && d.message.contains("'unknown'"))
+        .collect();
+    assert!(
+        unresolved_unknown.is_empty(),
+        "Expected no TS2304 for the built-in `unknown` keyword in JSDoc, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `@type {<T>(param?: T) => T | undefined}` declares its own type
+/// parameter `T` for the duration of the signature. The unresolved-leaf
+/// walker must thread `<T>` into the template-param scope before
+/// recursing into params and return — otherwise it spuriously emits
+/// TS2304 ("Cannot find name 'T'") for every reference to `T` inside
+/// the body of the signature.
+#[test]
+fn jsdoc_type_generic_signature_introduces_local_type_params() {
+    let diags = check_js(
+        r#"/** @type {<T>(param?: T) => T | undefined} */
+function typed(param) {
+    return param;
+}
+var n = typed(1);
+"#,
+    );
+    let unresolved_t: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304 && d.message.contains("'T'"))
+        .collect();
+    assert!(
+        unresolved_t.is_empty(),
+        "Expected no TS2304 for generic-signature-local `T`, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Variant: nested generic parameters and an `extends` constraint must
+/// also count toward the local scope. Only the parameter *name* gets
+/// added (we deliberately don't parse the constraint expression — that
+/// path stays intentionally unhandled in the diagnostic walker).
+#[test]
+fn jsdoc_type_generic_signature_with_constraint_no_ts2304() {
+    let diags = check_js(
+        r#"/** @type {<K extends string>(key: K) => K} */
+function get(key) {
+    return key;
+}
+"#,
+    );
+    let unresolved_k: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2304 && d.message.contains("'K'"))
+        .collect();
+    assert!(
+        unresolved_k.is_empty(),
+        "Expected no TS2304 for `<K extends string>(key: K) => K`, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// `@type {string[]}` with compatible assignment should produce no errors.
 #[test]
 fn jsdoc_type_array_suffix_compatible_no_error() {
@@ -118,6 +183,36 @@ var x = ["hello"];
         relevant.is_empty(),
         "Expected no TS2322 for string[] assigned string[], got codes: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn jsdoc_readonly_property_accepts_tab_after_modifier() {
+    let diags = check_js(
+        r#"
+// @ts-check
+
+/** @type {{readonly	value: string}} */
+const item = { value: 123 };
+"#,
+    );
+    let codes = diags.iter().map(|d| d.code).collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2353),
+        "Expected readonly modifier with tab whitespace to parse without TS2353, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected parsed readonly property to report value mismatch TS2322, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -214,6 +309,40 @@ const p = {};
     );
 }
 
+#[test]
+fn jsdoc_mapped_type_accepts_tab_before_in_keyword() {
+    let diags = check_js(
+        r#"
+// @ts-check
+
+/**
+ * @typedef {{ value: string }} Source
+ */
+
+/** @type {{[K	in keyof Source]: Source[K]}} */
+const item = { value: 123 };
+"#,
+    );
+    let codes = diags.iter().map(|d| d.code).collect::<Vec<_>>();
+
+    assert!(
+        !codes.contains(&2353),
+        "Expected tab-separated mapped type header to parse without TS2353, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected parsed mapped type to report value mismatch TS2322, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // ?Type nullable prefix and !Type non-nullable prefix
 // =============================================================================
@@ -288,6 +417,38 @@ function f() {
     );
 }
 
+/// `@this` on a real arrow function is invalid and must not override lexical
+/// class `this` for member lookup.
+#[test]
+fn jsdoc_this_tag_on_class_field_arrow_uses_lexical_this() {
+    let diags = check_js(
+        r#"/** @typedef {{fn(a: string): void}} T */
+class C {
+    /**
+     * @this {T}
+     * @param {string} a
+     */
+    p = (a) => this.fn("" + a);
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2730),
+        "Expected TS2730 for @this on arrow function, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 2339 && d.message == "Property 'fn' does not exist on type 'C'."
+        }),
+        "Expected TS2339 for class lexical this, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// `@type {(...values: string[]) => void}` should be parsed as a rest parameter,
 /// not as a single `string[]` positional parameter.
 #[test]
@@ -353,15 +514,22 @@ fn jsdoc_nongeneric_instantiation_reports_ts2315_and_ts2304() {
 /**
  * @param {Void<Missing>} c
  * @param {<T>(m: Boolean<T>) => string} fn
+ * @param {fn<T>} callback
  */
-function sample(c, fn) {
-  return fn(c);
+function sample(c, fn, callback) {
+  return fn(c) || callback;
 }
+
+function fn() {}
 "#,
     );
 
     let ts2315 = diags.iter().filter(|d| d.code == 2315).count();
-    let ts2304 = diags.iter().filter(|d| d.code == 2304).count();
+    let ts2304_messages = diags
+        .iter()
+        .filter(|d| d.code == 2304)
+        .map(|d| d.message.as_str())
+        .collect::<Vec<_>>();
 
     assert!(
         ts2315 >= 2,
@@ -372,8 +540,16 @@ function sample(c, fn) {
             .collect::<Vec<_>>()
     );
     assert!(
-        ts2304 >= 1,
+        ts2304_messages.contains(&"Cannot find name 'T'."),
         "Expected at least one TS2304 diagnostic for unresolved JSDoc type arguments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !ts2304_messages.contains(&"Cannot find name 'fn<T>'."),
+        "Known function values should suppress the full-name TS2304 while preserving argument diagnostics, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message))

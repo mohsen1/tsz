@@ -76,6 +76,7 @@ pub struct ClassES5Emitter<'a> {
     remove_comments: bool,
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
+    tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     printer_options: Option<crate::emitter::PrinterOptions>,
 }
@@ -93,6 +94,7 @@ impl<'a> ClassES5Emitter<'a> {
             leading_comment: None,
             remove_comments: false,
             tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             printer_options: None,
         }
@@ -100,6 +102,10 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
         self.tslib_prefix = enable;
+    }
+
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
     }
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
@@ -117,6 +123,10 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.transformer.set_use_define_for_class_fields(enable);
+    }
+
+    pub const fn set_skip_static_members(&mut self, skip: bool) {
+        self.transformer.set_skip_static_members(skip);
     }
 
     pub fn set_class_self_reference_alias(&mut self, alias: String) {
@@ -149,9 +159,18 @@ impl<'a> ClassES5Emitter<'a> {
         self.remove_comments = remove;
     }
 
-    /// Set the initial indentation level (to match the parent context)
+    /// Set the initial indentation level (to match the parent context).
+    ///
+    /// Also propagates to the transformer's `indent_base` so the Raw IR
+    /// nodes generated for `__decorate(...)` blocks use absolute indents
+    /// anchored at the parent context, instead of always assuming the
+    /// class IIFE lives at column 0. Without this, a class emitted inside
+    /// a System.execute body or other multi-level wrapper had its
+    /// `__decorate` array body land at columns 8 / 4 regardless of the
+    /// writer's actual indent.
     pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
+        self.transformer.set_indent_base(level);
     }
 
     /// Set the source text (for `ASTRef` emission)
@@ -224,6 +243,7 @@ impl<'a> ClassES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_remove_comments(self.remove_comments);
         printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
         printer.set_target_es5(true);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);

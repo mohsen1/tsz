@@ -202,6 +202,42 @@ js1.b;
     );
 }
 
+#[test]
+fn jsdoc_param_tag_uses_required_constructor_instance_type() {
+    let diagnostics = check_js_require_value_diagnostics(
+        r#"{ }"#,
+        r#"
+exports.A = function () {
+    this.x = 1;
+};
+
+exports.B = class {
+    constructor() {
+        this.x = 1;
+    }
+};
+"#,
+        r#"
+const { A, B } = require("./js.js");
+
+/** @param {A} p */
+function fromFunction(p) {
+    p.x;
+}
+
+/** @param {B} p */
+function fromClassExpression(p) {
+    p.x;
+}
+"#,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected JSDoc @param constructor references to expose instance properties, got: {diagnostics:#?}"
+    );
+}
+
 /// Writes to an unknown property on a `const X = require("…")` namespace must
 /// surface as TS2339 on both the read and the write side. The earlier behavior
 /// silently suppressed TS2339 because the JSDoc "assigned-value type" recovery

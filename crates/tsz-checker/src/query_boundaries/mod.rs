@@ -43,6 +43,7 @@ pub(crate) mod class_type;
     clippy::manual_map
 )]
 pub(crate) mod common;
+pub(crate) mod construct_signatures;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,
@@ -96,6 +97,7 @@ pub(crate) mod flow_analysis;
 pub(crate) mod index_signature;
 #[allow(dead_code)]
 pub(crate) mod inference;
+pub(crate) mod intersection_display;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,
@@ -114,8 +116,10 @@ pub(crate) mod name_resolution;
     clippy::manual_map
 )]
 pub(crate) mod property_access;
+pub(crate) mod recursive_alias;
 #[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
 pub(crate) mod relation_types;
+pub(crate) mod spread;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,
@@ -156,6 +160,17 @@ pub(crate) mod type_computation;
     clippy::manual_map
 )]
 pub(crate) mod type_construction;
+#[allow(
+    dead_code,
+    clippy::missing_const_for_fn,
+    clippy::match_same_arms,
+    clippy::doc_markdown,
+    clippy::manual_map
+)]
+pub(crate) mod type_defaults;
+pub(crate) mod type_parameter_identity;
+#[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
+pub(crate) mod type_rewrite;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,

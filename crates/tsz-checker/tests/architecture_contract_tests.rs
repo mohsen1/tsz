@@ -23,6 +23,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
 
@@ -39,6 +40,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
         tsz_solver::PropertyInfo {
@@ -53,6 +55,7 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         },
     ]);

@@ -4,9 +4,11 @@
 //! array/tuple extraction, and compound member mapping.
 
 use crate::TypeDatabase;
+use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::interner::Atom;
 
 // =============================================================================
 // Type Content Queries
@@ -50,6 +52,72 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
                 | TypeData::ThisType
                 | TypeData::BoundParameter(_)
         )
+    })
+}
+
+/// Check if a type contains named type parameters or canonical bound
+/// parameters, excluding in-flight `infer` placeholders and polymorphic `this`.
+pub fn contains_named_or_bound_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    contains_type_matching(db, type_id, |key| {
+        matches!(
+            key,
+            TypeData::TypeParameter(_) | TypeData::BoundParameter(_)
+        )
+    })
+}
+
+/// Like `contains_type_parameters_db`, but ignores references to a known
+/// locally-bound mapped key parameter.
+pub fn contains_type_parameters_except_name_db(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    excluded_name: Atom,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => info.name != excluded_name,
+        TypeData::ThisType | TypeData::BoundParameter(_) => true,
+        _ => false,
+    })
+}
+
+/// Check if a type contains an indexed access whose object is a type parameter.
+pub fn contains_index_access_with_type_parameter_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    contains_type_matching(
+        db,
+        type_id,
+        |key| matches!(key, TypeData::IndexAccess(object, _) if crate::type_queries::is_type_parameter_like(db, *object)),
+    )
+}
+
+/// Check if a type contains an indexed access whose object is a variadic tuple
+/// rest element containing a type parameter.
+pub fn contains_index_access_with_variadic_tuple_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    contains_type_matching(db, type_id, |key| {
+        matches!(
+            key,
+            TypeData::IndexAccess(object, _)
+                if variadic_tuple_object_contains_type_parameter(db, *object)
+        )
+    })
+}
+
+fn variadic_tuple_object_contains_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    get_tuple_elements(db, type_id).is_some_and(|elems| {
+        elems
+            .iter()
+            .any(|elem| elem.rest && contains_type_parameters_db(db, elem.type_id))
     })
 }
 
@@ -248,23 +316,55 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
 }
 
-/// Check if a type is a spread marker tuple `[...T]` created by the checker
-/// for generic `TypeParameter` spreads. These are 1-element rest tuples whose
-/// inner type is a `TypeParameter`.
+/// Check if a type is a spread marker tuple created by the checker.
 pub fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
     if let Some(TypeData::Tuple(elems_id)) = db.lookup(type_id) {
         let elems = db.tuple_list(elems_id);
-        elems.len() == 1
-            && elems[0].rest
-            && matches!(
+        if elems.len() != 1 || !elems[0].rest {
+            return false;
+        }
+        elems[0]
+            .name
+            .is_some_and(|name| db.resolve_atom(name) == "__tsz_spread_argument__")
+            || matches!(
                 db.lookup(elems[0].type_id),
                 Some(TypeData::TypeParameter(_))
             )
     } else {
         false
+    }
+}
+
+pub fn rest_type_needs_aggregate_argument_check(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            rest_type_needs_aggregate_argument_check(db, inner)
+        }
+        Some(TypeData::Union(members)) => db.type_list(members).iter().any(|&member| {
+            let member = match db.lookup(member) {
+                Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => inner,
+                _ => member,
+            };
+            matches!(db.lookup(member), Some(TypeData::Tuple(_)))
+                || rest_type_needs_aggregate_argument_check(db, member)
+        }),
+        Some(
+            TypeData::Application(_)
+            | TypeData::Conditional(_)
+            | TypeData::Intersection(_)
+            | TypeData::Lazy(_)
+            | TypeData::Mapped(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::IndexAccess(_, _),
+        ) => true,
+        _ => false,
     }
 }
 
@@ -505,6 +605,22 @@ pub fn is_literal_or_primitive_or_compound_of_those(
     }
 }
 
+/// Returns true when `type_id` is a literal type or a union whose members are
+/// all literal types.
+pub fn is_literal_or_literal_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(_)) => true,
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .all(|&member| is_literal_or_literal_union_type(db, member)),
+        _ => false,
+    }
+}
+
 /// Get the members of an intersection type.
 ///
 /// Returns None if the type is not an intersection.
@@ -619,6 +735,101 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
         }
         _ => None,
     }
+}
+
+/// Return true when a constraint admits a mutable array or tuple candidate.
+///
+/// Const type parameters preserve literal types, but when their declared
+/// constraint is mutable-array-like (`T extends unknown[]`, or a union with a
+/// mutable array member), array literal candidates must not be converted to
+/// readonly tuples.
+pub fn constraint_allows_mutable_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Array(_)) => true,
+        Some(TypeData::Tuple(list_id)) => !db.tuple_list(list_id).is_empty(),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .is_some_and(|constraint| constraint_allows_mutable_array_like(db, constraint)),
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| constraint_allows_mutable_array_like(db, member)),
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            evaluated != type_id && constraint_allows_mutable_array_like(db, evaluated)
+        }
+        _ => false,
+    }
+}
+
+/// Get the element type for mutable array forms that are identical for TS2403.
+///
+/// This intentionally recognizes `T[]` and canonical `Array<T>` applications
+/// before application evaluation erases the as-written `Array<T>` identity.
+pub fn mutable_array_element_for_redeclaration(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    array_base: Option<TypeId>,
+    definition_store: Option<&DefinitionStore>,
+) -> Option<TypeId> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Array(elem)) => Some(elem),
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            (is_array_application_base_for_redeclaration(
+                db,
+                app.base,
+                array_base,
+                definition_store,
+            ) && app.args.len() == 1)
+                .then_some(app.args[0])
+        }
+        _ => None,
+    }
+}
+
+fn is_array_application_base_for_redeclaration(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    array_base: Option<TypeId>,
+    definition_store: Option<&DefinitionStore>,
+) -> bool {
+    let array_base = array_base.or_else(|| db.get_array_base_type());
+    let array_display_base = db.get_array_display_base_type();
+    if array_base == Some(base)
+        || array_display_base.is_some_and(|display_base| display_base == base)
+    {
+        return true;
+    }
+
+    db.get_display_alias(base).is_some_and(|alias| {
+        array_base == Some(alias)
+            || array_display_base.is_some_and(|display_base| display_base == alias)
+    }) || lazy_base_names_array(db, definition_store, base)
+}
+
+fn lazy_base_names_array(
+    db: &dyn TypeDatabase,
+    definition_store: Option<&DefinitionStore>,
+    base: TypeId,
+) -> bool {
+    let (Some(definition_store), Some(TypeData::Lazy(def_id))) =
+        (definition_store, db.lookup(base))
+    else {
+        return false;
+    };
+
+    definition_store
+        .get(def_id)
+        .is_some_and(|def| db.resolve_atom_ref(def.name).as_ref() == "Array")
 }
 
 /// Get the elements of a tuple type.

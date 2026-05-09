@@ -3,6 +3,7 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
+use crate::query_boundaries::common as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
@@ -12,6 +13,51 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn property_type_has_array_like_length(&self, type_id: TypeId) -> bool {
+        let kind = crate::query_boundaries::type_checking_utilities::classify_array_like(
+            self.ctx.types,
+            type_id,
+        );
+        match kind {
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Array(_)
+            | crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Tuple => true,
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Readonly(inner) => {
+                self.property_type_has_array_like_length(inner)
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Union(members) => {
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.property_type_has_array_like_length(member))
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Intersection(
+                members,
+            ) => members
+                .iter()
+                .any(|&member| self.property_type_has_array_like_length(member)),
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Other => false,
+        }
+    }
+
+    fn is_global_this_surface_type(&self, type_id: TypeId) -> bool {
+        let Some(shape) = query::object_shape_for_type(self.ctx.types, type_id) else {
+            return false;
+        };
+
+        let has_global_this = shape.properties.iter().any(|prop| {
+            self.ctx.types.resolve_atom(prop.name) == "globalThis"
+                && prop.type_id == TypeId::UNKNOWN
+        });
+        let has_global_value = shape.properties.iter().any(|prop| {
+            matches!(
+                self.ctx.types.resolve_atom(prop.name).as_str(),
+                "Array" | "Object" | "String" | "Number" | "Boolean" | "Function"
+            )
+        });
+
+        has_global_this && has_global_value && shape.string_index.is_none()
+    }
+
     fn element_access_receiver_declared_element_display(
         &mut self,
         idx: NodeIndex,
@@ -117,6 +163,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn is_unshadowed_global_object_identifier(&self, idx: NodeIndex) -> bool {
+        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
+            return false;
+        };
+        if base_ident.escaped_text != "Object" {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
+            return true;
+        };
+        if self.known_global_value_has_local_shadow(idx, "Object") {
+            return false;
+        }
+        self.ctx.symbol_is_from_actual_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
+    }
+
     fn should_suppress_excess_property_for_target(&mut self, target: TypeId) -> bool {
         [target, self.evaluate_type_for_assignability(target)]
             .into_iter()
@@ -137,6 +199,66 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn excess_property_target_annotation_for_site(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(String, bool, Option<NodeIndex>)> {
+        let mut current = idx;
+        let mut from_nested_container = false;
+        loop {
+            let info = self.ctx.arena.node_info(current)?;
+            let parent_idx = info.parent;
+            let parent = self.ctx.arena.get(parent_idx)?;
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent)
+                && var_decl.initializer == current
+                && var_decl.type_annotation.is_some()
+            {
+                return self.node_text(var_decl.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                        .map(|text| (text, from_nested_container, Some(var_decl.type_annotation)))
+                });
+            }
+            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let grandparent_idx = self.ctx.arena.node_info(parent_idx)?.parent;
+                let grandparent = self.ctx.arena.get(grandparent_idx)?;
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
+                    && var_decl.initializer == parent_idx
+                    && var_decl.type_annotation.is_some()
+                {
+                    return self.node_text(var_decl.type_annotation).and_then(|text| {
+                        self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                            .map(|text| {
+                                (text, from_nested_container, Some(var_decl.type_annotation))
+                            })
+                    });
+                }
+                if let Some(jsdoc_satisfies_text) =
+                    self.jsdoc_satisfies_type_text_for_node(parent_idx)
+                {
+                    return Some((jsdoc_satisfies_text, from_nested_container, None));
+                }
+                if matches!(
+                    grandparent.kind,
+                    syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                ) {
+                    from_nested_container = true;
+                    current = grandparent_idx;
+                    continue;
+                }
+                return None;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            ) {
+                from_nested_container = true;
+            }
+            current = parent_idx;
+        }
+    }
+
     fn excess_property_target_display_for_site(
         &mut self,
         target: TypeId,
@@ -145,8 +267,13 @@ impl<'a> CheckerState<'a> {
         let inferred_display = self
             .format_pick_over_all_keys_as_keyof(target)
             .unwrap_or_else(|| self.format_excess_property_target_type(target));
-        if let Some(annotation_text) = self.excess_property_target_annotation_text_for_site(idx) {
+        if let Some((annotation_text, annotation_from_nested_container, annotation_type_node)) =
+            self.excess_property_target_annotation_for_site(idx)
+        {
             let annotation_display = self.format_annotation_like_type(&annotation_text);
+            if self.excess_property_site_is_nested_in_nested_array_literal(idx) {
+                return annotation_display;
+            }
             if inferred_display.starts_with('{') && annotation_display.contains("object &") {
                 return annotation_display;
             }
@@ -154,6 +281,14 @@ impl<'a> CheckerState<'a> {
                 && !annotation_display.contains('|')
                 && !annotation_display.contains("object")
                 && annotation_display.contains('&')
+            {
+                return annotation_display;
+            }
+            if annotation_display.contains('|')
+                && Self::same_simple_alias_array_union_display(
+                    &annotation_display,
+                    &inferred_display,
+                )
             {
                 return annotation_display;
             }
@@ -186,8 +321,90 @@ impl<'a> CheckerState<'a> {
             {
                 return annotation_display;
             }
+            if Self::is_plain_type_alias_display(&annotation_display)
+                && annotation_from_nested_container
+                && annotation_type_node
+                    .is_some_and(|type_node| self.annotation_type_resolves_to_union(type_node))
+                && annotation_display != inferred_display
+                && !inferred_display.contains('|')
+            {
+                return annotation_display;
+            }
         }
         Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+    }
+
+    fn same_simple_alias_array_union_display(left: &str, right: &str) -> bool {
+        fn normalized(display: &str) -> Option<(&str, &str)> {
+            let mut parts = display.split(" | ");
+            let first = parts.next()?.trim();
+            let second = parts.next()?.trim();
+            if parts.next().is_some() {
+                return None;
+            }
+            if let Some(base) = first.strip_suffix("[]")
+                && base == second
+            {
+                return Some((base, first));
+            }
+            if let Some(base) = second.strip_suffix("[]")
+                && base == first
+            {
+                return Some((base, second));
+            }
+            None
+        }
+
+        match (normalized(left), normalized(right)) {
+            (Some(l), Some(r)) => l == r,
+            _ => false,
+        }
+    }
+
+    fn is_plain_type_alias_display(display: &str) -> bool {
+        let mut chars = display.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    fn annotation_type_resolves_to_union(&mut self, type_node: NodeIndex) -> bool {
+        let type_id = self.get_type_from_type_node(type_node);
+        [
+            type_id,
+            self.resolve_ref_type(type_id),
+            self.evaluate_type_with_env(type_id),
+            self.resolve_type_for_property_access(type_id),
+        ]
+        .into_iter()
+        .any(|candidate| query::union_members(self.ctx.types, candidate).is_some())
+    }
+
+    fn excess_property_site_is_nested_in_nested_array_literal(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
+                return false;
+            };
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let mut array_depth = 0;
+                let mut container_idx = parent_idx;
+                while let Some(grandparent_idx) = self.ctx.arena.parent_of(container_idx)
+                    && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
+                    && grandparent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                {
+                    array_depth += 1;
+                    container_idx = grandparent_idx;
+                }
+                return array_depth >= 2;
+            }
+            current = parent_idx;
+        }
     }
 
     /// If `display` looks like a generic application of the form `Name<...>`
@@ -340,6 +557,65 @@ impl<'a> CheckerState<'a> {
             .map(|_| init_type)
     }
 
+    fn object_rest_this_omit_display_for_receiver(&mut self, idx: NodeIndex) -> Option<String> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let ext = self.ctx.arena.get_extended(decl_idx)?;
+            decl_idx = ext.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return None;
+        }
+        let binding_element = self.ctx.arena.get_binding_element(decl_node)?;
+        if !binding_element.dot_dot_dot_token {
+            return None;
+        }
+
+        let binding_ext = self.ctx.arena.get_extended(decl_idx)?;
+        let pattern_idx = binding_ext.parent;
+        let pattern_node = self.ctx.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+
+        let pattern_ext = self.ctx.arena.get_extended(pattern_idx)?;
+        let var_decl_node = self.ctx.arena.get(pattern_ext.parent)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(var_decl_node)?;
+        let init_idx = self.ctx.arena.skip_parenthesized(var_decl.initializer);
+        let init_node = self.ctx.arena.get(init_idx)?;
+        if init_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        let parent_type = self.get_type_of_node(init_idx);
+        let mut keys = self.collect_unspreadable_prototype_names_from(parent_type);
+        for name in self.collect_non_rest_property_names(pattern_idx) {
+            if !keys.iter().any(|k| k == &name) {
+                keys.push(name);
+            }
+        }
+        if keys.is_empty() {
+            return None;
+        }
+
+        let key_display = keys
+            .iter()
+            .map(|key| format!("\"{key}\""))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        Some(format!("Omit<this, {key_display}>"))
+    }
+
     fn js_constructor_receiver_display_for_node(&mut self, idx: NodeIndex) -> Option<String> {
         if !self.is_js_file() {
             return None;
@@ -361,6 +637,81 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(owner);
             }
+            if let Some(owner) = self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
+                .and_then(|lhs_idx| {
+                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
+                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let access = self.ctx.arena.get_access_expr(lhs_node)?;
+                    let receiver_node = self.ctx.arena.get(access.expression)?;
+                    if receiver_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || receiver_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let sym_id =
+                        self.resolve_identifier_symbol(access.expression)
+                            .or_else(|| {
+                                self.expression_text(access.expression)
+                                    .and_then(|text| self.ctx.binder.file_locals.get(text.as_str()))
+                            })?;
+                    let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                    self.ctx
+                        .arena
+                        .get(symbol.value_declaration)
+                        .is_some_and(|decl| decl.is_function_like())
+                        .then(|| self.expression_text(access.expression))
+                        .flatten()
+                })
+            {
+                return Some(format!("typeof {owner}"));
+            }
+            if let Some(owner) = self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
+                .and_then(|lhs_idx| {
+                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
+                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let lhs_access = self.ctx.arena.get_access_expr(lhs_node)?;
+                    if self
+                        .ctx
+                        .arena
+                        .get(lhs_access.expression)
+                        .and_then(|owner_node| self.ctx.arena.get_access_expr(owner_node))
+                        .and_then(|owner_access| {
+                            self.ctx
+                                .arena
+                                .get_identifier_at(owner_access.name_or_argument)
+                        })
+                        .is_some_and(|ident| ident.escaped_text == "prototype")
+                    {
+                        return None;
+                    }
+                    let owner_text = self.expression_text(lhs_access.expression)?;
+                    let owner_sym = self
+                        .resolve_identifier_symbol(lhs_access.expression)
+                        .or_else(|| self.resolve_qualified_symbol(lhs_access.expression))?;
+                    let owner_symbol = self.ctx.binder.get_symbol(owner_sym)?;
+                    if owner_symbol.has_any_flags(
+                        tsz_binder::symbol_flags::FUNCTION | tsz_binder::symbol_flags::CLASS,
+                    ) {
+                        Some(format!("typeof {owner_text}"))
+                    } else {
+                        None
+                    }
+                })
+            {
+                return Some(owner);
+            }
             // Fallback: a top-level (or nested) JS function with expando
             // assignments uses the function's own name as the apparent type
             // for `this`. tsc displays `Property 'X' does not exist on type
@@ -375,6 +726,9 @@ impl<'a> CheckerState<'a> {
             if self
                 .jsdoc_callable_type_annotation_for_node(func_idx)
                 .is_some()
+                || self
+                    .get_jsdoc_for_function(func_idx)
+                    .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
             {
                 return None;
             }
@@ -454,9 +808,31 @@ impl<'a> CheckerState<'a> {
         Some(symbol.escaped_name.to_string())
     }
 
+    fn annotation_uses_module_local_array_type(&self, annotation: &str) -> bool {
+        let trimmed = annotation.trim_start();
+        let Some(name) = trimmed.strip_prefix("Array<").map(|_| "Array").or_else(|| {
+            trimmed
+                .strip_prefix("ReadonlyArray<")
+                .map(|_| "ReadonlyArray")
+        }) else {
+            return false;
+        };
+        if !self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
+            !self.ctx.symbol_is_from_actual_lib(sym_id)
+                && self.symbol_has_declared_type_meaning(sym_id)
+        })
+    }
+
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
+            return name;
+        }
+        if let Some(name) = self.object_rest_this_omit_display_for_receiver(idx) {
             return name;
         }
         if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
@@ -502,7 +878,10 @@ impl<'a> CheckerState<'a> {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
             && !annotation.contains('{')
+            && !annotation.contains('|')
+            && !matches!(annotation.trim(), "any" | "unknown")
             && !receiver_reduces_to_never
+            && crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_none()
             && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
                 || self.ctx.types.get_display_alias(type_id).is_some()
                 || annotation.contains('&'))
@@ -518,6 +897,9 @@ impl<'a> CheckerState<'a> {
             // Skip annotations that contain inline object literal types
             // (`Required<{ a?: 1; x: 1 }>`) — those need the proper type
             // formatter to add `| undefined` for optional properties.
+            if self.annotation_uses_module_local_array_type(&annotation) {
+                return annotation.trim().to_string();
+            }
             return self.format_annotation_like_type(&annotation);
         }
         // When the receiver is a type alias whose body resolves to an Enum
@@ -670,7 +1052,51 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic_structural(type_id);
         }
 
+        if let Some(display) = self.class_first_union_property_receiver_display(type_id) {
+            return display;
+        }
         self.format_type_for_diagnostic_role(type_id, DiagnosticTypeDisplayRole::PropertyReceiver)
+    }
+
+    fn class_first_union_property_receiver_display(&mut self, type_id: TypeId) -> Option<String> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut class_members = Vec::new();
+        let mut other_members = Vec::new();
+        for member in members {
+            if self.get_class_decl_from_type(member).is_some() {
+                class_members.push(member);
+            } else {
+                if member.is_intrinsic() {
+                    return None;
+                }
+                other_members.push(member);
+            }
+        }
+        if class_members.is_empty() || other_members.is_empty() {
+            return None;
+        }
+
+        class_members.extend(other_members);
+        let formatted = class_members
+            .into_iter()
+            .map(|member| {
+                let display = self.format_type(member);
+                if crate::query_boundaries::common::intersection_members(self.ctx.types, member)
+                    .is_some()
+                    || crate::query_boundaries::common::union_members(self.ctx.types, member)
+                        .is_some()
+                {
+                    format!("({display})")
+                } else {
+                    display
+                }
+            })
+            .collect::<Vec<_>>();
+        Some(formatted.join(" | "))
     }
 
     /// Build a copy of a Callable's shape with ERROR property types replaced
@@ -736,6 +1162,23 @@ impl<'a> CheckerState<'a> {
             || type_id == TypeId::ANY
             || crate::query_boundaries::common::is_error_type(self.ctx.types, type_id)
         {
+            return;
+        }
+
+        if self.is_global_this_surface_type(type_id)
+            && self.ctx.no_implicit_any()
+            && !self.is_js_file()
+        {
+            use crate::diagnostics::{diagnostic_messages, format_message};
+            self.error_at_anchor(
+                idx,
+                DiagnosticAnchorKind::PropertyToken,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                    &["typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+            );
             return;
         }
 
@@ -938,11 +1381,7 @@ impl<'a> CheckerState<'a> {
             && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
             && access.name_or_argument == idx
-            && self
-                .ctx
-                .arena
-                .get_identifier_at(access.expression)
-                .is_some_and(|base_ident| base_ident.escaped_text == "Object")
+            && self.is_unshadowed_global_object_identifier(access.expression)
         {
             return;
         }
@@ -966,6 +1405,13 @@ impl<'a> CheckerState<'a> {
         // and does not emit TS2339. Check this before computing source location
         // to avoid unnecessary work.
         if self.class_extends_any_base(type_id) {
+            return;
+        }
+
+        // Array-like generic constraints always provide `.length`; if property
+        // resolution misses while recursive conditional evaluation is still
+        // deferred, avoid emitting a cascaded TS2339.
+        if prop_name == "length" && self.property_type_has_array_like_length(type_id) {
             return;
         }
 
@@ -1427,6 +1873,9 @@ impl<'a> CheckerState<'a> {
         if self.is_namespace_import_rooted_expression(expr_idx) {
             return false;
         }
+        if self.ctx.is_js_file() && self.commonjs_destructured_named_export_exists(expr_idx) {
+            return false;
+        }
         let name = expr_text;
         if loc.is_some() {
             let (code, message) = if let Some(ref name) = name {
@@ -1672,12 +2121,24 @@ impl<'a> CheckerState<'a> {
         }
         if object_type == TypeId::ANY
             || object_type == TypeId::ERROR
-            || object_type == TypeId::UNKNOWN
             || object_type == TypeId::NEVER
         {
             return;
         }
         if self.is_element_access_on_this_or_super_with_any_base(expr_idx) {
+            return;
+        }
+
+        if self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+            && let Some(atom) =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+        {
+            let prop_name = self.ctx.types.resolve_atom_ref(atom).to_string();
+            self.error_property_not_exist_at(&prop_name, object_type, arg_idx);
             return;
         }
 

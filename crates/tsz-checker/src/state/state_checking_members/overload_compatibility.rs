@@ -51,16 +51,14 @@ impl<'a> CheckerState<'a> {
         source_text: &str,
     ) -> Option<(u32, u32)> {
         let raw_comment = source_text.get(comment.pos as usize..comment.end as usize)?;
-        let offset = raw_comment.find("@overload")?;
+        let offset = Self::jsdoc_tag_offset(raw_comment, "overload")?;
         Some((comment.pos + offset as u32 + 1, "overload".len() as u32))
     }
 
     fn jsdoc_has_explicit_return_tag(jsdoc: &str) -> bool {
         jsdoc.lines().any(|line| {
             let trimmed = line.trim();
-            trimmed
-                .strip_prefix("@returns")
-                .or_else(|| trimmed.strip_prefix("@return"))
+            Self::strip_jsdoc_return_tag_prefix(trimmed)
                 .is_some_and(|rest| rest.trim().starts_with('{'))
         })
     }
@@ -129,7 +127,9 @@ impl<'a> CheckerState<'a> {
         };
         for comment in self.leading_jsdoc_comments_for_node(node_idx) {
             let jsdoc = get_jsdoc_content(&comment, &sf.text);
-            if !jsdoc.contains("@overload") || Self::jsdoc_has_explicit_return_tag(&jsdoc) {
+            if !Self::jsdoc_contains_tag(&jsdoc, "overload")
+                || Self::jsdoc_has_explicit_return_tag(&jsdoc)
+            {
                 continue;
             }
 
@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
 
         for comment in self.leading_jsdoc_comments_for_node(ctor_idx) {
             let jsdoc = get_jsdoc_content(&comment, &sf.text);
-            if !jsdoc.contains("@overload") {
+            if !Self::jsdoc_contains_tag(&jsdoc, "overload") {
                 continue;
             }
 

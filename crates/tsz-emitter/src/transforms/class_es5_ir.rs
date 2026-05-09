@@ -82,7 +82,8 @@ use crate::transforms::ir::{
     IRPropertyKind, IRSwitchCase,
 };
 use crate::transforms::private_fields_es5::{
-    PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
+    PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
+    collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
 };
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
@@ -307,6 +308,7 @@ pub struct ES5ClassTransformer<'a> {
     class_name: String,
     has_extends: bool,
     extends_null: bool,
+    super_name: String,
     private_fields: Vec<PrivateFieldInfo>,
     private_accessors: Vec<PrivateAccessorInfo>,
     auto_accessors: Vec<AutoAccessorFieldInfo>,
@@ -330,6 +332,8 @@ pub struct ES5ClassTransformer<'a> {
     current_static_class_alias: Option<String>,
     /// Alias used for class-name self references when class decorators can replace the binding.
     class_self_reference_alias: Option<String>,
+    /// Whether static field initializer assignments are emitted by the surrounding expression emitter.
+    skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
     /// Additional hoisted temp variable names collected from expression conversions
@@ -344,6 +348,7 @@ impl<'a> ES5ClassTransformer<'a> {
             class_name: String::new(),
             has_extends: false,
             extends_null: false,
+            super_name: "_super".to_string(),
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
             auto_accessors: Vec::new(),
@@ -357,6 +362,7 @@ impl<'a> ES5ClassTransformer<'a> {
             computed_prop_temp_map: std::collections::HashMap::new(),
             current_static_class_alias: None,
             class_self_reference_alias: None,
+            skip_static_field_initializers: false,
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
             extra_hoisted_temps: RefCell::new(Vec::new()),
@@ -365,6 +371,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.use_define_for_class_fields = enable;
+    }
+
+    pub const fn set_skip_static_members(&mut self, skip: bool) {
+        self.skip_static_field_initializers = skip;
     }
 
     pub fn set_class_self_reference_alias(&mut self, alias: String) {
@@ -381,6 +391,26 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    fn fresh_super_name(&self) -> String {
+        let mut suffix = 0usize;
+        loop {
+            let candidate = if suffix == 0 {
+                "_super".to_string()
+            } else {
+                format!("_super_{suffix}")
+            };
+            if !self
+                .arena
+                .identifiers
+                .iter()
+                .any(|identifier| identifier.escaped_text == candidate)
+            {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     /// Check if an expression (possibly wrapped in type assertions) is side-effect-free.
@@ -457,6 +487,50 @@ impl<'a> ES5ClassTransformer<'a> {
         self.source_text = Some(source_text);
     }
 
+    /// Append the property's immediately-preceding leading block comment (if any)
+    /// to `body`. When a class property's initializer is lifted into the
+    /// constructor, the comment that decorated the property in source must move
+    /// with it — otherwise the user-authored documentation silently disappears.
+    ///
+    /// We scan backwards from the property's `pos` through whitespace and
+    /// newlines and, if the previous bytes form `*/`, capture the enclosing
+    /// `/* ... */` (or `/** ... */`) span as a leading `Raw` IR node. This
+    /// covers the common JSDoc case targeted by this fix; line comments before
+    /// properties are still handled by the existing trivia logic when they
+    /// happen to land in the surrounding leading-comment range.
+    fn emit_property_leading_comment(&self, body: &mut Vec<IRNode>, prop_idx: NodeIndex) {
+        let Some(prop_node) = self.arena.get(prop_idx) else {
+            return;
+        };
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut i = prop_node.pos as usize;
+        if i > bytes.len() {
+            return;
+        }
+        while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r') {
+            i -= 1;
+        }
+        if i < 2 || &bytes[i - 2..i] != b"*/" {
+            return;
+        }
+        let comment_end = i;
+        let mut start = i.saturating_sub(2);
+        loop {
+            if start + 2 <= bytes.len() && &bytes[start..start + 2] == b"/*" {
+                let comment_text = &text[start..comment_end];
+                body.push(IRNode::Raw(comment_text.to_string().into()));
+                return;
+            }
+            if start == 0 {
+                return;
+            }
+            start -= 1;
+        }
+    }
+
     fn emit_leading_statement_comments(
         &self,
         body: &mut Vec<IRNode>,
@@ -472,12 +546,29 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         }
         let segment = &source_text[start..end];
+        let mut block_lines: Option<Vec<String>> = None;
         for line in segment.lines() {
+            if let Some(ref mut acc) = block_lines {
+                acc.push(line.trim_end().to_string());
+                if line.contains("*/") {
+                    let collected = block_lines.take().expect("block was active");
+                    body.push(IRNode::Raw(collected.join("\n").into()));
+                }
+                continue;
+            }
+
             let trimmed = line.trim_start();
-            let is_comment =
-                trimmed.starts_with("//") || (trimmed.starts_with("/*") && trimmed.ends_with("*/"));
-            if is_comment {
+            if trimmed.starts_with("//") {
                 body.push(IRNode::Raw(trimmed.to_string().into()));
+            } else if trimmed.starts_with("/*") {
+                if trimmed.contains("*/") {
+                    body.push(IRNode::Raw(trimmed.to_string().into()));
+                } else {
+                    // Begin a multi-line block comment. Preserve indentation on
+                    // the opening line so subsequent lines retain their relative
+                    // alignment when rejoined.
+                    block_lines = Some(vec![line.trim_end().to_string()]);
+                }
             }
         }
     }
@@ -679,6 +770,7 @@ impl<'a> ES5ClassTransformer<'a> {
     fn make_converter(&self) -> AstToIr<'a> {
         let mut converter = AstToIr::new(self.arena)
             .with_super(self.has_extends)
+            .with_super_name(self.super_name.clone())
             .with_temp_var_counter(self.temp_var_counter.get());
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
@@ -1553,8 +1645,19 @@ impl<'a> ES5ClassTransformer<'a> {
         self.class_name = class_name;
 
         // Collect private fields and accessors
-        self.private_fields = collect_private_fields(self.arena, class_idx, &self.class_name);
-        self.private_accessors = collect_private_accessors(self.arena, class_idx, &self.class_name);
+        let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
+        self.private_fields = collect_private_fields_with_reserved(
+            self.arena,
+            class_idx,
+            &self.class_name,
+            &mut used_private_names,
+        );
+        self.private_accessors = collect_private_accessors_with_reserved(
+            self.arena,
+            class_idx,
+            &self.class_name,
+            &mut used_private_names,
+        );
         self.auto_accessors = collect_auto_accessor_fields(self.arena, class_idx, &self.class_name);
 
         // Check for extends clause
@@ -1564,6 +1667,11 @@ impl<'a> ES5ClassTransformer<'a> {
             self.arena,
             &class_data.heritage_clauses,
         );
+        self.super_name = if self.has_extends {
+            self.fresh_super_name()
+        } else {
+            "_super".to_string()
+        };
 
         // Scan property declarations for computed names that need hoisting.
         // This must happen before constructor/member IR emission so that temps
@@ -1607,9 +1715,18 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             }
             // Check if this property is erased
+            // `declare` fields have no runtime effect even when an
+            // initializer is present, so the computed expression must
+            // emit only as a side-effect statement (no temp). Mirrors
+            // the ES2015+ path in `emit_es6.rs`. Without this, ES5
+            // emission allocated `var _a; _a = field3;` for ambient
+            // declared static decorated fields.
             let is_erased = if self
                 .arena
                 .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
             {
                 true
             } else {
@@ -1642,6 +1759,34 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
+        let computed_prop_temp_decls: Vec<String> = computed_prop_entries
+            .iter()
+            .filter_map(|(temp, _)| temp.clone())
+            .collect();
+        let mut computed_prop_init_entries = Vec::new();
+        if !computed_prop_entries.is_empty() {
+            let mut comma_parts: Vec<IRNode> = Vec::new();
+            for (temp_name, expr_idx) in &computed_prop_entries {
+                let expr_ir = self.convert_expression(*expr_idx);
+                if let Some(temp) = temp_name {
+                    comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
+                } else {
+                    comma_parts.push(expr_ir);
+                }
+            }
+            if !comma_parts.is_empty() {
+                let result = comma_parts
+                    .into_iter()
+                    .reduce(|left, right| IRNode::BinaryExpr {
+                        left: Box::new(left),
+                        operator: std::borrow::Cow::Borrowed(","),
+                        right: Box::new(right),
+                    })
+                    .unwrap();
+                computed_prop_init_entries.push(IRNode::ExpressionStatement(Box::new(result)));
+            }
+        }
+
         // Build IIFE body
         let mut body = Vec::new();
 
@@ -1649,6 +1794,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if self.has_extends {
             body.push(IRNode::ExtendsHelper {
                 class_name: self.class_name.clone().into(),
+                super_name: self.super_name.clone().into(),
             });
         }
 
@@ -1662,48 +1808,17 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRNode::id(self.class_name.clone()),
             )));
         }
-
-        // Emit computed property temp var declarations and comma expression
-        if !computed_prop_entries.is_empty() {
-            // var _a, _b, _c;
-            let temp_names: Vec<String> = computed_prop_entries
-                .iter()
-                .filter_map(|(temp, _)| temp.clone())
+        if !computed_prop_temp_decls.is_empty() {
+            let var_decls: Vec<IRNode> = computed_prop_temp_decls
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
                 .collect();
-            if !temp_names.is_empty() {
-                let var_decls: Vec<IRNode> = temp_names
-                    .iter()
-                    .map(|name| IRNode::VarDecl {
-                        name: name.clone().into(),
-                        initializer: None,
-                    })
-                    .collect();
-                body.push(IRNode::VarDeclList(var_decls));
-            }
-            // _a = expr1, sideEffect, _b = expr2, ...;
-            // Use chained BinaryExpr with comma operator to avoid parenthesization.
-            let mut comma_parts: Vec<IRNode> = Vec::new();
-            for (temp_name, expr_idx) in &computed_prop_entries {
-                let expr_ir = self.convert_expression(*expr_idx);
-                if let Some(temp) = temp_name {
-                    comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
-                } else {
-                    comma_parts.push(expr_ir);
-                }
-            }
-            if !comma_parts.is_empty() {
-                // Chain parts with comma operator: a, b, c → BinaryExpr(BinaryExpr(a, b), c)
-                let result = comma_parts
-                    .into_iter()
-                    .reduce(|left, right| IRNode::BinaryExpr {
-                        left: Box::new(left),
-                        operator: std::borrow::Cow::Borrowed(","),
-                        right: Box::new(right),
-                    })
-                    .unwrap();
-                body.push(IRNode::ExpressionStatement(Box::new(result)));
-            }
+            body.push(IRNode::VarDeclList(var_decls));
         }
+        body.extend(computed_prop_init_entries);
 
         // Prototype methods and static members interleaved in source order
         let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
@@ -1748,11 +1863,8 @@ impl<'a> ES5ClassTransformer<'a> {
         body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
 
         // Build WeakMap declarations and instantiations
-        let mut weakmap_decls: Vec<String> = self
-            .private_fields
-            .iter()
-            .map(|f| f.weakmap_name.clone())
-            .collect();
+        let mut weakmap_decls: Vec<String> = Vec::new();
+        weakmap_decls.extend(self.private_fields.iter().map(|f| f.weakmap_name.clone()));
 
         // Add private accessor WeakMap variables
         for acc in &self.private_accessors {
@@ -1806,14 +1918,26 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None
         };
+        // The deferred static block IIFEs (rendered after the class IIFE) may
+        // reference the class self-reference alias when their `this` was
+        // rewritten by `convert_statement_static_with_class_alias`. In that
+        // case the alias must be declared/assigned outside the class IIFE so
+        // the post-IIFE blocks can resolve it (issue #3967).
+        let deferred_block_class_alias = if !deferred_static_blocks.is_empty() {
+            self.current_static_class_alias.clone()
+        } else {
+            None
+        };
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
             base_class: base_class.map(Box::new),
+            super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,
             weakmap_decls,
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
+            deferred_block_class_alias,
         })
     }
 
@@ -1931,9 +2055,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
                     ctor_body.push(IRNode::ret(Some(IRNode::logical_or(
                         IRNode::logical_and(
-                            IRNode::binary(IRNode::id("_super"), "!==", IRNode::NullLiteral),
+                            IRNode::binary(
+                                IRNode::id(self.super_name.clone()),
+                                "!==",
+                                IRNode::NullLiteral,
+                            ),
                             IRNode::call(
-                                IRNode::prop(IRNode::id("_super"), "apply"),
+                                IRNode::prop(IRNode::id(self.super_name.clone()), "apply"),
                                 vec![IRNode::this(), IRNode::id("arguments")],
                             ),
                         ),
@@ -1945,9 +2073,13 @@ impl<'a> ES5ClassTransformer<'a> {
                         "_this",
                         Some(IRNode::logical_or(
                             IRNode::logical_and(
-                                IRNode::binary(IRNode::id("_super"), "!==", IRNode::NullLiteral),
+                                IRNode::binary(
+                                    IRNode::id(self.super_name.clone()),
+                                    "!==",
+                                    IRNode::NullLiteral,
+                                ),
                                 IRNode::call(
-                                    IRNode::prop(IRNode::id("_super"), "apply"),
+                                    IRNode::prop(IRNode::id(self.super_name.clone()), "apply"),
                                     vec![IRNode::this(), IRNode::id("arguments")],
                                 ),
                             ),
@@ -1962,6 +2094,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     // Instance property initializations
                     for &prop_idx in &instance_props {
+                        self.emit_property_leading_comment(&mut ctor_body, prop_idx);
                         if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
                             ctor_body.push(ir);
                         }
@@ -1984,6 +2117,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // Instance property initializations
                 for &prop_idx in &instance_props {
+                    self.emit_property_leading_comment(&mut ctor_body, prop_idx);
                     if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
                         ctor_body.push(ir);
                     }
@@ -2114,6 +2248,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Emit instance property initializers
         for &prop_idx in instance_props {
+            self.emit_property_leading_comment(body, prop_idx);
             if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
                 body.push(ir);
             }
@@ -2194,6 +2329,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Emit instance property initializers
         for &prop_idx in instance_props {
+            self.emit_property_leading_comment(body, prop_idx);
             if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
                 body.push(ir);
             }
@@ -2268,7 +2404,10 @@ impl<'a> ES5ClassTransformer<'a> {
         IRNode::var_decl(
             "_this",
             Some(IRNode::logical_or(
-                IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), args),
+                IRNode::call(
+                    IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                    args,
+                ),
                 IRNode::this(),
             )),
         )
@@ -2292,7 +2431,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // return _super.call(this, args...) || this;
         IRNode::ret(Some(IRNode::logical_or(
-            IRNode::call(IRNode::prop(IRNode::id("_super"), "call"), args),
+            IRNode::call(
+                IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                args,
+            ),
             IRNode::this(),
         )))
     }
@@ -3039,9 +3181,9 @@ fn collect_accessor_pairs(
             let entry = accessor_map.entry(name).or_insert((None, None));
 
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                entry.0 = Some(member_idx);
+                entry.0.get_or_insert(member_idx);
             } else {
-                entry.1 = Some(member_idx);
+                entry.1.get_or_insert(member_idx);
             }
         }
     }
@@ -3074,6 +3216,9 @@ fn collect_auto_accessor_fields(
             continue;
         };
         if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword) {
+            continue;
+        }
+        if arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword) {
             continue;
         }
         if is_private_identifier(arena, prop_data.name) {

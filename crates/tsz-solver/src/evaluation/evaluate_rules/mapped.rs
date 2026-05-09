@@ -119,6 +119,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Get the constraint - this tells us what keys to iterate over
         let constraint = mapped.constraint;
 
+        if let Some(name_type) = mapped.name_type
+            && (crate::type_queries::contains_type_parameters_db(self.interner(), constraint)
+                || crate::type_queries::contains_type_parameters_except_name_db(
+                    self.interner(),
+                    name_type,
+                    mapped.type_param.name,
+                ))
+        {
+            tracing::trace!(
+                constraint = ?self.interner().lookup(constraint),
+                name_type = ?self.interner().lookup(name_type),
+                "evaluate_mapped: DEFERRED - generic remapped mapped type"
+            );
+            return self.interner().mapped(*mapped);
+        }
+
         // SPECIAL CASE: Don't expand mapped types over type parameters.
         // When the constraint is `keyof T` where T is a type parameter, we should
         // keep the mapped type deferred. Even though we might be able to evaluate
@@ -210,6 +226,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .or_else(|| self.extract_source_from_keyof(mapped.constraint))
             .or_else(|| self.post_instantiation_mapped_template_source(mapped));
 
+        if source_object.is_none()
+            && let Some(source) =
+                self.extract_template_index_source(mapped.template, mapped.type_param.name)
+            && matches!(
+                self.interner().lookup(source),
+                Some(TypeData::Application(_))
+            )
+            && self.evaluate(source) == source
+        {
+            return self.interner().mapped(*mapped);
+        }
+
         // tsc treats ANY `{ [K in keyof T]: ... }` as homomorphic for modifier
         // inheritance — the source T's optional/readonly flags propagate to the
         // output even when the template is NOT `T[K]`. For example:
@@ -265,6 +293,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         prop.readonly,
                         prop.type_id,
                         prop.is_string_named,
+                        prop.is_symbol_named,
                         prop.single_quoted_name,
                     ),
                 );
@@ -392,7 +421,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Delegate to centralized modifier computation in type_queries.
             let source_info = source_prop_map.get(&key_name);
             let (source_optional, source_readonly) =
-                source_info.map_or((false, false), |(opt, ro, _, _, _)| (*opt, *ro));
+                source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
 
             let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
                 mapped,
@@ -424,7 +453,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             let property_type = if is_identity_homomorphic
                 && !source_has_type_params
-                && let Some(&(_, _, declared_type, _, _)) = source_info
+                && let Some(&(_, _, declared_type, _, _, _)) = source_info
             {
                 declared_type
             } else {
@@ -445,12 +474,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             for remapped_name in remapped_names {
                 let is_string_named = source_info
-                    .is_some_and(|(_, _, _, source_is_string_named, _)| *source_is_string_named)
+                    .is_some_and(|(_, _, _, source_is_string_named, _, _)| *source_is_string_named)
                     && remapped_name == key_name;
                 let single_quoted_name =
-                    source_info.is_some_and(|(_, _, _, _, source_single_quoted_name)| {
+                    source_info.is_some_and(|(_, _, _, _, _, source_single_quoted_name)| {
                         *source_single_quoted_name
                     }) && remapped_name == key_name;
+                let is_symbol_named = source_info
+                    .is_some_and(|(_, _, _, _, source_is_symbol_named, _)| *source_is_symbol_named)
+                    && remapped_name == key_name;
                 properties.push(PropertyInfo {
                     name: remapped_name,
                     type_id: property_type,
@@ -463,6 +495,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named,
+                    is_symbol_named,
                     single_quoted_name,
                 });
             }
@@ -671,6 +704,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 });
             }
@@ -754,11 +788,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             for &member in &members {
                 let resolved_member = self.evaluate(member);
                 let member_result =
-                    self.try_evaluate_mapped_over_array_like(mapped, resolved_member);
-                match member_result {
-                    Some(r) => results.push(r),
-                    None => return None,
-                }
+                    self.try_evaluate_mapped_over_array_like(mapped, resolved_member)?;
+                results.push(member_result);
             }
             if !results.is_empty() {
                 let union_id = self.interner().union(results);
@@ -1103,16 +1134,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             ),
                         );
                         keys.string_literals.push(s);
-                    } else if let Some(inner_keys) = self.extract_mapped_keys(member) {
+                    } else {
                         // Recursively extract keys from non-literal union members.
                         // Handles enum types (TypeData::Enum), lazy refs (TypeData::Lazy),
                         // and nested unions (e.g., `A | B` where A, B are enum types).
+                        // If extraction fails, we can't fully evaluate the union.
+                        let inner_keys = self.extract_mapped_keys(member)?;
                         keys.string_literals.extend(inner_keys.string_literals);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
-                    } else {
-                        // Non-literal in union - can't fully evaluate
-                        return None;
                     }
                 }
                 if !keys.has_string && !keys.has_number && keys.string_literals.is_empty() {
@@ -1158,10 +1188,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ) {
                         continue;
                     }
-                    match self.extract_mapped_keys(member) {
-                        Some(mk) => member_keys.push(mk),
-                        None => return None,
-                    }
+                    let mk = self.extract_mapped_keys(member)?;
+                    member_keys.push(mk);
                 }
                 if member_keys.is_empty() {
                     return None;

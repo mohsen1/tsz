@@ -815,6 +815,9 @@ impl TypeInterner {
     /// This is used when constructing types with property names or string literals.
     #[inline]
     pub fn intern_string(&self, s: &str) -> Atom {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_string_intern_calls,
+        );
         self.string_interner.intern(s)
     }
 
@@ -1165,7 +1168,7 @@ impl TypeInterner {
     /// Look up the allocation order for a given `TypeId`.
     /// Returns `None` for intrinsic/error types (they have no alloc order).
     #[inline]
-    pub(super) fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+    pub(crate) fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
         if id.is_intrinsic() || id.is_error() {
             return None;
         }
@@ -1183,12 +1186,18 @@ impl TypeInterner {
     }
 
     pub(in crate::intern) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
+        );
         TypeListId(self.type_lists.intern(&members))
     }
 
     /// Intern a type list from a slice, avoiding Vec conversion when the caller
     /// already has a `SmallVec` or slice reference.
     pub(in crate::intern) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
+        );
         TypeListId(self.type_lists.intern(members))
     }
 
@@ -1201,6 +1210,9 @@ impl TypeInterner {
     }
 
     pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_object_shape_intern_calls,
+        );
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 
@@ -1251,6 +1263,7 @@ impl TypeInterner {
                         crate::type_queries::contains_generic_type_parameters_db(self, arg)
                     })
                 });
+        let evaluated_is_mapped = matches!(self.lookup(evaluated), Some(TypeData::Mapped(_)));
         let evaluated_precedes_application = match (
             self.lookup_alloc_order(evaluated),
             self.lookup_alloc_order(application),
@@ -1260,7 +1273,11 @@ impl TypeInterner {
             }
             _ => evaluated.0 <= application.0,
         };
-        if application_is_alias && application_has_generic_args && evaluated_precedes_application {
+        if application_is_alias
+            && application_has_generic_args
+            && evaluated_precedes_application
+            && !evaluated_is_mapped
+        {
             let existing_is_application =
                 self.display_alias.get(&evaluated).is_some_and(|existing| {
                     matches!(self.lookup(*existing), Some(TypeData::Application(_)))
@@ -1330,7 +1347,8 @@ impl TypeInterner {
             }
             _ => evaluated.0 <= application.0,
         };
-        if application_has_generic_args && evaluated_precedes_application {
+        let evaluated_is_mapped = matches!(self.lookup(evaluated), Some(TypeData::Mapped(_)));
+        if application_has_generic_args && evaluated_precedes_application && !evaluated_is_mapped {
             return;
         }
         self.display_alias.insert(evaluated, application);
@@ -1383,7 +1401,24 @@ impl TypeInterner {
             ) || self.union_origin_overrides_canonical_number_literal_sort(
                 current.as_ref(),
                 &origin_members,
-            );
+            ) || self
+                .union_origin_overrides_canonical_keyof_sort(current.as_ref(), &origin_members)
+                || self.union_origin_overrides_canonical_application_sort(
+                    current.as_ref(),
+                    &origin_members,
+                )
+                || self.union_origin_overrides_canonical_array_pair_sort(
+                    current.as_ref(),
+                    &origin_members,
+                )
+                || self.union_origin_overrides_canonical_keyof_literal_sort(
+                    current.as_ref(),
+                    &origin_members,
+                )
+                || self.union_origin_overrides_canonical_generic_display_sort(
+                    current.as_ref(),
+                    &origin_members,
+                );
             if !needs_origin {
                 return;
             }
@@ -1393,6 +1428,23 @@ impl TypeInterner {
         self.display_union_origin
             .entry(union_type_id)
             .or_insert_with(|| Arc::new(origin_members));
+    }
+
+    /// Replace the display origin for a union whose diagnostic context has a
+    /// more specific tsc-compatible member order than the source union.
+    pub fn replace_union_origin_for_display(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+    ) {
+        if origin_members.len() < 2 {
+            return;
+        }
+        let Some(TypeData::Union(_)) = self.lookup(union_type_id) else {
+            return;
+        };
+        self.display_union_origin
+            .insert(union_type_id, Arc::new(origin_members));
     }
 
     /// Decide whether storing the as-written origin is needed even when no
@@ -1458,12 +1510,180 @@ impl TypeInterner {
         })
     }
 
+    /// Decide whether storing the as-written origin is needed for a union that
+    /// contains a `keyof` member. TypeScript preserves source order for
+    /// displays such as `keyof Shape | "knownLiteralKey"`, while the semantic
+    /// union comparator can place the literal first.
+    fn union_origin_overrides_canonical_keyof_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+        current
+            .iter()
+            .chain(origin.iter())
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::KeyOf(_))))
+    }
+
+    /// Decide whether storing origin is needed for a generated union of
+    /// same-base generic applications.
+    ///
+    /// Distributive conditional alias display builds unions such as
+    /// `ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>`.
+    /// The semantic union comparator sorts same-base applications by their
+    /// type arguments, which can invert the branch order that tsc displays from
+    /// the source union being distributed. Preserve that origin only when the
+    /// canonical union contains exactly the same same-base applications.
+    fn union_origin_overrides_canonical_application_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        fn same_application_base(
+            interner: &TypeInterner,
+            ids: &[TypeId],
+            expected_base: &mut Option<TypeId>,
+        ) -> bool {
+            for &id in ids {
+                let Some(TypeData::Application(app_id)) = interner.lookup(id) else {
+                    return false;
+                };
+                let app = interner.type_application(app_id);
+                match expected_base {
+                    Some(base) if *base != app.base => return false,
+                    Some(_) => {}
+                    None => *expected_base = Some(app.base),
+                }
+            }
+            true
+        }
+
+        let mut expected_base = None;
+        same_application_base(self, origin, &mut expected_base)
+            && same_application_base(self, current, &mut expected_base)
+            && expected_base.is_some()
+    }
+
+    fn union_origin_overrides_canonical_array_pair_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != 2 || origin.len() != 2 || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        fn is_array_of(interner: &TypeInterner, array: TypeId, element: TypeId) -> bool {
+            matches!(interner.lookup(array), Some(TypeData::Array(inner)) if inner == element)
+        }
+
+        is_array_of(self, origin[0], origin[1]) || is_array_of(self, origin[1], origin[0])
+    }
+
+    fn union_origin_overrides_canonical_keyof_literal_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != 2 || origin.len() != 2 || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        let is_keyof = |id| matches!(self.lookup(id), Some(TypeData::KeyOf(_)));
+        let is_literal = |id| matches!(self.lookup(id), Some(TypeData::Literal(_)));
+        (is_keyof(origin[0]) && is_literal(origin[1]))
+            || (is_literal(origin[0]) && is_keyof(origin[1]))
+    }
+
+    /// Preserve source-written order for generic display unions whose canonical
+    /// member sort is not the order tsc prints in diagnostics.
+    ///
+    /// Pure-literal unions are excluded: when every member is a literal,
+    /// our canonical alloc-order sort already matches tsc's
+    /// registration-order display (e.g. for instantiation-time unions like
+    /// `T | U` with `T="World", U="Hello"` where `"Hello"` was registered
+    /// first, tsc displays `"Hello" | "World"`).
+    fn union_origin_overrides_canonical_generic_display_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() || current == origin {
+            return false;
+        }
+
+        let mut current_sorted = current.to_vec();
+        let mut origin_sorted = origin.to_vec();
+        current_sorted.sort_unstable_by_key(|id| id.0);
+        origin_sorted.sort_unstable_by_key(|id| id.0);
+        if current_sorted != origin_sorted {
+            return false;
+        }
+
+        let has_complex_generic = origin.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeData::Application(_) | TypeData::KeyOf(_) | TypeData::IndexAccess(_, _))
+            )
+        });
+        if has_complex_generic {
+            return true;
+        }
+
+        // Mixed unions where literals coexist with non-literal complex types
+        // still need origin preservation, but pure-literal unions don't.
+        let all_literals = origin
+            .iter()
+            .all(|&id| matches!(self.lookup(id), Some(TypeData::Literal(_))));
+        if all_literals {
+            return false;
+        }
+
+        origin
+            .iter()
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::Literal(_))))
+    }
+
     /// Look up the as-written origin members for a flattened Union TypeId.
     pub fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
         self.display_union_origin.get(&type_id).map(|r| r.clone())
     }
 
     pub(super) fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_function_shape_intern_calls,
+        );
         FunctionShapeId(self.function_shapes.intern(shape))
     }
 
@@ -1475,14 +1695,23 @@ impl TypeInterner {
         &self,
         conditional: ConditionalType,
     ) -> ConditionalTypeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_conditional_intern_calls,
+        );
         ConditionalTypeId(self.conditional_types.intern(conditional))
     }
 
     pub(super) fn intern_mapped_type(&self, mapped: MappedType) -> MappedTypeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_mapped_intern_calls,
+        );
         MappedTypeId(self.mapped_types.intern(mapped))
     }
 
     pub(super) fn intern_application(&self, application: TypeApplication) -> TypeApplicationId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_application_intern_calls,
+        );
         TypeApplicationId(self.applications.intern(application))
     }
 
@@ -1513,17 +1742,13 @@ impl TypeInterner {
     /// Consume evaluation fuel and return whether fuel is exhausted.
     ///
     /// This is a global budget across all `TypeEvaluator` instances. When exhausted,
-    /// the interner is poisoned and subsequent operations return ERROR.
+    /// the current evaluation should bail out with ERROR, but the interner remains
+    /// readable so already-computed project types do not turn into opaque `Type(N)`
+    /// placeholders in later diagnostics.
     #[inline]
     pub fn consume_evaluation_fuel(&self, amount: u32) -> bool {
         let prev = self.evaluation_fuel.fetch_add(amount, Ordering::Relaxed);
-        if prev.wrapping_add(amount) > MAX_EVALUATION_FUEL {
-            self.poisoned
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        prev.wrapping_add(amount) > MAX_EVALUATION_FUEL
     }
 
     /// Check whether global evaluation fuel is exhausted without consuming any.

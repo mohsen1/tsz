@@ -4,9 +4,7 @@
 //! brace completion, comments, doc templates, indentation, classifications, etc.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
-use tsz::lsp::highlighting::semantic_tokens::{SemanticTokenType, SemanticTokensProvider};
-use tsz::lsp::position::{LineMap, Position};
+use tsz::lsp::position::LineMap;
 
 impl Server {
     pub(crate) fn handle_breakpoint_statement(
@@ -55,15 +53,7 @@ impl Server {
                     .count();
             let content_end = line_end;
 
-            let start_pos = line_map.offset_to_position(content_start as u32, source_text);
-            let end_pos = line_map.offset_to_position(content_end as u32, source_text);
-
-            Some(serde_json::json!({
-                "textSpan": {
-                    "start": Self::lsp_to_tsserver_position(start_pos),
-                    "end": Self::lsp_to_tsserver_position(end_pos)
-                }
-            }))
+            Some(Self::text_span_body(content_start, content_end))
         })();
 
         self.stub_response(seq, request, result)
@@ -105,6 +95,18 @@ impl Server {
                 return None;
             }
 
+            // Pre-compute string and comment byte ranges so the backward scan
+            // can skip over `<`/`>` bytes that live inside attribute strings,
+            // JSX-expression strings, or comments. Without this, an attribute
+            // like `<div title="a>b">` corrupts the depth counter and the
+            // opening `<` is never found at depth 0.
+            let skip_ranges = collect_skip_ranges(bytes, byte_offset);
+            let in_skip_range = |idx: usize| -> bool {
+                skip_ranges
+                    .iter()
+                    .any(|&(start, end)| idx >= start && idx < end)
+            };
+
             // Scan backwards past attributes to find '<TagName'
             let mut i = byte_offset - 1; // skip the '>'
             let mut depth = 0;
@@ -112,6 +114,9 @@ impl Server {
             // Skip past attributes, strings, etc. to find the '<'
             while i > 0 {
                 i -= 1;
+                if in_skip_range(i) {
+                    continue;
+                }
                 match bytes[i] {
                     b'<' if depth == 0 => {
                         // Found the opening '<', now extract the tag name
@@ -142,17 +147,12 @@ impl Server {
 
                         let tag_name = &source_text[tag_start..tag_end];
 
-                        // Don't auto-close void HTML elements
-                        let void_elements = [
-                            "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-                            "meta", "param", "source", "track", "wbr",
-                        ];
-                        if void_elements
-                            .iter()
-                            .any(|&v| v.eq_ignore_ascii_case(tag_name))
-                        {
-                            return None;
-                        }
+                        // Issue #3731: tsserver's jsxClosingTag returns a
+                        // closing tag for any JSX element — including
+                        // intrinsic HTML void elements like `<input>` —
+                        // because the JSX runtime requires explicit
+                        // close tags. The previous void-suppression list
+                        // was hand-built and didn't match tsc.
 
                         // Don't auto-close if the closing tag already follows the cursor
                         let expected_close = format!("</{tag_name}>");
@@ -160,8 +160,13 @@ impl Server {
                             return None;
                         }
 
+                        // tsserver's protocol shape is `TextInsertion`:
+                        // `{ newText, caretOffset }` (issue #3731).
+                        // The previous `$0` snippet syntax was a VS Code
+                        // editor convention, not tsserver's wire format.
                         return Some(serde_json::json!({
-                            "newText": format!("$0</{}>", tag_name)
+                            "newText": format!("</{tag_name}>"),
+                            "caretOffset": 0,
                         }));
                     }
                     b'>' => depth += 1,
@@ -184,7 +189,24 @@ impl Server {
         // braceCompletion returns boolean indicating whether the opening brace
         // should be auto-completed with the closing one.
         // We should NOT complete if we're inside a string or comment.
-        let result = (|| -> Option<serde_json::Value> {
+        if request
+            .arguments
+            .get("openingBrace")
+            .and_then(|v| v.as_str())
+            == Some("<")
+        {
+            return TsServerResponse {
+                seq,
+                msg_type: "response".to_string(),
+                command: request.command.clone(),
+                request_seq: request.seq,
+                success: false,
+                message: Some("No content available.".to_string()),
+                body: None,
+            };
+        }
+
+        let result = (|| -> Option<Result<serde_json::Value, ()>> {
             let file = request.arguments.get("file")?.as_str()?;
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
@@ -249,6 +271,7 @@ impl Server {
                     }
                     if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
                         template_depth += 1;
+                        in_template = false;
                         i += 2;
                         continue;
                     }
@@ -284,21 +307,35 @@ impl Server {
                 i += 1;
             }
 
-            // Don't auto-complete braces inside strings, comments, or template literals
-            if in_string || in_line_comment || in_block_comment || in_template {
-                return Some(serde_json::json!(false));
+            let is_quote_like = matches!(opening_brace, "'" | "\"" | "`");
+
+            if is_quote_like && (in_line_comment || in_block_comment) {
+                return Some(Err(()));
             }
 
-            // All valid opening braces should be completed
-            let valid = matches!(opening_brace, "{" | "(" | "[" | "'" | "\"" | "`" | "<");
-            Some(serde_json::json!(valid))
+            // Don't auto-complete inside strings or template literals.
+            if in_string || in_template {
+                return Some(Ok(serde_json::json!(false)));
+            }
+
+            // All valid opening braces should be completed.
+            let valid = matches!(opening_brace, "{" | "(" | "[" | "'" | "\"" | "`");
+            Some(Ok(serde_json::json!(valid)))
         })();
 
-        self.stub_response(
-            seq,
-            request,
-            Some(result.unwrap_or(serde_json::json!(true))),
-        )
+        match result {
+            Some(Err(())) => TsServerResponse {
+                seq,
+                msg_type: "response".to_string(),
+                command: request.command.clone(),
+                request_seq: request.seq,
+                success: false,
+                message: Some("No content available.".to_string()),
+                body: None,
+            },
+            Some(Ok(body)) => self.stub_response(seq, request, Some(body)),
+            None => self.stub_response(seq, request, Some(serde_json::json!(true))),
+        }
     }
 
     pub(crate) fn handle_span_of_enclosing_comment(
@@ -350,16 +387,7 @@ impl Server {
                         let comment_start = i;
                         let comment_end = source_text[i..].find('\n').map_or(len, |j| i + j);
                         if byte_offset >= comment_start && byte_offset <= comment_end {
-                            let start_pos =
-                                line_map.offset_to_position(comment_start as u32, source_text);
-                            let end_pos =
-                                line_map.offset_to_position(comment_end as u32, source_text);
-                            return Some(serde_json::json!({
-                                "textSpan": {
-                                    "start": Self::lsp_to_tsserver_position(start_pos),
-                                    "end": Self::lsp_to_tsserver_position(end_pos)
-                                }
-                            }));
+                            return Some(Self::text_span_body(comment_start, comment_end));
                         }
                         i = comment_end;
                         continue;
@@ -376,16 +404,7 @@ impl Server {
                         }
                         let comment_end = i;
                         if byte_offset >= comment_start && byte_offset <= comment_end {
-                            let start_pos =
-                                line_map.offset_to_position(comment_start as u32, source_text);
-                            let end_pos =
-                                line_map.offset_to_position(comment_end as u32, source_text);
-                            return Some(serde_json::json!({
-                                "textSpan": {
-                                    "start": Self::lsp_to_tsserver_position(start_pos),
-                                    "end": Self::lsp_to_tsserver_position(end_pos)
-                                }
-                            }));
+                            return Some(Self::text_span_body(comment_start, comment_end));
                         }
                         continue;
                     }
@@ -397,6 +416,13 @@ impl Server {
         })();
 
         self.stub_response(seq, request, result)
+    }
+
+    fn text_span_body(start: usize, end: usize) -> serde_json::Value {
+        serde_json::json!({
+            "start": start,
+            "length": end.saturating_sub(start),
+        })
     }
 
     pub(crate) fn handle_todo_comments(
@@ -432,8 +458,6 @@ impl Server {
             }
 
             let mut results = Vec::new();
-            let bytes = source_text.as_bytes();
-            let len = bytes.len();
 
             // Implements TypeScript's todo comment matching algorithm:
             // The regex pattern is: (preamble)(descriptor + message)(endOfLine|*/)
@@ -441,110 +465,164 @@ impl Server {
             //   - //+\s*  (single line comment)
             //   - /*+\s*  (block comment start)
             //   - ^[\s*]* (start of line with spaces/asterisks, for continued block comments)
-            let mut i = 0;
-            while i < len {
-                // Skip string literals to avoid false matches
-                if bytes[i] == b'"' || bytes[i] == b'\'' || bytes[i] == b'`' {
-                    let quote = bytes[i];
-                    i += 1;
-                    while i < len {
-                        if bytes[i] == b'\\' {
-                            i += 2;
-                            continue;
-                        }
-                        if bytes[i] == quote {
-                            i += 1;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    continue;
-                }
-
-                if i + 1 < len && bytes[i] == b'/' {
-                    if bytes[i + 1] == b'/' {
-                        // Line comment: //+\s* then check for descriptor
-                        i += 2;
-                        while i < len && bytes[i] == b'/' {
-                            i += 1;
-                        }
-                        while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                            i += 1;
-                        }
-                        // Check for descriptor at current position
-                        Self::match_descriptor_at(source_text, i, &descriptor_texts, &mut results);
-                        // Skip to end of line
-                        while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                            i += 1;
-                        }
-                        continue;
-                    } else if bytes[i + 1] == b'*' {
-                        // Block comment: /*+\s* then content with ^[\s*]* per line
-                        i += 2;
-                        // Skip additional asterisks (but not closing */)
-                        while i < len && bytes[i] == b'*' {
-                            if i + 1 < len && bytes[i + 1] == b'/' {
-                                break;
-                            }
-                            i += 1;
-                        }
-                        // Skip whitespace after comment start
-                        while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
-                            i += 1;
-                        }
-                        // Check for descriptor right after the comment opening
-                        if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                            Self::match_descriptor_at(
-                                source_text,
-                                i,
-                                &descriptor_texts,
-                                &mut results,
-                            );
-                        }
-                        // Scan through block comment content
-                        while i + 1 < len {
-                            if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                                i += 2;
-                                break;
-                            }
-                            if bytes[i] == b'\n' || bytes[i] == b'\r' {
-                                // Handle \r\n
-                                if bytes[i] == b'\r' && i + 1 < len && bytes[i + 1] == b'\n' {
-                                    i += 1;
-                                }
-                                i += 1;
-                                // Skip leading whitespace and asterisks (^[\s*]*)
-                                while i < len
-                                    && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'*')
-                                {
-                                    if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
-                                        break;
-                                    }
-                                    i += 1;
-                                }
-                                // Check for descriptor
-                                if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                                    Self::match_descriptor_at(
-                                        source_text,
-                                        i,
-                                        &descriptor_texts,
-                                        &mut results,
-                                    );
-                                }
-                                continue;
-                            }
-                            i += 1;
-                        }
-                        continue;
-                    }
-                }
-                i += 1;
-            }
+            //
+            // Templates are scanned for ${...} substitutions, which can contain
+            // nested code (and therefore nested comments). See #4003.
+            Self::scan_todos_in_range(source_text, &descriptor_texts, &mut results, 0, false);
 
             Some(serde_json::json!(results))
         })();
 
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Scan `source_text` from `start_pos` for TODO comments. Skips string and
+    /// template literals, but recurses into `${...}` template substitutions
+    /// because comments inside substitutions are real comments (#4003).
+    ///
+    /// When `stop_at_unbalanced_close_brace` is true, returns at the first `}`
+    /// that has no matching `{` in this scope — used to bound a single
+    /// substitution. Otherwise scans to end of input.
+    fn scan_todos_in_range(
+        source_text: &str,
+        descriptors: &[(String, i64)],
+        results: &mut Vec<serde_json::Value>,
+        start_pos: usize,
+        stop_at_unbalanced_close_brace: bool,
+    ) -> usize {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len();
+        let mut i = start_pos;
+        let mut brace_depth: u32 = 0;
+
+        while i < len {
+            let b = bytes[i];
+
+            // String literal: skip quoted content (with escapes).
+            if b == b'"' || b == b'\'' {
+                let quote = b;
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Template literal: scan content with substitution recursion.
+            if b == b'`' {
+                i += 1;
+                i = Self::scan_todos_in_template(source_text, descriptors, results, i);
+                continue;
+            }
+
+            // Track brace nesting to find the end of a `${...}` substitution.
+            if stop_at_unbalanced_close_brace {
+                if b == b'{' {
+                    brace_depth += 1;
+                } else if b == b'}' {
+                    if brace_depth == 0 {
+                        return i + 1;
+                    }
+                    brace_depth -= 1;
+                }
+            }
+
+            if i + 1 < len && b == b'/' {
+                if bytes[i + 1] == b'/' {
+                    // Line comment: //+\s* then check for descriptor.
+                    i += 2;
+                    while i < len && bytes[i] == b'/' {
+                        i += 1;
+                    }
+                    while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                    Self::match_descriptor_at(source_text, i, descriptors, results);
+                    while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                    continue;
+                } else if bytes[i + 1] == b'*' {
+                    // Block comment: /*+\s* then content with ^[\s*]* per line.
+                    i += 2;
+                    while i < len && bytes[i] == b'*' {
+                        if i + 1 < len && bytes[i + 1] == b'/' {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    while i < len && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                    if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        Self::match_descriptor_at(source_text, i, descriptors, results);
+                    }
+                    while i + 1 < len {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                            if bytes[i] == b'\r' && i + 1 < len && bytes[i + 1] == b'\n' {
+                                i += 1;
+                            }
+                            i += 1;
+                            while i < len
+                                && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'*')
+                            {
+                                if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                                    break;
+                                }
+                                i += 1;
+                            }
+                            if i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                                Self::match_descriptor_at(source_text, i, descriptors, results);
+                            }
+                            continue;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        i
+    }
+
+    /// Scan a template literal body. `start_pos` points just past the opening
+    /// backtick. On `${`, recurses into `scan_todos_in_range` with brace-end
+    /// tracking so comments inside substitutions are still matched. Returns
+    /// the position just past the closing backtick (or end of input).
+    fn scan_todos_in_template(
+        source_text: &str,
+        descriptors: &[(String, i64)],
+        results: &mut Vec<serde_json::Value>,
+        start_pos: usize,
+    ) -> usize {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len();
+        let mut i = start_pos;
+        while i < len {
+            match bytes[i] {
+                b'\\' if i + 1 < len => i += 2,
+                b'`' => return i + 1,
+                b'$' if i + 1 < len && bytes[i + 1] == b'{' => {
+                    i += 2;
+                    i = Self::scan_todos_in_range(source_text, descriptors, results, i, true);
+                }
+                _ => i += 1,
+            }
+        }
+        i
     }
 
     /// Check if any descriptor matches at the given position (case-insensitive).
@@ -585,14 +663,28 @@ impl Server {
                     }
                 }
                 let message = &rest[..msg_end];
+                let position = Self::utf16_position_for_byte_offset(source_text, pos);
                 results.push(serde_json::json!({
                     "descriptor": { "text": text, "priority": priority },
                     "message": message,
-                    "position": pos,
+                    "position": position,
                 }));
                 return; // Only match first descriptor at this position
             }
         }
+    }
+
+    fn utf16_position_for_byte_offset(source_text: &str, byte_offset: usize) -> usize {
+        let byte_offset = byte_offset.min(source_text.len());
+        let boundary = if source_text.is_char_boundary(byte_offset) {
+            byte_offset
+        } else {
+            (0..byte_offset)
+                .rev()
+                .find(|&idx| source_text.is_char_boundary(idx))
+                .unwrap_or(0)
+        };
+        source_text[..boundary].encode_utf16().count()
     }
 
     pub(crate) fn handle_doc_comment_template(
@@ -605,10 +697,15 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as usize;
             let _offset = request.arguments.get("offset")?.as_u64().unwrap_or(1);
             let source_text = self.open_files.get(file)?;
+            // Resolution order matches tsserver:
+            //   1. per-request argument `generateReturnInDocTemplate`
+            //   2. user preference set via `configure`
+            //   3. tsserver default (`true`)
             let generate_return = request
                 .arguments
                 .get("generateReturnInDocTemplate")
                 .and_then(serde_json::Value::as_bool)
+                .or(self.generate_return_in_doc_template)
                 .unwrap_or(true);
 
             // Detect JS files for JSDoc type annotation format
@@ -787,15 +884,34 @@ impl Server {
             let is_multi_declarator =
                 Self::is_multi_declarator_var(&decl_text, source_text, decl_offset);
 
+            // Issue #3752: tsc leaves the existing one-line JSDoc alone when
+            // the documented declaration is non-callable (type alias,
+            // interface, class, enum, namespace, module) even if a nested
+            // function-like signature appears on the same line. The previous
+            // line-scan happily found the nested `(...)` and produced
+            // spurious `@param`/`@returns` tags.
+            let is_non_callable_decl = [
+                "type ",
+                "interface ",
+                "class ",
+                "enum ",
+                "namespace ",
+                "module ",
+            ]
+            .iter()
+            .any(|kw| decl_text.starts_with(kw));
+
+            let suppress_signature_extraction = is_multi_declarator || is_non_callable_decl;
+
             // Extract parameters from the declaration
-            let params = if is_multi_declarator {
+            let params = if suppress_signature_extraction {
                 Vec::new()
             } else {
                 Self::extract_function_params(&decl_text, source_text, decl_offset)
             };
 
             // Check for return statement in function body if generate_return is enabled
-            let has_return = if generate_return && !is_multi_declarator {
+            let has_return = if generate_return && !suppress_signature_extraction {
                 Self::function_has_return(&decl_text, source_text, decl_offset)
             } else {
                 false
@@ -1122,10 +1238,7 @@ impl Server {
         // Find the RHS start position in source for multi-line scanning
         let eq_byte_offset = {
             let eq_search = &source[decl_offset..];
-            match eq_search.find('=') {
-                Some(pos) => decl_offset + pos + 1,
-                None => return None,
-            }
+            decl_offset + eq_search.find('=')? + 1
         };
         // Skip whitespace after = to find RHS start
         let mut rhs_source_start = eq_byte_offset;
@@ -1396,9 +1509,12 @@ impl Server {
         // indentation returns { position: number, indentation: number }
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let line = request.arguments.get("line")?.as_u64()? as usize;
-            let position = request.arguments.get("offset")?.as_u64().unwrap_or(1);
+            let line = request.arguments.get("line")?.as_u64()? as u32;
+            let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
             let source_text = self.open_files.get(file)?;
+            let line_map = LineMap::build(source_text);
+            let requested_position = line_map
+                .position_to_offset(Self::tsserver_to_lsp_position(line, offset), source_text)?;
 
             // Get indent size from options (default 4)
             let indent_size = request
@@ -1419,7 +1535,7 @@ impl Server {
                 .unwrap_or(0) as usize;
 
             let lines: Vec<&str> = source_text.lines().collect();
-            let target_line_idx = if line > 0 { line - 1 } else { 0 };
+            let target_line_idx = line.saturating_sub(1) as usize;
 
             // Smart indentation: compute brace/bracket/paren depth up to the target line
             // by scanning all lines before it, then adjust for the current line.
@@ -1571,7 +1687,7 @@ impl Server {
             }
 
             Some(serde_json::json!({
-                "position": position,
+                "position": requested_position,
                 "indentation": indentation
             }))
         })();
@@ -1670,7 +1786,11 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
+            Some(Self::comment_edits_for_protocol(
+                request,
+                &source_text,
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
@@ -1840,9 +1960,51 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
+            Some(Self::comment_edits_for_protocol(
+                request,
+                &source_text,
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn comment_edits_for_protocol(
+        request: &TsServerRequest,
+        source_text: &str,
+        edits: Vec<serde_json::Value>,
+    ) -> serde_json::Value {
+        if !request.command.ends_with("-full") {
+            return serde_json::json!(edits);
+        }
+
+        let text_changes: Vec<serde_json::Value> = edits
+            .into_iter()
+            .filter_map(|edit| {
+                let start = edit.get("start")?;
+                let end = edit.get("end")?;
+                let start_line = start.get("line")?.as_u64()? as u32;
+                let start_offset = start.get("offset")?.as_u64()? as u32;
+                let end_line = end.get("line")?.as_u64()? as u32;
+                let end_offset = end.get("offset")?.as_u64()? as u32;
+                let new_text = edit
+                    .get("newText")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!(""));
+                let start_byte = Self::line_offset_to_byte(source_text, start_line, start_offset);
+                let end_byte = Self::line_offset_to_byte(source_text, end_line, end_offset);
+
+                Some(serde_json::json!({
+                    "newText": new_text,
+                    "span": {
+                        "start": start_byte,
+                        "length": end_byte.saturating_sub(start_byte)
+                    }
+                }))
+            })
+            .collect();
+
+        serde_json::json!(text_changes)
     }
 
     /// Convert byte position to 1-based line/offset for multiline comment handler
@@ -1986,7 +2148,11 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
+            Some(Self::comment_edits_for_protocol(
+                request,
+                &source_text,
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
@@ -2065,245 +2231,13 @@ impl Server {
                 }
             }
 
-            Some(serde_json::json!(edits))
-        })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
-    }
-
-    pub(crate) fn handle_smart_selection_range(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        let result = (|| -> Option<serde_json::Value> {
-            let file = request.arguments.get("file")?.as_str()?;
-            let (arena, _binder, _root, source_text) = self.parse_and_bind_file(file)?;
-            let line_map = LineMap::build(&source_text);
-            let provider = SelectionRangeProvider::new(&arena, &line_map, &source_text);
-
-            let locations = request.arguments.get("locations")?.as_array()?;
-            let positions: Vec<Position> = locations
-                .iter()
-                .filter_map(|loc| {
-                    let line = loc.get("line")?.as_u64()? as u32;
-                    let offset = loc.get("offset")?.as_u64()? as u32;
-                    Some(Self::tsserver_to_lsp_position(line, offset))
-                })
-                .collect();
-
-            let ranges = provider.get_selection_ranges(&positions);
-
-            fn selection_range_to_json(
-                sr: &tsz::lsp::editor_ranges::selection_range::SelectionRange,
-            ) -> serde_json::Value {
-                let text_span = serde_json::json!({
-                    "start": {
-                        "line": sr.range.start.line + 1,
-                        "offset": sr.range.start.character + 1,
-                    },
-                    "end": {
-                        "line": sr.range.end.line + 1,
-                        "offset": sr.range.end.character + 1,
-                    },
-                });
-                if let Some(ref parent) = sr.parent {
-                    serde_json::json!({
-                        "textSpan": text_span,
-                        "parent": selection_range_to_json(parent),
-                    })
-                } else {
-                    serde_json::json!({
-                        "textSpan": text_span,
-                    })
-                }
-            }
-
-            let body: Vec<serde_json::Value> = ranges
-                .iter()
-                .map(|opt_sr| {
-                    opt_sr
-                        .as_ref()
-                        .map(selection_range_to_json)
-                        .unwrap_or(serde_json::json!(null))
-                })
-                .collect();
-            Some(serde_json::json!(body))
-        })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
-    }
-
-    pub(crate) fn handle_syntactic_classifications(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // getSyntacticClassifications returns ClassifiedSpan[]
-        // Use the scanner to classify tokens by syntax kind
-        let result = (|| -> Option<serde_json::Value> {
-            let file = request.arguments.get("file")?.as_str()?;
-            let start_line = request.arguments.get("startLine")?.as_u64()? as u32;
-            let start_offset = request.arguments.get("startOffset")?.as_u64()? as u32;
-            let end_line = request.arguments.get("endLine")?.as_u64()? as u32;
-            let end_offset = request.arguments.get("endOffset")?.as_u64()? as u32;
-
-            let source_text = self.open_files.get(file)?.clone();
-            let line_map = LineMap::build(&source_text);
-
-            let start_pos = Self::tsserver_to_lsp_position(start_line, start_offset);
-            let end_pos = Self::tsserver_to_lsp_position(end_line, end_offset);
-            let start_byte = line_map.position_to_offset(start_pos, &source_text)?;
-            let end_byte = line_map.position_to_offset(end_pos, &source_text)?;
-
-            let spans = Self::classify_tokens_syntactically(
+            Some(Self::comment_edits_for_protocol(
+                request,
                 &source_text,
-                start_byte as usize,
-                end_byte as usize,
-            );
-
-            Some(serde_json::json!(spans))
+                edits,
+            ))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
-    }
-
-    fn classify_tokens_syntactically(
-        source_text: &str,
-        start: usize,
-        end: usize,
-    ) -> Vec<serde_json::Value> {
-        use tsz_scanner::SyntaxKind;
-        use tsz_scanner::scanner_impl::ScannerState;
-        let mut scanner = ScannerState::new(source_text.to_string(), false);
-        let mut spans = Vec::new();
-
-        loop {
-            let token = scanner.scan();
-            if token == SyntaxKind::EndOfFileToken {
-                break;
-            }
-            let pos = scanner.get_token_start();
-            let token_end = scanner.get_pos();
-            if token_end <= start {
-                continue;
-            }
-            if pos >= end {
-                break;
-            }
-            let classification = match token {
-                SyntaxKind::StringLiteral
-                | SyntaxKind::NoSubstitutionTemplateLiteral
-                | SyntaxKind::TemplateHead
-                | SyntaxKind::TemplateMiddle
-                | SyntaxKind::TemplateTail => "string",
-                SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => "number",
-                SyntaxKind::RegularExpressionLiteral => "regexp",
-                SyntaxKind::SingleLineCommentTrivia | SyntaxKind::MultiLineCommentTrivia => {
-                    "comment"
-                }
-                k if tsz_scanner::token_is_keyword(k) => "keyword",
-                SyntaxKind::Identifier => "identifier",
-                _ => continue,
-            };
-            spans.push(serde_json::json!({
-                "textSpan": { "start": pos, "length": token_end - pos },
-                "classificationType": classification,
-            }));
-        }
-        spans
-    }
-
-    pub(crate) fn handle_semantic_classifications(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // getSemanticClassifications returns ClassifiedSpan[]
-        // Decode the encoded semantic tokens into ClassifiedSpan format
-        let result = (|| -> Option<serde_json::Value> {
-            let file = request.arguments.get("file")?.as_str()?;
-            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
-            let line_map = LineMap::build(&source_text);
-
-            let start_line = request
-                .arguments
-                .get("startLine")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1) as u32;
-            let end_line = request
-                .arguments
-                .get("endLine")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(u32::MAX as u64) as u32;
-
-            let mut provider =
-                SemanticTokensProvider::new(&arena, &binder, &line_map, &source_text);
-            let encoded = provider.get_semantic_tokens(root);
-
-            // Decode delta-encoded tokens: [deltaLine, deltaStartChar, length, tokenType, modifiers]
-            let mut spans = Vec::new();
-            let mut current_line: u32 = 0;
-            let mut current_char: u32 = 0;
-
-            for chunk in encoded.chunks_exact(5) {
-                let delta_line = chunk[0];
-                let delta_char = chunk[1];
-                let length = chunk[2];
-                let token_type = chunk[3];
-
-                if delta_line > 0 {
-                    current_line += delta_line;
-                    current_char = delta_char;
-                } else {
-                    current_char += delta_char;
-                }
-
-                // Filter to requested range (1-based lines)
-                let line_1based = current_line + 1;
-                if line_1based < start_line {
-                    continue;
-                }
-                if line_1based > end_line {
-                    break;
-                }
-
-                let pos = Position::new(current_line, current_char);
-                let start_offset = line_map.position_to_offset(pos, &source_text)?;
-
-                let classification = Self::semantic_token_type_name(token_type);
-
-                spans.push(serde_json::json!({
-                    "textSpan": { "start": start_offset, "length": length },
-                    "classificationType": classification,
-                }));
-            }
-
-            Some(serde_json::json!(spans))
-        })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
-    }
-
-    const fn semantic_token_type_name(token_type: u32) -> &'static str {
-        match token_type {
-            x if x == SemanticTokenType::Namespace as u32 => "module name",
-            x if x == SemanticTokenType::Type as u32 => "type",
-            x if x == SemanticTokenType::Class as u32 => "class name",
-            x if x == SemanticTokenType::Enum as u32 => "enum name",
-            x if x == SemanticTokenType::Interface as u32 => "interface name",
-            x if x == SemanticTokenType::TypeParameter as u32 => "type parameter name",
-            x if x == SemanticTokenType::Parameter as u32 => "parameter name",
-            x if x == SemanticTokenType::Variable as u32 => "identifier",
-            x if x == SemanticTokenType::Property as u32 => "identifier",
-            x if x == SemanticTokenType::EnumMember as u32 => "enum member name",
-            x if x == SemanticTokenType::Function as u32 => "identifier",
-            x if x == SemanticTokenType::Method as u32 => "identifier",
-            x if x == SemanticTokenType::Keyword as u32 => "keyword",
-            x if x == SemanticTokenType::Comment as u32 => "comment",
-            x if x == SemanticTokenType::String as u32 => "string",
-            x if x == SemanticTokenType::Number as u32 => "number",
-            x if x == SemanticTokenType::Regexp as u32 => "regexp",
-            x if x == SemanticTokenType::Operator as u32 => "operator",
-            x if x == SemanticTokenType::Decorator as u32 => "identifier",
-            _ => "identifier",
-        }
     }
 
     pub(crate) fn handle_compiler_options_diagnostics(
@@ -2334,4 +2268,65 @@ impl Server {
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
+}
+
+/// Forward-scan `bytes[..end]` and collect byte ranges that should be ignored
+/// when matching JSX angle brackets — namely string/template literals and
+/// `//` / `/* ... */` comments. The returned ranges are half-open `[start, end)`
+/// and include the surrounding quotes/comment delimiters.
+///
+/// This is intentionally a lightweight tokenizer rather than a full JSX
+/// scanner: it is sufficient to keep `<` and `>` inside attribute strings
+/// (and JSX-expression strings) from being treated as tag boundaries.
+pub(crate) fn collect_skip_ranges(bytes: &[u8], end: usize) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let limit = end.min(bytes.len());
+    let mut j = 0;
+    while j < limit {
+        match bytes[j] {
+            quote @ (b'"' | b'\'' | b'`') => {
+                let start = j;
+                j += 1;
+                while j < limit && bytes[j] != quote {
+                    if bytes[j] == b'\\' && j + 1 < limit {
+                        j += 2;
+                    } else if bytes[j] == b'\n' && quote != b'`' {
+                        // Unterminated single/double-quoted string: stop at
+                        // newline so a stray quote does not swallow the rest
+                        // of the file.
+                        break;
+                    } else {
+                        j += 1;
+                    }
+                }
+                if j < limit {
+                    j += 1; // consume closing quote (or stop byte)
+                }
+                ranges.push((start, j));
+            }
+            b'/' if j + 1 < limit && bytes[j + 1] == b'/' => {
+                let start = j;
+                j += 2;
+                while j < limit && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                ranges.push((start, j));
+            }
+            b'/' if j + 1 < limit && bytes[j + 1] == b'*' => {
+                let start = j;
+                j += 2;
+                while j + 1 < limit && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
+                    j += 1;
+                }
+                if j + 1 < limit {
+                    j += 2; // consume closing */
+                } else {
+                    j = limit;
+                }
+                ranges.push((start, j));
+            }
+            _ => j += 1,
+        }
+    }
+    ranges
 }

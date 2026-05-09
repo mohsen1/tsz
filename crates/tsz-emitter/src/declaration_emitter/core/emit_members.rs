@@ -95,35 +95,44 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // tsc uses property syntax for computed method names in these cases:
-        // 1. Computed key with `any` type (from shorthand ambient modules)
-        // 2. Optional computed methods (`[key]?()` → `[key]?: (() => T) | undefined`)
+        // tsc uses property syntax for late-bound computed method names:
+        // `[key]()` becomes `[key]: () => T`.
+        // Literal and resolved computed names can stay method-like.
         // Non-computed optional methods keep method syntax: `g?(): T`
         let is_computed_name = self
             .arena
             .get(method.name)
             .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
 
+        let resolved_computed_name = self.resolved_computed_property_name_text(method.name);
+        let is_symbol_computed_name = self.is_symbol_computed_property_name(method.name);
+        let can_emit_computed_method_name =
+            self.computed_method_name_can_preserve_method_syntax(method.name);
+        let computed_name_forces_method_syntax =
+            can_emit_computed_method_name && !method.question_token;
+        let computed_key_type = self
+            .arena
+            .get(method.name)
+            .and_then(|node| self.arena.get_computed_property(node))
+            .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]));
+        let computed_key_requires_property_syntax = computed_key_type.is_none_or(|t| {
+            t == tsz_solver::types::TypeId::ANY
+                || self.type_interner.is_some_and(|interner| {
+                    !tsz_solver::type_queries::is_type_usable_as_property_name(interner, t)
+                })
+        });
         let use_property_syntax = is_computed_name
-            && (method.question_token
-                || self
-                    .arena
-                    .get(method.name)
-                    .and_then(|node| self.arena.get_computed_property(node))
-                    .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
-                    .is_some_and(|t| {
-                        t == tsz_solver::types::TypeId::ANY
-                            || self.type_interner.is_some_and(|interner| {
-                                !tsz_solver::type_queries::is_type_usable_as_property_name(
-                                    interner, t,
-                                )
-                            })
-                    }))
             // If the computed name resolves to a known literal (e.g. const enum member),
-            // keep method syntax — the name is a valid property name in .d.ts
-            && self
-                .resolved_computed_property_name_text(method.name)
-                .is_none();
+            // keep method syntax — the name is a valid property name in .d.ts.
+            && resolved_computed_name.is_none()
+            // Well-known symbol names are valid declaration method names even when
+            // the symbol expression's type is unavailable in the current cache.
+            && !is_symbol_computed_name
+            // Literal/reference computed method names are valid declaration method
+            // names when the referenced key is usable as a declaration property.
+            // Keep them as methods unless optional syntax forces a property.
+            && !computed_name_forces_method_syntax
+            && (method.question_token || computed_key_requires_property_syntax);
 
         if use_property_syntax {
             self.write(": ");
@@ -211,6 +220,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         let method_body = method.body;
         let method_name = method.name;
+        let is_static = self.arena.is_static(&method.modifiers);
         if method.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(method.type_annotation);
@@ -219,6 +229,13 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if !is_private
+            && let Some(type_text) = self.static_method_returning_this_type_text(method_idx, method)
+        {
+            self.write(": ");
+            self.write(&type_text);
+        } else if !is_private && !is_static && self.method_body_returns_this(method_body) {
+            self.write(": this");
         } else if !is_private
             && let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
         {
@@ -310,6 +327,16 @@ impl<'a> DeclarationEmitter<'a> {
         method: &MethodDeclData,
     ) {
         let method_body = method.body;
+        if let Some(type_text) = self.static_method_returning_this_type_text(method_idx, method) {
+            self.write(&type_text);
+            return;
+        }
+        let is_static = self.arena.is_static(&method.modifiers);
+        if !is_static && self.method_body_returns_this(method_body) {
+            self.write("this");
+            return;
+        }
+
         let method_name = method.name;
         if method.type_annotation.is_some() {
             self.emit_type(method.type_annotation);
@@ -336,9 +363,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else {
-                    self.write(&self.print_type_id(return_type_id));
+                    let type_text = self.print_type_id(return_type_id);
+                    self.write_type_text_with_current_indent(&type_text);
                 }
             } else if let Some(method_type_id) = method_type_id {
                 if method_type_id == tsz_solver::types::TypeId::ANY
@@ -350,9 +378,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else {
-                    self.write(&self.print_type_id(method_type_id));
+                    let type_text = self.print_type_id(method_type_id);
+                    self.write_type_text_with_current_indent(&type_text);
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -360,7 +389,7 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
-                    self.write(&type_text);
+                    self.write_type_text_with_current_indent(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write("any");
                 }
@@ -373,12 +402,95 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_text) =
                 self.function_body_preferred_return_type_text(method_body)
             {
-                self.write(&type_text);
+                self.write_type_text_with_current_indent(&type_text);
             } else if !self.source_is_declaration_file {
                 self.write("any");
             }
         } else if !self.source_is_declaration_file {
             self.write("any");
+        }
+    }
+
+    fn static_method_returning_this_type_text(
+        &self,
+        method_idx: NodeIndex,
+        method: &MethodDeclData,
+    ) -> Option<String> {
+        if !self.arena.is_static(&method.modifiers) || !self.method_body_returns_this(method.body) {
+            return None;
+        }
+
+        let class_idx = self.enclosing_class_for_member(method_idx)?;
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+        let class_name = self.get_identifier_text(class.name)?;
+        Some(format!("typeof {class_name}"))
+    }
+
+    fn enclosing_class_for_member(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = member_idx;
+        for _ in 0..8 {
+            let parent_idx = self.arena.parent_of(current)?;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if self.arena.get_class(parent_node).is_some() {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    fn method_body_returns_this(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let mut saw_return_this = false;
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                return false;
+            };
+            let Some(expr_idx) = ret.expression.is_some().then_some(ret.expression) else {
+                return false;
+            };
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                return false;
+            };
+            if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
+                return false;
+            }
+            saw_return_this = true;
+        }
+        saw_return_this
+    }
+
+    pub(in crate::declaration_emitter) fn write_type_text_with_current_indent(
+        &mut self,
+        text: &str,
+    ) {
+        let mut lines = text.lines();
+        let Some(first) = lines.next() else {
+            return;
+        };
+
+        self.write(first);
+        let continuation_indent = "    ".repeat(self.indent_level as usize);
+        for line in lines {
+            self.write_line();
+            self.write(&continuation_indent);
+            self.write(line);
         }
     }
 
@@ -391,6 +503,172 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
         self.js_augmented_static_method_nodes.contains(&method_idx)
+    }
+
+    fn is_symbol_computed_property_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
+    }
+
+    pub(in crate::declaration_emitter) fn computed_method_name_can_preserve_method_syntax(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        {
+            return true;
+        }
+
+        if expr_node.kind != SyntaxKind::Identifier as u16
+            && expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+
+        if let Some(type_id) = self.get_node_type_or_names(&[expr_idx, name_idx])
+            && type_id != tsz_solver::types::TypeId::ANY
+            && self.type_interner.is_some_and(|interner| {
+                type_queries::is_type_usable_as_property_name(interner, type_id)
+            })
+        {
+            return true;
+        }
+
+        // tsc also preserves method syntax when the computed-name identifier
+        // is a const annotated with `typeof Symbol.<id>` or initialized with
+        // `Symbol.<id>` — the binding is a stable late-bound key whose
+        // declaration shape carries enough information for the d.ts
+        // consumer to resolve the same name back. The runtime type may
+        // still be the widened `symbol` (so the
+        // `is_type_usable_as_property_name` check above doesn't fire), but
+        // tsc treats the symbol-of-Symbol pattern specially for accessor
+        // syntax preservation.
+        self.identifier_resolves_to_symbol_member_const(expr_idx)
+    }
+
+    /// Return true when `expr_idx` is an identifier whose binding (a
+    /// const declaration in scope) was annotated with `typeof Symbol.<id>`
+    /// or initialized with the property access `Symbol.<id>`.
+    fn identifier_resolves_to_symbol_member_const(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(name) = self.get_identifier_text(expr_idx) else {
+            return false;
+        };
+        let sym_id = binder
+            .node_symbols
+            .get(&expr_idx.0)
+            .copied()
+            .or_else(|| binder.file_locals.get(&name));
+        let Some(sym_id) = sym_id else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            // `const X: typeof Symbol.<id>` — the type query alone is
+            // enough; tsc treats it as a late-bound key.
+            if let Some(type_node) = self.arena.get(decl.type_annotation)
+                && type_node.kind == syntax_kind_ext::TYPE_QUERY
+                && let Some(type_query) = self.arena.get_type_query(type_node)
+                && self.entity_name_root_is(type_query.expr_name, "Symbol")
+            {
+                return true;
+            }
+            // `const X = Symbol.<id>` — initializer is a property access
+            // on the global `Symbol` identifier.
+            if let Some(init_node) = self.arena.get(decl.initializer)
+                && init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(init_node)
+                && self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Walk the entity-name AST (Identifier, `QualifiedName`, or
+    /// `PropertyAccessExpression`) and return true when its leftmost root
+    /// is the identifier `target_root`.
+    fn entity_name_root_is(&self, name_idx: NodeIndex, target_root: &str) -> bool {
+        let mut current = name_idx;
+        for _ in 0..32 {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            match node.kind {
+                k if k == SyntaxKind::Identifier as u16 => {
+                    return self.get_identifier_text(current).as_deref() == Some(target_root);
+                }
+                k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                    let Some(qualified) = self.arena.get_qualified_name(node) else {
+                        return false;
+                    };
+                    current = qualified.left;
+                }
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let Some(access) = self.arena.get_access_expr(node) else {
+                        return false;
+                    };
+                    current = access.expression;
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 
     pub(in crate::declaration_emitter) fn emit_constructor_declaration(
@@ -510,6 +788,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Emit parameter properties
+        let mut previous_param_end = ctor_node.pos;
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
@@ -518,6 +797,19 @@ impl<'a> DeclarationEmitter<'a> {
                 let has_modifier = self.parameter_has_property_modifier(&param.modifiers);
 
                 if has_modifier {
+                    if self.strip_internal
+                        && self.nearest_leading_comment_contains(
+                            self.arena
+                                .get(param.name)
+                                .map_or(param_node.pos, |name_node| name_node.pos),
+                            previous_param_end,
+                            "@internal",
+                        )
+                    {
+                        previous_param_end = self.parameter_semantic_end(param_node.end, param);
+                        continue;
+                    }
+
                     let is_destructuring = self.arena.get(param.name).is_some_and(|name_node| {
                         name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
@@ -570,7 +862,9 @@ impl<'a> DeclarationEmitter<'a> {
                             // include it (avoid `Type | undefined | undefined`).
                             let full = self.writer.get_output();
                             let type_text = &full[before_type..];
-                            if !type_text.ends_with("| undefined") {
+                            if !type_text.ends_with("| undefined")
+                                && !Self::type_text_has_undefined_branch(type_text)
+                            {
                                 self.write(" | undefined");
                             }
                         }
@@ -595,6 +889,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(";");
                     self.write_line();
                 }
+                previous_param_end = self.parameter_semantic_end(param_node.end, param);
             }
         }
     }
@@ -655,6 +950,19 @@ impl<'a> DeclarationEmitter<'a> {
             && !is_private
             && let Some(type_text) = self.js_accessor_backing_field_type_text(accessor_idx)
         {
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
+        } else if !is_getter
+            && !is_private
+            && let Some(type_text) =
+                self.paired_getter_type_predicate_text(accessor_idx, &accessor.parameters)
+        {
+            // When a setter has no annotation and the paired getter is
+            // declared with a type-predicate return (`get isFile(): this is File`),
+            // tsc emits the setter parameter using the same predicate
+            // (`set isFile(param: this is File);`). Without this, the
+            // contextual-from-getter inference resolves the predicate down
+            // to its runtime `boolean` type, producing a structurally
+            // different (and lossy) declaration.
             self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
         } else {
             self.emit_parameters_without_types(&accessor.parameters, is_private);
@@ -733,10 +1041,12 @@ impl<'a> DeclarationEmitter<'a> {
         let parent_node = self.arena.get(parent_idx)?;
         let member_nodes = if let Some(class_decl) = self.arena.get_class(parent_node) {
             class_decl.members.nodes.clone()
-        } else if let Some(object) = self.arena.get_literal_expr(parent_node) {
-            object.elements.nodes.clone()
         } else {
-            return None;
+            self.arena
+                .get_literal_expr(parent_node)?
+                .elements
+                .nodes
+                .clone()
         };
 
         for member_idx in member_nodes {
@@ -935,6 +1245,80 @@ impl<'a> DeclarationEmitter<'a> {
         let key_node = self.arena.get(key_idx)?;
         self.get_source_slice(key_node.pos, key_node.end)
             .map(|text| text.trim().to_string())
+    }
+
+    /// Recover the type-predicate annotation text of a paired getter for a
+    /// setter that has no annotation of its own. tsc symmetrises the pair
+    /// by writing the same predicate (`x is File`) on both accessors in
+    /// the emitted .d.ts, even though the runtime type of the setter
+    /// parameter is `boolean`.
+    fn paired_getter_type_predicate_text(
+        &self,
+        accessor_idx: NodeIndex,
+        setter_params: &tsz_parser::parser::NodeList,
+    ) -> Option<String> {
+        let first_param_idx = *setter_params.nodes.first()?;
+        let param_node = self.arena.get(first_param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        if param.type_annotation.is_some() {
+            return None;
+        }
+
+        let parent_idx = self.arena.get_extended(accessor_idx)?.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        let member_nodes = if let Some(class_decl) = self.arena.get_class(parent_node) {
+            class_decl.members.nodes.clone()
+        } else if let Some(interface) = self.arena.get_interface(parent_node) {
+            interface.members.nodes.clone()
+        } else {
+            let literal = self.arena.get_literal_expr(parent_node)?;
+            literal.elements.nodes.clone()
+        };
+
+        let setter_node = self.arena.get(accessor_idx)?;
+        let setter_accessor = self.arena.get_accessor(setter_node)?;
+        let setter_name_text = self
+            .arena
+            .get(setter_accessor.name)
+            .and_then(|name_node| self.get_source_slice(name_node.pos, name_node.end))?;
+
+        for member_idx in member_nodes {
+            if member_idx == accessor_idx {
+                continue;
+            }
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::GET_ACCESSOR {
+                continue;
+            }
+            let Some(getter) = self.arena.get_accessor(member_node) else {
+                continue;
+            };
+            let getter_name_text = self
+                .arena
+                .get(getter.name)
+                .and_then(|name_node| self.get_source_slice(name_node.pos, name_node.end));
+            if getter_name_text.as_deref() != Some(setter_name_text.as_str()) {
+                continue;
+            }
+            let annotation_node = self.arena.get(getter.type_annotation)?;
+            if annotation_node.kind != syntax_kind_ext::TYPE_PREDICATE {
+                return None;
+            }
+            // The annotation node's end span may include the `{` that
+            // opens the body of the getter; trim trailing whitespace and
+            // any leftover open brace so the emitted setter parameter
+            // type matches the predicate alone.
+            return self
+                .get_source_slice(annotation_node.pos, annotation_node.end)
+                .map(|s| {
+                    s.trim_end_matches(|c: char| c.is_whitespace() || c == '{')
+                        .to_string()
+                });
+        }
+
+        None
     }
 
     fn emit_setter_parameters_with_type_text(
@@ -1596,6 +1980,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 keyword,
                                 is_exported,
                             );
+                            let skip_end = self
+                                .arena
+                                .get(decl.initializer)
+                                .map_or(decl_node.end, |n| n.end);
+                            self.skip_comments_in_node(decl_node.pos, skip_end);
                         } else {
                             let is_exported =
                                 has_export_modifier || self.is_js_named_exported_name(decl.name);
@@ -1648,6 +2037,17 @@ impl<'a> DeclarationEmitter<'a> {
                 if !has_export_modifier && !has_js_named_export {
                     regular_decls.retain(|(_is_exported, _decl_idx, _decl_node, decl)| {
                         self.should_emit_public_api_dependency(decl.name)
+                            && !self
+                                .public_api_dependency_is_type_only_exported_type_side(decl.name)
+                            && !self.default_import_alias_dependency_is_type_only(
+                                decl.name,
+                                decl.initializer,
+                            )
+                            && !self.declared_ambient_value_dependency_is_initializer_only(
+                                decl.name,
+                                decl.initializer,
+                                decl.type_annotation,
+                            )
                     });
                 }
 
@@ -1749,6 +2149,16 @@ impl<'a> DeclarationEmitter<'a> {
                                 && let Some(dn) = self.arena.get(*decl_idx)
                             {
                                 self.skip_comments_in_node(dn.pos, skip_end);
+                            }
+                            if let Some(init_node) = self.arena.get(decl.initializer)
+                                && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                    || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                && let Some(func) = self.arena.get_function(init_node)
+                                && func.body.is_some()
+                            {
+                                let function_decl_end =
+                                    self.arena.get(*decl_idx).map_or(init_node.end, |n| n.end);
+                                self.skip_comments_before_raw(function_decl_end);
                             }
                         }
                         i += 1;

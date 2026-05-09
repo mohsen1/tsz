@@ -401,6 +401,7 @@ fn test_contains_error_type() {
         parent_id: None,
         declaration_order: 0,
         is_string_named: false,
+        is_symbol_named: false,
         single_quoted_name: false,
     }]);
     assert!(contains_error_type(&interner, object_with_error_method));
@@ -575,6 +576,43 @@ fn test_collection_extractors() {
     assert_eq!(elements.len(), 2);
     assert_eq!(elements[0].type_id, TypeId::STRING);
     assert_eq!(elements[1].type_id, TypeId::NUMBER);
+}
+
+#[test]
+fn any_array_assignable_to_unknown_entry_tuple_for_map_inference() {
+    let interner = TypeInterner::new();
+    let any_array = interner.array(TypeId::ANY);
+    let unknown_pair = interner.readonly_tuple(vec![
+        TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let concrete_pair = interner.readonly_tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(is_subtype_of(&interner, any_array, unknown_pair));
+    assert!(!is_subtype_of(&interner, any_array, concrete_pair));
 }
 
 #[test]
@@ -900,6 +938,28 @@ fn test_collect_referenced_types_transitive_and_unique() {
     assert_eq!(reachable.len(), 5);
 }
 
+#[test]
+fn test_collect_infer_bindings_skips_terminal_types() {
+    let interner = TypeInterner::new();
+    let infer_name = interner.intern_string("T");
+    let infer_type = interner.infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    let root = interner.union(vec![
+        TypeId::STRING,
+        interner.literal_string("literal"),
+        infer_type,
+        infer_type,
+    ]);
+
+    let bindings = collect_infer_bindings(&interner, root);
+
+    assert_eq!(bindings, vec![(infer_name, infer_type)]);
+}
+
 // =============================================================================
 // unwrap_readonly_or_noinfer Tests
 // =============================================================================
@@ -1017,4 +1077,125 @@ fn test_references_any_type_param_named_not_found() {
     let mut names = rustc_hash::FxHashSet::default();
     names.insert(interner.intern_string("X")); // Not present
     assert!(!references_any_type_param_named(&interner, union, &names));
+}
+
+// =============================================================================
+// is_type_parameter_at_top_level tests
+// =============================================================================
+//
+// Mirrors tsc's `isTypeParameterAtTopLevel` (checker.ts ~26411). The helper is
+// used by inference resolution to decide when fresh literal candidates may be
+// widened: when a type parameter appears at top level in a signature's return
+// type and has not yet been fixed, tsc preserves literal candidates so that
+// deferred (context-sensitive) callback arguments see literal target types
+// (e.g. `cb: (a: T) => U` becomes `(a: number) => 1` rather than `=> number`).
+
+#[test]
+fn test_is_type_parameter_at_top_level_bare() {
+    let interner = TypeInterner::new();
+    let u_atom = interner.intern_string("U");
+    let u = interner.type_param(TypeParamInfo {
+        name: u_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    // The bare type parameter itself counts as top-level.
+    assert!(is_type_parameter_at_top_level(&interner, u, u_atom));
+}
+
+#[test]
+fn test_is_type_parameter_at_top_level_under_union() {
+    let interner = TypeInterner::new();
+    let u_atom = interner.intern_string("U");
+    let u = interner.type_param(TypeParamInfo {
+        name: u_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let union = interner.union(vec![u, TypeId::UNDEFINED]);
+    // `U | undefined` keeps U at top level for tsc's purposes.
+    assert!(is_type_parameter_at_top_level(&interner, union, u_atom));
+}
+
+#[test]
+fn test_is_type_parameter_at_top_level_under_intersection() {
+    let interner = TypeInterner::new();
+    let u_atom = interner.intern_string("U");
+    let u = interner.type_param(TypeParamInfo {
+        name: u_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let v = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let inter = interner.intersection(vec![u, v]);
+    assert!(is_type_parameter_at_top_level(&interner, inter, u_atom));
+}
+
+#[test]
+fn test_is_type_parameter_at_top_level_inside_function() {
+    let interner = TypeInterner::new();
+    let u_atom = interner.intern_string("U");
+    let u = interner.type_param(TypeParamInfo {
+        name: u_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    // `(a: number) => U` — when this whole function is the candidate (i.e. the
+    // signature's *return type* is itself a function returning U), U is NOT
+    // at the top level of this function-type return position. tsc widens
+    // literal candidates inferred at this position.
+    let fn_ty = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        return_type: u,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    assert!(!is_type_parameter_at_top_level(&interner, fn_ty, u_atom));
+}
+
+#[test]
+fn test_is_type_parameter_at_top_level_different_name() {
+    let interner = TypeInterner::new();
+    let u_atom = interner.intern_string("U");
+    let t_atom = interner.intern_string("T");
+    let t = interner.type_param(TypeParamInfo {
+        name: t_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    // `T` is at top level but we're asking about `U`.
+    assert!(!is_type_parameter_at_top_level(&interner, t, u_atom));
+}
+
+#[test]
+fn test_is_type_parameter_at_top_level_inside_array_is_false() {
+    let interner = TypeInterner::new();
+    let u_atom = interner.intern_string("U");
+    let u = interner.type_param(TypeParamInfo {
+        name: u_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let arr = interner.array(u);
+    // tsc's rule does not unwrap arrays; `U[]` is not "U at top level".
+    assert!(!is_type_parameter_at_top_level(&interner, arr, u_atom));
 }

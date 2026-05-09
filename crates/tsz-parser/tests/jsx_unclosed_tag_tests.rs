@@ -1,16 +1,14 @@
 //! Tests for JSX unclosed tag detection (TS17008) and mismatched closing tag (TS17002)
 
-use crate::parser::state::ParserState;
+use crate::parser::test_fixture::parse_source_named;
 
 fn get_parser_error_codes(source: &str, filename: &str) -> Vec<u32> {
-    let mut parser = ParserState::new(filename.to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named(filename, source);
     parser.parse_diagnostics.iter().map(|d| d.code).collect()
 }
 
 fn get_parser_errors(source: &str, filename: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new(filename.to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named(filename, source);
     parser
         .parse_diagnostics
         .iter()
@@ -91,8 +89,7 @@ fn test_jsx_missing_closing_tag_anchor_after_conflict_marker_uses_opening_end() 
     // at the EOF position. Match that anchor so the diagnostic fingerprint
     // lines up with tsc.
     let source = "const x = <div>\n<<<<<<< HEAD";
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("test.tsx", source);
     let ts1005: Vec<_> = parser
         .parse_diagnostics
         .iter()

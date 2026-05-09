@@ -5,6 +5,7 @@
 
 use crate::FlowAnalyzer;
 use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -560,6 +561,11 @@ impl<'a> CheckerState<'a> {
         prop_name: &str,
     ) -> bool {
         let mapped = self.ctx.types.mapped_type(mapped_id);
+        let preserves_source_names = mapped.name_type.is_none()
+            || crate::query_boundaries::state::checking::is_identity_name_mapping(
+                self.ctx.types,
+                &mapped,
+            );
         crate::query_boundaries::state::checking::get_finite_mapped_property_type(
             self.ctx.types,
             mapped_id,
@@ -571,12 +577,13 @@ impl<'a> CheckerState<'a> {
                 mapped_id,
             )
             .is_some_and(|names| names.contains(&self.ctx.types.intern_string(prop_name)))
-            || crate::query_boundaries::state::checking::extract_string_literal_keys(
-                self.ctx.types,
-                mapped.constraint,
-            )
-            .iter()
-            .any(|name| self.ctx.types.resolve_atom(*name) == prop_name)
+            || (preserves_source_names
+                && crate::query_boundaries::state::checking::extract_string_literal_keys(
+                    self.ctx.types,
+                    mapped.constraint,
+                )
+                .iter()
+                .any(|name| self.ctx.types.resolve_atom(*name) == prop_name))
     }
 
     fn mapped_explicit_property_names(&self, mapped_id: tsz_solver::MappedTypeId) -> Vec<String> {
@@ -1130,37 +1137,53 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        if symbol.has_any_flags(symbol_flags::ALIAS)
+            && let Some(target_sym_id) =
+                self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
+            && target_sym_id != sym_id
+        {
+            return self.resolved_const_expando_key_from_binder(target_sym_id, depth + 1);
+        }
+
         let decl_idx = symbol.primary_declaration()?;
-        if !self.ctx.arena.is_const_variable_declaration(decl_idx) {
+        let arena = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .unwrap_or(self.ctx.arena);
+        let binder = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .unwrap_or(self.ctx.binder);
+
+        if !arena.is_const_variable_declaration(decl_idx) {
             return None;
         }
 
-        let decl_node = self.ctx.arena.get(decl_idx)?;
-        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let decl_node = arena.get(decl_idx)?;
+        let var_decl = arena.get_variable_declaration(decl_node)?;
         let init_idx = var_decl.initializer;
         if init_idx.is_none() {
             return None;
         }
-        let init_node = self.ctx.arena.get(init_idx)?;
+        let init_node = arena.get(init_idx)?;
 
         match init_node.kind {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
-                self.ctx
-                    .arena
-                    .get_literal(init_node)
-                    .map(|lit| lit.text.clone())
+                arena.get_literal(init_node).map(|lit| lit.text.clone())
             }
             k if k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                let unary = self.ctx.arena.get_unary_expr(init_node)?;
-                let operand = self.ctx.arena.get(unary.operand)?;
+                let unary = arena.get_unary_expr(init_node)?;
+                let operand = arena.get(unary.operand)?;
                 if operand.kind != SyntaxKind::NumericLiteral as u16 {
                     return None;
                 }
-                let lit = self.ctx.arena.get_literal(operand)?;
+                let lit = arena.get_literal(operand)?;
                 match unary.operator {
                     k if k == SyntaxKind::MinusToken as u16 => Some(format!("-{}", lit.text)),
                     k if k == SyntaxKind::PlusToken as u16 => Some(lit.text.clone()),
@@ -1168,21 +1191,25 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == SyntaxKind::Identifier as u16 => {
-                let name = self
-                    .ctx
-                    .arena
-                    .get_identifier(init_node)?
-                    .escaped_text
-                    .clone();
-                let next_sym = self.ctx.binder.file_locals.get(&name)?;
+                let name = arena.get_identifier(init_node)?.escaped_text.clone();
+                let next_sym = binder.file_locals.get(&name)?;
                 self.resolved_const_expando_key_from_binder(next_sym, depth + 1)
             }
             k if k == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
-                Self::is_symbol_call_in_arena(self.ctx.arena, init_idx)
+                Self::is_symbol_call_in_arena(arena, init_idx)
                     .then(|| format!("__unique_{}", sym_id.0))
             }
             _ => None,
         }
+    }
+
+    pub(crate) fn canonical_expando_property_name(&self, property_name: &str) -> String {
+        self.ctx
+            .binder
+            .file_locals
+            .get(property_name)
+            .and_then(|sym_id| self.resolved_const_expando_key_from_binder(sym_id, 0))
+            .unwrap_or_else(|| property_name.to_string())
     }
 
     /// Check if a node is a `Symbol()` or `Symbol("desc")` call expression (pure AST check).
@@ -1241,9 +1268,14 @@ impl<'a> CheckerState<'a> {
 
         let has_unique =
             |expandos: &rustc_hash::FxHashMap<String, rustc_hash::FxHashSet<String>>, key: &str| {
-                expandos
-                    .get(key)
-                    .is_some_and(|props| props.iter().any(|p| p.starts_with("__unique_")))
+                expandos.get(key).is_some_and(|props| {
+                    props.iter().any(|p| {
+                        p.starts_with("__unique_")
+                            || self
+                                .canonical_expando_property_name(p)
+                                .starts_with("__unique_")
+                    })
+                })
             };
 
         for key in &candidate_keys {

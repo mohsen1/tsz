@@ -7,7 +7,7 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use tsz_binder::{ModuleAugmentation, SymbolId};
+use tsz_binder::{ModuleAugmentation, SymbolId, SymbolTable};
 
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]
@@ -21,6 +21,15 @@ pub struct ResolutionError {
 pub enum ResolutionModeOverride {
     Import,
     Require,
+}
+
+/// Syntactic request kind used by the driver when resolving a module specifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResolutionRequestKind {
+    EsmImport,
+    DynamicImport,
+    CjsRequire,
+    EsmReExport,
 }
 
 /// Global cross-binder index: identifier name → list of `(file_idx, SymbolId)`
@@ -39,6 +48,19 @@ pub type ModuleExportsIndexMap = FxHashMap<String, ModuleExportsByName>;
 /// `(file_idx, SymbolId)` where the export is declared.
 pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
 
+/// Per-checker cache: (requesting file, module specifier) → resolved cross-file namespace exports.
+pub type NamespaceExportsCache = FxHashMap<(usize, String), Option<SymbolTable>>;
+
+/// Per-checker positive cache for named exports reached through `export=`.
+/// Keyed by `(current_file_idx, module_specifier, export_name)`.
+pub type ExportEqualsNamedCache = FxHashMap<(usize, String, String), Option<SymbolId>>;
+
+/// Per-checker cache: nested namespace name → candidate `(file_idx, SymbolId)` entries.
+pub type NestedNamespaceCandidatesCache = FxHashMap<String, Vec<(usize, SymbolId)>>;
+
+/// Per-checker cache: namespace name → member name → resolved cross-binder symbol.
+pub type NamespaceMemberResolutionCache = FxHashMap<String, FxHashMap<String, Option<SymbolId>>>;
+
 /// Global cross-binder index: module specifier → list of `(file_idx, augmentation)`
 /// entries that contribute to that module's merged type.
 pub type GlobalModuleAugmentationsIndex = Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>;
@@ -49,10 +71,24 @@ pub type GlobalAugmentationTargetsIndex = Arc<FxHashMap<String, Vec<(SymbolId, u
 
 pub type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
 pub type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
-pub type ResolvedModuleRequestPathMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>;
-pub type ResolvedModuleRequestErrorMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
+pub type ResolvedModuleRequestPathMap = FxHashMap<
+    (
+        usize,
+        String,
+        Option<ResolutionModeOverride>,
+        ResolutionRequestKind,
+    ),
+    usize,
+>;
+pub type ResolvedModuleRequestErrorMap = FxHashMap<
+    (
+        usize,
+        String,
+        Option<ResolutionModeOverride>,
+        ResolutionRequestKind,
+    ),
+    ResolutionError,
+>;
 
 /// Per-`(source_file_idx, specifier)` flag mirroring tsc's
 /// `resolvedUsingTsExtension`: `true` when the resolver consumed a TS source

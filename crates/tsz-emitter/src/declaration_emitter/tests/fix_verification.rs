@@ -111,6 +111,27 @@ fn fix_template_literal_with_types() {
 }
 
 #[test]
+fn fix_template_literal_escaped_substitution_preserved() {
+    let output = emit_dts(
+        r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;
+export type EscapedOnly = `\${}`;"#,
+    );
+    println!("template escaped substitution:\n{output}");
+    assert!(
+        output.contains(r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;"#),
+        "escaped substitution should remain literal text: {output}"
+    );
+    assert!(
+        output.contains(r#"export type EscapedOnly = `\${}`;"#),
+        "escaped empty substitution should remain literal text: {output}"
+    );
+    assert!(
+        !output.contains(r#"`prefix-${notAType}-suffix`"#) && !output.contains(r#"`${}`;"#),
+        "escaped template text should not become structural substitution: {output}"
+    );
+}
+
+#[test]
 fn fix_numeric_sep_negative() {
     // Negative number with separator
     let output = emit_dts("export declare const x: -1_000;");
@@ -183,6 +204,39 @@ fn fix_template_literal_backtick_in_template() {
     assert!(
         output.contains(r"`hello\`world`"),
         "escaped backtick: {output}"
+    );
+}
+
+#[test]
+fn fix_template_literal_escaped_dollar_brace_preserved() {
+    // The scanner cooks `\${` to a literal `${`, so the declaration
+    // emitter must re-escape `$` followed by `{` to keep it as text
+    // instead of turning it into a template substitution. (Issue #3412)
+    let prefix_output =
+        emit_dts(r#"export type EscapedSubstitution = `prefix-\${notAType}-suffix`;"#);
+    println!("template escaped $ prefix:\n{prefix_output}");
+    assert!(
+        prefix_output.contains(r"`prefix-\${notAType}-suffix`"),
+        "escaped ${{ should be preserved as \\${{: {prefix_output}"
+    );
+    assert!(
+        !prefix_output.contains("`prefix-${notAType}-suffix`"),
+        "escaped ${{ must not collapse to a real interpolation: {prefix_output}"
+    );
+
+    let only_output = emit_dts(r#"export type EscapedOnly = `\${}`;"#);
+    println!("template escaped $ only:\n{only_output}");
+    assert!(
+        only_output.contains(r"`\${}`"),
+        "lone escaped ${{ should be preserved: {only_output}"
+    );
+
+    // A bare `$` (not followed by `{`) must stay unescaped.
+    let bare_output = emit_dts(r"export type Bare = `cost: $5`;");
+    println!("template bare $:\n{bare_output}");
+    assert!(
+        bare_output.contains("`cost: $5`"),
+        "bare $ should remain unescaped: {bare_output}"
     );
 }
 
@@ -1478,5 +1532,223 @@ export const b = id(a);
     assert!(
         !output.is_empty(),
         "emitter should produce output: {output}"
+    );
+}
+
+#[test]
+fn fix_exported_generic_call_literals_preserve_inferred_literal_types() {
+    let output = emit_dts(
+        r#"
+export function generic<T>(value: T) {
+  return value;
+}
+
+export const viaGeneric = generic("ok" as const);
+
+export const genericArrow = <T>(value: T) => value;
+export const viaGenericArrow = genericArrow("ok" as const);
+
+function localGeneric<T>(value: T) {
+  return value;
+}
+export const viaLocalGeneric = localGeneric("ok" as const);
+
+const localGenericArrow = <T>(value: T) => value;
+export const viaLocalGenericArrow = localGenericArrow("ok" as const);
+
+export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
+"#,
+    );
+
+    for name in [
+        "viaGeneric",
+        "viaGenericArrow",
+        "viaLocalGeneric",
+        "viaLocalGenericArrow",
+        "viaInlineArrow",
+    ] {
+        assert!(
+            output.contains(&format!("export declare const {name}: \"ok\";")),
+            "expected {name} to preserve the literal call result: {output}"
+        );
+    }
+}
+
+#[test]
+fn fix_generic_call_constructor_return_object_formats_multiline() {
+    let output = emit_dts(
+        r#"
+declare const a: symbol;
+type Constructor = new (...args: any[]) => {};
+declare function Mix<T extends Constructor>(
+    classish: T
+): T & (new (...args: any[]) => {mixed: true});
+
+export const Mixer = Mix(class {
+    [a]() { return 1 };
+});
+"#,
+    );
+
+    assert!(
+        output.contains("): T & (new (...args: any[]) => {\n    mixed: true;\n});"),
+        "constructor-arrow return object should be normalized to multiline: {output}"
+    );
+}
+
+#[test]
+fn fix_deferred_lookup_preserves_string_literal_key_substitution() {
+    let output = emit_dts_with_binding(
+        r#"
+declare function f1<A extends string, B extends string>(a: A, b: B): { [P in A | B]: any };
+
+function f2<A extends string>(a: A) {
+    return f1(a, 'x');
+}
+"#,
+    );
+
+    assert!(
+        output
+            .contains(r#"declare function f2<A extends string>(a: A): { [P in A | "x"]: any; };"#),
+        "expected f2 to preserve the string literal key substitution: {output}"
+    );
+    assert!(
+        !output.contains("[P in string | string]"),
+        "string-constrained literal substitution should not widen both keys: {output}"
+    );
+}
+
+#[test]
+fn fix_const_literal_preservation_uses_lexical_const_symbol() {
+    let output = emit_dts_with_binding(
+        r#"
+const tag = "outer";
+
+export namespace N {
+  const tag = "inner";
+  export const value = tag;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("const value = \"inner\";"),
+        "Expected namespace const to preserve the inner lexical binding: {output}"
+    );
+    assert!(
+        !output.contains("const value = \"outer\";"),
+        "Declaration emit must not use the shadowed top-level const: {output}"
+    );
+}
+
+#[test]
+fn fix_identity_call_preservation_uses_lexical_callee_symbol() {
+    let output = emit_dts_with_binding(
+        r#"
+function id<T extends string>(value: T): T {
+  return value;
+}
+
+export namespace N {
+  function id(_: string) {
+    return "wide";
+  }
+
+  export const value = id("narrow");
+}
+"#,
+    );
+
+    assert!(
+        output.contains("const value: string;"),
+        "Expected local non-identity callee to widen the declaration type: {output}"
+    );
+    assert!(
+        !output.contains("const value = \"narrow\";"),
+        "Declaration emit must not use the shadowed top-level identity helper: {output}"
+    );
+}
+
+#[test]
+fn fix_returned_object_jsdoc_keeps_method_signature() {
+    let output = emit_dts_with_binding(
+        r#"
+export const foo = (p: string) => {
+    return {
+        /**
+         * comment2
+         * @param s
+         */
+        bar: (s: number) => {},
+        /**
+         * comment3
+         * @param s
+         */
+        bar2(s: number) {},
+    };
+};
+"#,
+    );
+
+    assert!(
+        output.contains("bar: (s: number) => void;"),
+        "property function syntax should stay unchanged: {output}"
+    );
+    assert!(
+        output.contains("bar2(s: number): void;"),
+        "method syntax should survive JSDoc insertion: {output}"
+    );
+    assert!(
+        !output.contains("bar2: (s: number) => void;"),
+        "returned object methods must not be rewritten as property functions: {output}"
+    );
+}
+
+#[test]
+fn fix_shadowed_type_param_new_class_return_uses_global_this() {
+    let output = emit_dts_with_binding(
+        r#"
+class A {}
+
+var make = <A,>(value: A) => new A();
+function make2<A,>(value: A) {
+    return new A();
+}
+
+interface B {}
+var id = <B,>(value: B) => value;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var make: <A>(value: A) => globalThis.A;"),
+        "Expected arrow return to qualify the shadowed class constructor type: {output}"
+    );
+    assert!(
+        output.contains("declare function make2<A>(value: A): globalThis.A;"),
+        "Expected function return to qualify the shadowed class constructor type: {output}"
+    );
+    assert!(
+        output.contains("declare var id: <B>(value: B) => B;"),
+        "Type-only interface names should still bind to the type parameter: {output}"
+    );
+}
+
+#[test]
+fn fix_static_method_return_this_does_not_emit_instance_this() {
+    let output = emit_dts_with_binding(
+        r#"
+export class Enhancement {
+  static getType() {
+    return this;
+  }
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("static getType(): this;"),
+        "Static methods must not use instance this return syntax: {output}"
     );
 }

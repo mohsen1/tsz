@@ -1,6 +1,7 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
 
@@ -35,6 +36,66 @@ interface I {
 }
 
 #[test]
+fn parameter_array_binding_reserved_words_match_tsc_recovery_fingerprints() {
+    let source = "function a4([while, for, public]){ }\nfunction a5(...while) { }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let first_comma = source.find(", for").expect("comma after while") as u32;
+    let for_pos = source.find("for,").expect("for token") as u32;
+    let second_comma = source.find(", public").expect("comma after for") as u32;
+    let close_bracket = source.find("])").expect("array close bracket") as u32;
+    let close_paren = close_bracket + 1;
+    let rest_close_paren =
+        source.find("while) {").expect("rest while") as u32 + "while".len() as u32;
+
+    for (code, start, message) in [
+        (diagnostic_codes::EXPECTED, first_comma, "'(' expected."),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            for_pos,
+            "Expression expected.",
+        ),
+        (diagnostic_codes::EXPECTED, second_comma, "'(' expected."),
+        (diagnostic_codes::EXPECTED, close_bracket, "';' expected."),
+        (
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            close_paren,
+            "Declaration or statement expected.",
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            rest_close_paren,
+            "'(' expected.",
+        ),
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == code && diag.start == start && diag.message == message),
+            "Expected diagnostic {code} at {start} with {message:?}; got {diagnostics:?}",
+        );
+    }
+
+    assert!(
+        diagnostics.iter().all(|diag| {
+            !(diag.code == diagnostic_codes::EXPECTED
+                && diag.start == first_comma
+                && diag.message == "';' expected.")
+        }),
+        "First comma should use tsc's '(' recovery, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().all(|diag| {
+            !(diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == for_pos)
+        }),
+        "TS1128 should be anchored after the recovered binding pattern, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
     // Should be more permissive to avoid false positives
@@ -54,6 +115,88 @@ const fn = (a: number, b: string)
     assert!(
         ts1005_count <= 1,
         "Expected at most 1 TS1005 error, got {ts1005_count}",
+    );
+}
+
+#[test]
+fn parameter_type_predicate_tail_reports_comma_at_type_name() {
+    let source = "function b2(a: b is A) {};";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            18,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at `is`, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            1,
+            21,
+            "',' expected.".to_string()
+        )),
+        "expected TS1005 at the predicate type name, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn index_signature_type_predicate_tail_defers_close_brace() {
+    let source = "interface I2 {\n    [index: number]: p1 is C;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            2,
+            25,
+            "';' expected.".to_string()
+        )),
+        "expected TS1005 at the invalid `is` tail, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            3,
+            1,
+            "Declaration or statement expected.".to_string()
+        )),
+        "expected TS1128 at the deferred interface close brace, got {fingerprints:?}"
     );
 }
 
@@ -220,7 +363,7 @@ fn test_property_access_missing_name_at_eof_reports_ts1003_after_dot() {
 }
 
 #[test]
-fn test_missing_arrow_expression_body_consumes_synthetic_close_brace() {
+fn test_missing_arrow_expression_body_preserves_close_brace() {
     let source = r"
 namespace N {
     namespace Inner {
@@ -240,8 +383,8 @@ namespace N {
         "Expected only the missing-expression TS1109 for recovered arrow body, got {diagnostics:?}"
     );
     assert_eq!(
-        ts1128_count, 0,
-        "Recovered expression-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+        ts1128_count, 1,
+        "Recovered expression-bodied arrows should preserve the close brace for outer recovery: {diagnostics:?}"
     );
 }
 
@@ -276,6 +419,30 @@ const cloneObjectGood = value => /** @type {T} */({ ...value });
         diagnostics.is_empty(),
         "Parenthesized object literal bodies after arrows should not trigger missing-arrow recovery: {diagnostics:?}"
     );
+}
+
+#[test]
+fn test_plain_js_strict_binder_parse_diagnostics_are_preserved() {
+    let source = r#"
+export default 12
+const yield = 1
+async function f() {
+    const await = 2
+}
+class C {
+    #constructor = 3
+}
+"#;
+    let mut parser = ParserState::new("plainJSBinderErrors.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    for code in [1359, 18012] {
+        assert!(
+            codes.contains(&code),
+            "Expected parser diagnostic TS{code} in plain JS async/class strict contexts. Got: {codes:?}"
+        );
+    }
 }
 
 #[test]
@@ -366,6 +533,51 @@ const regexes: RegExp[] = [
 }
 
 #[test]
+fn test_middle_dot_identifier_part_parses_without_ts1127() {
+    let source = "const a·b = 1;\na·b;\n";
+    let mut parser = ParserState::new("middle-dot-identifier.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "Expected U+00B7 to be accepted as an identifier continuation, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_regex_extended_unicode_escape_above_max_does_not_report_ts1198() {
+    // tsc treats out-of-range `\u{...}` inside regex literals as a runtime
+    // concern and does not emit TS1198 even with the `u` flag. Match that
+    // behavior — the parser must skip past the braced escape without
+    // validating its code-point range.
+    let source = r#"
+const regexes: RegExp[] = [
+  /\u{110000}/u,
+  /[\u{110000}]/u,
+];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1198: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE
+        })
+        .collect();
+
+    assert!(
+        ts1198.is_empty(),
+        "Expected no TS1198 inside regex literals to match tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_character_class_range_order_reports_ts1517() {
     let source = r#"
 const regexes: RegExp[] = [
@@ -398,6 +610,45 @@ const regexes: RegExp[] = [
 }
 
 #[test]
+fn test_regex_unicode_set_class_operators_follow_v_mode_rules() {
+    let source = r#"
+const q = /[\q{ab}]/v;
+const sub = /[a--b]/v;
+const missing = /[a&&]/v;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION),
+        "Expected valid v-mode \\q string disjunction to avoid TS1535, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Expected v-mode set subtraction to avoid legacy TS1517, got {diagnostics:?}"
+    );
+
+    let ts1520: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED_A_CLASS_SET_OPERAND)
+        .collect();
+    assert_eq!(
+        ts1520.len(),
+        1,
+        "Expected exactly one TS1520 for the trailing intersection, got {diagnostics:?}"
+    );
+    let expected_start = source.rfind("]/v;").expect("trailing class close") as u32;
+    assert_eq!(
+        ts1520[0].start, expected_start,
+        "Expected TS1520 at the missing operand before ']', got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_hyphen_after_range_is_literal() {
     let source = "const idSuffixPattern = /^([a-z][a-z0-9-]*)(:[a-z0-9-.]*)?$/i;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -409,6 +660,24 @@ fn test_regex_hyphen_after_range_is_literal() {
             .iter()
             .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
         "Hyphen after an already-consumed range should be literal: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_unicode_regex_trailing_hyphen_class_does_not_report_ts1508() {
+    let source = r#"
+const unicode = /[a-]/u;
+const unicode_sets = /[a-]/v;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().all(
+            |d| d.code != diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH
+        ),
+        "Trailing hyphen before a class close should be a literal, got {diagnostics:?}"
     );
 }
 
@@ -488,6 +757,239 @@ fn test_regex_missing_parenthesis_reports_ts1005_at_regex_end() {
         "Expected exactly one missing ')' diagnostic: {diagnostics:?}"
     );
     assert_eq!(ts1005[0].start, expected_pos);
+}
+
+#[test]
+fn test_unterminated_regex_class_suppresses_missing_bracket() {
+    let source = "let r = /[a/;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let slash_pos = source.find('/').expect("regex slash") as u32;
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL
+                && d.start == slash_pos
+        }),
+        "expected TS1161 at regex slash, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED && d.message == "']' expected."),
+        "unterminated regex class should not also emit missing bracket diagnostic, got {codes:?}: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_unterminated_regex_with_angle_text_reports_ts1161() {
+    for source in ["const r = /<x>;\n", "const r = /a<x>;\n"] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let _root = parser.parse_source_file();
+
+        let diagnostics = parser.get_diagnostics();
+        let ts1161 = diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ts1161.len(),
+            1,
+            "Expected one TS1161 for ordinary regex angle text in {source:?}, got {diagnostics:?}"
+        );
+        assert_eq!(ts1161[0].start, source.find('/').unwrap() as u32);
+    }
+}
+
+#[test]
+fn test_regex_annex_b_diagnostic_positions_match_tsc() {
+    let source = r#"
+const regexes: RegExp[] = [
+  /\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s/,
+  /[\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s]/,
+  /\P[\P\w-_]/,
+
+  // Compare to
+  /\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s/u,
+  /[\q\u\i\c\k\_\f\o\x\-\j\u\m\p\s]/u,
+  /\P[\P\w-_]/u,
+];
+
+const regexesWithBraces: RegExp[] = [
+  /{??/,
+  /{,??/,
+  /{,1??/,
+  /{1??/,
+  /{1,??/,
+  /{1,2??/,
+  /{2,1??/,
+  /{}??/,
+  /{,}??/,
+  /{,1}??/,
+  /{1}??/,
+  /{1,}??/,
+  /{1,2}??/,
+  /{2,1}??/,
+
+  // Compare to
+  /{??/u,
+  /{,??/u,
+  /{,1??/u,
+  /{1??/u,
+  /{1,??/u,
+  /{1,2??/u,
+  /{2,1??/u,
+  /{}??/u,
+  /{,}??/u,
+  /{,1}??/u,
+  /{1}??/u,
+  /{1,}??/u,
+  /{1,2}??/u,
+  /{2,1}??/u,
+];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let line_map = LineMap::build(source);
+
+    let mut fingerprints: Vec<(u32, u32, u32, String)> = diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.code,
+                diagnostic_codes::EXPECTED
+                    | diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED
+                    | diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER
+                    | diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION
+                    | diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION
+            )
+        })
+        .map(|d| {
+            let pos = line_map.offset_to_position(d.start, source);
+            (d.code, pos.line + 1, pos.character + 1, d.message.clone())
+        })
+        .collect();
+    fingerprints.sort();
+
+    let mut expected = vec![
+        (diagnostic_codes::EXPECTED, 32, 7, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 33, 6, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 34, 7, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 35, 8, "'}' expected."),
+        (diagnostic_codes::EXPECTED, 36, 8, "'}' expected."),
+        (
+            diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
+            32,
+            5,
+            "Incomplete quantifier. Digit expected.",
+        ),
+        (
+            diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
+            38,
+            5,
+            "Incomplete quantifier. Digit expected.",
+        ),
+        (
+            diagnostic_codes::INCOMPLETE_QUANTIFIER_DIGIT_EXPECTED,
+            39,
+            5,
+            "Incomplete quantifier. Digit expected.",
+        ),
+        (
+            diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER,
+            27,
+            5,
+            "Numbers out of order in quantifier.",
+        ),
+        (
+            diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER,
+            36,
+            5,
+            "Numbers out of order in quantifier.",
+        ),
+        (
+            diagnostic_codes::NUMBERS_OUT_OF_ORDER_IN_QUANTIFIER,
+            43,
+            5,
+            "Numbers out of order in quantifier.",
+        ),
+    ];
+
+    for (line, column) in [
+        (24, 4),
+        (24, 8),
+        (25, 4),
+        (25, 9),
+        (26, 4),
+        (26, 10),
+        (27, 4),
+        (27, 10),
+        (32, 4),
+        (32, 8),
+        (33, 4),
+        (33, 7),
+        (34, 4),
+        (34, 8),
+        (35, 4),
+        (35, 9),
+        (36, 4),
+        (36, 9),
+        (38, 4),
+        (38, 8),
+        (39, 4),
+        (39, 9),
+        (40, 4),
+        (40, 8),
+        (41, 4),
+        (41, 9),
+        (42, 4),
+        (42, 10),
+        (43, 4),
+        (43, 10),
+    ] {
+        expected.push((
+            diagnostic_codes::THERE_IS_NOTHING_AVAILABLE_FOR_REPETITION,
+            line,
+            column,
+            "There is nothing available for repetition.",
+        ));
+    }
+
+    for (line, column) in [
+        (8, 4),
+        (8, 14),
+        (8, 18),
+        (8, 24),
+        (9, 5),
+        (9, 13),
+        (9, 15),
+        (9, 19),
+        (9, 25),
+    ] {
+        expected.push((
+            diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION,
+            line,
+            column,
+            "This character cannot be escaped in a regular expression.",
+        ));
+    }
+
+    let mut expected: Vec<(u32, u32, u32, String)> = expected
+        .into_iter()
+        .map(|(code, line, column, message)| (code, line, column, message.to_string()))
+        .collect();
+    expected.sort();
+
+    assert_eq!(
+        fingerprints, expected,
+        "Annex B regex diagnostic positions should match tsc, got: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -932,6 +1434,45 @@ type T = [element: string?];
         parser.get_diagnostics().iter().all(|d| d.code != 1005),
         "Named tuple members with a trailing '?' after the type should defer to later tuple diagnostics without TS1005: {:?}",
         parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn named_tuple_member_postfix_question_is_not_jsdoc_nullable() {
+    let source = "type T = [a: string?];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().all(|d| {
+            d.code
+                != diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE
+        }),
+        "Expected named tuple member `string?` to avoid TS17019, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn tuple_type_missing_comma_reports_comma_without_bracket_cascade() {
+    let source = "type T = [string number];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let number_pos = source.find("number").expect("number token") as u32;
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED
+                && d.start == number_pos
+                && d.message == "',' expected."
+        }),
+        "Expected TS1005 ',' expected at `number`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.message != "']' expected."
+            && d.code != diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected no bracket/TS1128 cascade, got {diagnostics:?}"
     );
 }
 
@@ -2046,6 +2587,30 @@ type T = Foo<?string>;
 }
 
 #[test]
+fn test_type_argument_with_jsdoc_prefix_type_simplifies_ts17020_suggestion() {
+    let source = r#"
+type T = Foo<?undefined>;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostic = parser
+        .get_diagnostics()
+        .iter()
+        .find(|d| d.code == 17020)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS17020 for `Foo<?undefined>`, got {:?}",
+                parser.get_diagnostics()
+            )
+        });
+    assert_eq!(
+        diagnostic.message,
+        "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write 'null | undefined'?"
+    );
+}
+
+#[test]
 fn test_expression_type_argument_with_empty_jsdoc_wildcard_emits_ts8020_only() {
     let source = r#"
 const WhatFoo = foo<?>;
@@ -2395,6 +2960,115 @@ fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
     assert_eq!(
         ts1134_count, 0,
         "Expected no TS1134 variable declaration cascade, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_escaped_combining_mark_as_variable_name_reports_ts1127() {
+    let source = r"var \u0345 = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1127 && d.start == source.find('\\').unwrap() as u32),
+        "Expected TS1127 at escaped combining mark, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn invalid_escaped_private_use_identifier_part_reports_ts1127() {
+    let source = r"var _\uD4A5\u7204\uC316\uE59F = local;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let invalid_escape = source.find(r"\uE59F").expect("invalid escape") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1127 && d.start == invalid_escape),
+        "Expected TS1127 at escaped private-use identifier part, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn invalid_surrogate_unicode_escapes_in_class_member_emit_ts1127() {
+    let source = r"class C { \uD800\uDEA7: string; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let first_escape = source.find(r"\uD800").expect("first escape") as u32;
+    let second_escape = source.find(r"\uDEA7").expect("second escape") as u32;
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, first_escape),
+            (diagnostic_codes::INVALID_CHARACTER, second_escape),
+        ],
+        "invalid surrogate escapes in class member names should report scanner-shaped TS1127 diagnostics, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn es5_astral_identifier_chars_recover_as_invalid_declaration_tail() {
+    let source = "export var _𐊧 = new Foo();";
+    let astral_pos = source.find('𐊧').expect("astral identifier char") as u32;
+    let equals_pos = source.find('=').expect("equals") as u32;
+    let new_pos = source.find("new").expect("new keyword") as u32;
+
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == astral_pos),
+        "ES5 astral identifier char must emit TS1127 at its source position, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(
+            |d| d.code == diagnostic_codes::VARIABLE_DECLARATION_EXPECTED && d.start == equals_pos
+        ),
+        "ES5 astral identifier recovery must keep `=` visible for TS1134, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code
+            == diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
+            && d.start == new_pos),
+        "ES5 astral identifier recovery must report TS1389 at `new`, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es2015_astral_identifier_chars_remain_valid_identifier_parts() {
+    let source = "export var _𐊧 = new Foo();";
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES2015,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "ES2015 astral identifier chars should remain valid identifier parts, got {diagnostics:?}"
     );
 }
 
@@ -2992,6 +3666,59 @@ fn test_import_defer_type_modifier_conflict_anchors_from_at_namespace_token() {
 }
 
 #[test]
+fn test_import_defer_from_equals_routes_to_import_declaration() {
+    // `import defer from = require("m")` — `defer` has no import-equals form,
+    // so the lookahead must route this to import-declaration. tsc parses it as
+    // `defer` modifier + `from` binding name, then expects the `from` keyword
+    // and finds `=` at column 19 (start=18). The lookahead must NOT route to
+    // import-equals (which would emit `'=' expected.` at column 14 plus a
+    // trailing `';' expected.`).
+    let source = r#"import defer from = require("m");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
+    assert!(
+        !ts1005.iter().any(|d| d.message.contains("'=' expected")),
+        "Should not emit `'=' expected.` for `import defer from = require(...)`: {ts1005:?}"
+    );
+    assert!(
+        !ts1005.iter().any(|d| d.message.contains("';' expected")),
+        "Should not emit `';' expected.` for `import defer from = require(...)`: {ts1005:?}"
+    );
+    let from_expected: Vec<_> = ts1005
+        .iter()
+        .filter(|d| d.message.contains("'from' expected"))
+        .collect();
+    assert!(
+        from_expected.iter().any(|d| d.start == 18),
+        "Expected `'from' expected.` anchored at column 19 (start=18), got {from_expected:?} (all ts1005: {ts1005:?})"
+    );
+}
+
+#[test]
+fn test_import_type_from_equals_still_routes_to_import_equals() {
+    // Regression for the sibling case: `import type from = require("m")` IS
+    // valid type-only import-equals (with `from` as the binding name). The
+    // narrow `defer` fix must not regress the `type` branch, so the parser
+    // should accept this without parser-level recovery diagnostics.
+    let source = r#"import type from = require("m");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for `import type from = require(...)`, got {parse_errors:?}"
+    );
+}
+
+#[test]
 fn test_regex_named_capturing_groups_do_not_emit_unexpected_paren() {
     let source = r#"const re = /(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})/u;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3137,6 +3864,40 @@ fn test_prefix_question_emits_ts17020() {
         ts1110_count, 0,
         "Should not emit TS1110 for nullable type, got diagnostics: {diagnostics:?}"
     );
+}
+
+#[test]
+fn test_prefix_question_simplifies_ts17020_suggestions() {
+    for (input, expected) in [
+        ("unknown", "unknown"),
+        ("never", "never"),
+        ("void", "void"),
+        ("undefined", "null | undefined"),
+        ("null", "null | undefined"),
+        ("number", "number | null | undefined"),
+    ] {
+        let source = format!("let x: ?{input};");
+        let mut parser = ParserState::new(format!("{input}.ts"), source);
+        let _root = parser.parse_source_file();
+
+        let diagnostic = parser
+            .get_diagnostics()
+            .iter()
+            .find(|d| d.code == 17020)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected TS17020 for ?{input}, got {:?}",
+                    parser.get_diagnostics()
+                )
+            });
+        assert_eq!(
+            diagnostic.message,
+            format!(
+                "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{expected}'?"
+            ),
+            "wrong TS17020 suggestion for ?{input}"
+        );
+    }
 }
 
 #[test]
@@ -4077,6 +4838,67 @@ fn test_array_terminated_by_close_bracket_keeps_clean_close() {
     assert!(
         diagnostics.is_empty(),
         "well-formed array literal must not emit diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parameter_list_stray_colon_recovers_through_object_binding_tail() {
+    // Regression for `parametersSyntaxErrorNoCrash1.ts`. After the stray second
+    // colon, tsc keeps parsing the following `{ return arg; }` as a malformed
+    // object binding parameter, producing the full recovery tail.
+    let source = "\n// https://github.com/microsoft/TypeScript/issues/59422\n\nfunction identity<T>(arg: T: T {\n    return arg;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let line_map = LineMap::build(source);
+
+    let mut fingerprints: Vec<(u32, u32, u32, String)> = diagnostics
+        .iter()
+        .map(|d| {
+            let pos = line_map.offset_to_position(d.start, source);
+            (d.code, pos.line + 1, pos.character + 1, d.message.clone())
+        })
+        .collect();
+    fingerprints.sort();
+
+    let mut expected = vec![
+        (
+            diagnostic_codes::EXPECTED,
+            4,
+            28,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            4,
+            32,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            5,
+            12,
+            "':' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            5,
+            15,
+            "',' expected.".to_string(),
+        ),
+        (
+            diagnostic_codes::EXPECTED,
+            6,
+            2,
+            "')' expected.".to_string(),
+        ),
+    ];
+    expected.sort();
+
+    assert_eq!(
+        fingerprints, expected,
+        "parameter-list recovery fingerprints must match tsc, got: {diagnostics:?}"
     );
 }
 

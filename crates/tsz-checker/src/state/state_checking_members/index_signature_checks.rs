@@ -224,6 +224,9 @@ impl<'a> CheckerState<'a> {
         let mut static_string_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_number_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_symbol_index_nodes: Vec<NodeIndex> = Vec::new();
+        let mut other_index_nodes: Vec<(TypeId, NodeIndex)> = Vec::new();
+        let mut static_other_index_nodes: Vec<(TypeId, NodeIndex)> = Vec::new();
+        let mut pattern_index_signatures: Vec<(TypeId, TypeId, NodeIndex, bool)> = Vec::new();
         let mut synthesized_instance_string_index_types: Vec<TypeId> = Vec::new();
         let mut synthesized_instance_number_index_types: Vec<TypeId> = Vec::new();
         let mut synthesized_static_string_index_types: Vec<TypeId> = Vec::new();
@@ -304,38 +307,59 @@ impl<'a> CheckerState<'a> {
             }
 
             let param_type = self.get_type_from_type_node(param.type_annotation);
+            let key_components = self.index_signature_key_components(param.type_annotation);
 
             // Store the index signature based on parameter type and static-ness
             // Own index signatures take priority over inherited ones
-            if param_type == TypeId::NUMBER {
-                if is_static {
-                    static_number_index_nodes.push(member_idx);
-                } else {
-                    number_index_nodes.push(member_idx);
-                    index_info.number_index = Some(tsz_solver::IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    });
-                }
-            } else if param_type == TypeId::STRING {
-                if is_static {
-                    static_string_index_nodes.push(member_idx);
-                } else {
-                    string_index_nodes.push(member_idx);
-                    index_info.string_index = Some(tsz_solver::IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    });
-                }
-            } else if param_type == TypeId::SYMBOL {
-                if is_static {
-                    static_symbol_index_nodes.push(member_idx);
-                } else {
-                    symbol_index_nodes.push(member_idx);
+            let key_components = if key_components.is_empty() {
+                vec![param_type]
+            } else {
+                key_components
+            };
+            for key_type in key_components {
+                if key_type == TypeId::NUMBER {
+                    if is_static {
+                        static_number_index_nodes.push(member_idx);
+                    } else {
+                        number_index_nodes.push(member_idx);
+                        index_info.number_index = Some(tsz_solver::IndexSignature {
+                            key_type: TypeId::NUMBER,
+                            value_type,
+                            readonly: false,
+                            param_name: None,
+                        });
+                    }
+                } else if key_type == TypeId::STRING {
+                    if is_static {
+                        static_string_index_nodes.push(member_idx);
+                    } else {
+                        string_index_nodes.push(member_idx);
+                        index_info.string_index = Some(tsz_solver::IndexSignature {
+                            key_type: TypeId::STRING,
+                            value_type,
+                            readonly: false,
+                            param_name: None,
+                        });
+                    }
+                } else if key_type == TypeId::SYMBOL {
+                    if is_static {
+                        static_symbol_index_nodes.push(member_idx);
+                    } else {
+                        symbol_index_nodes.push(member_idx);
+                    }
+                } else if key_type != TypeId::ERROR && key_type != TypeId::NONE {
+                    if is_static {
+                        static_other_index_nodes.push((key_type, member_idx));
+                    } else {
+                        other_index_nodes.push((key_type, member_idx));
+                    }
+                    if crate::query_boundaries::common::is_template_literal_type(
+                        self.ctx.types,
+                        key_type,
+                    ) {
+                        pattern_index_signatures
+                            .push((key_type, value_type, member_idx, is_static));
+                    }
                 }
             }
         }
@@ -397,6 +421,42 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
                     &["symbol"],
                 );
+            }
+        }
+        self.report_duplicate_other_index_signatures(&other_index_nodes);
+        self.report_duplicate_other_index_signatures(&static_other_index_nodes);
+
+        // Template pattern index signatures compose like narrower string
+        // indexes: a pattern whose key type is assignable to an earlier pattern
+        // must have a value type assignable to that earlier pattern's value.
+        for i in 0..pattern_index_signatures.len() {
+            let (key_type, value_type, node_idx, is_static) = pattern_index_signatures[i];
+            for j in (0..i).rev() {
+                let (previous_key_type, previous_value_type, _, previous_is_static) =
+                    pattern_index_signatures[j];
+                if is_static != previous_is_static || key_type == previous_key_type {
+                    continue;
+                }
+
+                let key_assignable = self.is_assignable_to(key_type, previous_key_type)
+                    || self.template_pattern_key_is_subset(key_type, previous_key_type);
+                let value_assignable = self.is_assignable_to(value_type, previous_value_type);
+                if key_assignable && !value_assignable {
+                    let key_type_str = self.format_type(key_type);
+                    let value_type_str = self.format_type(value_type);
+                    let previous_key_type_str = self.format_type(previous_key_type);
+                    let previous_value_type_str = self.format_type(previous_value_type);
+                    self.error_at_node_msg(
+                        node_idx,
+                        diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &[
+                            &key_type_str,
+                            &value_type_str,
+                            &previous_key_type_str,
+                            &previous_value_type_str,
+                        ],
+                    );
+                }
             }
         }
 
@@ -495,7 +555,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Skip checks when signature value types are unresolved/cascading errors.
         // This mirrors TS's behavior of avoiding secondary errors after earlier
         // resolution failures, especially for imported module/type alias edges.
         if let Some(number_idx) = &index_info.number_index
@@ -711,10 +770,10 @@ impl<'a> CheckerState<'a> {
                         symbol_value_type
                     };
                     if let Some(sym_value_type) = applicable_symbol_value
-                        && !self.is_assignable_to(prop_type, sym_value_type)
+                        && !self.property_type_assignable_to_index_type(prop_type, sym_value_type)
                     {
-                        let prop_type_str = self.format_type(prop_type);
-                        let index_type_str = self.format_type(sym_value_type);
+                        let prop_type_str = self.format_ts2411_type(prop_type);
+                        let index_type_str = self.format_ts2411_type(sym_value_type);
                         self.error_at_node_msg(
                             name_idx,
                             diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
@@ -730,15 +789,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Skip computed property names whose expression is an entity name
-            // (identifier or property access chain).  In tsc these are "late-bound"
-            // names and are NOT checked against index signatures for TS2411.
-            // Other computed expressions (e.g. `[+s]`, `[s + n]`, `["literal"]`)
-            // ARE checked normally.
             if let Some(name_node) = self.ctx.arena.get(name_idx)
                 && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
                 && self.computed_name_uses_entity_expression(computed.expression)
+                && !self.computed_name_is_non_global_symbol_property_access(computed.expression)
             {
                 continue;
             }
@@ -803,7 +858,7 @@ impl<'a> CheckerState<'a> {
             // Check against number index signature first (for numeric properties)
             if let Some(number_value_type) = applicable_number_value
                 && is_numeric_property
-                && !self.is_assignable_to(prop_type, number_value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, number_value_type)
             {
                 // Deduplicate TS2411 across merged interface bodies.
                 // Property names like `1` (numeric) and `'1'` (string) are semantically
@@ -812,8 +867,8 @@ impl<'a> CheckerState<'a> {
                 if !self.ctx.emitted_ts2411_for_iface_prop.contains(&dedup_key) {
                     self.ctx.emitted_ts2411_for_iface_prop.insert(dedup_key);
 
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(number_value_type);
+                    let prop_type_str = self.format_ts2411_type(prop_type);
+                    let index_type_str = self.format_ts2411_type(number_value_type);
 
                     self.error_at_node_msg(
                         name_idx,
@@ -825,15 +880,15 @@ impl<'a> CheckerState<'a> {
 
             // Check against string index signature
             if let Some(string_value_type) = applicable_string_value
-                && !self.is_assignable_to(prop_type, string_value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, string_value_type)
             {
                 // Deduplicate TS2411 across merged interface bodies (same as above).
                 let dedup_key = (iface_type.0, prop_name.clone(), false);
                 if !self.ctx.emitted_ts2411_for_iface_prop.contains(&dedup_key) {
                     self.ctx.emitted_ts2411_for_iface_prop.insert(dedup_key);
 
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(string_value_type);
+                    let prop_type_str = self.format_ts2411_type(prop_type);
+                    let index_type_str = self.format_ts2411_type(string_value_type);
 
                     self.error_at_node_msg(
                         name_idx,
@@ -1157,7 +1212,7 @@ impl<'a> CheckerState<'a> {
             if own_names.contains(&prop_name) {
                 continue;
             }
-            if prop_name.starts_with("__private_brand_") {
+            if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
                 continue;
             }
 
@@ -1172,10 +1227,10 @@ impl<'a> CheckerState<'a> {
                 prop_name.starts_with("[Symbol.") || prop_name.starts_with("__@");
             if is_symbol_property {
                 if let Some(sym_value_type) = symbol_value_type
-                    && !self.is_assignable_to(prop_type, sym_value_type)
+                    && !self.property_type_assignable_to_index_type(prop_type, sym_value_type)
                 {
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(sym_value_type);
+                    let prop_type_str = self.format_ts2411_type(prop_type);
+                    let index_type_str = self.format_ts2411_type(sym_value_type);
                     let error_node = symbol_index_sig_node.unwrap_or(name_fallback_node);
 
                     self.error_at_node_msg(
@@ -1194,10 +1249,10 @@ impl<'a> CheckerState<'a> {
             if let Some(ref number_idx) = index_info.number_index
                 && is_numeric_property
                 && !number_index_covered.contains(&prop_name)
-                && !self.is_assignable_to(prop_type, number_idx.value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, number_idx.value_type)
             {
-                let prop_type_str = self.format_type(prop_type);
-                let index_type_str = self.format_type(number_idx.value_type);
+                let prop_type_str = self.format_ts2411_type(prop_type);
+                let index_type_str = self.format_ts2411_type(number_idx.value_type);
                 let error_node = number_index_sig_node.unwrap_or(name_fallback_node);
 
                 self.error_at_node_msg(
@@ -1210,10 +1265,10 @@ impl<'a> CheckerState<'a> {
             // Skip properties already covered by a base that owns the string index sig.
             if let Some(ref string_idx) = index_info.string_index
                 && !string_index_covered.contains(&prop_name)
-                && !self.is_assignable_to(prop_type, string_idx.value_type)
+                && !self.property_type_assignable_to_index_type(prop_type, string_idx.value_type)
             {
-                let prop_type_str = self.format_type(prop_type);
-                let index_type_str = self.format_type(string_idx.value_type);
+                let prop_type_str = self.format_ts2411_type(prop_type);
+                let index_type_str = self.format_ts2411_type(string_idx.value_type);
                 let error_node = string_index_sig_node.unwrap_or(name_fallback_node);
 
                 self.error_at_node_msg(
@@ -1225,7 +1280,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a property name node refers to a symbol-keyed property.
     fn is_symbol_named_property(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
@@ -1239,20 +1293,16 @@ impl<'a> CheckerState<'a> {
         let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
             return false;
         };
-
         match expr_node.kind {
             ek if ek == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
                     return false;
                 };
-                let Some(obj_node) = self.ctx.arena.get(access.expression) else {
-                    return false;
-                };
-                if let Some(ident) = self.ctx.arena.get_identifier(obj_node) {
-                    ident.escaped_text.as_str() == "Symbol"
-                } else {
-                    false
-                }
+                // `[Symbol.x]` only denotes a symbol-keyed member when `Symbol`
+                // is the built-in global. A locally-bound `Symbol` (e.g.
+                // `const Symbol = { tag: "name" } as const`) makes the computed
+                // name a regular string property.
+                self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             }
             ek if ek == tsz_scanner::SyntaxKind::Identifier as u16 => {
                 let expr_type = self.get_type_of_node(computed.expression);
@@ -1505,11 +1555,92 @@ impl<'a> CheckerState<'a> {
     }
 
     fn has_package_root_side_effect_import(text: &str) -> bool {
-        let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-        compact.contains("import'./';")
-            || compact.contains("import\"./\";")
-            || compact.contains("import'.';")
-            || compact.contains("import\".\";")
+        let bytes = text.as_bytes();
+        let mut idx = 0usize;
+        while idx < bytes.len() {
+            idx = Self::skip_js_trivia(text, idx);
+            if idx >= bytes.len() {
+                break;
+            }
+
+            if !text[idx..].starts_with("import") || !Self::is_word_boundary(text, idx + 6) {
+                idx += text[idx..].chars().next().map(char::len_utf8).unwrap_or(1);
+                continue;
+            }
+
+            let mut cursor = Self::skip_js_trivia(text, idx + 6);
+            let Some(quote) = text[cursor..].chars().next() else {
+                break;
+            };
+            if quote != '"' && quote != '\'' {
+                idx += 6;
+                continue;
+            }
+            cursor += quote.len_utf8();
+            let Some(rest) = text.get(cursor..) else {
+                break;
+            };
+            if let Some(after_specifier) = rest
+                .strip_prefix("./")
+                .map(|_| cursor + 2)
+                .or_else(|| rest.strip_prefix('.').map(|_| cursor + 1))
+                && text[after_specifier..].starts_with(quote)
+            {
+                let after_quote = after_specifier + quote.len_utf8();
+                let after_import = Self::skip_js_trivia(text, after_quote);
+                if after_import >= text.len()
+                    || text[after_import..].starts_with(';')
+                    || text[after_import..].starts_with('\n')
+                    || text[after_import..].starts_with('\r')
+                {
+                    return true;
+                }
+            }
+
+            idx += 6;
+        }
+
+        false
+    }
+
+    fn skip_js_trivia(text: &str, mut idx: usize) -> usize {
+        loop {
+            while let Some(ch) = text[idx..].chars().next()
+                && ch.is_whitespace()
+            {
+                idx += ch.len_utf8();
+            }
+
+            if text[idx..].starts_with("//") {
+                idx += 2;
+                while let Some(ch) = text[idx..].chars().next() {
+                    idx += ch.len_utf8();
+                    if ch == '\n' || ch == '\r' {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            if text[idx..].starts_with("/*") {
+                idx += 2;
+                if let Some(end) = text[idx..].find("*/") {
+                    idx += end + 2;
+                } else {
+                    return text.len();
+                }
+                continue;
+            }
+
+            return idx;
+        }
+    }
+
+    fn is_word_boundary(text: &str, idx: usize) -> bool {
+        text[idx..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
     }
 
     fn jsx_runtime_types_package_dir_matches(&self, package_dir: &str) -> bool {
@@ -1660,6 +1791,25 @@ impl<'a> CheckerState<'a> {
             return self.computed_name_uses_entity_expression(access.expression);
         }
         false
+    }
+
+    fn computed_name_is_non_global_symbol_property_access(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_access_expr(expr_node)
+            .is_some_and(|access| {
+                self.ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .is_some_and(|ident| ident.escaped_text.as_str() == "Symbol")
+                    && !self.is_identifier_reference_to_global_symbol(access.expression)
+            })
     }
 }
 

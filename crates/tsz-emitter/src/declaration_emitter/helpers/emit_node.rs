@@ -184,20 +184,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    // Strip numeric separators (tsc strips them in .d.ts output)
-                    if lit.text.contains('_') {
-                        if let Some(v) = lit.value {
-                            if v.fract() == 0.0 && v.abs() < 1e20 {
-                                self.write(&format!("{}", v as i64));
-                            } else {
-                                self.write(&v.to_string());
-                            }
-                        } else {
-                            self.write(&lit.text.replace('_', ""));
-                        }
-                    } else {
-                        self.write(&lit.text);
-                    }
+                    self.write(&Self::declaration_numeric_literal_text(
+                        &lit.text, lit.value,
+                    ));
                 }
             }
             k if k == SyntaxKind::BigIntLiteral as u16 => {
@@ -355,6 +344,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && self
                         .js_supported_commonjs_named_export_for_statement(stmt_idx)
                         .is_some())
+                || (stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                    && self
+                        .js_commonjs_define_property_export_for_statement(stmt_idx)
+                        .is_some())
             {
                 has_export = true;
             }
@@ -378,6 +371,9 @@ impl<'a> DeclarationEmitter<'a> {
                     || self.stmt_has_export_modifier(stmt_node)
                     || self
                         .js_supported_commonjs_named_export_for_statement(stmt_idx)
+                        .is_some()
+                    || self
+                        .js_commonjs_define_property_export_for_statement(stmt_idx)
                         .is_some()
             })
         })

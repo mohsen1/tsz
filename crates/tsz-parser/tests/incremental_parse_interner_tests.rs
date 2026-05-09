@@ -134,6 +134,53 @@ fn incremental_parse_resolves_new_identifier_through_get_identifier_text() {
     );
 }
 
+/// Phase 1.3 (`PERFORMANCE_PLAN` T3.1): the snapshot pipeline serialises a
+/// parsed `NodeArena` to disk and restores it on a later run. The arena's
+/// internal `Interner` field used to be `#[serde(skip)]`, which silently
+/// stripped identifier text on round-trip. This test pins the post-fix
+/// invariant: serialise -> deserialise -> resolve must yield the same text
+/// for every `Identifier` node.
+#[test]
+fn node_arena_round_trips_identifier_text_via_serde_json() {
+    let source = "\nconst helloWorld = 1;\nfunction compute(input: string): string {\n    const intermediate = input + helloWorld;\n    return intermediate;\n}\ninterface Cache {\n    storedValue: number;\n}\n".to_string();
+
+    let mut parser = ParserState::new("snapshot_round_trip.ts".to_string(), source);
+    let _root = parser.parse_source_file();
+    let arena = parser.into_arena();
+
+    let original_idents = collect_identifier_atom_text(&arena);
+    assert!(
+        !original_idents.is_empty(),
+        "fixture should produce at least one Identifier node"
+    );
+
+    // Round-trip through serde_json (the Phase 1 prototype format).
+    let json = serde_json::to_string(&arena).expect("NodeArena should serialize via serde_json");
+    let restored: NodeArena =
+        serde_json::from_str(&json).expect("NodeArena should deserialize via serde_json");
+    let restored_idents = collect_identifier_atom_text(&restored);
+
+    assert_eq!(
+        restored_idents.len(),
+        original_idents.len(),
+        "identifier count must match after round-trip"
+    );
+    for (before, after) in original_idents.iter().zip(restored_idents.iter()) {
+        assert_eq!(
+            before, after,
+            "identifier (atom, escaped_text, resolved) must match across round-trip"
+        );
+    }
+
+    // Resolving an arbitrary atom from the original through the restored
+    // interner must give the same text — this is what guards against atom
+    // index drift between the two interners.
+    if let Some((atom, _, original_text)) = original_idents.first() {
+        let restored_text = restored.interner.resolve(*atom).to_string();
+        assert_eq!(&restored_text, original_text);
+    }
+}
+
 fn find_first_identifier_descendant(
     arena: &NodeArena,
     root: crate::parser::NodeIndex,

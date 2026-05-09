@@ -266,19 +266,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         // 6. Create checker with persistent cache if available
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -863,19 +851,7 @@ impl<'a> SignatureHelpProvider<'a> {
             })
             .unwrap_or_else(|| var_name.clone());
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -999,13 +975,14 @@ impl<'a> SignatureHelpProvider<'a> {
                 self.contextual_property_type_from_type(outer_param_type, &member_name)
             {
                 (prop_type, member_name, member_node.pos)
-            } else if let Some(sig_info) =
-                self.source_contextual_member_signature(checker, outer_param_type, &member_name)
-            {
+            } else {
+                let sig_info = self.source_contextual_member_signature(
+                    checker,
+                    outer_param_type,
+                    &member_name,
+                )?;
                 source_signature = Some(sig_info);
                 (TypeId::ERROR, member_name, member_node.pos)
-            } else {
-                return None;
             }
         } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             && let Some(member_name) =
@@ -1015,13 +992,14 @@ impl<'a> SignatureHelpProvider<'a> {
                 self.contextual_property_type_from_type(outer_param_type, &member_name)
             {
                 (prop_type, member_name, arg_node.pos)
-            } else if let Some(sig_info) =
-                self.source_contextual_member_signature(checker, outer_param_type, &member_name)
-            {
+            } else {
+                let sig_info = self.source_contextual_member_signature(
+                    checker,
+                    outer_param_type,
+                    &member_name,
+                )?;
                 source_signature = Some(sig_info);
                 (TypeId::ERROR, member_name, arg_node.pos)
-            } else {
-                return None;
             }
         } else {
             let kind = arg_node.kind;
@@ -2086,19 +2064,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = walker.resolve_node(root, callee_expr)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -2233,19 +2199,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut walker = crate::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = walker.resolve_node(root, callee_expr)?;
 
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            sound_mode: self.sound_mode,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = self.checker_options();
         let mut checker = if let Some(cache) = type_cache.take() {
             CheckerState::with_cache(
                 self.arena,
@@ -4036,16 +3990,13 @@ impl<'a> SignatureHelpProvider<'a> {
             .get_identifier_text(access.name_or_argument)
             .or_else(|| self.arena.get_literal_text(access.name_or_argument))?;
 
-        let (class_decls, static_only) = if let Some(result) =
-            self.class_decls_for_expression(access.expression)
-        {
-            result
-        } else if let Some(decls) = self.class_decls_for_property_name_in_file(root, property_name)
-        {
-            (decls, false)
-        } else {
-            return None;
-        };
+        let (class_decls, static_only) =
+            if let Some(result) = self.class_decls_for_expression(access.expression) {
+                result
+            } else {
+                let decls = self.class_decls_for_property_name_in_file(root, property_name)?;
+                (decls, false)
+            };
         let mut candidates = Vec::new();
         let mut fallback = None;
 

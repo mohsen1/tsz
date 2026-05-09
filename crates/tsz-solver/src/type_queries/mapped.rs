@@ -12,6 +12,12 @@ use crate::types::{MappedModifier, PropertyInfo, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemappedMappedIndexAccessResult {
+    Known(TypeId),
+    Deferred(TypeId),
+}
+
 // =============================================================================
 // Mapped Property Key Remapping and Value Specialization
 // =============================================================================
@@ -28,7 +34,69 @@ fn remap_mapped_property_key(
     use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
     let subst = TypeSubstitution::single(mapped.type_param.name, source_key);
-    crate::evaluation::evaluate::evaluate_type(db, instantiate_type(db, name_type, &subst))
+    let remapped =
+        crate::evaluation::evaluate::evaluate_type(db, instantiate_type(db, name_type, &subst));
+    simplify_remapped_template_key_for_literal_source(db, remapped, source_key)
+}
+
+fn simplify_remapped_template_key_for_literal_source(
+    db: &dyn TypeDatabase,
+    remapped: TypeId,
+    source_key: TypeId,
+) -> TypeId {
+    let Some(TypeData::TemplateLiteral(list_id)) = db.lookup(remapped) else {
+        return remapped;
+    };
+    let spans = db.template_list(list_id);
+    let mut changed = false;
+    let mut simplified = Vec::with_capacity(spans.len());
+
+    for span in spans.iter() {
+        match span {
+            crate::types::TemplateSpan::Text(text) => {
+                simplified.push(crate::types::TemplateSpan::Text(*text));
+            }
+            crate::types::TemplateSpan::Type(type_id) => {
+                let evaluated = crate::evaluation::evaluate::evaluate_type(db, *type_id);
+                let replacement = simplify_remapped_template_span_type_for_literal_source(
+                    db, evaluated, source_key,
+                );
+                changed |= replacement != *type_id;
+                simplified.push(crate::types::TemplateSpan::Type(replacement));
+            }
+        }
+    }
+
+    if changed {
+        db.template_literal(simplified)
+    } else {
+        remapped
+    }
+}
+
+fn simplify_remapped_template_span_type_for_literal_source(
+    db: &dyn TypeDatabase,
+    span_type: TypeId,
+    source_key: TypeId,
+) -> TypeId {
+    let Some(TypeData::Application(app_id)) = db.lookup(span_type) else {
+        return span_type;
+    };
+    let app = db.type_application(app_id);
+    if app.args.len() == 2
+        && app.args[0] == source_key
+        && matches!(
+            (db.lookup(source_key), app.args[1]),
+            (
+                Some(TypeData::Literal(crate::types::LiteralValue::String(_))),
+                TypeId::STRING
+            )
+        )
+    {
+        source_key
+    } else {
+        span_type
+    }
 }
 
 fn add_mapped_property_optional_undefined(
@@ -526,6 +594,188 @@ pub fn is_mapped_template_callable(
         || super::data::get_callable_shape(db, mapped.template).is_some()
 }
 
+/// Resolve the value-level type for a generic index into a remapped mapped type.
+///
+/// Remapped mapped types (`{ [P in K as F<P>]: T<P> }`) cannot safely use the
+/// ordinary concrete-property/index-signature lookup path while `K` is still
+/// generic: doing so erases the relationship between the original key `P`, the
+/// remapped key `F<P>`, and the template. Most cases therefore stay as a
+/// deferred indexed-access type, which lets diagnostics print the same
+/// `Alias<K>[F<K>]` surface that tsc preserves.
+///
+/// A filtering identity remap is the useful exception:
+/// `{ [P in K as P extends Pattern ? P : never]: P }[keyof ...]` has values
+/// known to satisfy `Pattern`, so it can resolve to that pattern constraint.
+pub fn remapped_mapped_index_access_result(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+) -> Option<RemappedMappedIndexAccessResult> {
+    let mapped_object_type = if super::data::get_mapped_type(db, object_type).is_some() {
+        object_type
+    } else {
+        crate::evaluation::evaluate::evaluate_type(db, object_type)
+    };
+    let mapped = super::data::get_mapped_type(db, mapped_object_type)?;
+    let name_type = mapped.name_type?;
+
+    if let Some(known) = filtered_identity_remapped_keyof_value_type(
+        db,
+        mapped_object_type,
+        index_type,
+        &mapped,
+        name_type,
+    ) {
+        return Some(RemappedMappedIndexAccessResult::Known(known));
+    }
+
+    if super::contains_type_parameters_db(db, index_type)
+        || keyof_targets_type_or_display_alias(db, index_type, mapped_object_type)
+    {
+        let deferred_object_type = if super::data::get_mapped_type(db, object_type).is_some() {
+            mapped_object_type
+        } else {
+            object_type
+        };
+        return Some(RemappedMappedIndexAccessResult::Deferred(
+            db.index_access(deferred_object_type, index_type),
+        ));
+    }
+
+    None
+}
+
+pub fn is_remapped_mapped_index_access(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some((object_type, _)) = super::data::get_index_access_types(db, type_id) else {
+        return false;
+    };
+    let mapped_object_type = if super::data::get_mapped_type(db, object_type).is_some() {
+        object_type
+    } else {
+        crate::evaluation::evaluate::evaluate_type(db, object_type)
+    };
+    super::data::get_mapped_type(db, mapped_object_type).is_some_and(|mapped| {
+        mapped.name_type.is_some()
+            && (super::contains_type_parameters_db(db, mapped.constraint)
+                || mapped
+                    .name_type
+                    .is_some_and(|name| super::contains_type_parameters_db(db, name)))
+    })
+}
+
+pub fn remapped_mapped_type_has_no_outer_type_params(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let mapped_object_type = if super::data::get_mapped_type(db, type_id).is_some() {
+        type_id
+    } else {
+        crate::evaluation::evaluate::evaluate_type(db, type_id)
+    };
+    super::data::get_mapped_type(db, mapped_object_type).is_some_and(|mapped| {
+        mapped.name_type.is_some()
+            && !super::contains_type_parameters_except_name_db(
+                db,
+                mapped.constraint,
+                mapped.type_param.name,
+            )
+    })
+}
+
+fn filtered_identity_remapped_keyof_value_type(
+    db: &dyn TypeDatabase,
+    _object_type: TypeId,
+    index_type: TypeId,
+    mapped: &crate::types::MappedType,
+    name_type: TypeId,
+) -> Option<TypeId> {
+    if crate::keyof_inner_type(db, index_type).is_none()
+        || !is_mapped_iteration_param(db, mapped.template, mapped)
+    {
+        return None;
+    }
+
+    let Some(TypeData::Conditional(cond_id)) = db.lookup(name_type) else {
+        return None;
+    };
+    let cond = db.get_conditional(cond_id);
+
+    if is_mapped_iteration_param(db, cond.true_type, mapped) && cond.false_type == TypeId::NEVER {
+        Some(single_tuple_element_type(db, cond.extends_type).unwrap_or(cond.extends_type))
+    } else {
+        None
+    }
+}
+
+fn single_tuple_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let Some(TypeData::Tuple(tuple_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let elements = db.tuple_list(tuple_id);
+    let [element] = elements.as_ref() else {
+        return None;
+    };
+    Some(element.type_id)
+}
+
+fn keyof_targets_type_or_display_alias(
+    db: &dyn TypeDatabase,
+    index_type: TypeId,
+    object_type: TypeId,
+) -> bool {
+    let Some(keyof_target) = crate::keyof_inner_type(db, index_type) else {
+        return false;
+    };
+
+    same_type_or_display_alias(db, keyof_target, object_type)
+        || same_type_or_display_alias(
+            db,
+            crate::evaluation::evaluate::evaluate_type(db, keyof_target),
+            object_type,
+        )
+}
+
+fn same_type_or_display_alias(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> bool {
+    if left == right {
+        return true;
+    }
+
+    let mut current = left;
+    for _ in 0..4 {
+        let Some(alias) = db.get_display_alias(current) else {
+            break;
+        };
+        if alias == right {
+            return true;
+        }
+        current = alias;
+    }
+
+    let mut current = right;
+    for _ in 0..4 {
+        let Some(alias) = db.get_display_alias(current) else {
+            break;
+        };
+        if alias == left {
+            return true;
+        }
+        current = alias;
+    }
+
+    false
+}
+
+fn is_mapped_iteration_param(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mapped: &crate::types::MappedType,
+) -> bool {
+    matches!(
+        crate::type_param_info(db, type_id),
+        Some(param) if param.name == mapped.type_param.name
+    )
+}
+
 /// Get the inner type of a `keyof T` type, delegated from the visitor layer.
 ///
 /// Returns `Some(T)` if the type is `KeyOf(T)`, `None` otherwise.
@@ -810,6 +1060,7 @@ pub fn expand_mapped_type_to_properties(
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             });
         }

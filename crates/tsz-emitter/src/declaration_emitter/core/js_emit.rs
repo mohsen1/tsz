@@ -3,7 +3,7 @@ use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, string_to_token, token_is_reserved_word};
 use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
@@ -282,6 +282,9 @@ impl<'a> DeclarationEmitter<'a> {
             || self
                 .js_anonymous_export_equals_value_initializer(stmt_idx)
                 .is_some()
+            || self
+                .js_commonjs_define_property_export_for_statement(stmt_idx)
+                .is_some()
     }
 
     pub(in crate::declaration_emitter) fn emit_js_synthetic_expression_statement(
@@ -308,6 +311,12 @@ impl<'a> DeclarationEmitter<'a> {
             .copied()
         {
             self.emit_js_synthetic_value_declaration(name_idx, initializer, is_exported);
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+
+        if let Some(property) = self.js_commonjs_define_property_export_for_statement(stmt_idx) {
+            self.emit_js_commonjs_define_property_export(&property);
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -425,6 +434,84 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        let reserved_export_alias = if is_exported {
+            self.js_reserved_export_local_name(name_idx)
+        } else {
+            None
+        };
+
+        if let Some((export_name, local_name)) = reserved_export_alias {
+            self.write_indent();
+            self.write("declare ");
+            self.write("function ");
+            self.write(&local_name);
+            self.write("(");
+            self.emit_parameters_with_body(&func.parameters, func.body);
+            self.write(")");
+
+            if func.type_annotation.is_some() {
+                self.write(": ");
+                self.emit_type(func.type_annotation);
+            } else if let Some(return_type_text) = jsdoc
+                .as_deref()
+                .and_then(Self::parse_jsdoc_return_type_text)
+            {
+                self.write(": ");
+                self.write(&return_type_text);
+            } else if let Some(return_type_text) = self
+                .js_function_body_preferred_return_text_for_declaration(
+                    func.body,
+                    name_idx,
+                    &func.parameters,
+                )
+            {
+                self.write(": ");
+                self.write(&return_type_text);
+            } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+                let func_type_id = cache
+                    .node_types
+                    .get(&initializer.0)
+                    .copied()
+                    .or_else(|| self.get_node_type_or_names(&[name_idx, initializer]));
+                if let Some(func_type_id) = func_type_id
+                    && let Some(return_type_id) =
+                        type_queries::get_return_type(*interner, func_type_id)
+                {
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && func.body.is_some()
+                        && self.body_returns_void(func.body)
+                    {
+                        self.write(": void");
+                    } else {
+                        self.write(": ");
+                        self.write(&self.print_type_id(return_type_id));
+                    }
+                } else if func.body.is_some() && self.body_returns_void(func.body) {
+                    self.write(": void");
+                }
+            } else if func.body.is_some() && self.body_returns_void(func.body) {
+                self.write(": void");
+            }
+
+            self.write(";");
+            self.write_line();
+
+            self.write_indent();
+            if export_name == "default" {
+                self.write("export default ");
+                self.write(&local_name);
+            } else {
+                self.write("export { ");
+                self.write(&local_name);
+                self.write(" as ");
+                self.write(&export_name);
+                self.write(" }");
+            }
+            self.write(";");
+            self.write_line();
+            self.emitted_module_indicator = true;
+            return;
+        }
 
         self.write_indent();
         if is_exported {
@@ -546,16 +633,32 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        if is_exported {
+        let reserved_export_alias = if is_exported {
+            self.js_reserved_export_local_name(name_idx)
+        } else {
+            None
+        };
+        if is_exported && reserved_export_alias.is_none() {
             self.write("export ");
             self.write(self.js_synthetic_export_value_keyword(initializer));
         } else {
             if self.should_emit_declare_keyword(false) {
                 self.write("declare ");
             }
-            self.write("var ");
+            if is_exported {
+                self.write(self.js_synthetic_export_value_keyword(initializer));
+            } else {
+                self.write("var ");
+            }
         }
-        self.emit_node(name_idx);
+        if let Some((export_name, local_name)) = reserved_export_alias {
+            self.write(&local_name);
+            self.js_cjs_export_aliases.push((export_name, local_name));
+        } else if let Some(export_name) = self.js_commonjs_export_name_text(name_idx) {
+            self.write(&export_name);
+        } else {
+            self.emit_node(name_idx);
+        }
         self.write(": ");
         self.write(&type_text);
         self.write(";");
@@ -563,6 +666,36 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.emitted_module_indicator = true;
         }
+    }
+
+    fn js_reserved_export_local_name(&mut self, name_idx: NodeIndex) -> Option<(String, String)> {
+        let export_name = self.get_identifier_text(name_idx)?;
+        if !token_is_reserved_word(string_to_token(&export_name)) {
+            return None;
+        }
+
+        let base = format!("_{export_name}");
+        let local_name = if self.reserved_names.contains(&base) {
+            self.generate_unique_name(&base)
+        } else {
+            base
+        };
+        self.reserved_names.insert(local_name.clone());
+        Some((export_name, local_name))
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_commonjs_define_property_export(
+        &mut self,
+        property: &super::super::helpers::JsDefinedPropertyDecl,
+    ) {
+        self.write_indent();
+        self.write("export const ");
+        self.write(&property.name);
+        self.write(": ");
+        self.write(&property.type_text);
+        self.write(";");
+        self.write_line();
+        self.emitted_module_indicator = true;
     }
 
     pub(in crate::declaration_emitter) fn emit_js_named_class_expression_declaration(
@@ -2380,6 +2513,15 @@ impl<'a> DeclarationEmitter<'a> {
             if index > 0 {
                 self.write(", ");
             }
+            let has_leading_jsdoc = self.arena.get(ident_idx).is_some_and(|node| {
+                !self
+                    .leading_jsdoc_comment_chain_for_pos(node.pos)
+                    .is_empty()
+            });
+            if has_leading_jsdoc && let Some(node) = self.arena.get(ident_idx) {
+                self.write_line();
+                self.emit_leading_jsdoc_comments(node.pos);
+            }
             self.emit_node(ident_idx);
             self.emit_flattened_binding_type_annotation(ident_idx, type_id);
         }
@@ -2603,8 +2745,17 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some("void".to_string());
         }
-        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
-        self.js_parameter_type_text(params, returned_identifier)
+        if let Some(returned_identifier) = self.function_body_unique_return_identifier(body_idx)
+            && let Some(type_text) = self.js_parameter_type_text(params, returned_identifier)
+        {
+            return Some(type_text);
+        }
+
+        self.function_body_single_return_expression(body_idx)
+            .and_then(|expr_idx| {
+                self.js_constructor_assignment_expression_type_text(expr_idx, params, 0)
+            })
+            .filter(|type_text| !type_text.is_empty() && type_text != "any")
     }
 
     pub(in crate::declaration_emitter) fn emit_js_function_like_class_if_needed(

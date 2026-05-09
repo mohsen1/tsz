@@ -59,7 +59,7 @@ impl BinderState {
     fn parse_jsdoc_import_tag(rest: &str) -> Vec<(String, String, String)> {
         let rest = rest.trim();
         let mut results = Vec::new();
-        if let Some(from_idx) = rest.rfind("from") {
+        if let Some(from_idx) = Self::find_jsdoc_import_from_keyword(rest) {
             let before_from = rest[..from_idx].trim();
             if matches!(
                 before_from.split_whitespace().next(),
@@ -78,24 +78,29 @@ impl BinderState {
                     .to_string();
                 if before_from.starts_with('{') && before_from.ends_with('}') {
                     let inner = &before_from[1..before_from.len() - 1];
-                    for part in inner.split(',') {
+                    for part in Self::split_jsdoc_import_clause_items(inner) {
                         let part = part.trim();
                         if part.is_empty() {
                             continue;
                         }
-                        let parts: Vec<&str> = part.split(" as ").collect();
-                        if parts.len() == 2 {
+                        if let Some((imported_name, local_name)) =
+                            Self::split_jsdoc_import_as_keyword(part)
+                        {
+                            let imported_name = Self::normalize_jsdoc_import_name(imported_name);
                             results.push((
-                                parts[1].trim().to_string(),
+                                local_name.to_string(),
                                 specifier.clone(),
-                                parts[0].trim().to_string(),
+                                imported_name,
                             ));
                         } else {
-                            results.push((part.to_string(), specifier.clone(), part.to_string()));
+                            let imported_name = Self::normalize_jsdoc_import_name(part);
+                            results.push((imported_name.clone(), specifier.clone(), imported_name));
                         }
                     }
-                } else if let Some(ns_name) = before_from.strip_prefix("* as ") {
-                    let ns_name = ns_name.trim().to_string();
+                } else if let Some(("*", ns_name)) =
+                    Self::split_jsdoc_import_as_keyword(before_from)
+                {
+                    let ns_name = ns_name.to_string();
                     if !ns_name.is_empty() {
                         results.push((ns_name, specifier, "*".to_string()));
                     }
@@ -108,6 +113,263 @@ impl BinderState {
             }
         }
         results
+    }
+
+    fn find_jsdoc_import_from_keyword(rest: &str) -> Option<usize> {
+        let mut quote = None;
+        let mut escaped = false;
+        let mut last_from = None;
+
+        for (idx, ch) in rest.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            if ch == '"' || ch == '\'' || ch == '`' {
+                quote = Some(ch);
+                continue;
+            }
+
+            if rest[idx..].starts_with("from")
+                && !rest[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(Self::is_jsdoc_import_keyword_part)
+                && !rest[idx + 4..]
+                    .chars()
+                    .next()
+                    .is_some_and(Self::is_jsdoc_import_keyword_part)
+            {
+                last_from = Some(idx);
+            }
+        }
+
+        last_from
+    }
+
+    fn split_jsdoc_import_clause_items(s: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0;
+        let mut angle_depth = 0u32;
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut square_depth = 0u32;
+        let mut quote = None;
+        let mut escaped = false;
+
+        for (idx, ch) in s.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            if ch == '"' || ch == '\'' || ch == '`' {
+                quote = Some(ch);
+                continue;
+            }
+
+            match ch {
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                '[' => square_depth += 1,
+                ']' if square_depth > 0 => square_depth -= 1,
+                ',' if angle_depth == 0
+                    && paren_depth == 0
+                    && brace_depth == 0
+                    && square_depth == 0 =>
+                {
+                    parts.push(&s[start..idx]);
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+
+        if start < s.len() {
+            parts.push(&s[start..]);
+        }
+        parts
+    }
+
+    fn split_jsdoc_import_as_keyword(part: &str) -> Option<(&str, &str)> {
+        let mut quote = None;
+        let mut escaped = false;
+        for (idx, ch) in part.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+
+            if ch == '"' || ch == '\'' || ch == '`' {
+                quote = Some(ch);
+                continue;
+            }
+
+            if !part[idx..].starts_with("as") {
+                continue;
+            }
+
+            let before_ok = part[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace);
+            let after_idx = idx + 2;
+            let after_ok = part[after_idx..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace);
+            if before_ok && after_ok {
+                let imported = part[..idx].trim();
+                let local = part[after_idx..].trim();
+                if !imported.is_empty() && !local.is_empty() {
+                    return Some((imported, local));
+                }
+            }
+        }
+        None
+    }
+
+    fn normalize_jsdoc_import_name(name: &str) -> String {
+        Self::parse_jsdoc_string_literal(name).unwrap_or_else(|| name.trim().to_string())
+    }
+
+    fn parse_jsdoc_string_literal(text: &str) -> Option<String> {
+        let text = text.trim();
+        let quote = text.chars().next()?;
+        if quote != '"' && quote != '\'' && quote != '`' {
+            return None;
+        }
+
+        let mut value = String::new();
+        let mut escaped = false;
+        let mut close_end = None;
+        for (idx, ch) in text[quote.len_utf8()..].char_indices() {
+            if escaped {
+                value.push(match ch {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    _ => ch,
+                });
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                close_end = Some(quote.len_utf8() + idx + ch.len_utf8());
+                break;
+            }
+            value.push(ch);
+        }
+
+        let close_end = close_end?;
+        if !text[close_end..].trim().is_empty() {
+            return None;
+        }
+        Some(value)
+    }
+
+    const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+    }
+
+    /// Collapse `@import` tag continuations onto a single line so the
+    /// line-by-line binder can register the alias.
+    ///
+    /// JSDoc allows the import clause to be split over several lines, e.g.
+    ///
+    /// ```text
+    /// /**
+    ///  * @import
+    ///  * * as types
+    ///  * from "./types"
+    ///  */
+    /// ```
+    ///
+    /// Without this preprocessing, the binder sees `@import` followed by an
+    /// empty rest and silently fails to register the namespace alias —
+    /// every later `types.A` reference then fires TS2304.
+    fn merge_jsdoc_import_continuations(jsdoc: &str) -> String {
+        // Note: this preprocessor runs over JSDoc text that has already been
+        // normalized by `get_jsdoc_content`, so the outer `* ` decoration is
+        // gone. We MUST NOT strip any further leading `*`s, since
+        // `import * as types` puts a real `*` at the start of the
+        // continuation line — accidentally consuming it would turn the line
+        // into `as types` and erase the namespace import.
+        let mut result = String::with_capacity(jsdoc.len());
+        let mut pending: Option<String> = None;
+        for line in jsdoc.lines() {
+            let stripped = line.trim();
+            if let Some(text) = pending.as_mut() {
+                let already_complete = text.contains(" from \"")
+                    || text.contains(" from '")
+                    || text.contains(" from `");
+                if !already_complete && !stripped.is_empty() && !stripped.starts_with('@') {
+                    text.push(' ');
+                    text.push_str(stripped);
+                    continue;
+                }
+                let flushed = pending
+                    .take()
+                    .expect("pending import text is present while flushing continuation");
+                result.push_str(&flushed);
+                result.push('\n');
+            }
+            if stripped.strip_prefix("@import").is_some_and(|rest| {
+                !rest
+                    .chars()
+                    .next()
+                    .is_some_and(Self::is_jsdoc_import_keyword_part)
+            }) {
+                pending = Some(line.to_string());
+                continue;
+            }
+            result.push_str(line);
+            result.push('\n');
+        }
+        if let Some(text) = pending {
+            result.push_str(&text);
+            result.push('\n');
+        }
+        result
     }
 
     fn bind_jsdoc_import_tags(
@@ -128,12 +390,23 @@ impl BinderState {
             if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
-            let content = get_jsdoc_content(comment, source_text);
+            let raw_content = get_jsdoc_content(comment, source_text);
+            let merged_content = Self::merge_jsdoc_import_continuations(raw_content.as_ref());
+            let content: &str = merged_content.as_str();
             for line in content.lines() {
                 let trimmed = line.trim_start_matches('*').trim();
                 let Some(rest) = trimmed.strip_prefix("@import") else {
                     continue;
                 };
+                // Tag-boundary check: `@importx { Foo } from "./x"` must not
+                // be parsed as `@import`. Issue #2916.
+                if rest
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    continue;
+                }
                 let has_attributes = rest.contains(" with ");
                 for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
                     if local_name.is_empty() || specifier.is_empty() {
@@ -141,6 +414,22 @@ impl BinderState {
                     }
                     self.file_import_sources.push(specifier.clone());
                     if has_attributes {
+                        continue;
+                    }
+                    // Do not redeclare a name that already has an alias in this
+                    // scope (runtime ES import or earlier JSDoc `@import`). The
+                    // type-only JSDoc binding must not override the existing
+                    // alias's `is_type_only`, otherwise the runtime import is
+                    // misreported as a type-only JS import (TS18042). The
+                    // resulting duplicate identifier is reported as TS2300 by
+                    // the JSDoc duplicate-import check in the checker.
+                    let already_aliased =
+                        self.current_scope.get(&local_name).is_some_and(|existing| {
+                            self.symbols
+                                .get(existing)
+                                .is_some_and(|sym| (sym.flags & symbol_flags::ALIAS) != 0)
+                        });
+                    if already_aliased {
                         continue;
                     }
                     let sym_id =
@@ -812,41 +1101,39 @@ impl BinderState {
         false
     }
 
-    /// Check if any top-level statement is a CommonJS module.exports or exports.x assignment.
+    /// Check if a source file contains a CommonJS module.exports or exports.x assignment.
     /// This detects patterns like:
     /// - `module.exports = { ... }`
     /// - `module.exports.x = ...`
     /// - `exports.x = ...`
     fn source_file_has_commonjs_indicator(arena: &NodeArena, stmts: &[NodeIndex]) -> bool {
-        for &stmt_idx in stmts {
-            if stmt_idx.is_none() {
-                continue;
-            }
-            let Some(stmt) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = arena.get_expression_statement(stmt) else {
+        let mut stack: Vec<NodeIndex> =
+            stmts.iter().copied().filter(|idx| !idx.is_none()).collect();
+
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
                 continue;
             };
-            let Some(expr_node) = arena.get(expr_stmt.expression) else {
-                continue;
-            };
-            // Check for assignment: `lhs = rhs`
-            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
+            match node.kind {
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    // Check left side for `module.exports` or `exports.x` pattern.
+                    if let Some(binary) = arena.get_binary_expr(node)
+                        && binary.operator_token == SyntaxKind::EqualsToken as u16
+                        && Self::is_commonjs_export_target(arena, binary.left)
+                    {
+                        return true;
+                    }
+                }
+                syntax_kind_ext::CALL_EXPRESSION
+                    if Self::is_commonjs_define_property_export_call(arena, idx) =>
+                {
+                    return true;
+                }
+                _ => {}
             }
-            let Some(binary) = arena.get_binary_expr(expr_node) else {
-                continue;
-            };
-            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                continue;
-            }
-            // Check left side for `module.exports` or `exports.x` pattern
-            if Self::is_commonjs_export_target(arena, binary.left) {
-                return true;
+
+            for child in arena.get_children(idx) {
+                stack.push(child);
             }
         }
         false
@@ -899,6 +1186,68 @@ impl BinderState {
         }
 
         false
+    }
+
+    /// Check for `Object.defineProperty(exports, ...)` or
+    /// `Object.defineProperty(module.exports, ...)` as a CommonJS export marker.
+    fn is_commonjs_define_property_export_call(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let Some(call_node) = arena.get(idx) else {
+            return false;
+        };
+        let Some(call) = arena.get_call_expr(call_node) else {
+            return false;
+        };
+        let Some(callee_node) = arena.get(call.expression) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(callee) = arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let is_object_define_property = arena
+            .get_identifier_at(callee.expression)
+            .is_some_and(|ident| ident.escaped_text == "Object")
+            && arena
+                .get_identifier_at(callee.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "defineProperty");
+        if !is_object_define_property {
+            return false;
+        }
+        let Some(args) = &call.arguments else {
+            return false;
+        };
+        if args.nodes.len() < 3 {
+            return false;
+        }
+        Self::is_commonjs_export_base(arena, args.nodes[0])
+    }
+
+    /// Check if a node is a CommonJS export base: `exports` or `module.exports`.
+    fn is_commonjs_export_base(arena: &NodeArena, idx: NodeIndex) -> bool {
+        if arena
+            .get_identifier_at(idx)
+            .is_some_and(|ident| ident.escaped_text == "exports")
+        {
+            return true;
+        }
+
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
     }
 
     pub(crate) fn source_file_contains_import_meta(arena: &NodeArena, root: NodeIndex) -> bool {

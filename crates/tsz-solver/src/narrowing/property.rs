@@ -6,7 +6,7 @@
 //! - Object-like type detection for instanceof support
 
 use super::NarrowingContext;
-use crate::types::{ObjectShapeId, PropertyInfo, TypeId, Visibility};
+use crate::types::{ObjectFlags, ObjectShapeId, PropertyInfo, TypeId, Visibility};
 use crate::visitor::{
     intersection_list_id, object_shape_id, object_with_index_shape_id, type_param_info,
     union_list_id,
@@ -111,6 +111,7 @@ impl<'a> NarrowingContext<'a> {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             };
             let filter_obj = self.db.object(vec![required_prop]);
@@ -213,7 +214,7 @@ impl<'a> NarrowingContext<'a> {
                     "No members have property, creating intersection with Record<prop, unknown>"
                 );
                 let record_type = self.make_record_type(property_name);
-                return self.db.intersection2(source_type, record_type);
+                return self.db.intersect_types_raw2(source_type, record_type);
             } else if matching_non_never.len() == 1 {
                 trace!(
                     "Found single member after filtering, returning {}",
@@ -233,8 +234,20 @@ impl<'a> NarrowingContext<'a> {
         if present {
             // Positive: "prop" in x
             if has_property {
-                // Property exists: Promote to required
-                let prop_type = self.get_property_type(resolved_type, property_name);
+                // Property exists: promote to required. For exact-optional
+                // slots the write type excludes the synthetic missing-property
+                // `undefined`, so use it for the presence filter.
+                let prop_info = self.get_property_info(resolved_type, property_name);
+                let prop_type = prop_info
+                    .as_ref()
+                    .map(|prop| {
+                        if prop.optional {
+                            prop.write_type
+                        } else {
+                            prop.type_id
+                        }
+                    })
+                    .or_else(|| self.get_property_type(resolved_type, property_name));
                 let required_prop = PropertyInfo {
                     name: property_name,
                     type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
@@ -247,6 +260,7 @@ impl<'a> NarrowingContext<'a> {
                     parent_id: None,
                     declaration_order: 0,
                     is_string_named: false,
+                    is_symbol_named: false,
                     single_quoted_name: false,
                 };
                 let filter_obj = self.db.object(vec![required_prop]);
@@ -268,6 +282,27 @@ impl<'a> NarrowingContext<'a> {
             if self.is_property_required(resolved_type, property_name) {
                 return TypeId::NEVER;
             }
+            if let Some(prop) = self.get_property_info(resolved_type, property_name)
+                && prop.optional
+            {
+                let absent_prop = PropertyInfo {
+                    name: property_name,
+                    type_id: TypeId::UNDEFINED,
+                    write_type: prop.write_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                };
+                let filter_obj = self.db.object(vec![absent_prop]);
+                return self.db.intersection2(source_type, filter_obj);
+            }
             // Keep source_type (no required property found, or property is optional)
             source_type
         }
@@ -279,6 +314,10 @@ impl<'a> NarrowingContext<'a> {
     /// source type. TypeScript narrows to `source & Record<prop, unknown>` to
     /// indicate the type must have the property after the check.
     fn make_record_type(&self, property_name: Atom) -> TypeId {
+        let is_symbol_named = self
+            .db
+            .resolve_atom_ref(property_name)
+            .starts_with("__unique_");
         let required_prop = PropertyInfo {
             name: property_name,
             type_id: TypeId::UNKNOWN,
@@ -291,9 +330,11 @@ impl<'a> NarrowingContext<'a> {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named,
             single_quoted_name: false,
         };
-        self.db.object(vec![required_prop])
+        self.db
+            .object_with_flags(vec![required_prop], ObjectFlags::IN_OPERATOR_RECORD)
     }
 
     /// Check if a type has a specific property.
@@ -351,6 +392,10 @@ impl<'a> NarrowingContext<'a> {
     ///
     /// Returns Some(type) if the property exists, None otherwise.
     pub(crate) fn get_property_type(&self, type_id: TypeId, property_name: Atom) -> Option<TypeId> {
+        if let Some(prop) = self.get_property_info(type_id, property_name) {
+            return Some(prop.type_id);
+        }
+
         // CRITICAL: Resolve Lazy types before checking for properties
         // This ensures type aliases are resolved to their actual types
         let resolved_type = self.resolve_type(type_id);
@@ -422,6 +467,26 @@ impl<'a> NarrowingContext<'a> {
 
         // For other types (functions, classes, arrays, etc.), assume they don't have arbitrary properties
         // unless they have been handled above (object shapes, etc.)
+        None
+    }
+
+    fn get_property_info(&self, type_id: TypeId, property_name: Atom) -> Option<PropertyInfo> {
+        let resolved_type = self.resolve_type(type_id);
+
+        if let Some(shape_id) = object_shape_id(self.db, resolved_type) {
+            let shape = self.db.object_shape(shape_id);
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, property_name) {
+                return Some(prop.clone());
+            }
+        }
+
+        if let Some(shape_id) = object_with_index_shape_id(self.db, resolved_type) {
+            let shape = self.db.object_shape(shape_id);
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, property_name) {
+                return Some(prop.clone());
+            }
+        }
+
         None
     }
 }

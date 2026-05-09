@@ -39,6 +39,7 @@ pub(super) enum JsxAttrValue {
     StringNode(NodeIndex),
     Bool(bool),
     Expr(NodeIndex),
+    EmptyExpression,
 }
 
 pub(super) struct JsxAttrsInfo {
@@ -89,7 +90,11 @@ pub(super) fn group_jsx_attrs(attrs: &[JsxAttrInfo]) -> Vec<AttrGroup> {
 // =============================================================================
 
 /// Extract `@jsxImportSource <package>` from leading block comments.
-/// Mirrors tsc behavior: only block comments before any code are scanned.
+/// Mirrors tsc behavior: only block comments before any code are scanned, and
+/// the `@jsxImportSource` tag must be followed by a pragma boundary
+/// (whitespace or end-of-comment) — this rejects fake tags like
+/// `@jsxImportSourcex preact` that would otherwise be misparsed as a real
+/// pragma with package `x`.
 pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
     let scan_limit = source.len().min(4096);
     let text = &source[..scan_limit];
@@ -104,9 +109,25 @@ pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
             let comment_start = pos + 2;
             if let Some(end_offset) = text[comment_start..].find("*/") {
                 let comment_body = &text[comment_start..comment_start + end_offset];
-                if let Some(idx) = comment_body.find("@jsxImportSource") {
-                    let after = &comment_body[idx + "@jsxImportSource".len()..];
-                    let pkg: String = after
+                let mut start = 0usize;
+                let mut after_idx: Option<usize> = None;
+                while let Some(rel) = comment_body[start..].find("@jsxImportSource") {
+                    let abs = start + rel;
+                    let after = abs + "@jsxImportSource".len();
+                    let body_bytes = comment_body.as_bytes();
+                    if after >= body_bytes.len()
+                        || (body_bytes[after] as char).is_ascii_whitespace()
+                    {
+                        after_idx = Some(after);
+                        break;
+                    }
+                    start = after;
+                    if start >= comment_body.len() {
+                        break;
+                    }
+                }
+                if let Some(after) = after_idx {
+                    let pkg: String = comment_body[after..]
                         .trim_start()
                         .chars()
                         .take_while(|c| {
@@ -141,23 +162,127 @@ pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
     None
 }
 
+/// Extract a `@<tag> <factory>` pragma from the leading block comments,
+/// returning the factory expression (e.g. `h` or `React.createElement`).
+///
+/// Mirrors tsc's classic JSX pragma handling: only block comments before
+/// any code are scanned, the tag must be followed by a pragma boundary
+/// (whitespace), and the value is a dot-separated identifier chain. The
+/// scan stops at the first non-comment token. Issue #4010.
+fn extract_jsx_factory_like_pragma(source: &str, tag: &str) -> Option<String> {
+    let scan_limit = source.len().min(4096);
+    let text = &source[..scan_limit];
+    let bytes = text.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+            let comment_start = pos + 2;
+            if let Some(end_offset) = text[comment_start..].find("*/") {
+                let comment_body = &text[comment_start..comment_start + end_offset];
+                let mut start = 0usize;
+                let mut after_idx: Option<usize> = None;
+                while let Some(rel) = comment_body[start..].find(tag) {
+                    let abs = start + rel;
+                    let after = abs + tag.len();
+                    let body_bytes = comment_body.as_bytes();
+                    if after >= body_bytes.len()
+                        || (body_bytes[after] as char).is_ascii_whitespace()
+                    {
+                        after_idx = Some(after);
+                        break;
+                    }
+                    start = after;
+                    if start >= comment_body.len() {
+                        break;
+                    }
+                }
+                if let Some(after) = after_idx {
+                    let factory: String = comment_body[after..]
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$' || *c == '.')
+                        .collect();
+                    if !factory.is_empty() && is_dotted_identifier_chain(&factory) {
+                        return Some(factory);
+                    }
+                }
+                pos = comment_start + end_offset + 2;
+            } else {
+                break;
+            }
+            continue;
+        }
+        if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+            if let Some(nl) = text[pos..].find('\n') {
+                pos += nl + 1;
+            } else {
+                break;
+            }
+            continue;
+        }
+        break;
+    }
+    None
+}
+
+fn is_dotted_identifier_chain(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    s.split('.').all(|seg| {
+        let mut chars = seg.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first == '_' || first == '$' || first.is_alphabetic()) {
+            return false;
+        }
+        chars.all(|c| c == '_' || c == '$' || c.is_alphanumeric())
+    })
+}
+
+/// Extract a classic JSX `@jsx <factory>` pragma value from the file's
+/// leading comments, e.g. `/** @jsx h */` -> `Some("h")`. Issue #4010.
+pub(super) fn extract_jsx_factory(source: &str) -> Option<String> {
+    extract_jsx_factory_like_pragma(source, "@jsx")
+}
+
+/// Extract a classic JSX `@jsxFrag <factory>` pragma value from the file's
+/// leading comments, e.g. `/** @jsxFrag F */` -> `Some("F")`. Issue #4010.
+pub(super) fn extract_jsx_fragment_factory(source: &str) -> Option<String> {
+    extract_jsx_factory_like_pragma(source, "@jsxFrag")
+}
+
 // =============================================================================
 // JSX Text Processing (matches tsc behavior)
 // =============================================================================
 
 /// Process JSX text content matching tsc's `getTransformedJsxText` algorithm:
 ///
-/// - If the text has no newlines, return it as-is (preserving whitespace).
+/// - If the text has no line breaks, return it as-is (preserving whitespace).
 /// - If multi-line, trim each line's leading/trailing whitespace, skip empty
 ///   lines, and join with a single space.
+///
+/// All three JS line terminator forms (`\r\n`, `\n`, and bare `\r`) act as
+/// line breaks. tsc treats CR-only line breaks the same as LF — `isLineBreak`
+/// in `compiler/scanner.ts` accepts CR, LF, LS, and PS.
 pub(super) fn process_jsx_text(text: &str) -> String {
-    // No newlines at all -> return as-is (even if whitespace-only)
-    if !text.contains('\n') {
+    // No line breaks at all -> return as-is (even if whitespace-only)
+    if !text.contains('\n') && !text.contains('\r') {
         return text.to_string();
     }
 
+    // Normalize CRLF and bare CR to LF, then split on LF. Without this, a
+    // CR-only line break (`a\rb`) would not split into separate lines and the
+    // whitespace coalescing would preserve the `\r` byte in the emitted string.
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+
     // Multi-line processing (matches tsc's algorithm)
-    let lines: Vec<&str> = text.split('\n').collect();
+    let lines: Vec<&str> = normalized.split('\n').collect();
     let mut parts: Vec<String> = Vec::new();
 
     for (i, line) in lines.iter().enumerate() {
@@ -269,32 +394,271 @@ fn resolve_entity(body: &str) -> Option<String> {
         };
         return char::from_u32(cp).map(|c| c.to_string());
     }
-    // Named entities
-    let c = match body {
-        "amp" => '&',
-        "lt" => '<',
-        "gt" => '>',
-        "quot" => '"',
-        "apos" => '\'',
-        "nbsp" => '\u{00A0}',
-        "middot" => '\u{00B7}',
-        "mdash" => '\u{2014}',
-        "ndash" => '\u{2013}',
-        "hellip" => '\u{2026}',
-        "laquo" => '\u{00AB}',
-        "raquo" => '\u{00BB}',
-        "bull" => '\u{2022}',
-        "copy" => '\u{00A9}',
-        "reg" => '\u{00AE}',
-        "trade" => '\u{2122}',
-        "hearts" => '\u{2665}',
-        "larr" => '\u{2190}',
-        "rarr" => '\u{2192}',
-        "uarr" => '\u{2191}',
-        "darr" => '\u{2193}',
+    // Named entities. Table mirrors the HTML named entity set TypeScript ships
+    // in `src/compiler/transformers/jsx.ts`, so JSX text and string attribute
+    // values decode to the same runtime characters tsc produces.
+    let cp = named_entity_codepoint(body)?;
+    char::from_u32(cp).map(|c| c.to_string())
+}
+
+fn named_entity_codepoint(name: &str) -> Option<u32> {
+    let cp: u32 = match name {
+        "quot" => 0x0022,
+        "amp" => 0x0026,
+        "apos" => 0x0027,
+        "lt" => 0x003C,
+        "gt" => 0x003E,
+        "nbsp" => 0x00A0,
+        "iexcl" => 0x00A1,
+        "cent" => 0x00A2,
+        "pound" => 0x00A3,
+        "curren" => 0x00A4,
+        "yen" => 0x00A5,
+        "brvbar" => 0x00A6,
+        "sect" => 0x00A7,
+        "uml" => 0x00A8,
+        "copy" => 0x00A9,
+        "ordf" => 0x00AA,
+        "laquo" => 0x00AB,
+        "not" => 0x00AC,
+        "shy" => 0x00AD,
+        "reg" => 0x00AE,
+        "macr" => 0x00AF,
+        "deg" => 0x00B0,
+        "plusmn" => 0x00B1,
+        "sup2" => 0x00B2,
+        "sup3" => 0x00B3,
+        "acute" => 0x00B4,
+        "micro" => 0x00B5,
+        "para" => 0x00B6,
+        "middot" => 0x00B7,
+        "cedil" => 0x00B8,
+        "sup1" => 0x00B9,
+        "ordm" => 0x00BA,
+        "raquo" => 0x00BB,
+        "frac14" => 0x00BC,
+        "frac12" => 0x00BD,
+        "frac34" => 0x00BE,
+        "iquest" => 0x00BF,
+        "Agrave" => 0x00C0,
+        "Aacute" => 0x00C1,
+        "Acirc" => 0x00C2,
+        "Atilde" => 0x00C3,
+        "Auml" => 0x00C4,
+        "Aring" => 0x00C5,
+        "AElig" => 0x00C6,
+        "Ccedil" => 0x00C7,
+        "Egrave" => 0x00C8,
+        "Eacute" => 0x00C9,
+        "Ecirc" => 0x00CA,
+        "Euml" => 0x00CB,
+        "Igrave" => 0x00CC,
+        "Iacute" => 0x00CD,
+        "Icirc" => 0x00CE,
+        "Iuml" => 0x00CF,
+        "ETH" => 0x00D0,
+        "Ntilde" => 0x00D1,
+        "Ograve" => 0x00D2,
+        "Oacute" => 0x00D3,
+        "Ocirc" => 0x00D4,
+        "Otilde" => 0x00D5,
+        "Ouml" => 0x00D6,
+        "times" => 0x00D7,
+        "Oslash" => 0x00D8,
+        "Ugrave" => 0x00D9,
+        "Uacute" => 0x00DA,
+        "Ucirc" => 0x00DB,
+        "Uuml" => 0x00DC,
+        "Yacute" => 0x00DD,
+        "THORN" => 0x00DE,
+        "szlig" => 0x00DF,
+        "agrave" => 0x00E0,
+        "aacute" => 0x00E1,
+        "acirc" => 0x00E2,
+        "atilde" => 0x00E3,
+        "auml" => 0x00E4,
+        "aring" => 0x00E5,
+        "aelig" => 0x00E6,
+        "ccedil" => 0x00E7,
+        "egrave" => 0x00E8,
+        "eacute" => 0x00E9,
+        "ecirc" => 0x00EA,
+        "euml" => 0x00EB,
+        "igrave" => 0x00EC,
+        "iacute" => 0x00ED,
+        "icirc" => 0x00EE,
+        "iuml" => 0x00EF,
+        "eth" => 0x00F0,
+        "ntilde" => 0x00F1,
+        "ograve" => 0x00F2,
+        "oacute" => 0x00F3,
+        "ocirc" => 0x00F4,
+        "otilde" => 0x00F5,
+        "ouml" => 0x00F6,
+        "divide" => 0x00F7,
+        "oslash" => 0x00F8,
+        "ugrave" => 0x00F9,
+        "uacute" => 0x00FA,
+        "ucirc" => 0x00FB,
+        "uuml" => 0x00FC,
+        "yacute" => 0x00FD,
+        "thorn" => 0x00FE,
+        "yuml" => 0x00FF,
+        "OElig" => 0x0152,
+        "oelig" => 0x0153,
+        "Scaron" => 0x0160,
+        "scaron" => 0x0161,
+        "Yuml" => 0x0178,
+        "fnof" => 0x0192,
+        "circ" => 0x02C6,
+        "tilde" => 0x02DC,
+        "Alpha" => 0x0391,
+        "Beta" => 0x0392,
+        "Gamma" => 0x0393,
+        "Delta" => 0x0394,
+        "Epsilon" => 0x0395,
+        "Zeta" => 0x0396,
+        "Eta" => 0x0397,
+        "Theta" => 0x0398,
+        "Iota" => 0x0399,
+        "Kappa" => 0x039A,
+        "Lambda" => 0x039B,
+        "Mu" => 0x039C,
+        "Nu" => 0x039D,
+        "Xi" => 0x039E,
+        "Omicron" => 0x039F,
+        "Pi" => 0x03A0,
+        "Rho" => 0x03A1,
+        "Sigma" => 0x03A3,
+        "Tau" => 0x03A4,
+        "Upsilon" => 0x03A5,
+        "Phi" => 0x03A6,
+        "Chi" => 0x03A7,
+        "Psi" => 0x03A8,
+        "Omega" => 0x03A9,
+        "alpha" => 0x03B1,
+        "beta" => 0x03B2,
+        "gamma" => 0x03B3,
+        "delta" => 0x03B4,
+        "epsilon" => 0x03B5,
+        "zeta" => 0x03B6,
+        "eta" => 0x03B7,
+        "theta" => 0x03B8,
+        "iota" => 0x03B9,
+        "kappa" => 0x03BA,
+        "lambda" => 0x03BB,
+        "mu" => 0x03BC,
+        "nu" => 0x03BD,
+        "xi" => 0x03BE,
+        "omicron" => 0x03BF,
+        "pi" => 0x03C0,
+        "rho" => 0x03C1,
+        "sigmaf" => 0x03C2,
+        "sigma" => 0x03C3,
+        "tau" => 0x03C4,
+        "upsilon" => 0x03C5,
+        "phi" => 0x03C6,
+        "chi" => 0x03C7,
+        "psi" => 0x03C8,
+        "omega" => 0x03C9,
+        "thetasym" => 0x03D1,
+        "upsih" => 0x03D2,
+        "piv" => 0x03D6,
+        "ensp" => 0x2002,
+        "emsp" => 0x2003,
+        "thinsp" => 0x2009,
+        "zwnj" => 0x200C,
+        "zwj" => 0x200D,
+        "lrm" => 0x200E,
+        "rlm" => 0x200F,
+        "ndash" => 0x2013,
+        "mdash" => 0x2014,
+        "lsquo" => 0x2018,
+        "rsquo" => 0x2019,
+        "sbquo" => 0x201A,
+        "ldquo" => 0x201C,
+        "rdquo" => 0x201D,
+        "bdquo" => 0x201E,
+        "dagger" => 0x2020,
+        "Dagger" => 0x2021,
+        "bull" => 0x2022,
+        "hellip" => 0x2026,
+        "permil" => 0x2030,
+        "prime" => 0x2032,
+        "Prime" => 0x2033,
+        "lsaquo" => 0x2039,
+        "rsaquo" => 0x203A,
+        "oline" => 0x203E,
+        "frasl" => 0x2044,
+        "euro" => 0x20AC,
+        "image" => 0x2111,
+        "weierp" => 0x2118,
+        "real" => 0x211C,
+        "trade" => 0x2122,
+        "alefsym" => 0x2135,
+        "larr" => 0x2190,
+        "uarr" => 0x2191,
+        "rarr" => 0x2192,
+        "darr" => 0x2193,
+        "harr" => 0x2194,
+        "crarr" => 0x21B5,
+        "lArr" => 0x21D0,
+        "uArr" => 0x21D1,
+        "rArr" => 0x21D2,
+        "dArr" => 0x21D3,
+        "hArr" => 0x21D4,
+        "forall" => 0x2200,
+        "part" => 0x2202,
+        "exist" => 0x2203,
+        "empty" => 0x2205,
+        "nabla" => 0x2207,
+        "isin" => 0x2208,
+        "notin" => 0x2209,
+        "ni" => 0x220B,
+        "prod" => 0x220F,
+        "sum" => 0x2211,
+        "minus" => 0x2212,
+        "lowast" => 0x2217,
+        "radic" => 0x221A,
+        "prop" => 0x221D,
+        "infin" => 0x221E,
+        "ang" => 0x2220,
+        "and" => 0x2227,
+        "or" => 0x2228,
+        "cap" => 0x2229,
+        "cup" => 0x222A,
+        "int" => 0x222B,
+        "there4" => 0x2234,
+        "sim" => 0x223C,
+        "cong" => 0x2245,
+        "asymp" => 0x2248,
+        "ne" => 0x2260,
+        "equiv" => 0x2261,
+        "le" => 0x2264,
+        "ge" => 0x2265,
+        "sub" => 0x2282,
+        "sup" => 0x2283,
+        "nsub" => 0x2284,
+        "sube" => 0x2286,
+        "supe" => 0x2287,
+        "oplus" => 0x2295,
+        "otimes" => 0x2297,
+        "perp" => 0x22A5,
+        "sdot" => 0x22C5,
+        "lceil" => 0x2308,
+        "rceil" => 0x2309,
+        "lfloor" => 0x230A,
+        "rfloor" => 0x230B,
+        "lang" => 0x2329,
+        "rang" => 0x232A,
+        "loz" => 0x25CA,
+        "spades" => 0x2660,
+        "clubs" => 0x2663,
+        "hearts" => 0x2665,
+        "diams" => 0x2666,
         _ => return None,
     };
-    Some(c.to_string())
+    Some(cp)
 }
 
 /// Check if a property name needs quoting in an object literal.
@@ -308,6 +672,7 @@ pub(super) fn needs_quoting(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::process_jsx_text;
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -404,6 +769,33 @@ mod tests {
     }
 
     #[test]
+    fn process_jsx_text_normalizes_cr_only_line_break() {
+        // Issue #3903: JSX text with a CR-only line break (e.g. "a\rb") was
+        // emitted unchanged because the multiline path only fired on '\n'.
+        // tsc collapses CR-only breaks the same as LF, joining trimmed lines
+        // with a single space.
+        assert_eq!(process_jsx_text("a\rb"), "a b");
+    }
+
+    #[test]
+    fn process_jsx_text_normalizes_crlf_line_break() {
+        assert_eq!(process_jsx_text("a\r\nb"), "a b");
+    }
+
+    #[test]
+    fn process_jsx_text_normalizes_mixed_cr_and_lf() {
+        assert_eq!(process_jsx_text("a\rb\nc"), "a b c");
+    }
+
+    #[test]
+    fn process_jsx_text_preserves_text_without_line_breaks() {
+        // Non-multiline text must round-trip verbatim, including significant
+        // whitespace, so the rest of the emitter can decide how to escape it.
+        assert_eq!(process_jsx_text("hello world"), "hello world");
+        assert_eq!(process_jsx_text("  spaced  "), "  spaced  ");
+    }
+
+    #[test]
     fn jsx_expression_with_trailing_comment_in_expression_is_preserved() {
         let source = "let x = <div>{null/* preserved */}</div>;";
         let output = emit_jsx(source);
@@ -474,5 +866,67 @@ mod tests {
             output.contains("/* ??? */ }"),
             "Trailing inline block comment inside JSX expression should keep leading space before closing brace.\nOutput: {output}"
         );
+    }
+
+    #[test]
+    fn decode_jsx_entities_decodes_extended_named_entities() {
+        // Latin-1 supplement and other letters tsc decodes but the previous
+        // hardcoded list omitted.
+        assert_eq!(super::decode_jsx_entities("&eacute;"), "\u{00E9}");
+        assert_eq!(super::decode_jsx_entities("&Aacute;"), "\u{00C1}");
+        assert_eq!(super::decode_jsx_entities("&iquest;"), "\u{00BF}");
+        assert_eq!(super::decode_jsx_entities("&Eacute;"), "\u{00C9}");
+        assert_eq!(super::decode_jsx_entities("&szlig;"), "\u{00DF}");
+        // Greek letters
+        assert_eq!(super::decode_jsx_entities("&alpha;"), "\u{03B1}");
+        assert_eq!(super::decode_jsx_entities("&Omega;"), "\u{03A9}");
+        assert_eq!(super::decode_jsx_entities("&Delta;"), "\u{0394}");
+        // Math symbols
+        assert_eq!(super::decode_jsx_entities("&sum;"), "\u{2211}");
+        assert_eq!(super::decode_jsx_entities("&infin;"), "\u{221E}");
+        // Currency
+        assert_eq!(super::decode_jsx_entities("&euro;"), "\u{20AC}");
+    }
+
+    #[test]
+    fn decode_jsx_entities_preserves_previously_supported_entities() {
+        // Regression net for entities the old short table covered.
+        assert_eq!(super::decode_jsx_entities("&amp;"), "&");
+        assert_eq!(super::decode_jsx_entities("&lt;"), "<");
+        assert_eq!(super::decode_jsx_entities("&gt;"), ">");
+        assert_eq!(super::decode_jsx_entities("&quot;"), "\"");
+        assert_eq!(super::decode_jsx_entities("&apos;"), "'");
+        assert_eq!(super::decode_jsx_entities("&nbsp;"), "\u{00A0}");
+        assert_eq!(super::decode_jsx_entities("&middot;"), "\u{00B7}");
+        assert_eq!(super::decode_jsx_entities("&hellip;"), "\u{2026}");
+        assert_eq!(super::decode_jsx_entities("&copy;"), "\u{00A9}");
+        assert_eq!(super::decode_jsx_entities("&trade;"), "\u{2122}");
+        assert_eq!(super::decode_jsx_entities("&hearts;"), "\u{2665}");
+        assert_eq!(super::decode_jsx_entities("&rarr;"), "\u{2192}");
+    }
+
+    #[test]
+    fn decode_jsx_entities_mixes_text_and_entities() {
+        assert_eq!(
+            super::decode_jsx_entities("caf&eacute; &amp; the&aacute;tre"),
+            "caf\u{00E9} & the\u{00E1}tre",
+        );
+    }
+
+    #[test]
+    fn decode_jsx_entities_leaves_unknown_named_entity_alone() {
+        // Truly unknown names round-trip verbatim, including the trailing semi.
+        assert_eq!(
+            super::decode_jsx_entities("&notARealEntity;"),
+            "&notARealEntity;",
+        );
+    }
+
+    #[test]
+    fn decode_jsx_entities_decodes_numeric_entities() {
+        // Existing behavior we must keep.
+        assert_eq!(super::decode_jsx_entities("&#233;"), "\u{00E9}");
+        assert_eq!(super::decode_jsx_entities("&#xE9;"), "\u{00E9}");
+        assert_eq!(super::decode_jsx_entities("&#x2026;"), "\u{2026}");
     }
 }

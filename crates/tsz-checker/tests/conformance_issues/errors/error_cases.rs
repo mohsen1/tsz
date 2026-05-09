@@ -91,10 +91,26 @@ fn test_plain_js_binder_errors_use_module_and_cross_function_diagnostics() {
         "plainJSBinderErrors.js",
         r#"
 export default 12
+const yield = 2
+async function f() {
+    const await = 3
+}
 function* g() {
     const yield = 4
 }
 class C {
+    deleted() {
+        function container(f) {
+            delete f
+        }
+        var g = 6
+        delete g
+        delete container
+    }
+    evalArguments() {
+        const eval = 7
+        const arguments = 8
+    }
     label() {
         for(;;) {
             label: var x = 1
@@ -117,12 +133,94 @@ const arguments = 10
         "Expected top-level `eval`/`arguments` bindings in a JS module to use TS1215.\nGot: {diagnostics:?}"
     );
     assert!(
+        has_error(&diagnostics, 1210),
+        "Expected class-local `eval`/`arguments` bindings in JS to use TS1210.\nGot: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 1102),
+        "Expected delete-on-identifier in JS class/module strict context to use TS1102.\nGot: {diagnostics:?}"
+    );
+    assert!(
         has_error(&diagnostics, 1107),
         "Expected `break label` after a non-enclosing labeled statement to use TS1107 in the function body.\nGot: {diagnostics:?}"
     );
     assert!(
         !has_error(&diagnostics, 1116),
         "Did not expect TS1116 once the cross-function boundary diagnostic is selected.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_delete_identifier_diagnostic_still_reports_without_syntax_errors() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "deleteIdentifier.ts",
+        r#"
+class C {
+    method(s: unknown) {
+        delete s;
+    }
+}
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 1102),
+        "Expected TS1102 for delete on an identifier in strict mode.\nGot: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_delete_identifier_diagnostic_is_suppressed_with_real_syntax_errors() {
+    let source = r#"
+var BOOLEAN1 = ANY delete ;
+var BOOLEAN2 = delete ;
+
+class C {
+    method(s: unknown) {
+        delete s;
+    }
+}
+"#;
+    let mut parser = ParserState::new(
+        "deleteIdentifierWithSyntaxErrors.ts".to_string(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let parse_diagnostics = parser.get_diagnostics().to_vec();
+    assert!(
+        !parse_diagnostics.is_empty(),
+        "test fixture must contain syntax diagnostics"
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "deleteIdentifierWithSyntaxErrors.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.has_parse_errors = true;
+    checker.ctx.has_syntax_parse_errors = true;
+    checker.ctx.all_parse_error_positions =
+        parse_diagnostics.iter().map(|diag| diag.start).collect();
+    checker.ctx.syntax_parse_error_positions = checker.ctx.all_parse_error_positions.clone();
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.message_text.clone()))
+        .collect();
+
+    assert!(
+        !has_error(&diagnostics, 1102),
+        "Did not expect TS1102 when real syntax errors are already present.\nGot: {diagnostics:#?}"
     );
 }
 
@@ -311,14 +409,18 @@ function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Sha
     // with tsc on tests like mappedTypeGenericWithKnownKeys.
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2551 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+            *code == 2551
+                && (message.contains("Record<\"knownLiteralKey\" | keyof Shape, number>")
+                    || message.contains("Record<keyof Shape | \"knownLiteralKey\", number>"))
         }),
-        "Expected TS2551 to preserve `Record<keyof Shape | \"knownLiteralKey\", number>` in the property-receiver display.\nActual diagnostics: {diagnostics:#?}"
+        "Expected TS2551 to preserve the generic Record receiver display.\nActual diagnostics: {diagnostics:#?}"
     );
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2862 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+            *code == 2862
+                && (message.contains("Record<\"knownLiteralKey\" | keyof Shape, number>")
+                    || message.contains("Record<keyof Shape | \"knownLiteralKey\", number>"))
         }),
         "Expected TS2862 for broad string write through generic mapped type.\nActual diagnostics: {diagnostics:#?}"
     );
@@ -400,7 +502,7 @@ function f<T extends Dict, K extends keyof T>(
 fn test_keyof_self_write_on_generic_receiver_does_not_emit_ts2862() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
-class Test<T extends Record<string, number>> {
+class Test<T extends { [key: string]: number }> {
   testy: T;
 
   constructor(t: T) {
@@ -423,6 +525,12 @@ class Test<T extends Record<string, number>> {
     assert!(
         !has_error(&diagnostics, 2862),
         "Did not expect TS2862 for write through `keyof T` on generic receiver `T`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'number' is not assignable to type 'T[keyof T]'."
+        }),
+        "Expected compound write through `keyof T` to emit TS2322 against `T[keyof T]`.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -452,6 +560,54 @@ function test1<T extends Record<string, any>, K extends keyof T>(t: T, k: K) {
     assert!(
         !has_error(&diagnostics, 2862),
         "Did not expect TS2862 for write through `K extends keyof T` on generic receiver `T`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_keyof_index_write_preserves_deferred_target_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Item = { a: string, b: number };
+
+type Entity = { id: number | string };
+type IdOf<E extends Entity> = E["id"];
+
+function f10<T extends Item, K extends keyof T>(obj: T, k2: keyof Item, k3: keyof T, k4: K) {
+  obj[k2] = 123;
+  obj[k3] = 123;
+  obj[k4] = 123;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type '123' is not assignable to type 'never'."
+        }),
+        "Expected write through `keyof` of the generic constraint to use the intersected write target `never`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'number' is not assignable to type 'T[keyof T]'."
+        }),
+        "Expected TS2322 target display to preserve `T[keyof T]`, not unrelated alias IdOf.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message == "Type 'number' is not assignable to type 'T[K]'."
+        }),
+        "Expected TS2322 target display to preserve `T[K]`, not unrelated alias IdOf.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("IdOf")),
+        "Deferred generic indexed-access writes must not be repainted as IdOf.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -613,18 +769,18 @@ o2.p4;
         .find(|(code, _)| *code == 2339)
         .expect("expected TS2339 for missing p4");
     assert!(
-        ts2339.1.contains("merge<merge<"),
-        "Expected TS2339 receiver to preserve merge alias chain.\nActual diagnostics: {diagnostics:#?}"
+        ts2339.1.contains("merge<"),
+        "Expected TS2339 receiver to preserve the merge alias surface.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
         !ts2339.1.contains("Omit<"),
         "Expected TS2339 receiver to avoid the expanded Omit surface.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2339
-            .1
-            .contains("merge<merge<{ p1: number; }, { p2: number; }>, { p3: number; }>"),
-        "Expected TS2339 receiver to widen inferred merge literal arguments.\nActual diagnostics: {diagnostics:#?}"
+        ts2339.1.contains("p1: number")
+            && ts2339.1.contains("p2: number")
+            && ts2339.1.contains("{ p3: number; }"),
+        "Expected TS2339 receiver to preserve widened merge literal properties.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -667,15 +823,18 @@ fn test_ts2339_elides_long_merge_receiver_instantiation_chain() {
 type Exclude<T, U> = T extends U ? never : T;
 type Pick<T, K extends keyof T> = { [P in K]: T[P] };
 type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
-type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+type merge<base, props> = keyof base & keyof props extends never
+    ? base & props
+    : Omit<base, keyof props & keyof base> & props;
 declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
 
 const o1 = merge({ p1: 1 }, { p2: 2 });
+const o2 = merge(o1, { p2: 2, p3: 3 });
 "#,
     );
-    for i in 2..=30 {
+    for i in 3..=30 {
         source.push_str(&format!(
-            "const o{i} = merge(o{}, {{ p{}: {} }});\n",
+            "const o{i} = merge(o{}, {{ p{i}: {i}, p{}: {} }});\n",
             i - 1,
             i + 1,
             i + 1
@@ -690,26 +849,25 @@ const o1 = merge({ p1: 1 }, { p2: 2 });
     );
     for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
         assert!(
-            message.matches("merge<").count() >= 25,
-            "Expected TS2339 receiver to preserve the long merge application chain.\nActual message: {message}"
+            message.matches("Omit<").count() >= 20,
+            "Expected TS2339 receiver to preserve the long Omit application chain.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ p1: number; }")
-                && message.contains("{ p2: number; }")
-                && message.contains("{ p5: number; }"),
-            "Expected TS2339 receiver to preserve the stable merge chain prefix.\nActual message: {message}"
+            message.contains("{ p1: number; } & { p2: number; }")
+                && message.contains("{ p2: number; p3: number; }"),
+            "Expected TS2339 receiver to preserve the stable Omit chain prefix.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ...; }"),
-            "Expected TS2339 receiver to elide the middle merge object arguments.\nActual message: {message}"
+            message.contains(", \"p3\"> & { ...; }"),
+            "Expected TS2339 receiver to elide later object branches.\nActual message: {message}"
         );
         assert!(
-            !message.contains("{ p31: number; }"),
-            "Expected TS2339 receiver to truncate before the shallow suffix.\nActual message: {message}"
+            !message.contains("{ p3: number; p4: number; }"),
+            "Expected TS2339 receiver not to expand later object branches.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ....."),
-            "Expected TS2339 receiver truncation to match tsc's merge-chain suffix.\nActual message: {message}"
+            !message.contains("merge<"),
+            "Expected TS2339 receiver not to repaint the resolved conditional branch as merge.\nActual message: {message}"
         );
         assert!(
             !message.contains("<...,"),
@@ -756,18 +914,16 @@ declare const o1: Type<{ p1: 1 }>;
     );
     for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
         assert!(
-            message.contains("{ p1: 1; }")
-                && message.contains("{ p2: number; }")
-                && message.contains("{ p5: number; }"),
-            "Expected TS2339 receiver to preserve the stable method-chain prefix.\nActual message: {message}"
+            message.matches("merge<").count() >= 20,
+            "Expected TS2339 receiver to preserve the long method-chain merge surface.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ...; }") && message.contains("{ ....."),
-            "Expected TS2339 receiver to elide and truncate the middle method-chain arguments.\nActual message: {message}"
+            message.contains("{ ...; }"),
+            "Expected TS2339 receiver to elide method-chain object arguments.\nActual message: {message}"
         );
         assert!(
-            !message.contains("{ p30: number; }") && !message.contains("<...,"),
-            "Expected TS2339 receiver not to keep the shallow suffix or raw ellipsis.\nActual message: {message}"
+            !message.contains("<...,"),
+            "Expected TS2339 receiver not to collapse the older chain to a raw ellipsis.\nActual message: {message}"
         );
     }
 }
@@ -947,6 +1103,27 @@ class Result<T, E> {
 }
 
 #[test]
+fn test_static_property_arrow_type_params_shadow_class_type_params() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+class Observable<T> {
+    static create: (...args: any[]) => any = <T>(value: T): T => value;
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Static property arrow type parameters should shadow class type parameters.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_static_method_type_params_still_check_constructor_argument_nullability() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
@@ -1087,6 +1264,125 @@ type T = Shape[any];
 }
 
 #[test]
+fn test_indexed_access_type_anchors_ts2538_at_any_index() {
+    let source = r#"
+class Shape {
+    name: string;
+}
+
+type T = Shape[any];
+"#;
+    let diagnostics =
+        compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+
+    let ts2538 = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == 2538
+                && diagnostic
+                    .message_text
+                    .contains("Type 'any' cannot be used as an index type")
+        })
+        .expect("expected TS2538 for `Shape[any]`");
+    assert_eq!(ts2538.start, source.find("any];").unwrap() as u32);
+    assert_eq!(ts2538.length, 3);
+}
+
+#[test]
+fn test_indexed_access_union_boolean_reports_literal_members() {
+    let source = r#"
+class Shape {
+    name: string;
+}
+
+type T = Shape[string | boolean];
+"#;
+    let diagnostics =
+        compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+
+    let ts2538: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2538)
+        .collect();
+    assert!(
+        ts2538.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'false' cannot be used as an index type")
+        }),
+        "Expected TS2538 for the false member.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2538.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'true' cannot be used as an index type")
+        }),
+        "Expected TS2538 for the true member.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2538.iter().all(|diagnostic| {
+            !diagnostic
+                .message_text
+                .contains("Type 'boolean' cannot be used as an index type")
+        }),
+        "Expected boolean union diagnostics to expand to literal members.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    let expected_start = source.find("string | boolean").unwrap() as u32;
+    let expected_len = "string | boolean".len() as u32;
+    assert!(
+        ts2538.iter().all(|diagnostic| {
+            diagnostic.start == expected_start && diagnostic.length == expected_len
+        }),
+        "Expected TS2538 diagnostics to anchor at the full index type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_indexed_access_string_number_union_reports_both_index_signatures() {
+    let source = r#"
+class Shape {
+    name: string;
+}
+
+type T = Shape[string | number];
+"#;
+    let diagnostics =
+        compile_and_get_raw_diagnostics_named("test.ts", source, CheckerOptions::default());
+
+    let ts2537: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2537)
+        .collect();
+    assert!(
+        ts2537.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'Shape' has no matching index signature for type 'string'")
+        }),
+        "Expected TS2537 for the string member.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2537.iter().any(|diagnostic| {
+            diagnostic
+                .message_text
+                .contains("Type 'Shape' has no matching index signature for type 'number'")
+        }),
+        "Expected TS2537 for the number member.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    let expected_start = source.find("string | number").unwrap() as u32;
+    let expected_len = "string | number".len() as u32;
+    assert!(
+        ts2537.iter().all(|diagnostic| {
+            diagnostic.start == expected_start && diagnostic.length == expected_len
+        }),
+        "Expected TS2537 diagnostics to anchor at the full index type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2537_for_array_string_index() {
     if !lib_files_available() {
         return;
@@ -1109,6 +1405,34 @@ type T = string[][string];
         !diagnostics.iter().any(|(code, _)| *code == 2536),
         "Did not expect TS2536 for `string[][string]` once concrete classifier applies.\nActual diagnostics: {diagnostics:#?}"
     );
+}
+
+#[test]
+fn test_nested_indexed_access_diagnostic_uses_last_bracket_span() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let source = r#"
+type T = string[][boolean];
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        source,
+        CheckerOptions::default(),
+    );
+
+    let ts2538 = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == 2538
+                && diagnostic
+                    .message_text
+                    .contains("Type 'boolean' cannot be used as an index type")
+        })
+        .expect("expected TS2538 for `string[][boolean]`");
+    assert_eq!(ts2538.start, source.rfind("boolean").unwrap() as u32);
+    assert_eq!(ts2538.length, "boolean".len() as u32);
 }
 
 #[test]

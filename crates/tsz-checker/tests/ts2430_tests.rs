@@ -494,18 +494,64 @@ fn test_constructor_typed_property_with_outer_type_param_errors() {
     // property uses its own generic constructor signature.
     let source = r#"
 interface Base {
+    make: new <T>() => T;
+    makeOptional: new <T>(x?: T) => T;
     a: new <T>(x: T) => T[];
 }
 
 interface Derived<T> extends Base {
+    make: new () => T;
+    makeOptional: new (x?: T) => T;
     a: new (x: T) => T[];
 }
 "#;
 
+    let diags = get_diagnostics(source);
     assert!(
-        has_error_with_code(source, 2430),
-        "Should emit TS2430 when a derived constructor-typed property narrows a base generic constructor property. Got: {:?}",
-        get_diagnostics(source)
+        diags.iter().any(|(code, message)| *code == 2430
+            && message.contains("incorrectly extends interface 'Base'")
+            && message.contains("Types of property 'make' are incompatible.")),
+        "Should emit TS2430 when derived constructor-typed properties narrow base generic constructor properties. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_construct_property_required_param_against_optional_base_errors() {
+    let source = r#"
+interface Base {
+    make: new <T>(x?: T) => T;
+}
+
+interface Derived extends Base {
+    make: new <T>(x: T) => T;
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2430
+            && message.contains("Interface 'Derived' incorrectly extends interface 'Base'")),
+        "Should emit TS2430 when a derived generic construct property makes an optional generic base parameter required. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_outer_type_param_call_property_against_generic_base_errors() {
+    let source = r#"
+interface Base {
+    make: <T>() => T;
+}
+
+interface Derived<T> extends Base {
+    make: () => T;
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| *code == 2430
+            && message.contains("Interface 'Derived<T>' incorrectly extends interface 'Base'")),
+        "Should emit TS2430 when a derived call property uses an outer type parameter instead of the base generic signature. Got: {diags:?}"
     );
 }
 
@@ -545,12 +591,19 @@ class C implements ClassComponent<MyAttrs> {
     view(v: Vnode<MyAttrs, C>) { return 0; }
     [_: number]: unknown;
 }
+
+const test8: ClassComponent<any> = new C();
 "#;
     let diags = get_diagnostics(source);
     let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
     assert!(
         ts2430.is_empty(),
         "Should NOT emit TS2430 for class implementing interface with `this` type references. Got: {ts2430:?}"
+    );
+    let ts2322 = diags.iter().filter(|d| d.0 == 2322).collect::<Vec<_>>();
+    assert!(
+        ts2322.is_empty(),
+        "Should NOT emit TS2322 for assigning a class instance to an interface with `this` type references. Got: {ts2322:?}"
     );
 }
 

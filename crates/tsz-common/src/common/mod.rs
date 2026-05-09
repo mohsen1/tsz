@@ -16,9 +16,9 @@
 //! No module should depend on a module that appears later in this chain.
 
 fn normalize_ts_option(value: &str) -> String {
-    let first = value.split(',').next().unwrap_or(value).trim();
-    let mut normalized = String::with_capacity(first.len());
-    for ch in first.chars() {
+    let trimmed = value.trim();
+    let mut normalized = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
         if ch == '-' || ch == '_' || ch.is_whitespace() {
             continue;
         }
@@ -30,7 +30,7 @@ fn normalize_ts_option(value: &str) -> String {
 /// ECMAScript target version.
 ///
 /// This determines which language features are available during compilation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum ScriptTarget {
     /// ECMAScript 3 (1999)
@@ -80,8 +80,7 @@ pub enum ScriptTarget {
 impl ScriptTarget {
     /// Parse a TypeScript compiler option target value.
     ///
-    /// This accepts tsc spelling variants and comma-separated directive values,
-    /// taking the first entry to match multi-target conformance directives.
+    /// This accepts tsc spelling variants.
     #[must_use]
     pub fn from_ts_str(value: &str) -> Option<Self> {
         match normalize_ts_option(value).as_str() {
@@ -278,8 +277,7 @@ pub enum ModuleKind {
 impl ModuleKind {
     /// Parse a TypeScript compiler option module value.
     ///
-    /// This accepts tsc spelling variants and comma-separated directive values,
-    /// taking the first entry to match multi-target conformance directives.
+    /// This accepts tsc spelling variants.
     #[must_use]
     pub fn from_ts_str(value: &str) -> Option<Self> {
         match normalize_ts_option(value).as_str() {

@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashMap;
 use std::ffi::OsString;
 use std::io::IsTerminal;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use tsz::checker::diagnostics::DiagnosticCategory;
@@ -18,6 +19,7 @@ use tsz_cli::{driver, locale, reporter::Reporter, watch};
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
+const TS5112_COMMAND_LINE_FILES_MESSAGE: &str = "tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.";
 
 fn main() -> Result<()> {
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
@@ -75,9 +77,29 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return handle_init(&args, &cwd);
     }
 
+    reject_tsconfig_only_cli_options(&args);
+    reject_build_only_cli_options(&args);
+
     // Handle --showConfig: print resolved configuration
     if args.show_config {
         return handle_show_config(&args, &cwd);
+    }
+
+    if should_report_ts5112_for_command_line_files(&args, &cwd) {
+        println!("error TS5112: {TS5112_COMMAND_LINE_FILES_MESSAGE}");
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
+    // `--listFilesOnly` still uses the normal no-input command-line behavior before
+    // the file-list-only path can print default libs.
+    if args.list_files_only
+        && args.files.is_empty()
+        && args.project.is_none()
+        && !cwd.join("tsconfig.json").exists()
+    {
+        println!("Version {TSC_VERSION}");
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        std::process::exit(1);
     }
 
     // Handle --listFilesOnly: print file list and exit
@@ -94,9 +116,10 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         return watch::run(&args, &cwd);
     }
 
-    // No-input behavior: if no files given, no --project, and no tsconfig.json in cwd,
-    // print version + help and exit 1 (matching tsc v6 behavior).
-    if args.files.is_empty() && args.project.is_none() && !cwd.join("tsconfig.json").exists() {
+    // No-input behavior: if no files given, no --project, and no tsconfig.json
+    // can be discovered from cwd or an ancestor, print version + help and exit
+    // 1 (matching tsc v6 behavior).
+    if args.files.is_empty() && args.project.is_none() && driver::find_tsconfig(&cwd).is_none() {
         println!("Version {TSC_VERSION}");
         println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
         std::process::exit(1);
@@ -110,13 +133,27 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         std::process::exit(1);
     }
 
-    // TS5069: Option 'emitDeclarationOnly' cannot be specified without specifying option
-    // 'declaration' or option 'composite'.
-    if args.emit_declaration_only && !args.declaration && !args.composite {
+    // Issue #3500: TS5069 for `--emitDeclarationOnly` is enforced by the
+    // driver/config validation (see `crates/tsz-cli/src/driver/core.rs`'s
+    // group-1 prerequisite merge and `crates/tsz-core/src/config/mod.rs`'s
+    // TS5069 emission). The previous early CLI-only short-circuit fired
+    // before tsconfig was loaded, so projects with `declaration: true`
+    // in their config were incorrectly rejected.
+
+    // Issue #3860: tsc honors output-only `compilerOptions` flags
+    // (`listFiles`, `listEmittedFiles`, `explainFiles`, `diagnostics`,
+    // `extendedDiagnostics`, `traceResolution`) from tsconfig. tsz only
+    // checked the CLI-flag side. OR the tsconfig-side values into `args`
+    // before the CLI gates further down inspect them.
+    let mut args = args;
+    merge_output_only_options_from_tsconfig(&mut args, &cwd);
+
+    if let Some(profile_path) = args.generate_cpu_profile.as_ref() {
         println!(
-            "error TS5069: Option 'emitDeclarationOnly' cannot be specified without specifying option 'declaration' or option 'composite'."
+            "error: --generateCpuProfile is not supported by tsz; requested profile '{}' was not created. Use --generateTrace for native trace output.",
+            profile_path.display()
         );
-        std::process::exit(1);
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
 
     // Initialize tracer if --generateTrace is specified
@@ -128,14 +165,6 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         t.metadata("process_name", meta_args);
         t
     });
-
-    // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
-    // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
-    if let Some(ref _profile_path) = args.generate_cpu_profile {
-        tracing::warn!(
-            "The --generateCpuProfile flag is a V8/Node.js feature and is not applicable to tsz (a native Rust compiler). The flag is accepted for compatibility but has no effect."
-        );
-    }
 
     let start_time = std::time::Instant::now();
     let result = match driver::compile(&args, &cwd) {
@@ -267,9 +296,11 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         //   (--noEmitOnError with errors means no outputs were generated).
         // Exit code 2 (DiagnosticsPresent_OutputsGenerated): errors exist but outputs were
         //   still generated (or --noEmit where there's nothing to emit regardless).
+        // `result.no_emit` reflects the resolved option (CLI + tsconfig.json),
+        // so a tsconfig-only `noEmit` selects exit 2 just like the CLI flag.
         if args.no_emit_on_error {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
-        } else if args.no_emit || !result.emitted_files.is_empty() {
+        } else if result.no_emit || !result.emitted_files.is_empty() {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
         } else {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
@@ -279,8 +310,16 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     std::process::exit(EXIT_SUCCESS);
 }
 
+fn should_report_ts5112_for_command_line_files(args: &CliArgs, cwd: &std::path::Path) -> bool {
+    !args.ignore_config
+        && !args.build
+        && args.project.is_none()
+        && !args.files.is_empty()
+        && cwd.join("tsconfig.json").exists()
+}
+
 const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
-    args.project.is_some() || args.build || args.watch || args.batch || args.files.len() != 1
+    args.project.is_some() || args.build || args.watch || args.batch || !args.files.is_empty()
 }
 
 /// Batch compilation mode: read project directory paths from stdin (one per line),
@@ -383,6 +422,7 @@ fn run_batch_mode() -> Result<()> {
 ///   `-v` maps to `--build-verbose`, `-d` maps to `--dry`, `-f` maps to `--force`
 /// - Case-insensitive flag names: `--NoEmit` → `--noEmit` (tsc v6 compat)
 /// - Boolean flag values: `--strict false` → strip the flag (tsc v6 compat)
+/// - Optional boolean flags: `--strictNullChecks file.ts` → `--strictNullChecks=true file.ts`
 /// - Duplicate flags: `--strict --strict` → deduplicated (tsc v6 compat)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     let flag_lookup = build_flag_lookup();
@@ -405,7 +445,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 Ok(content) => {
                     for line in content.lines() {
                         let trimmed = line.trim();
-                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        if !trimmed.is_empty() {
                             for part in split_response_line(trimmed) {
                                 expanded.push(OsString::from(part));
                             }
@@ -595,42 +635,62 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 let next_lower = next_str.to_lowercase();
                 if next_lower == "false" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=false so clap gets the value
-                        let combined = format!("{flag_name}=false");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            false,
+                        );
                         i += 2;
                         continue;
                     }
-                    // Plain bool flag: skip both (flag is not set)
+                    // Plain bool flag: clap can't represent an explicit `false`,
+                    // so strip the `--flag false` pair and forward the intent
+                    // through a hidden side-channel arg. The override pipeline
+                    // reads `args.explicitly_disabled_bool_flags` and uses it to
+                    // flip a `true` value loaded from `tsconfig.json` to `false`.
                     if let Some(&prev_idx) = flag_positions.get(&flag_name) {
                         skip_positions[prev_idx] = true;
                     }
                     flag_positions.remove(&flag_name);
+                    let bare = flag_name.trim_start_matches("--");
+                    final_result.push(OsString::from(format!(
+                        "--__explicitly-disabled-bool-flag={bare}"
+                    )));
+                    skip_positions.push(false);
                     i += 2;
                     continue;
                 } else if next_lower == "true" {
                     if option_bool_flags.contains(flag_name.as_str()) {
-                        // Option<bool> flag: emit --flag=true so clap gets the value
-                        let combined = format!("{flag_name}=true");
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        let current_idx = final_result.len();
-                        flag_positions.insert(flag_name, current_idx);
-                        final_result.push(OsString::from(combined));
-                        skip_positions.push(false);
+                        push_option_bool_arg(
+                            &mut final_result,
+                            &mut skip_positions,
+                            &mut flag_positions,
+                            &flag_name,
+                            true,
+                        );
                         i += 2;
                         continue;
                     }
                     // Plain bool flag: keep the flag, skip the "true" token
                     i += 1;
                 }
+            }
+
+            if is_boolean
+                && !arg_str.contains('=')
+                && option_bool_flags.contains(flag_name.as_str())
+            {
+                push_option_bool_arg(
+                    &mut final_result,
+                    &mut skip_positions,
+                    &mut flag_positions,
+                    &flag_name,
+                    true,
+                );
+                i += 1;
+                continue;
             }
 
             // Deduplicate: if we've seen this flag before, mark old position for skip
@@ -669,6 +729,23 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         .zip(skip_positions)
         .filter_map(|(arg, skip)| if skip { None } else { Some(arg) })
         .collect()
+}
+
+fn push_option_bool_arg(
+    final_result: &mut Vec<OsString>,
+    skip_positions: &mut Vec<bool>,
+    flag_positions: &mut FxHashMap<String, usize>,
+    flag_name: &str,
+    value: bool,
+) {
+    if let Some(&prev_idx) = flag_positions.get(flag_name) {
+        skip_positions[prev_idx] = true;
+    }
+
+    let current_idx = final_result.len();
+    flag_positions.insert(flag_name.to_string(), current_idx);
+    final_result.push(OsString::from(format!("{flag_name}={value}")));
+    skip_positions.push(false);
 }
 
 /// Build a lookup table from lowercase flag names (without `--`) to their canonical
@@ -836,6 +913,7 @@ fn build_valued_flag_set() -> rustc_hash::FxHashSet<&'static str> {
         "--tsBuildInfoFile",
         "--generateTrace",
         "--generateCpuProfile",
+        "--ignoreDeprecations",
         "--watchFile",
         "--watchDirectory",
         "--fallbackPolling",
@@ -1193,6 +1271,7 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--generateTrace",
     "--help",
     "--ignoreConfig",
+    "--ignoreDeprecations",
     "--importHelpers",
     "--importsNotUsedAsValues",
     "--incremental",
@@ -1342,6 +1421,124 @@ fn find_closest_option(unknown: &str) -> Option<&'static str> {
         let threshold = (max_len * 2 / 5).max(1); // ~40% of the longer name
         if dist <= threshold { Some(name) } else { None }
     })
+}
+
+/// Read the discovered tsconfig and OR its output-only `compilerOptions`
+/// flags into `args`. tsc honors `listFiles`, `listEmittedFiles`,
+/// `explainFiles`, `diagnostics`, `extendedDiagnostics`, and
+/// `traceResolution` from tsconfig; tsz used to ignore them. See #3860.
+///
+/// This is a best-effort merge: the full config resolver runs later
+/// (with extends-resolution, JSONC, etc.). For these output-only flags,
+/// reading the literal top-level `compilerOptions` is sufficient because
+/// their values aren't redefined in extends chains in practice.
+fn merge_output_only_options_from_tsconfig(args: &mut CliArgs, cwd: &std::path::Path) {
+    if args.ignore_config {
+        return;
+    }
+    // Resolve tsconfig path the same way handle_show_config does, falling
+    // back to upward search from cwd.
+    let tsconfig_path = args
+        .project
+        .as_ref()
+        .map(|p| {
+            let resolved = if p.is_relative() {
+                cwd.join(p)
+            } else {
+                p.clone()
+            };
+            if resolved.is_dir() {
+                resolved.join("tsconfig.json")
+            } else {
+                resolved
+            }
+        })
+        .or_else(|| driver::find_tsconfig(cwd));
+    let Some(path) = tsconfig_path else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    // Tolerate JSONC: strip line/block comments before parsing. tsconfig
+    // permits both. We don't need the full extends chain here — only the
+    // top-level compilerOptions block.
+    let stripped = strip_jsonc_minimal(&text);
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&stripped) else {
+        return;
+    };
+    let Some(opts) = json.get("compilerOptions").and_then(|v| v.as_object()) else {
+        return;
+    };
+
+    let take_bool = |key: &str, current: &mut bool| {
+        if !*current
+            && opts
+                .get(key)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        {
+            *current = true;
+        }
+    };
+    take_bool("listFiles", &mut args.list_files);
+    take_bool("listEmittedFiles", &mut args.list_emitted_files);
+    take_bool("explainFiles", &mut args.explain_files);
+    take_bool("diagnostics", &mut args.diagnostics);
+    take_bool("extendedDiagnostics", &mut args.extended_diagnostics);
+    take_bool("traceResolution", &mut args.trace_resolution);
+}
+
+/// Strip line and block comments from JSONC. Single-pass; respects string
+/// literals. Sufficient for top-level tsconfig parsing.
+fn strip_jsonc_minimal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut string_quote = b'"';
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            out.push(b as char);
+            if b == b'\\' && i + 1 < bytes.len() {
+                out.push(bytes[i + 1] as char);
+                i += 2;
+                continue;
+            }
+            if b == string_quote {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'"' || b == b'\'' {
+            in_string = true;
+            string_quote = b;
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'/' && i + 1 < bytes.len() {
+            if bytes[i + 1] == b'/' {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if bytes[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+                continue;
+            }
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    out
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
@@ -1594,10 +1791,59 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         // PERF: dump perf counters when TSZ_PERF_COUNTERS is set. Empty
         // string when the env var isn't present, so the noisy counter dump
         // only appears in profiling runs. See
-        // `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+        // `docs/plan/PERFORMANCE_PLAN.md`.
         let counter_dump = tsz_common::perf_counters::PerfCounters::dump_string();
         if !counter_dump.is_empty() {
             print!("{counter_dump}");
+        }
+    }
+}
+
+fn reject_tsconfig_only_cli_options(args: &CliArgs) {
+    for (name, values) in [
+        ("paths", args.paths.as_ref()),
+        ("plugins", args.plugins.as_ref()),
+    ] {
+        let provided_non_null = values
+            .is_some_and(|values| !(values.len() == 1 && values[0].eq_ignore_ascii_case("null")));
+        if provided_non_null {
+            println!(
+                "error TS6064: Option '{name}' can only be specified in 'tsconfig.json' file or set to 'null' on command line."
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+fn reject_build_only_cli_options(args: &CliArgs) {
+    if args.build {
+        return;
+    }
+
+    let explicitly_disabled = |name: &str| {
+        args.explicitly_disabled_bool_flags
+            .iter()
+            .any(|flag| flag == name)
+    };
+
+    for (name, provided) in [
+        (
+            "verbose",
+            args.build_verbose
+                || explicitly_disabled("build-verbose")
+                || explicitly_disabled("verbose"),
+        ),
+        ("dry", args.dry || explicitly_disabled("dry")),
+        ("force", args.force || explicitly_disabled("force")),
+        ("clean", args.clean || explicitly_disabled("clean")),
+        (
+            "stopBuildOnErrors",
+            args.stop_build_on_errors || explicitly_disabled("stopBuildOnErrors"),
+        ),
+    ] {
+        if provided {
+            println!("error TS5093: Compiler option '--{name}' may only be used with '--build'.");
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
         }
     }
 }
@@ -1653,7 +1899,7 @@ fn get_memory_usage_kb() -> u64 {
     0
 }
 
-fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
+fn handle_init(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let tsconfig_path = cwd.join("tsconfig.json");
     if tsconfig_path.exists() {
         println!(
@@ -1663,53 +1909,9 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         std::process::exit(0);
     }
 
-    // Build the tsconfig.json content matching tsc 5.x --init output format
-    // Uses JSONC (JSON with comments) which TypeScript supports
-    let config = r#"{
-  // Visit https://aka.ms/tsconfig to read more about this file
-  "compilerOptions": {
-    // File Layout
-    // "rootDir": "./src",
-    // "outDir": "./dist",
-
-    // Environment Settings
-    // See also https://aka.ms/tsconfig/module
-    "module": "nodenext",
-    "target": "esnext",
-    "types": [],
-    // For nodejs:
-    // "lib": ["esnext"],
-    // "types": ["node"],
-    // and npm install -D @types/node
-
-    // Other Outputs
-    "sourceMap": true,
-    "declaration": true,
-    "declarationMap": true,
-
-    // Stricter Typechecking Options
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-
-    // Style Options
-    // "noImplicitReturns": true,
-    // "noImplicitOverride": true,
-    // "noUnusedLocals": true,
-    // "noUnusedParameters": true,
-    // "noFallthroughCasesInSwitch": true,
-    // "noPropertyAccessFromIndexSignature": true,
-
-    // Recommended Options
-    "strict": true,
-    "jsx": "react-jsx",
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-    "noUncheckedSideEffectImports": true,
-    "moduleDetection": "force",
-    "skipLibCheck": true,
-  }
-}
-"#;
+    let raw_args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let overrides = collect_init_overrides(&raw_args, args);
+    let config = render_init_template(&overrides);
 
     std::fs::write(&tsconfig_path, config).with_context(|| {
         format!(
@@ -1723,38 +1925,634 @@ fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Walk the original CLI args in order and collect (canonical option name,
+/// JSON-formatted value) pairs for every recognized compiler option the user
+/// passed. Later occurrences supersede earlier ones (matching tsc's
+/// last-write-wins behavior). Order is preserved so that options not in the
+/// fixed `--init` template are appended in the order they appear.
+fn collect_init_overrides(raw_args: &[OsString], args: &CliArgs) -> Vec<(&'static str, String)> {
+    let mut overrides: Vec<(&'static str, String)> = Vec::new();
+    let mut i = 0;
+    while i < raw_args.len() {
+        let arg = raw_args[i].to_string_lossy().to_string();
+        if !arg.starts_with("--") || arg == "--" {
+            i += 1;
+            continue;
+        }
+        let (flag, has_inline_value) = match arg.find('=') {
+            Some(eq) => (arg[..eq].to_string(), true),
+            None => (arg.clone(), false),
+        };
+        let canonical = canonicalize_init_option(&flag);
+        let takes_value = canonical.is_some_and(init_option_takes_value);
+        if let Some(name) = canonical
+            && let Some(value) = init_option_value(name, args)
+        {
+            if let Some(pos) = overrides.iter().position(|(k, _)| *k == name) {
+                overrides[pos] = (name, value);
+            } else {
+                overrides.push((name, value));
+            }
+        }
+        if takes_value && !has_inline_value {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    overrides
+}
+
+/// Returns the canonical (camelCase) compiler-option name for a CLI flag.
+/// Matching is case-insensitive and ignores `-` characters so that
+/// `--rootDir`, `--rootdir`, and `--root-dir` all map to `"rootDir"`.
+fn canonicalize_init_option(flag: &str) -> Option<&'static str> {
+    let key: String = flag
+        .trim_start_matches('-')
+        .chars()
+        .filter(|c| *c != '-')
+        .flat_map(char::to_lowercase)
+        .collect();
+    INIT_OPTION_TABLE.iter().find_map(|(canonical, _)| {
+        let canonical_key: String = canonical
+            .chars()
+            .filter(|c| *c != '-')
+            .flat_map(char::to_lowercase)
+            .collect();
+        (canonical_key == key).then_some(*canonical)
+    })
+}
+
+#[derive(Clone, Copy)]
+enum InitOptionKind {
+    /// Boolean flag (`--strict`, `--strict false`, `--strict true`).
+    Bool,
+    /// Flag that requires a value (`--target esnext`, `--lib es2015,dom`).
+    Value,
+}
+
+fn init_option_takes_value(name: &str) -> bool {
+    INIT_OPTION_TABLE
+        .iter()
+        .find(|(n, _)| *n == name)
+        .is_some_and(|(_, k)| matches!(k, InitOptionKind::Value))
+}
+
+/// Recognized compiler options for the `--init` flow.
+///
+/// The set is intentionally small relative to the full CLI surface: it covers
+/// every option that has a slot in the default template plus the most common
+/// command-line options that tsc users pass alongside `--init`. Unrecognized
+/// options are silently ignored, matching `tsc`.
+const INIT_OPTION_TABLE: &[(&str, InitOptionKind)] = &[
+    // Language and environment
+    ("target", InitOptionKind::Value),
+    ("module", InitOptionKind::Value),
+    ("moduleResolution", InitOptionKind::Value),
+    ("moduleDetection", InitOptionKind::Value),
+    ("jsx", InitOptionKind::Value),
+    ("jsxFactory", InitOptionKind::Value),
+    ("jsxFragmentFactory", InitOptionKind::Value),
+    ("jsxImportSource", InitOptionKind::Value),
+    ("lib", InitOptionKind::Value),
+    ("types", InitOptionKind::Value),
+    ("typeRoots", InitOptionKind::Value),
+    ("rootDir", InitOptionKind::Value),
+    ("outDir", InitOptionKind::Value),
+    ("outFile", InitOptionKind::Value),
+    ("baseUrl", InitOptionKind::Value),
+    ("declarationDir", InitOptionKind::Value),
+    ("newLine", InitOptionKind::Value),
+    ("noLib", InitOptionKind::Bool),
+    // Emit / output
+    ("declaration", InitOptionKind::Bool),
+    ("declarationMap", InitOptionKind::Bool),
+    ("sourceMap", InitOptionKind::Bool),
+    ("inlineSourceMap", InitOptionKind::Bool),
+    ("inlineSources", InitOptionKind::Bool),
+    ("emitDeclarationOnly", InitOptionKind::Bool),
+    ("noEmit", InitOptionKind::Bool),
+    ("noEmitOnError", InitOptionKind::Bool),
+    ("noEmitHelpers", InitOptionKind::Bool),
+    ("importHelpers", InitOptionKind::Bool),
+    ("downlevelIteration", InitOptionKind::Bool),
+    ("removeComments", InitOptionKind::Bool),
+    ("preserveConstEnums", InitOptionKind::Bool),
+    ("emitBOM", InitOptionKind::Bool),
+    // Interop / modules
+    ("esModuleInterop", InitOptionKind::Bool),
+    ("allowSyntheticDefaultImports", InitOptionKind::Bool),
+    ("isolatedModules", InitOptionKind::Bool),
+    ("isolatedDeclarations", InitOptionKind::Bool),
+    ("verbatimModuleSyntax", InitOptionKind::Bool),
+    ("forceConsistentCasingInFileNames", InitOptionKind::Bool),
+    ("preserveSymlinks", InitOptionKind::Bool),
+    ("erasableSyntaxOnly", InitOptionKind::Bool),
+    ("resolveJsonModule", InitOptionKind::Bool),
+    ("noResolve", InitOptionKind::Bool),
+    ("allowUmdGlobalAccess", InitOptionKind::Bool),
+    ("noUncheckedSideEffectImports", InitOptionKind::Bool),
+    ("allowImportingTsExtensions", InitOptionKind::Bool),
+    ("rewriteRelativeImportExtensions", InitOptionKind::Bool),
+    ("allowArbitraryExtensions", InitOptionKind::Bool),
+    // JavaScript support
+    ("allowJs", InitOptionKind::Bool),
+    ("checkJs", InitOptionKind::Bool),
+    // Decorators
+    ("experimentalDecorators", InitOptionKind::Bool),
+    ("emitDecoratorMetadata", InitOptionKind::Bool),
+    // Type checking
+    ("strict", InitOptionKind::Bool),
+    ("noImplicitAny", InitOptionKind::Bool),
+    ("strictNullChecks", InitOptionKind::Bool),
+    ("strictFunctionTypes", InitOptionKind::Bool),
+    ("strictBindCallApply", InitOptionKind::Bool),
+    ("strictPropertyInitialization", InitOptionKind::Bool),
+    ("strictBuiltinIteratorReturn", InitOptionKind::Bool),
+    ("noImplicitThis", InitOptionKind::Bool),
+    ("useUnknownInCatchVariables", InitOptionKind::Bool),
+    ("alwaysStrict", InitOptionKind::Bool),
+    ("noUnusedLocals", InitOptionKind::Bool),
+    ("noUnusedParameters", InitOptionKind::Bool),
+    ("exactOptionalPropertyTypes", InitOptionKind::Bool),
+    ("noImplicitReturns", InitOptionKind::Bool),
+    ("noFallthroughCasesInSwitch", InitOptionKind::Bool),
+    ("noUncheckedIndexedAccess", InitOptionKind::Bool),
+    ("noImplicitOverride", InitOptionKind::Bool),
+    ("noPropertyAccessFromIndexSignature", InitOptionKind::Bool),
+    ("allowUnreachableCode", InitOptionKind::Bool),
+    ("allowUnusedLabels", InitOptionKind::Bool),
+    ("useDefineForClassFields", InitOptionKind::Bool),
+    // Completeness
+    ("skipDefaultLibCheck", InitOptionKind::Bool),
+    ("skipLibCheck", InitOptionKind::Bool),
+    // Projects
+    ("composite", InitOptionKind::Bool),
+    ("incremental", InitOptionKind::Bool),
+    // Diagnostics / output formatting
+    ("diagnostics", InitOptionKind::Bool),
+    ("extendedDiagnostics", InitOptionKind::Bool),
+    ("explainFiles", InitOptionKind::Bool),
+    ("listFiles", InitOptionKind::Bool),
+    ("listEmittedFiles", InitOptionKind::Bool),
+    ("traceResolution", InitOptionKind::Bool),
+    ("noCheck", InitOptionKind::Bool),
+    ("noErrorTruncation", InitOptionKind::Bool),
+    ("preserveWatchOutput", InitOptionKind::Bool),
+    ("pretty", InitOptionKind::Bool),
+];
+
+/// Format the user-supplied value for a recognized option as a JSON literal.
+/// Returns `None` if the option is recognized but the parsed `args` struct
+/// does not carry a meaningful value (e.g., a `bool` field is `false` because
+/// the option was never on the command line — but in that case the caller
+/// would not invoke this function).
+fn init_option_value(name: &'static str, args: &CliArgs) -> Option<String> {
+    match name {
+        "target" => args.target.map(|t| json_str(target_init_str(t))),
+        "module" => args.module.map(|m| json_str(module_init_str(m))),
+        "moduleResolution" => args
+            .module_resolution
+            .map(|m| json_str(module_resolution_init_str(m))),
+        "moduleDetection" => args
+            .module_detection
+            .map(|m| json_str(module_detection_init_str(m))),
+        "jsx" => args.jsx.map(|j| json_str(jsx_init_str(j))),
+        "jsxFactory" => args.jsx_factory.as_deref().map(json_str),
+        "jsxFragmentFactory" => args.jsx_fragment_factory.as_deref().map(json_str),
+        "jsxImportSource" => args.jsx_import_source.as_deref().map(json_str),
+        "newLine" => args.new_line.map(|n| json_str(new_line_init_str(n))),
+        "lib" => args.lib.as_ref().map(|v| json_str_array(v)),
+        "types" => args.types.as_ref().map(|v| json_str_array(v)),
+        "typeRoots" => args
+            .type_roots
+            .as_ref()
+            .map(|v| json_path_array(v.iter().map(PathBuf::as_path))),
+        "rootDir" => args.root_dir.as_deref().map(json_path),
+        "outDir" => args.out_dir.as_deref().map(json_path),
+        "outFile" => args.out_file.as_deref().map(json_path),
+        "baseUrl" => args.base_url.as_deref().map(json_path),
+        "declarationDir" => args.declaration_dir.as_deref().map(json_path),
+        // Plain bool flags. The preprocessor in `preprocess_args` strips
+        // `--flag false` pairs and either flips the field to `false` directly
+        // or records the flag name in `explicitly_disabled_bool_flags`. By
+        // the time we get here, `args.<field>` already reflects the user's
+        // intent.
+        "noLib" => Some(bool_str(args.no_lib)),
+        "declaration" => Some(bool_str(args.declaration)),
+        "declarationMap" => Some(bool_str(args.declaration_map)),
+        "sourceMap" => Some(bool_str(args.source_map)),
+        "inlineSourceMap" => Some(bool_str(args.inline_source_map)),
+        "inlineSources" => Some(bool_str(args.inline_sources)),
+        "emitDeclarationOnly" => Some(bool_str(args.emit_declaration_only)),
+        "noEmit" => Some(bool_str(args.no_emit)),
+        "noEmitOnError" => Some(bool_str(args.no_emit_on_error)),
+        "noEmitHelpers" => Some(bool_str(args.no_emit_helpers)),
+        "importHelpers" => Some(bool_str(args.import_helpers)),
+        "downlevelIteration" => Some(bool_str(args.downlevel_iteration)),
+        "removeComments" => Some(bool_str(args.remove_comments)),
+        "preserveConstEnums" => Some(bool_str(args.preserve_const_enums)),
+        "emitBOM" => Some(bool_str(args.emit_bom)),
+        "esModuleInterop" => Some(bool_str(args.es_module_interop)),
+        "isolatedModules" => Some(bool_str(args.isolated_modules)),
+        "isolatedDeclarations" => Some(bool_str(args.isolated_declarations)),
+        "verbatimModuleSyntax" => Some(bool_str(args.verbatim_module_syntax)),
+        "preserveSymlinks" => Some(bool_str(args.preserve_symlinks)),
+        "erasableSyntaxOnly" => Some(bool_str(args.erasable_syntax_only)),
+        "resolveJsonModule" => Some(bool_str(args.resolve_json_module)),
+        "noResolve" => Some(bool_str(args.no_resolve)),
+        "allowUmdGlobalAccess" => Some(bool_str(args.allow_umd_global_access)),
+        "noUncheckedSideEffectImports" => Some(bool_str(args.no_unchecked_side_effect_imports)),
+        "allowImportingTsExtensions" => Some(bool_str(args.allow_importing_ts_extensions)),
+        "rewriteRelativeImportExtensions" => {
+            Some(bool_str(args.rewrite_relative_import_extensions))
+        }
+        "allowArbitraryExtensions" => Some(bool_str(args.allow_arbitrary_extensions)),
+        "allowJs" => Some(bool_str(args.allow_js)),
+        "checkJs" => Some(bool_str(args.check_js)),
+        "experimentalDecorators" => Some(bool_str(args.experimental_decorators)),
+        "emitDecoratorMetadata" => Some(bool_str(args.emit_decorator_metadata)),
+        "strict" => Some(bool_str(args.strict)),
+        "noUnusedLocals" => Some(bool_str(args.no_unused_locals)),
+        "noUnusedParameters" => Some(bool_str(args.no_unused_parameters)),
+        "exactOptionalPropertyTypes" => Some(bool_str(args.exact_optional_property_types)),
+        "noImplicitReturns" => Some(bool_str(args.no_implicit_returns)),
+        "noFallthroughCasesInSwitch" => Some(bool_str(args.no_fallthrough_cases_in_switch)),
+        "noUncheckedIndexedAccess" => Some(bool_str(args.no_unchecked_indexed_access)),
+        "noImplicitOverride" => Some(bool_str(args.no_implicit_override)),
+        "noPropertyAccessFromIndexSignature" => {
+            Some(bool_str(args.no_property_access_from_index_signature))
+        }
+        "skipDefaultLibCheck" => Some(bool_str(args.skip_default_lib_check)),
+        "skipLibCheck" => Some(bool_str(args.skip_lib_check)),
+        "composite" => Some(bool_str(args.composite)),
+        "incremental" => Some(bool_str(args.incremental)),
+        "diagnostics" => Some(bool_str(args.diagnostics)),
+        "extendedDiagnostics" => Some(bool_str(args.extended_diagnostics)),
+        "explainFiles" => Some(bool_str(args.explain_files)),
+        "listFiles" => Some(bool_str(args.list_files)),
+        "listEmittedFiles" => Some(bool_str(args.list_emitted_files)),
+        "traceResolution" => Some(bool_str(args.trace_resolution)),
+        "noCheck" => Some(bool_str(args.no_check)),
+        "noErrorTruncation" => Some(bool_str(args.no_error_truncation)),
+        "preserveWatchOutput" => Some(bool_str(args.preserve_watch_output)),
+        // Tri-state Option<bool> flags.
+        "pretty" => args.pretty.map(bool_str),
+        "noImplicitAny" => args.no_implicit_any.map(bool_str),
+        "strictNullChecks" => args.strict_null_checks.map(bool_str),
+        "strictFunctionTypes" => args.strict_function_types.map(bool_str),
+        "strictBindCallApply" => args.strict_bind_call_apply.map(bool_str),
+        "strictPropertyInitialization" => args.strict_property_initialization.map(bool_str),
+        "strictBuiltinIteratorReturn" => args.strict_builtin_iterator_return.map(bool_str),
+        "noImplicitThis" => args.no_implicit_this.map(bool_str),
+        "useUnknownInCatchVariables" => args.use_unknown_in_catch_variables.map(bool_str),
+        "alwaysStrict" => args.always_strict.map(bool_str),
+        "allowSyntheticDefaultImports" => args.allow_synthetic_default_imports.map(bool_str),
+        "forceConsistentCasingInFileNames" => {
+            args.force_consistent_casing_in_file_names.map(bool_str)
+        }
+        "allowUnreachableCode" => args.allow_unreachable_code.map(bool_str),
+        "allowUnusedLabels" => args.allow_unused_labels.map(bool_str),
+        "useDefineForClassFields" => args.use_define_for_class_fields.map(bool_str),
+        _ => None,
+    }
+}
+
+fn bool_str(b: bool) -> String {
+    if b { "true".into() } else { "false".into() }
+}
+
+fn json_str(s: &str) -> String {
+    // Escape backslashes and double quotes; tsconfig is JSONC and our values
+    // are user-supplied strings or paths.
+    let mut escaped = String::with_capacity(s.len() + 2);
+    escaped.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            _ => escaped.push(c),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+fn json_path(p: &Path) -> String {
+    // tsc emits paths with forward slashes; do the same so that snapshots are
+    // stable on Windows-style inputs and so that the path round-trips through
+    // tsconfig parsing.
+    json_str(&p.to_string_lossy().replace('\\', "/"))
+}
+
+fn json_str_array(values: &[String]) -> String {
+    if values.is_empty() {
+        return "[]".into();
+    }
+    let items: Vec<String> = values.iter().map(|v| json_str(v)).collect();
+    format!("[{}]", items.join(", "))
+}
+
+fn json_path_array<'a, I: Iterator<Item = &'a Path>>(paths: I) -> String {
+    let items: Vec<String> = paths.map(json_path).collect();
+    if items.is_empty() {
+        "[]".into()
+    } else {
+        format!("[{}]", items.join(", "))
+    }
+}
+
+const fn target_init_str(t: tsz_cli::args::Target) -> &'static str {
+    use tsz_cli::args::Target;
+    match t {
+        Target::Es3 => "es3",
+        Target::Es5 => "es5",
+        // tsc canonicalizes ES2015 to "es6".
+        Target::Es2015 => "es6",
+        Target::Es2016 => "es2016",
+        Target::Es2017 => "es2017",
+        Target::Es2018 => "es2018",
+        Target::Es2019 => "es2019",
+        Target::Es2020 => "es2020",
+        Target::Es2021 => "es2021",
+        Target::Es2022 => "es2022",
+        Target::Es2023 => "es2023",
+        Target::Es2024 => "es2024",
+        Target::Es2025 => "es2025",
+        Target::EsNext => "esnext",
+    }
+}
+
+const fn module_init_str(m: tsz_cli::args::Module) -> &'static str {
+    use tsz_cli::args::Module;
+    match m {
+        Module::None => "none",
+        Module::CommonJs => "commonjs",
+        Module::Amd => "amd",
+        Module::Umd => "umd",
+        Module::System => "system",
+        // tsc canonicalizes ES2015 to "es6" for module too.
+        Module::Es2015 => "es6",
+        Module::Es2020 => "es2020",
+        Module::Es2022 => "es2022",
+        Module::EsNext => "esnext",
+        Module::Node16 => "node16",
+        Module::Node18 => "node18",
+        Module::Node20 => "node20",
+        Module::NodeNext => "nodenext",
+        Module::Preserve => "preserve",
+    }
+}
+
+const fn module_resolution_init_str(m: tsz_cli::args::ModuleResolution) -> &'static str {
+    use tsz_cli::args::ModuleResolution;
+    match m {
+        ModuleResolution::Classic => "classic",
+        // tsc emits "node10" as the canonical name for Node10/node.
+        ModuleResolution::Node10 => "node10",
+        ModuleResolution::Node16 => "node16",
+        ModuleResolution::NodeNext => "nodenext",
+        ModuleResolution::Bundler => "bundler",
+    }
+}
+
+const fn module_detection_init_str(m: tsz_cli::args::ModuleDetection) -> &'static str {
+    use tsz_cli::args::ModuleDetection;
+    match m {
+        ModuleDetection::Auto => "auto",
+        ModuleDetection::Force => "force",
+        ModuleDetection::Legacy => "legacy",
+    }
+}
+
+const fn jsx_init_str(j: tsz_cli::args::JsxEmit) -> &'static str {
+    use tsz_cli::args::JsxEmit;
+    match j {
+        JsxEmit::Preserve => "preserve",
+        JsxEmit::React => "react",
+        JsxEmit::ReactJsx => "react-jsx",
+        JsxEmit::ReactJsxDev => "react-jsxdev",
+        JsxEmit::ReactNative => "react-native",
+    }
+}
+
+const fn new_line_init_str(n: tsz_cli::args::NewLine) -> &'static str {
+    use tsz_cli::args::NewLine;
+    match n {
+        NewLine::Crlf => "crlf",
+        NewLine::Lf => "lf",
+    }
+}
+
+fn emit_init_line(
+    out: &mut String,
+    map: &std::collections::HashMap<&'static str, &str>,
+    key: &'static str,
+    default_value: &str,
+    comment_default: bool,
+) {
+    if let Some(value) = map.get(key) {
+        out.push_str("    \"");
+        out.push_str(key);
+        out.push_str("\": ");
+        out.push_str(value);
+        out.push_str(",\n");
+    } else if comment_default {
+        out.push_str("    // \"");
+        out.push_str(key);
+        out.push_str("\": ");
+        out.push_str(default_value);
+        out.push_str(",\n");
+    } else {
+        out.push_str("    \"");
+        out.push_str(key);
+        out.push_str("\": ");
+        out.push_str(default_value);
+        out.push_str(",\n");
+    }
+}
+
+/// Render the `tsconfig.json` body using the JSONC template that tsc 6.x
+/// emits, with each templated option replaced by the user-provided value (if
+/// any). Options that the user passed but that don't have a slot in the
+/// template are appended after the template body in CLI order, matching tsc.
+fn render_init_template(overrides: &[(&'static str, String)]) -> String {
+    use std::collections::HashMap;
+    let map: HashMap<&'static str, &str> =
+        overrides.iter().map(|(k, v)| (*k, v.as_str())).collect();
+
+    let mut out = String::new();
+    out.push_str("{\n");
+    out.push_str("  // Visit https://aka.ms/tsconfig to read more about this file\n");
+    out.push_str("  \"compilerOptions\": {\n");
+
+    out.push_str("    // File Layout\n");
+    emit_init_line(&mut out, &map, "rootDir", "\"./src\"", true);
+    emit_init_line(&mut out, &map, "outDir", "\"./dist\"", true);
+    out.push('\n');
+    out.push_str("    // Environment Settings\n");
+    out.push_str("    // See also https://aka.ms/tsconfig/module\n");
+    emit_init_line(&mut out, &map, "module", "\"nodenext\"", false);
+    emit_init_line(&mut out, &map, "target", "\"esnext\"", false);
+    emit_init_line(&mut out, &map, "types", "[]", false);
+    out.push_str("    // For nodejs:\n");
+    out.push_str("    // \"lib\": [\"esnext\"],\n");
+    out.push_str("    // \"types\": [\"node\"],\n");
+    out.push_str("    // and npm install -D @types/node\n");
+    out.push('\n');
+    out.push_str("    // Other Outputs\n");
+    emit_init_line(&mut out, &map, "sourceMap", "true", false);
+    emit_init_line(&mut out, &map, "declaration", "true", false);
+    emit_init_line(&mut out, &map, "declarationMap", "true", false);
+    out.push('\n');
+    out.push_str("    // Stricter Typechecking Options\n");
+    emit_init_line(&mut out, &map, "noUncheckedIndexedAccess", "true", false);
+    emit_init_line(&mut out, &map, "exactOptionalPropertyTypes", "true", false);
+    out.push('\n');
+    out.push_str("    // Style Options\n");
+    emit_init_line(&mut out, &map, "noImplicitReturns", "true", true);
+    emit_init_line(&mut out, &map, "noImplicitOverride", "true", true);
+    emit_init_line(&mut out, &map, "noUnusedLocals", "true", true);
+    emit_init_line(&mut out, &map, "noUnusedParameters", "true", true);
+    emit_init_line(&mut out, &map, "noFallthroughCasesInSwitch", "true", true);
+    emit_init_line(
+        &mut out,
+        &map,
+        "noPropertyAccessFromIndexSignature",
+        "true",
+        true,
+    );
+    out.push('\n');
+    out.push_str("    // Recommended Options\n");
+    emit_init_line(&mut out, &map, "strict", "true", false);
+    emit_init_line(&mut out, &map, "jsx", "\"react-jsx\"", false);
+    emit_init_line(&mut out, &map, "verbatimModuleSyntax", "true", false);
+    emit_init_line(&mut out, &map, "isolatedModules", "true", false);
+    emit_init_line(
+        &mut out,
+        &map,
+        "noUncheckedSideEffectImports",
+        "true",
+        false,
+    );
+    emit_init_line(&mut out, &map, "moduleDetection", "\"force\"", false);
+    emit_init_line(&mut out, &map, "skipLibCheck", "true", false);
+
+    // Append any overrides that don't have a slot in the template, preserving
+    // the order they appeared on the command line. tsc emits these after a
+    // single blank line separating them from the recommended-options block.
+    let template_keys: &[&str] = &[
+        "rootDir",
+        "outDir",
+        "module",
+        "target",
+        "types",
+        "sourceMap",
+        "declaration",
+        "declarationMap",
+        "noUncheckedIndexedAccess",
+        "exactOptionalPropertyTypes",
+        "noImplicitReturns",
+        "noImplicitOverride",
+        "noUnusedLocals",
+        "noUnusedParameters",
+        "noFallthroughCasesInSwitch",
+        "noPropertyAccessFromIndexSignature",
+        "strict",
+        "jsx",
+        "verbatimModuleSyntax",
+        "isolatedModules",
+        "noUncheckedSideEffectImports",
+        "moduleDetection",
+        "skipLibCheck",
+    ];
+    let mut appended_any = false;
+    for (key, value) in overrides.iter() {
+        if template_keys.contains(key) {
+            continue;
+        }
+        if !appended_any {
+            out.push('\n');
+            appended_any = true;
+        }
+        out.push_str("    \"");
+        out.push_str(key);
+        out.push_str("\": ");
+        out.push_str(value);
+        out.push_str(",\n");
+    }
+
+    out.push_str("  }\n");
+    out.push_str("}\n");
+    out
+}
+
 fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
+    use tsz::checker::diagnostics::diagnostic_codes;
+    use tsz_cli::config::{load_tsconfig_with_diagnostics, resolve_compiler_options};
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    // --ignoreConfig: skip tsconfig loading
-    let tsconfig_path = if args.ignore_config {
-        None
+    // Resolve a tsconfig path for `--showConfig`. We track whether the path
+    // was found by walking up the filesystem so the TS5112 "implicit
+    // tsconfig + explicit files" check below knows to fire only on
+    // walk-up discoveries (an explicit `--project` path is the user opting
+    // into a specific config, and tsc keeps loading it in that case).
+    let (tsconfig_path, discovered_via_walkup) = if args.ignore_config {
+        (None, false)
+    } else if let Some(p) = args.project.as_ref() {
+        // Canonicalize relative paths by joining with cwd first,
+        // so that p.parent() later returns a valid directory.
+        let resolved = if p.is_relative() {
+            cwd.join(p)
+        } else {
+            p.clone()
+        };
+        let resolved = if resolved.is_dir() {
+            resolved.join("tsconfig.json")
+        } else {
+            resolved
+        };
+        (Some(resolved), false)
     } else {
-        args.project
-            .as_ref()
-            .map(|p| {
-                // Canonicalize relative paths by joining with cwd first,
-                // so that p.parent() later returns a valid directory.
-                let resolved = if p.is_relative() {
-                    cwd.join(p)
-                } else {
-                    p.clone()
-                };
-                if resolved.is_dir() {
-                    resolved.join("tsconfig.json")
-                } else {
-                    resolved
-                }
-            })
-            .or_else(|| Some(cwd.join("tsconfig.json")))
+        (driver::find_tsconfig(cwd), true)
     };
 
-    // When no tsconfig.json is found (and --ignoreConfig is not set), emit the
-    // appropriate tsc error code depending on how the path was resolved:
-    //   TS5081 – no --project flag, default cwd/tsconfig.json missing
-    //   TS5057 – --project dir exists but has no tsconfig.json
-    //   TS5058 – --project path does not exist at all
+    // tsc parity: when files are passed on the command line and a
+    // `tsconfig.json` was discovered by walking up the filesystem (i.e. the
+    // user did not opt in via `--project`), tsc refuses to silently load
+    // that config and emits TS5112. The user can suppress with
+    // `--ignoreConfig`. Without this check, tsz would inherit options from
+    // an unrelated parent project for what the user expected to be a
+    // single-file synthesis.
+    if discovered_via_walkup && tsconfig_path.is_some() && !args.files.is_empty() {
+        println!(
+            "error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error."
+        );
+        std::process::exit(1);
+    }
+
+    // tsc parity: with no files passed and no tsconfig resolved (either
+    // because `--ignoreConfig` was set or because none was found by walking
+    // up), tsc emits TS5081 even if other CLI options were provided. The
+    // synthesized output requires either a `tsconfig.json` to anchor the
+    // project or an explicit root-file list.
+    if tsconfig_path.is_none() && args.files.is_empty() {
+        println!(
+            "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
+            cwd.display()
+        );
+        std::process::exit(1);
+    }
+
+    // When the resolved tsconfig path does not exist on disk, emit the
+    // appropriate tsc error code. This now only fires for explicit
+    // `--project` paths because `find_tsconfig` returns `Some` only for an
+    // existing file; the `args.project.is_none()` branch is kept as a
+    // defensive fallback in case of a TOCTOU race between discovery and
+    // the existence check.
+    //   TS5057 – `--project` dir exists but has no tsconfig.json
+    //   TS5058 – `--project` path does not exist at all
+    //   TS5081 – defensive fallback (walk-up race)
     if let Some(ref path) = tsconfig_path
         && !path.exists()
     {
@@ -1779,13 +2577,40 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Issue 2: load_tsconfig already resolves extends chains, so the returned
-    // config is the fully merged result.
-    let config = if let Some(path) = tsconfig_path.as_ref() {
-        Some(load_tsconfig(path)?)
+    // Issue 2: load_tsconfig_with_diagnostics already resolves extends chains
+    // and validates compiler-option types (TS5024) on every file in the chain,
+    // so the returned config is the fully merged, validated result. Surfacing
+    // the config diagnostics keeps `--showConfig` parity with tsc, which exits
+    // 1 when an invalid option is present in the root config or any base.
+    let (config, config_diagnostics) = if let Some(path) = tsconfig_path.as_ref() {
+        let parsed = load_tsconfig_with_diagnostics(path)?;
+        (Some(parsed.config), parsed.diagnostics)
     } else {
-        None
+        (None, Vec::new())
     };
+    if config_diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+    }) {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
+        let mut reporter = Reporter::new(pretty);
+        let output = reporter.render(&config_diagnostics);
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        std::process::exit(1);
+    }
+
+    let base_dir = tsconfig_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .unwrap_or(cwd);
 
     // Build the compiler options map from the MERGED config (extends-resolved).
     let mut compiler_options_map: serde_json::Map<String, serde_json::Value> =
@@ -1800,6 +2625,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // Issue 3: Compute and add implied options.
     show_config_add_implied_options(&mut compiler_options_map);
+
+    show_config_relativize_resolved_path_options(&mut compiler_options_map, base_dir);
 
     // Issue 5: Normalize outDir/outFile/rootDir paths with "./" prefix
     for path_key in &["outDir", "outFile", "rootDir", "declarationDir", "baseUrl"] {
@@ -1825,18 +2652,13 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // We need resolved options for file discovery (allow_js, out_dir).
     let resolved = resolve_compiler_options(raw_opts).ok();
-    let allow_js = raw_opts.and_then(|o| o.allow_js).unwrap_or(false) || args.allow_js;
+    let allow_js = resolved.as_ref().is_some_and(|r| r.allow_js) || args.allow_js || args.check_js;
     let out_dir = args
         .out_dir
         .clone()
         .or_else(|| resolved.as_ref().and_then(|r| r.out_dir.clone()));
 
     // Discover resolved file list
-    let base_dir = tsconfig_path
-        .as_ref()
-        .and_then(|p| p.parent())
-        .unwrap_or(cwd);
-
     let explicit_files: Vec<std::path::PathBuf> = if !args.files.is_empty() {
         args.files.clone()
     } else if let Some(ref cfg) = config {
@@ -1850,69 +2672,45 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     let files_explicitly_set =
         !args.files.is_empty() || config.as_ref().and_then(|c| c.files.as_ref()).is_some();
-    let discovery = FileDiscoveryOptions {
-        base_dir: base_dir.to_path_buf(),
-        files: explicit_files,
-        files_explicitly_set,
-        include: config.as_ref().and_then(|c| c.include.clone()),
-        exclude: config.as_ref().and_then(|c| c.exclude.clone()),
-        out_dir: out_dir.clone(),
-        follow_links: false,
-        allow_js,
-        resolve_json_module: resolved.as_ref().is_some_and(|r| r.resolve_json_module),
+
+    // `--showConfig` should print the resolved config without validating root
+    // files (matching `tsc --showConfig`). When `files` is explicitly set,
+    // preserve every entry verbatim — even unsupported extensions or missing
+    // paths — and normalize with a `./` prefix. The TS6053/TS6054/TS18003
+    // diagnostics belong to normal compilation, not to the config display.
+    let file_paths: Vec<String> = if files_explicitly_set {
+        explicit_files
+            .iter()
+            .map(|p| show_config_normalize_relative(base_dir, p))
+            .collect()
+    } else {
+        // No explicit `files` — fall back to glob-based discovery so the
+        // displayed list reflects what include/exclude would resolve. Treat
+        // discovery errors and empty results as "nothing to print" instead of
+        // TS18003; tsc's --showConfig also exits 0 in that case.
+        let discovery = FileDiscoveryOptions {
+            base_dir: base_dir.to_path_buf(),
+            files: explicit_files,
+            files_explicitly_set,
+            include: config.as_ref().and_then(|c| c.include.clone()),
+            exclude: config.as_ref().and_then(|c| c.exclude.clone()),
+            out_dir: out_dir.clone(),
+            follow_links: false,
+            allow_js,
+            resolve_json_module: resolved.as_ref().is_some_and(|r| r.resolve_json_module),
+        };
+        discover_ts_files(&discovery)
+            .unwrap_or_default()
+            .iter()
+            .map(|f| {
+                if let Ok(rel) = f.strip_prefix(base_dir) {
+                    format!("./{}", rel.display())
+                } else {
+                    f.display().to_string()
+                }
+            })
+            .collect()
     };
-
-    let discovered_files = discover_ts_files(&discovery).unwrap_or_default();
-
-    // If no input files found, emit TS18003 error and exit 1
-    if discovered_files.is_empty() && config.is_some() {
-        // tsc formats include/exclude as JSON arrays. When `include` is omitted,
-        // it reports the implicit discovery set rather than `[]`.
-        let include_json = config
-            .as_ref()
-            .and_then(|c| c.include.as_ref())
-            .map(|items| {
-                let inner: Vec<String> = items.iter().map(|s| format!("\"{s}\"")).collect();
-                format!("[{}]", inner.join(","))
-            })
-            .unwrap_or_else(|| {
-                let inner: Vec<String> = tsz_cli::fs::default_include_display()
-                    .into_iter()
-                    .map(|s| format!("\"{s}\""))
-                    .collect();
-                format!("[{}]", inner.join(","))
-            });
-        let exclude_json = config
-            .as_ref()
-            .and_then(|c| c.exclude.as_ref())
-            .map(|items| {
-                let inner: Vec<String> = items.iter().map(|s| format!("\"{s}\"")).collect();
-                format!("[{}]", inner.join(","))
-            })
-            .unwrap_or_else(|| "[]".to_string());
-        println!(
-            "error TS18003: No inputs were found in config file '{}'. Specified 'include' paths were '{}' and 'exclude' paths were '{}'.",
-            tsconfig_path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default(),
-            include_json,
-            exclude_json,
-        );
-        std::process::exit(1);
-    }
-
-    // Build file paths relative to tsconfig dir with "./" prefix (matching tsc)
-    let file_paths: Vec<String> = discovered_files
-        .iter()
-        .map(|f| {
-            if let Ok(rel) = f.strip_prefix(base_dir) {
-                format!("./{}", rel.display())
-            } else {
-                f.display().to_string()
-            }
-        })
-        .collect();
 
     // Issue 6: Auto-add outDir to exclude array (tsc behavior)
     let effective_exclude = {
@@ -2003,7 +2801,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if let Some(ref include) = cfg.include {
             output.push_str(",\n    \"include\": [\n");
             for (i, v) in include.iter().enumerate() {
-                output.push_str(&format!("        \"{v}\""));
+                let display = show_config_display_selector(base_dir, v);
+                output.push_str(&format!("        \"{display}\""));
                 if i + 1 < include.len() {
                     output.push(',');
                 }
@@ -2015,7 +2814,8 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         if !effective_exclude.is_empty() {
             output.push_str(",\n    \"exclude\": [\n");
             for (i, v) in effective_exclude.iter().enumerate() {
-                output.push_str(&format!("        \"{v}\""));
+                let display = show_config_display_selector(base_dir, v);
+                output.push_str(&format!("        \"{display}\""));
                 if i + 1 < effective_exclude.len() {
                     output.push(',');
                 }
@@ -2029,6 +2829,111 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     print!("{output}");
 
     Ok(())
+}
+
+fn show_config_display_selector(base_dir: &Path, selector: &str) -> String {
+    let path = Path::new(selector);
+    if path.is_absolute() {
+        show_config_display_path(base_dir, path)
+    } else {
+        selector.to_string()
+    }
+}
+
+fn show_config_display_path(base_dir: &Path, path: &Path) -> String {
+    let relative = if path.is_absolute() {
+        diff_paths(path, base_dir).unwrap_or_else(|| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
+    path_to_show_config_string(&relative)
+}
+
+/// Normalize a path for the --showConfig `files` array: strip the tsconfig
+/// base directory if the input is absolute, convert backslashes to forward
+/// slashes, and prepend `./` for plain relative paths so the output mirrors
+/// `tsc --showConfig` (`["./style.css"]` rather than `["style.css"]`).
+fn show_config_normalize_relative(base_dir: &std::path::Path, path: &std::path::Path) -> String {
+    let rel = if path.is_absolute() {
+        path.strip_prefix(base_dir)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        path.to_path_buf()
+    };
+    let s = rel.display().to_string().replace('\\', "/");
+    if s.starts_with("./") || s.starts_with("../") || s.starts_with('/') {
+        s
+    } else {
+        format!("./{s}")
+    }
+}
+
+fn show_config_relativize_resolved_path_options(
+    options: &mut serde_json::Map<String, serde_json::Value>,
+    base_dir: &Path,
+) {
+    if let Some(serde_json::Value::String(base_url)) = options.get_mut("baseUrl") {
+        *base_url = show_config_format_path_option(base_url, base_dir);
+    }
+
+    if let Some(serde_json::Value::Array(root_dirs)) = options.get_mut("rootDirs") {
+        for root_dir in root_dirs {
+            if let serde_json::Value::String(path) = root_dir {
+                *path = show_config_format_path_option(path, base_dir);
+            }
+        }
+    }
+}
+
+fn show_config_format_path_option(path: &str, base_dir: &Path) -> String {
+    let path_obj = Path::new(path);
+    if !path_obj.is_absolute() {
+        return path.to_string();
+    }
+
+    let canonical_base = base_dir
+        .canonicalize()
+        .unwrap_or_else(|_| base_dir.to_path_buf());
+    let canonical_path = path_obj
+        .canonicalize()
+        .unwrap_or_else(|_| path_obj.to_path_buf());
+    let relative = diff_paths(&canonical_path, &canonical_base)
+        .unwrap_or_else(|| canonical_path.to_path_buf());
+    path_to_show_config_string(&relative)
+}
+
+fn path_to_show_config_string(path: &Path) -> String {
+    let display = path.to_string_lossy().replace('\\', "/");
+    if display.is_empty() || display == "." {
+        "./".to_string()
+    } else if display.starts_with("../") || display.starts_with('/') {
+        display
+    } else {
+        format!("./{display}")
+    }
+}
+
+fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 && path.is_absolute() && base.is_absolute() {
+        return None;
+    }
+
+    let mut result = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+    Some(result)
 }
 
 /// Convert merged `CompilerOptions` (from extends-resolved `TsConfig`) into a JSON map
@@ -2084,6 +2989,12 @@ fn show_config_compiler_options_to_json(
     if let Some(ref v) = opts.root_dir {
         map.insert("rootDir".into(), Value::String(v.clone()));
     }
+    if let Some(ref v) = opts.root_dirs {
+        map.insert(
+            "rootDirs".into(),
+            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
+        );
+    }
     if let Some(ref v) = opts.out_dir {
         map.insert("outDir".into(), Value::String(v.clone()));
     }
@@ -2099,6 +3010,9 @@ fn show_config_compiler_options_to_json(
     if let Some(ref v) = opts.module_detection {
         map.insert("moduleDetection".into(), Value::String(v.to_lowercase()));
     }
+    if let Some(ref v) = opts.ignore_deprecations {
+        map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
+    }
 
     macro_rules! set_bool {
         ($f:ident, $k:expr) => {
@@ -2109,13 +3023,17 @@ fn show_config_compiler_options_to_json(
     }
     set_bool!(strict, "strict");
     set_bool!(no_emit, "noEmit");
+    set_bool!(no_check, "noCheck");
     set_bool!(no_emit_on_error, "noEmitOnError");
     set_bool!(declaration, "declaration");
+    set_bool!(emit_declaration_only, "emitDeclarationOnly");
     set_bool!(source_map, "sourceMap");
+    set_bool!(inline_source_map, "inlineSourceMap");
     set_bool!(declaration_map, "declarationMap");
     set_bool!(composite, "composite");
     set_bool!(incremental, "incremental");
     set_bool!(isolated_modules, "isolatedModules");
+    set_bool!(isolated_declarations, "isolatedDeclarations");
     set_bool!(verbatim_module_syntax, "verbatimModuleSyntax");
     set_bool!(es_module_interop, "esModuleInterop");
     set_bool!(
@@ -2125,9 +3043,15 @@ fn show_config_compiler_options_to_json(
     set_bool!(allow_js, "allowJs");
     set_bool!(check_js, "checkJs");
     set_bool!(skip_lib_check, "skipLibCheck");
+    set_bool!(skip_default_lib_check, "skipDefaultLibCheck");
     set_bool!(strip_internal, "stripInternal");
     set_bool!(no_lib, "noLib");
+    set_bool!(lib_replacement, "libReplacement");
+    set_bool!(no_types_and_symbols, "noTypesAndSymbols");
     set_bool!(import_helpers, "importHelpers");
+    set_bool!(no_emit_helpers, "noEmitHelpers");
+    set_bool!(remove_comments, "removeComments");
+    set_bool!(emit_bom, "emitBOM");
     set_bool!(no_implicit_any, "noImplicitAny");
     set_bool!(no_implicit_returns, "noImplicitReturns");
     set_bool!(strict_null_checks, "strictNullChecks");
@@ -2138,11 +3062,22 @@ fn show_config_compiler_options_to_json(
     );
     set_bool!(no_implicit_this, "noImplicitThis");
     set_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
+    set_bool!(exact_optional_property_types, "exactOptionalPropertyTypes");
     set_bool!(strict_bind_call_apply, "strictBindCallApply");
+    set_bool!(
+        strict_builtin_iterator_return,
+        "strictBuiltinIteratorReturn"
+    );
     set_bool!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
+    set_bool!(
+        no_property_access_from_index_signature,
+        "noPropertyAccessFromIndexSignature"
+    );
     set_bool!(no_unused_locals, "noUnusedLocals");
     set_bool!(no_unused_parameters, "noUnusedParameters");
     set_bool!(allow_unreachable_code, "allowUnreachableCode");
+    set_bool!(allow_unused_labels, "allowUnusedLabels");
+    set_bool!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
     set_bool!(no_resolve, "noResolve");
     set_bool!(
         no_unchecked_side_effect_imports,
@@ -2154,6 +3089,7 @@ fn show_config_compiler_options_to_json(
     set_bool!(use_define_for_class_fields, "useDefineForClassFields");
     set_bool!(experimental_decorators, "experimentalDecorators");
     set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");
+    set_bool!(allow_umd_global_access, "allowUmdGlobalAccess");
     set_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
     set_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
     set_bool!(resolve_json_module, "resolveJsonModule");
@@ -2163,6 +3099,19 @@ fn show_config_compiler_options_to_json(
         rewrite_relative_import_extensions,
         "rewriteRelativeImportExtensions"
     );
+    set_bool!(preserve_const_enums, "preserveConstEnums");
+    set_bool!(erasable_syntax_only, "erasableSyntaxOnly");
+    set_bool!(sound, "sound");
+
+    if let Some(ref v) = opts.new_line {
+        map.insert("newLine".into(), Value::String(v.to_lowercase()));
+    }
+    if let Some(v) = opts.max_node_module_js_depth {
+        map.insert(
+            "maxNodeModuleJsDepth".into(),
+            Value::Number(serde_json::Number::from(v)),
+        );
+    }
 
     if let Some(ref v) = opts.lib {
         map.insert(
@@ -2215,6 +3164,7 @@ fn show_config_apply_cli_overrides(
     use serde_json::Value;
     if let Some(target) = args.target {
         let s = match target {
+            tsz_cli::args::Target::Es3 => "es3",
             tsz_cli::args::Target::Es5 => "es5",
             tsz_cli::args::Target::Es2015 => "es6",
             tsz_cli::args::Target::Es2016 => "es2016",
@@ -2297,16 +3247,32 @@ fn show_config_apply_cli_overrides(
     if let Some(ref v) = args.base_url {
         map.insert("baseUrl".into(), Value::String(v.display().to_string()));
     }
+    if let Some(ref v) = args.ignore_deprecations {
+        map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
+    }
+
+    // `--flag false` for plain `bool` flags is forwarded through this hidden
+    // side-channel by `preprocess_args`. Explicit `false` must round-trip into
+    // `--showConfig` output so a CLI override of a `tsconfig.json` `true` value
+    // is visible to the caller, matching `tsc --showConfig --flag false`.
+    let disabled_bool_flags: rustc_hash::FxHashSet<&str> = args
+        .explicitly_disabled_bool_flags
+        .iter()
+        .map(String::as_str)
+        .collect();
 
     macro_rules! set_if_true {
         ($f:ident, $k:expr) => {
             if args.$f {
                 map.insert($k.into(), Value::Bool(true));
+            } else if disabled_bool_flags.contains($k) {
+                map.insert($k.into(), Value::Bool(false));
             }
         };
     }
     set_if_true!(strict, "strict");
     set_if_true!(no_emit, "noEmit");
+    set_if_true!(no_check, "noCheck");
     set_if_true!(no_emit_on_error, "noEmitOnError");
     set_if_true!(declaration, "declaration");
     set_if_true!(source_map, "sourceMap");
@@ -2530,7 +3496,6 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
         .unwrap_or("es2025");
     let user_target = parse_target(user_target_str);
 
-    let user_strict = map.get("strict").and_then(|v| v.as_bool()).unwrap_or(false);
     let user_composite = map
         .get("composite")
         .and_then(|v| v.as_bool())
@@ -2633,27 +3598,9 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
     }
 
     // --- strict sub-flags: deps=["strict"] ---
-    let strict_sub_flags = [
-        "noImplicitAny",
-        "noImplicitThis",
-        "strictNullChecks",
-        "strictFunctionTypes",
-        "strictBindCallApply",
-        "strictPropertyInitialization",
-        "strictBuiltinIteratorReturn",
-        "alwaysStrict",
-        "useUnknownInCatchVariables",
-    ];
-    for flag_name in &strict_sub_flags {
-        if !provided.contains(*flag_name) && depends_on_provided(&["strict"]) {
-            // computed = strict ?? false; default = false (no strict in empty config)
-            let computed = user_strict;
-            let default_val = false;
-            if computed != default_val {
-                map.insert((*flag_name).to_string(), Value::Bool(computed));
-            }
-        }
-    }
+    // tsc 6.0 keeps `strict: true` compact in --showConfig output. Explicit
+    // strict sub-options are already present in `map`, but the aggregate
+    // `strict` flag no longer expands every sub-option here.
 
     // --- isolatedModules: deps=["verbatimModuleSyntax"] ---
     if !provided.contains("isolatedModules") && depends_on_provided(&["verbatimModuleSyntax"]) {
@@ -2737,15 +3684,13 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
         && depends_on_provided(&["moduleResolution", "module", "target"])
     {
         let user_resolve_json = map.get("resolveJsonModule").and_then(|v| v.as_bool());
-        // Compute: resolveJsonModule defaults to true if moduleResolution is node16/nodenext/bundler
+        // tsc 6.0 shows the empty-config default as true (bundler), but node16
+        // and legacy resolution compute false while nodenext/bundler compute true.
         let eff_mr = map
             .get("moduleResolution")
             .and_then(|v| v.as_str())
             .unwrap_or(DEFAULT_MODULE_RESOLUTION);
-        let mr_implies_json = matches!(
-            eff_mr.to_lowercase().as_str(),
-            "node16" | "nodenext" | "bundler"
-        );
+        let mr_implies_json = matches!(eff_mr.to_lowercase().as_str(), "nodenext" | "bundler");
         let computed = user_resolve_json.unwrap_or(mr_implies_json);
         // default: bundler implies true
         let default_mr_implies = matches!(
@@ -2872,34 +3817,65 @@ fn format_json_value(value: &serde_json::Value, indent: usize) -> String {
 }
 
 fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    use tsz_cli::config::{load_tsconfig, resolve_compiler_options};
+    use tsz::checker::diagnostics::diagnostic_codes;
+    use tsz_cli::config::{load_tsconfig_with_diagnostics, resolve_compiler_options};
     use tsz_cli::driver::apply_cli_overrides;
     use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
 
-    // --ignoreConfig: skip tsconfig loading
+    if args.ignore_config && args.files.is_empty() {
+        println!("Version {TSC_VERSION}");
+        println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
+        std::process::exit(1);
+    }
+
     let tsconfig_path = if args.ignore_config {
         None
     } else {
         args.project
             .as_ref()
             .map(|p| {
-                if p.is_dir() {
-                    p.join("tsconfig.json")
+                let resolved = if p.is_relative() {
+                    cwd.join(p)
                 } else {
                     p.clone()
+                };
+                if resolved.is_dir() {
+                    resolved.join("tsconfig.json")
+                } else {
+                    resolved
                 }
             })
-            .or_else(|| {
-                let default_path = cwd.join("tsconfig.json");
-                default_path.exists().then_some(default_path)
-            })
+            .or_else(|| driver::find_tsconfig(cwd))
     };
 
-    let config = if let Some(path) = tsconfig_path.as_ref() {
-        Some(load_tsconfig(path)?)
+    // Route through the diagnostic loader so TS5024 / TS5102 in the root
+    // config or any base reached via `extends` surface as errors instead of
+    // being silently coerced (matching tsc's `--listFilesOnly` exit-1
+    // behavior).
+    let (config, config_diagnostics) = if let Some(path) = tsconfig_path.as_ref() {
+        let parsed = load_tsconfig_with_diagnostics(path)?;
+        (Some(parsed.config), parsed.diagnostics)
     } else {
-        None
+        (None, Vec::new())
     };
+    if config_diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+            || d.code
+                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+    }) {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
+        let mut reporter = Reporter::new(pretty);
+        let output = reporter.render(&config_diagnostics);
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        std::process::exit(1);
+    }
 
     let mut resolved = resolve_compiler_options(
         config
@@ -2939,6 +3915,29 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         resolve_json_module: resolved.resolve_json_module,
     };
 
+    let files = discover_ts_files(&discovery)?;
+    let files_from_config = args.files.is_empty()
+        && config
+            .as_ref()
+            .and_then(|config| config.files.as_ref())
+            .is_some();
+    let unsupported_js_root_diagnostics =
+        list_files_only_unsupported_js_root_diagnostics(&discovery, &files, files_from_config);
+    if !unsupported_js_root_diagnostics.is_empty() {
+        let pretty = args
+            .pretty
+            .unwrap_or_else(|| std::io::stdout().is_terminal());
+        if args.pretty == Some(true) {
+            Reporter::force_colors(true);
+        }
+        let mut reporter = Reporter::new(pretty);
+        let output = reporter.render(&unsupported_js_root_diagnostics);
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
     // Print lib files first (matching tsc --listFilesOnly order)
     if !resolved.checker.no_lib {
         for lib_file in &resolved.lib_files {
@@ -2946,12 +3945,70 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         }
     }
 
-    let files = discover_ts_files(&discovery)?;
     for file in files {
         println!("{}", file.display());
     }
 
     Ok(())
+}
+
+fn list_files_only_unsupported_js_root_diagnostics(
+    discovery: &tsz_cli::fs::FileDiscoveryOptions,
+    files: &[std::path::PathBuf],
+    files_from_config: bool,
+) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+    use tsz::checker::diagnostics::{
+        Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    };
+    use tsz_common::file_extensions::is_js_file;
+
+    if discovery.allow_js || !discovery.files_explicitly_set {
+        return Vec::new();
+    }
+
+    files
+        .iter()
+        .filter(|file| is_js_file(file))
+        .map(|file| {
+            let file_name = file.display().to_string();
+            let mut diagnostic = Diagnostic::from_code(
+                diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION,
+                "",
+                0,
+                0,
+                &[&file_name],
+            );
+            diagnostic
+                .related_information
+                .push(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                    file: String::new(),
+                    start: 0,
+                    length: 0,
+                    message_text: "The file is in the program because:".to_string(),
+                });
+            diagnostic
+                .related_information
+                .push(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: if files_from_config {
+                        diagnostic_codes::PART_OF_FILES_LIST_IN_TSCONFIG_JSON
+                    } else {
+                        diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION
+                    },
+                    file: String::new(),
+                    start: 0,
+                    length: 0,
+                    message_text: if files_from_config {
+                        "Part of 'files' list in tsconfig.json".to_string()
+                    } else {
+                        "Root file specified for compilation".to_string()
+                    },
+                });
+            diagnostic
+        })
+        .collect()
 }
 
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
@@ -3129,7 +4186,7 @@ fn handle_build_clean(
     verbose: bool,
 ) -> Result<()> {
     use std::fs;
-    use tsz_cli::incremental::default_build_info_path;
+    use tsz_cli::build::get_build_info_path;
 
     let mut deleted_count = 0;
 
@@ -3138,8 +4195,9 @@ fn handle_build_clean(
         // `--clean` removes the file the build actually wrote. Previously this
         // always wrote next to the tsconfig, which missed the case where
         // `outDir` relocates the .tsbuildinfo file.
-        let buildinfo_path =
-            default_build_info_path(&project.config_path, project.out_dir.as_deref());
+        let Some(buildinfo_path) = get_build_info_path(project) else {
+            continue;
+        };
         if buildinfo_path.exists() {
             fs::remove_file(&buildinfo_path)?;
             if verbose {

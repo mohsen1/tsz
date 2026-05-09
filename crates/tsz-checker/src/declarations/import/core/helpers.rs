@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -23,6 +23,23 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /// Whether AMD/System/classic-resolution should swallow secondary
+    /// missing-module diagnostics (TS2792/TS2307/TS2882) in favor of the
+    /// TS5107 deprecation diagnostic.
+    ///
+    /// tsc's behaviour (issue #3077): under `module: amd|system` or classic
+    /// `moduleResolution`, the deprecation diagnostic is the user-visible
+    /// signal. The secondary missing-module diagnostic is suppressed unless
+    /// `ignoreDeprecations` is set to silence TS5107, in which case the
+    /// missing-module diagnostic surfaces normally.
+    pub(crate) const fn deprecated_mode_suppresses_module_not_found(&self) -> bool {
+        let module_kind = self.ctx.compiler_options.module;
+        let is_system_or_amd = matches!(module_kind, ModuleKind::System | ModuleKind::AMD);
+        let is_classic_style =
+            is_system_or_amd || self.ctx.compiler_options.implied_classic_resolution;
+        is_classic_style && !self.ctx.compiler_options.ignore_deprecations
+    }
 
     /// Extract the `resolution-mode` override from an import/export declaration's
     /// attributes (e.g., `with { "resolution-mode": "require" }`).
@@ -175,6 +192,59 @@ impl<'a> CheckerState<'a> {
         } else {
             crate::context::ResolutionModeOverride::Require
         }
+    }
+
+    pub(crate) fn current_file_is_commonjs_for_node16_or_node18(&self) -> bool {
+        if !self.ctx.compiler_options.module.is_node16_or_node18() {
+            return false;
+        }
+
+        let file_name = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(self.ctx.current_file_idx))
+            .and_then(|arena| arena.source_files.first())
+            .map(|source_file| source_file.file_name.as_str())
+            .unwrap_or(self.ctx.file_name.as_str());
+
+        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+            return true;
+        }
+        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+            return false;
+        }
+        if let Some(is_esm) = self.lookup_file_is_esm(file_name) {
+            return !is_esm;
+        }
+        if let Some(is_esm) = self.ctx.file_is_esm {
+            return !is_esm;
+        }
+        !self.ctx.compiler_options.module.is_es_module()
+    }
+
+    pub(crate) fn file_idx_is_esm_for_node_cjs_boundary(&self, file_idx: usize) -> bool {
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+        if file_name.ends_with(".json") {
+            return false;
+        }
+        file_name.ends_with(".mts")
+            || file_name.ends_with(".mjs")
+            || self.lookup_file_is_esm(file_name).unwrap_or(false)
+    }
+
+    pub(crate) fn type_only_cjs_esm_resolution_mode_is_missing(
+        &self,
+        target_idx: usize,
+        has_resolution_mode_override: bool,
+    ) -> bool {
+        !has_resolution_mode_override
+            && self.current_file_is_commonjs_for_node16_or_node18()
+            && self.file_idx_is_esm_for_node_cjs_boundary(target_idx)
     }
 
     pub(crate) fn requested_resolution_mode(
@@ -927,6 +997,59 @@ impl<'a> CheckerState<'a> {
             self.resolve_property_access_with_env(export_type, import_name),
             PropertyAccessResult::Success { .. }
         )
+    }
+
+    pub(crate) fn named_imports_resolve_via_export_equals_target(
+        &mut self,
+        bindings_node: Option<&Node>,
+        exports_table: Option<&tsz_binder::SymbolTable>,
+        module_name: &str,
+        has_non_default_named_imports: bool,
+    ) -> bool {
+        let Some(table) = exports_table else {
+            return false;
+        };
+        if !has_non_default_named_imports {
+            return false;
+        }
+        let Some(bindings_node) = bindings_node else {
+            return false;
+        };
+        let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+
+        let mut saw_non_default = false;
+        for element_idx in &named_imports.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                return false;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                return false;
+            };
+            let Some(name_node) = self.ctx.arena.get(specifier.name) else {
+                return false;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+                return false;
+            };
+
+            let name = name_ident.escaped_text.as_str();
+            if name == "default" {
+                continue;
+            }
+            saw_non_default = true;
+            if !self.has_named_export_via_export_equals(table, name)
+                && self
+                    .resolve_named_export_via_export_equals(module_name, name)
+                    .is_none()
+                && !self.has_named_export_via_export_equals_type(table, name)
+            {
+                return false;
+            }
+        }
+
+        saw_non_default
     }
 
     /// Check if an import resolves to a `.ts`/`.tsx` source file (not a `.d.ts` declaration).

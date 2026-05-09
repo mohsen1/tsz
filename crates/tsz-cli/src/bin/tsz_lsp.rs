@@ -126,6 +126,17 @@ struct JsonRpcNotification {
     params: Value,
 }
 
+/// A JSON-RPC server-to-client request. Issue #3545: methods like
+/// `workspace/applyEdit` are LSP requests, not notifications, so they
+/// must include an `id` and the client is expected to respond.
+#[derive(Debug, Serialize)]
+struct JsonRpcServerRequest {
+    jsonrpc: String,
+    id: Value,
+    method: String,
+    params: Value,
+}
+
 // =============================================================================
 // LSP Server State
 // =============================================================================
@@ -142,6 +153,11 @@ struct LspServer {
     shutdown_requested: bool,
     /// Pending diagnostics notifications to send after handling a request.
     pending_notifications: Vec<JsonRpcNotification>,
+    /// Pending server-to-client requests (e.g. `workspace/applyEdit`).
+    /// Drained alongside notifications. Issue #3545.
+    pending_server_requests: Vec<JsonRpcServerRequest>,
+    /// Counter for generating unique server-side request ids. Issue #3545.
+    next_server_request_id: u64,
     /// Request IDs that have been cancelled by the client.
     cancelled_requests: FxHashSet<String>,
     /// Workspace folder URIs.
@@ -166,6 +182,8 @@ impl LspServer {
             initialized: false,
             shutdown_requested: false,
             pending_notifications: Vec::new(),
+            pending_server_requests: Vec::new(),
+            next_server_request_id: 1,
             cancelled_requests: FxHashSet::default(),
             workspace_folders: Vec::new(),
             client_supports_workspace_folders: false,
@@ -632,21 +650,129 @@ impl LspServer {
 
     /// Convert a file URI to the internal file name used by Project.
     fn uri_to_file_name(uri: &str) -> String {
-        // Strip file:// prefix if present, keeping the path
-        if let Some(path) = uri.strip_prefix("file://") {
-            path.to_string()
-        } else {
-            uri.to_string()
-        }
+        let Some(path) = uri.strip_prefix("file://") else {
+            return uri.to_string();
+        };
+
+        Self::file_uri_path_to_file_name(path)
     }
 
     /// Convert an internal file name back to a URI.
     fn file_name_to_uri(file_name: &str) -> String {
-        if file_name.starts_with('/') {
-            format!("file://{file_name}")
-        } else {
-            file_name.to_string()
+        let Some(uri_path) = Self::file_name_to_uri_path(file_name) else {
+            return file_name.to_string();
+        };
+
+        format!("file://{}", Self::percent_encode_file_uri_path(&uri_path))
+    }
+
+    fn file_name_to_uri_path(file_name: &str) -> Option<String> {
+        if let Some(unc_path) = file_name.strip_prefix("//")
+            && !unc_path.is_empty()
+            && !unc_path.starts_with('/')
+        {
+            return Some(unc_path.to_string());
         }
+
+        if file_name.starts_with('/') {
+            Some(file_name.to_string())
+        } else {
+            None
+        }
+    }
+
+    fn file_uri_path_to_file_name(path: &str) -> String {
+        let path = if path.starts_with('/') {
+            path.to_string()
+        } else if let Some(path) = path.strip_prefix("localhost/") {
+            format!("/{path}")
+        } else if path == "localhost" {
+            "/".to_string()
+        } else if path.is_empty() {
+            String::new()
+        } else {
+            format!("//{path}")
+        };
+
+        Self::percent_decode_file_uri_path(&path)
+    }
+
+    fn percent_decode_file_uri_path(path: &str) -> String {
+        let bytes = path.as_bytes();
+        let mut decoded = Vec::with_capacity(bytes.len());
+        let mut index = 0;
+
+        while index < bytes.len() {
+            if bytes[index] == b'%'
+                && index + 2 < bytes.len()
+                && let (Some(high), Some(low)) = (
+                    Self::hex_digit_value(bytes[index + 1]),
+                    Self::hex_digit_value(bytes[index + 2]),
+                )
+            {
+                decoded.push((high << 4) | low);
+                index += 3;
+                continue;
+            }
+
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+
+        String::from_utf8(decoded).unwrap_or_else(|_| path.to_string())
+    }
+
+    fn percent_encode_file_uri_path(path: &str) -> String {
+        let mut encoded = String::with_capacity(path.len());
+
+        for byte in path.bytes() {
+            if Self::is_file_uri_path_byte_allowed(byte) {
+                encoded.push(char::from(byte));
+            } else {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                encoded.push('%');
+                encoded.push(char::from(HEX[(byte >> 4) as usize]));
+                encoded.push(char::from(HEX[(byte & 0x0F) as usize]));
+            }
+        }
+
+        encoded
+    }
+
+    const fn hex_digit_value(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            _ => None,
+        }
+    }
+
+    const fn is_file_uri_path_byte_allowed(byte: u8) -> bool {
+        matches!(
+            byte,
+            b'A'..=b'Z'
+                | b'a'..=b'z'
+                | b'0'..=b'9'
+                | b'-'
+                | b'.'
+                | b'_'
+                | b'~'
+                | b'/'
+                | b':'
+                | b'@'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+        )
     }
 
     // ─── Diagnostic publishing ──────────────────────────────────────────
@@ -2649,8 +2775,11 @@ impl LspServer {
                     changes.insert(uri, Value::Array(lsp_edits));
                 }
 
-                self.pending_notifications.push(JsonRpcNotification {
+                let req_id = self.next_server_request_id;
+                self.next_server_request_id += 1;
+                self.pending_server_requests.push(JsonRpcServerRequest {
                     jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Number(req_id.into()),
                     method: "workspace/applyEdit".to_string(),
                     params: serde_json::json!({
                         "label": "Update imports for renamed file",
@@ -2723,9 +2852,14 @@ impl LspServer {
                 if let Some(args) = arguments
                     && let Some(edit_value) = args.first()
                 {
-                    // Send workspace/applyEdit request to the client
-                    self.pending_notifications.push(JsonRpcNotification {
+                    // Issue #3545: workspace/applyEdit is a server-to-client
+                    // request, not a notification. Allocate an id so the
+                    // client can respond with `ApplyWorkspaceEditResponse`.
+                    let req_id = self.next_server_request_id;
+                    self.next_server_request_id += 1;
+                    self.pending_server_requests.push(JsonRpcServerRequest {
                         jsonrpc: "2.0".to_string(),
+                        id: serde_json::Value::Number(req_id.into()),
                         method: "workspace/applyEdit".to_string(),
                         params: serde_json::json!({
                             "label": "Apply code action",
@@ -2761,6 +2895,7 @@ impl LspServer {
 // Main
 // =============================================================================
 
+#[allow(clippy::items_after_test_module)]
 fn main() -> Result<()> {
     // Initialize tracing (always stderr — stdout carries LSP JSON-RPC).
     tsz_cli::tracing_config::init_tracing();
@@ -2858,5 +2993,160 @@ fn main() -> Result<()> {
             )?;
             stdout.flush()?;
         }
+
+        // Issue #3545: send any pending server-to-client requests (with id).
+        for request in server.pending_server_requests.drain(..) {
+            let request_str = serde_json::to_string(&request)?;
+            let request_bytes = request_str.as_bytes();
+
+            if args.verbose {
+                trace!("tsz-lsp: Sending server request: {}", request_str);
+            }
+
+            write!(
+                stdout,
+                "Content-Length: {}\r\n\r\n{}",
+                request_bytes.len(),
+                request_str
+            )?;
+            stdout.flush()?;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn uri_to_file_name_decodes_percent_encoded_file_paths() {
+        assert_eq!(
+            LspServer::uri_to_file_name("file:///private/tmp/tsz%20lsp%20uri%20current"),
+            "/private/tmp/tsz lsp uri current"
+        );
+        assert_eq!(
+            LspServer::uri_to_file_name("file:///tmp/hash%23percent%25.ts"),
+            "/tmp/hash#percent%.ts"
+        );
+        assert_eq!(
+            LspServer::uri_to_file_name("file:///tmp/%C3%BC.ts"),
+            "/tmp/\u{00fc}.ts"
+        );
+    }
+
+    #[test]
+    fn uri_to_file_name_handles_localhost_authority() {
+        assert_eq!(
+            LspServer::uri_to_file_name("file://localhost/private/tmp/tsz%20lsp"),
+            "/private/tmp/tsz lsp"
+        );
+    }
+
+    #[test]
+    fn uri_to_file_name_handles_non_local_authority() {
+        assert_eq!(
+            LspServer::uri_to_file_name("file://server/share/a%20b.ts"),
+            "//server/share/a b.ts"
+        );
+    }
+
+    #[test]
+    fn uri_to_file_name_preserves_non_file_uris() {
+        assert_eq!(
+            LspServer::uri_to_file_name("untitled:Untitled-1"),
+            "untitled:Untitled-1"
+        );
+    }
+
+    #[test]
+    fn file_name_to_uri_percent_encodes_file_paths() {
+        assert_eq!(
+            LspServer::file_name_to_uri("/private/tmp/tsz lsp uri current/src/a#b%.ts"),
+            "file:///private/tmp/tsz%20lsp%20uri%20current/src/a%23b%25.ts"
+        );
+        assert_eq!(
+            LspServer::file_name_to_uri("/tmp/\u{00fc}.ts"),
+            "file:///tmp/%C3%BC.ts"
+        );
+        assert_eq!(
+            LspServer::file_name_to_uri("//server/share/a b%.ts"),
+            "file://server/share/a%20b%25.ts"
+        );
+    }
+
+    #[test]
+    fn uri_conversion_round_trips_encoded_absolute_paths() {
+        let file_name = "/private/tmp/tsz lsp uri current/src/a#b%.ts";
+        let uri = LspServer::file_name_to_uri(file_name);
+
+        assert_eq!(LspServer::uri_to_file_name(&uri), file_name);
+    }
+
+    #[test]
+    fn initialize_decodes_percent_encoded_workspace_root_uri() {
+        let mut server = LspServer::new();
+        let params = json!({
+            "rootUri": "file:///private/tmp/tsz%20lsp%20uri%20current",
+            "capabilities": {}
+        });
+
+        server.handle_initialize(Some(&params));
+
+        assert_eq!(
+            server.project.workspace_roots(),
+            ["/private/tmp/tsz lsp uri current".to_string()]
+        );
+    }
+
+    // Issue #3545: tsz.applyCodeAction must enqueue workspace/applyEdit as a
+    // server-to-client REQUEST (with `id`), not a notification. LSP spec
+    // requires the client to respond with `ApplyWorkspaceEditResponse`.
+    #[test]
+    fn apply_code_action_enqueues_workspace_apply_edit_as_request() {
+        let mut server = LspServer::new();
+        let params = json!({
+            "command": "tsz.applyCodeAction",
+            "arguments": [{
+                "changes": {
+                    "file:///tmp/a.ts": [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 0 }
+                        },
+                        "newText": "x"
+                    }]
+                }
+            }]
+        });
+
+        let result = server
+            .handle_execute_command(Some(params))
+            .expect("execute command should succeed");
+        assert_eq!(result, Value::Bool(true));
+
+        // No notification should be queued — the message is a request.
+        assert!(
+            !server
+                .pending_notifications
+                .iter()
+                .any(|n| n.method == "workspace/applyEdit"),
+            "workspace/applyEdit must NOT be a notification"
+        );
+
+        // Exactly one server-to-client request, with a numeric id and the
+        // expected method.
+        assert_eq!(
+            server.pending_server_requests.len(),
+            1,
+            "expected one pending server request"
+        );
+        let req = &server.pending_server_requests[0];
+        assert_eq!(req.method, "workspace/applyEdit");
+        assert!(
+            matches!(req.id, Value::Number(_)),
+            "request id must be numeric per JSON-RPC, got: {:?}",
+            req.id
+        );
     }
 }

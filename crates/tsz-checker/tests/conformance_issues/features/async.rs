@@ -37,6 +37,38 @@ expected = iter[Symbol.asyncIterator];
 }
 
 #[test]
+fn test_es5_async_function_arguments_reference_reports_ts2522() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+async function f(a = 1) {
+    return arguments.length;
+}
+
+class C {
+    async m() {
+        return arguments.length;
+    }
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES5,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2522 = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2522 && message.contains("async function or method in ES5")
+        })
+        .count();
+    assert_eq!(
+        ts2522, 2,
+        "Expected TS2522 for async function and method arguments references. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_declarations_reports_computed_object_literal_exports() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
@@ -71,6 +103,76 @@ export let o4 = { [u]: 1 };
     assert!(
         has_error(&diagnostics, 9010),
         "Expected TS9010 for the inferred helper variable used in a computed export name.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_isolated_declarations_allows_const_computed_object_literal_exports() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+function prop<T>(v: T): T { return v }
+
+const s: unique symbol = Symbol();
+const str: string = "";
+enum E {
+    V = 10,
+}
+
+export const oWithComputedProperties = {
+    [1]: 1,
+    [1 + 3]: 1,
+    [prop(2)]: 2,
+    [s]: 1,
+    [E.V]: 1,
+    [str]: 0,
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ESNext,
+            isolated_declarations: true,
+            emit_declarations: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 9038),
+        "Expected no TS9038 for const computed object literal export.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_isolated_declarations_reports_const_property_access_computed_object_literal_exports() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+let E = { A: 1 } as const;
+function ns() {
+    return { v: 0 } as const;
+}
+enum Enum {
+    V = 10,
+}
+
+export const o8 = { [E.A]: 1 };
+export const o9 = { [ns().v]: 1 };
+export const oEnum = { [Enum.V]: 1 };
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ESNext,
+            isolated_declarations: true,
+            emit_declarations: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts9038_count = diagnostics.iter().filter(|(code, _)| *code == 9038).count();
+    assert_eq!(
+        ts9038_count, 2,
+        "Expected TS9038 for const property-access computed names except enum members.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -604,6 +706,241 @@ if (Strs.A) {}
 }
 
 #[test]
+fn test_module_scoped_shadowed_nan_does_not_trigger_ts2845() {
+    // When a module re-declares `NaN` as a local variable, comparisons against
+    // that local should NOT emit TS2845. Only the lib-originated global `NaN`
+    // triggers the always-true/false diagnostic.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+const NaN = 0;
+
+if (NaN === 0) {
+    const ok: true = true;
+}
+
+if (NaN !== 0) {
+    const unreachable: never = "not actually unreachable";
+}
+
+export {};
+"#,
+    );
+
+    // Only the intentional `never` assignment should appear — no false TS2845.
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert!(
+        ts2845.is_empty(),
+        "Expected no TS2845 for shadowed module-level NaN, got: {ts2845:?}"
+    );
+    // The never assignment error IS expected.
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 (never assignment), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_function_local_shadowed_nan_does_not_trigger_ts2845() {
+    // Function-local `NaN` redeclarations must also be free of false TS2845.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function f() {
+    const NaN = 0;
+    if (NaN === 0) {
+        return true;
+    }
+    return false;
+}
+
+f();
+
+export {};
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert!(
+        ts2845.is_empty(),
+        "Expected no TS2845 for function-local shadowed NaN, got: {ts2845:?}"
+    );
+}
+
+#[test]
+fn test_global_nan_still_triggers_ts2845() {
+    // The global (lib) NaN must still produce TS2845 so we don't regress
+    // the original behavior.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare let x: number;
+if (x === NaN) {}
+export {};
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        1,
+        "Expected one TS2845 for global NaN comparison, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_script_global_nan_comparisons_trigger_ts2845() {
+    // In script files, lib globals are merged into the file binder. Comparisons
+    // against that merged global `NaN` still need TS2845, while parameter
+    // shadows named `NaN` remain valid.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare const x: number;
+if (x === NaN) {}
+if (NaN == x) {}
+if (((NaN)) !== x) {}
+
+function ok(value: number, NaN: number) {
+    return value === NaN;
+}
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        3,
+        "Expected three TS2845 diagnostics for global NaN comparisons only, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_script_global_nan_still_triggers_ts2845() {
+    // `compiler/nanEquality.ts` is a script, not an external module. A
+    // script-level ambient declaration must not prevent bare `NaN` from
+    // resolving as the standard lib global.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+declare const x: number;
+if (x === NaN) {}
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        1,
+        "Expected one TS2845 for script global NaN comparison, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_nan_equality_conformance_fixture_emits_all_ts2845_lines() {
+    // Mirrors `TypeScript/tests/cases/compiler/nanEquality.ts` line-for-line so
+    // the conformance fingerprints for every direct global-`NaN` comparison are
+    // locked into a checker regression. The fixture exercises:
+    //   * `===`, `==`, `!==`, `!=` against the global `NaN`
+    //   * left-hand and right-hand placement of `NaN`
+    //   * parenthesised `((NaN))` (the inner identifier still resolves to lib)
+    //   * `NaN <op> NaN` (the result is independent of which side is named)
+    //   * `NaN === y[0][1]` where the other operand is `any`
+    //   * three negative cases: function-parameter shadows named `NaN` whose
+    //     comparisons are ordinary number equalities and must NOT emit TS2845
+    //
+    // tsc 6.0.3 emits exactly 17 TS2845 fingerprints at lines
+    // 3,4,6,7,9,10,12,13,15,16,18,19,21,22,24,25,29 of the fixture; the
+    // shadowed-parameter functions (t1/t2/t3) emit none. tsz must match both
+    // sides.
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"declare const x: number;
+
+if (x === NaN) {}
+if (NaN === x) {}
+
+if (x == NaN) {}
+if (NaN == x) {}
+
+if (x !== NaN) {}
+if (NaN !== x) {}
+
+if (x != NaN) {}
+if (NaN != x) {}
+
+if (x === ((NaN))) {}
+if (((NaN)) === x) {}
+
+if (x !== ((NaN))) {}
+if (((NaN)) !== x) {}
+
+if (NaN === NaN) {}
+if (NaN !== NaN) {}
+
+if (NaN == NaN) {}
+if (NaN != NaN) {}
+
+declare let y: any;
+if (NaN === y[0][1]) {}
+
+function t1(value: number, NaN: number) {
+    return value === NaN; // ok
+}
+
+function t2(value: number, NaN: number) {
+    return NaN == value; // ok
+}
+
+function t3(NaN: number) {
+    return NaN === NaN; // ok
+}
+"#,
+    );
+
+    let ts2845: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .collect();
+    assert_eq!(
+        ts2845.len(),
+        17,
+        "Expected 17 TS2845 diagnostics matching nanEquality.ts conformance fingerprints, got: {diagnostics:#?}",
+    );
+
+    let always_false = ts2845
+        .iter()
+        .filter(|(_, message)| message.contains("'false'"))
+        .count();
+    let always_true = ts2845
+        .iter()
+        .filter(|(_, message)| message.contains("'true'"))
+        .count();
+    assert_eq!(
+        always_false, 9,
+        "Expected nine always-false TS2845 messages (matches tsc), got: {ts2845:#?}",
+    );
+    assert_eq!(
+        always_true, 8,
+        "Expected eight always-true TS2845 messages (matches tsc), got: {ts2845:#?}",
+    );
+}
+
+#[test]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -639,11 +976,9 @@ both[sym] = 'not ok';
 
 #[test]
 fn test_js_global_element_access_or_fallback_uses_contextual_target() {
-    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
-        "test.js",
-        r#"
+    let source = r#"
 var Common = {};
-globalThis["Common"] = globalThis["Common"] || {};
+self['Common'] = self['Common'] || {};
 /**
  * @param {string} string
  * @return {string}
@@ -651,7 +986,10 @@ globalThis["Common"] = globalThis["Common"] || {};
 Common.localize = function (string) {
     return string;
 };
-"#,
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.js",
+        source,
         CheckerOptions {
             allow_js: true,
             check_js: true,
@@ -660,16 +998,31 @@ Common.localize = function (string) {
         },
     );
 
-    let ts2741_count = diagnostics.iter().filter(|(code, _)| *code == 2741).count();
-    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+    let ts2741: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2741)
+        .collect();
+    let ts7053_count = diagnostics.iter().filter(|diag| diag.code == 7053).count();
 
     assert_eq!(
-        ts2741_count, 1,
+        ts2741.len(),
+        1,
         "Expected the JS global element-access `||` assignment to fail with one TS2741.\nActual diagnostics: {diagnostics:#?}"
+    );
+    let statement_pos = source
+        .find("self['Common'] =")
+        .expect("expected global fallback assignment") as u32;
+    assert_eq!(
+        ts2741[0].start, statement_pos,
+        "Expected TS2741 to anchor at the assignment statement start.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2741[0].message_text.contains("typeof Common"),
+        "Expected TS2741 target display to preserve the namespace/value side.\nActual diagnostics: {diagnostics:#?}"
     );
     assert_eq!(
         ts7053_count, 0,
-        "Did not expect TS7053 for globalThis[\"Common\"] once it resolves through the global property path.\nActual diagnostics: {diagnostics:#?}"
+        "Did not expect TS7053 for self['Common'] once it resolves through the global property path.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

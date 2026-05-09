@@ -930,6 +930,9 @@ impl ProjectFile {
             return names;
         };
         let local_name = symbol.escaped_name.as_str();
+        if symbol.is_exported {
+            names.push(local_name.to_string());
+        }
 
         let Some(source_file) = arena.get_source_file_at(self.root()) else {
             return names;
@@ -1888,7 +1891,7 @@ impl Project {
                 .map(|ts| (ts.include.clone(), ts.exclude.clone()))
                 .unwrap_or_else(|| {
                     (
-                        vec!["**/*.ts".to_string(), "**/*.tsx".to_string()],
+                        Vec::new(),
                         vec![
                             "node_modules".to_string(),
                             "dist".to_string(),
@@ -1907,6 +1910,7 @@ impl Project {
                         .map(|g| g.compile_matcher())
                 })
                 .collect();
+            let include_matchers = compile_tsconfig_include_matchers(&includes);
 
             // Walk directory
             let walker = walkdir::WalkDir::new(root_path)
@@ -1922,6 +1926,8 @@ impl Project {
                 }
 
                 let path_str = path.to_string_lossy().to_string();
+                let relative_path =
+                    path_to_slash_string(path.strip_prefix(root_path).unwrap_or(path));
 
                 // Check exclude patterns
                 if exclude_matchers.iter().any(|m| m.is_match(&path_str)) {
@@ -1934,12 +1940,10 @@ impl Project {
                 }
 
                 // Only load files within include patterns if specified
-                if !includes.is_empty() {
-                    let _relative = path
-                        .strip_prefix(root_path)
-                        .unwrap_or(path)
-                        .to_string_lossy();
-                    // For now, load all TS/JS files (include pattern matching is complex)
+                if !include_matchers.is_empty()
+                    && !include_matchers.iter().any(|m| m.is_match(&relative_path))
+                {
+                    continue;
                 }
 
                 // Load the file
@@ -2647,6 +2651,48 @@ impl Default for Project {
 fn is_ts_js_file(path: &str) -> bool {
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
     extensions.iter().any(|ext| path.ends_with(ext))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn path_to_slash_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compile_tsconfig_include_matchers(patterns: &[String]) -> Vec<globset::GlobMatcher> {
+    patterns
+        .iter()
+        .flat_map(|pattern| expand_tsconfig_include_pattern(pattern))
+        .filter_map(|pattern| Glob::new(&pattern).ok().map(|glob| glob.compile_matcher()))
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn expand_tsconfig_include_pattern(pattern: &str) -> Vec<String> {
+    let mut normalized = pattern.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_string();
+    }
+
+    if normalized.is_empty() {
+        return Vec::new();
+    }
+
+    if !contains_glob_meta(&normalized)
+        && Path::new(&normalized)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_none()
+    {
+        normalized.push_str("/**/*");
+    }
+
+    let mut expanded = vec![normalized.clone()];
+    let direct_child_variant = normalized.replace("/**/", "/");
+    if direct_child_variant != normalized {
+        expanded.push(direct_child_variant);
+    }
+    expanded
 }
 
 /// Parse a tsconfig.json or jsconfig.json file into `TsConfigSettings`.

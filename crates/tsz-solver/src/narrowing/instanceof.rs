@@ -15,7 +15,7 @@ use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
-use crate::visitor::{application_id, lazy_def_id, union_list_id};
+use crate::visitor::{application_id, intersection_list_id, lazy_def_id, union_list_id};
 use tracing::{Level, span, trace};
 
 impl<'a> NarrowingContext<'a> {
@@ -494,12 +494,18 @@ impl<'a> NarrowingContext<'a> {
                         if self.is_assignable_to(instance_type, member) {
                             return Some(instance_type);
                         }
-                        // Neither direction holds — create intersection per tsc
-                        // semantics. This handles cases like Date instanceof Object
-                        // where assignability checks may miss the relationship.
-                        // The intersection preserves the member's shape while
-                        // constraining it to the instance type.
-                        Some(self.db.intersection2(member, instance_type))
+                        // Neither direction holds — drop the member from the
+                        // narrowed union. tsc's `isTypeDerivedFrom` requires a
+                        // structural relationship; when the member and the
+                        // instance type are unrelated interfaces, the member
+                        // cannot satisfy `instanceof` at runtime and should
+                        // not survive narrowing as an intersection. The
+                        // earlier intersection fallback was producing forms
+                        // like `C2 & C1` for unrelated callable interfaces in
+                        // the typeGuardOfFormInstanceOfOnInterface repro,
+                        // leaking into TS2322 displays as `'C2 & C1'` instead
+                        // of dropping the unreachable branch.
+                        None
                     })
                     .collect()
             };
@@ -524,6 +530,40 @@ impl<'a> NarrowingContext<'a> {
             "instanceof: non-union path for source_type={}",
             source_type.0
         );
+
+        // `instanceof Object` proves the value is non-primitive at
+        // runtime. When the source is a generic — `T extends {}`
+        // (constraint accepts primitives in TS's empty-object rule)
+        // or a bare `T` — pretending the narrowed shape is just
+        // `T & {}` (which `narrow_type_param` produces by default)
+        // leaks the "may represent primitive" verdict downstream and
+        // triggers a false TS2638 on `'k' in narrowedX` (see
+        // issue #3769). Surface the runtime guarantee by intersecting
+        // with `TypeId::OBJECT` (the `object` keyword), which
+        // `type_may_represent_primitive` recognises as non-primitive.
+        let resolved_target_for_object_check = self.resolve_type(instance_type);
+        if self.is_object_interface(resolved_target_for_object_check) {
+            let bare_type_param = matches!(
+                self.db.lookup(resolved_source),
+                Some(crate::types::TypeData::TypeParameter(_))
+            );
+            let intersection_with_type_param =
+                crate::visitor::intersection_list_id(self.db, resolved_source)
+                    .map(|list_id| self.db.type_list(list_id))
+                    .is_some_and(|members| {
+                        members.iter().any(|&member| {
+                            matches!(
+                                self.db.lookup(member),
+                                Some(crate::types::TypeData::TypeParameter(_))
+                            )
+                        })
+                    });
+            if bare_type_param || intersection_with_type_param {
+                return self
+                    .db
+                    .intersection2(source_type, crate::types::TypeId::OBJECT);
+            }
+        }
 
         // Try type parameter narrowing first (produces T & InstanceType)
         if let Some(narrowed) = self.narrow_type_param(resolved_source, instance_type) {
@@ -566,6 +606,12 @@ impl<'a> NarrowingContext<'a> {
             if !self.are_instanceof_types_overlapping(resolved_source, instance_type) {
                 trace!("Types have conflicting properties, returning NEVER");
                 return TypeId::NEVER;
+            }
+            if (intersection_list_id(self.db, source_type).is_some()
+                || intersection_list_id(self.db, resolved_source).is_some())
+                && target_is_class
+            {
+                return instance_type;
             }
             return self.db.intersection2(source_type, instance_type);
         }

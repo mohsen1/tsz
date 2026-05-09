@@ -156,6 +156,10 @@ export class Test1 {
         has_error(&diagnostics, 2663),
         "Expected TS2663 for missing free name in module instance initializer. Actual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Did not expect generic TS2304 alongside TS2663. Actual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -200,6 +204,48 @@ export class Test1 {
 }
 
 #[test]
+fn test_instance_member_initializer_cross_file_exported_name_reports_only_ts2663() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "classMemberInitializerWithLamdaScoping4_0.ts",
+                "export var field1: string;",
+            ),
+            (
+                "classMemberInitializerWithLamdaScoping4_1.ts",
+                r"
+declare var console: {
+    log(msg?: any): void;
+};
+export class Test1 {
+    constructor(private field1: string) {
+    }
+    messageHandler = () => {
+        console.log(field1);
+    };
+}
+                ",
+            ),
+        ],
+        "classMemberInitializerWithLamdaScoping4_1.ts",
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2663),
+        "Expected TS2663 for exported cross-file name hidden from module scope. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Did not expect generic TS2304 alongside TS2663. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_umd_namespace_conflicting_with_global_const_reports_ts2451() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
@@ -236,6 +282,37 @@ declare global {
     assert!(
         ts2451_count >= 2,
         "Expected both UMD/global declarations to report TS2451 when checking global.d.ts. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_constructor_guard_negative_branch_ts2339_uses_tsc_union_order() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C1 {
+    property1!: string;
+}
+
+declare let var1: C1 | number;
+if (var1.constructor != C1) {
+    var1.property1;
+}
+        ",
+    );
+
+    let ts2339_messages: Vec<&String> = diagnostics
+        .iter()
+        .filter_map(|(code, message)| (*code == 2339).then_some(message))
+        .collect();
+
+    assert_eq!(
+        ts2339_messages.len(),
+        1,
+        "Expected one TS2339 diagnostic. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2339_messages[0],
+        "Property 'property1' does not exist on type 'number | C1'."
     );
 }
 

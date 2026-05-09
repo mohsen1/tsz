@@ -493,6 +493,42 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
+    pub(super) fn collect_noinfer_placeholder_vars_in_type(
+        &mut self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        result: &mut FxHashSet<InferenceVar>,
+        probe_map: &mut FxHashMap<TypeId, InferenceVar>,
+        visited: &mut FxHashSet<TypeId>,
+    ) {
+        if !visited.insert(ty) {
+            return;
+        }
+
+        let mut roots = vec![ty];
+        if let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+            && visited.insert(expanded)
+        {
+            roots.push(expanded);
+        }
+
+        for root in roots {
+            for nested in crate::visitor::collect_all_types(self.interner.as_type_database(), root)
+            {
+                if let Some(TypeData::NoInfer(inner)) = self.interner.lookup(nested) {
+                    let mut inner_visited = FxHashSet::default();
+                    result.extend(self.collect_placeholder_vars_in_type(
+                        inner,
+                        var_map,
+                        probe_map,
+                        &mut inner_visited,
+                    ));
+                }
+            }
+        }
+    }
+
     pub(super) fn direct_inference_tracking_target(&self, ty: TypeId) -> Option<TypeId> {
         match self.interner.lookup(ty) {
             Some(TypeData::Union(members)) => {
@@ -511,6 +547,226 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Intersection(_)) => None,
             _ => Some(ty),
+        }
+    }
+
+    pub(super) fn collect_direct_placeholder_vars_in_type(
+        &self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> FxHashSet<InferenceVar> {
+        let mut result = FxHashSet::default();
+        self.collect_direct_placeholder_vars_in_type_inner(ty, var_map, visited, &mut result);
+        result
+    }
+
+    fn collect_direct_placeholder_vars_in_type_inner(
+        &self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        visited: &mut FxHashSet<TypeId>,
+        result: &mut FxHashSet<InferenceVar>,
+    ) {
+        if ty.is_intrinsic() || !visited.insert(ty) {
+            return;
+        }
+        if let Some(&var) = var_map.get(&ty) {
+            result.insert(var);
+            return;
+        }
+
+        let Some(key) = self.interner.lookup(ty) else {
+            return;
+        };
+        match key {
+            TypeData::ReadonlyType(inner)
+            | TypeData::NoInfer(inner)
+            | TypeData::Array(inner)
+            | TypeData::KeyOf(inner) => {
+                self.collect_direct_placeholder_vars_in_type_inner(inner, var_map, visited, result);
+            }
+            TypeData::Tuple(elements_id) => {
+                let elements = self.interner.tuple_list(elements_id);
+                for element in elements.iter().filter(|element| !element.rest) {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        element.type_id,
+                        var_map,
+                        visited,
+                        result,
+                    );
+                }
+            }
+            TypeData::Union(members_id) | TypeData::Intersection(members_id) => {
+                for &member in self.interner.type_list(members_id).iter() {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        member, var_map, visited, result,
+                    );
+                }
+            }
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                let shape = self.interner.object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        prop.type_id,
+                        var_map,
+                        visited,
+                        result,
+                    );
+                }
+                if let Some(index) = shape.string_index.as_ref() {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        index.value_type,
+                        var_map,
+                        visited,
+                        result,
+                    );
+                }
+                if let Some(index) = shape.number_index.as_ref() {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        index.value_type,
+                        var_map,
+                        visited,
+                        result,
+                    );
+                }
+            }
+            TypeData::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    app.base, var_map, visited, result,
+                );
+                for &arg in &app.args {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        arg, var_map, visited, result,
+                    );
+                }
+            }
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.interner.get_mapped(mapped_id);
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    mapped.constraint,
+                    var_map,
+                    visited,
+                    result,
+                );
+                if let Some(name_type) = mapped.name_type {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        name_type, var_map, visited, result,
+                    );
+                }
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    mapped.template,
+                    var_map,
+                    visited,
+                    result,
+                );
+            }
+            TypeData::Conditional(cond_id) => {
+                let cond = self.interner.get_conditional(cond_id);
+                for nested in [
+                    cond.check_type,
+                    cond.extends_type,
+                    cond.true_type,
+                    cond.false_type,
+                ] {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        nested, var_map, visited, result,
+                    );
+                }
+            }
+            TypeData::IndexAccess(object, index) => {
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    object, var_map, visited, result,
+                );
+                self.collect_direct_placeholder_vars_in_type_inner(index, var_map, visited, result);
+            }
+            TypeData::Function(shape_id) => {
+                let shape = self.interner.function_shape(shape_id);
+                for param in &shape.params {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        param.type_id,
+                        var_map,
+                        visited,
+                        result,
+                    );
+                }
+                if let Some(this_type) = shape.this_type {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        this_type, var_map, visited, result,
+                    );
+                }
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    shape.return_type,
+                    var_map,
+                    visited,
+                    result,
+                );
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = self.interner.callable_shape(shape_id);
+                for sig in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    for param in &sig.params {
+                        self.collect_direct_placeholder_vars_in_type_inner(
+                            param.type_id,
+                            var_map,
+                            visited,
+                            result,
+                        );
+                    }
+                    if let Some(this_type) = sig.this_type {
+                        self.collect_direct_placeholder_vars_in_type_inner(
+                            this_type, var_map, visited, result,
+                        );
+                    }
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        sig.return_type,
+                        var_map,
+                        visited,
+                        result,
+                    );
+                }
+                for prop in &shape.properties {
+                    self.collect_direct_placeholder_vars_in_type_inner(
+                        prop.type_id,
+                        var_map,
+                        visited,
+                        result,
+                    );
+                }
+            }
+            TypeData::StringIntrinsic { type_arg, .. } => {
+                self.collect_direct_placeholder_vars_in_type_inner(
+                    type_arg, var_map, visited, result,
+                );
+            }
+            TypeData::TemplateLiteral(spans_id) => {
+                for span in self.interner.template_list(spans_id).iter() {
+                    if let crate::types::TemplateSpan::Type(nested) = span {
+                        self.collect_direct_placeholder_vars_in_type_inner(
+                            *nested, var_map, visited, result,
+                        );
+                    }
+                }
+            }
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
+            | TypeData::Enum(_, _)
+            | TypeData::Error => {}
         }
     }
 
@@ -693,6 +949,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         match self.interner.lookup(arg_type) {
             Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
+                if shape.all_properties_context_sensitive() {
+                    return true;
+                }
                 !shape
                     .properties
                     .iter()
@@ -729,6 +988,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let source_shape = self.interner.object_shape(source_obj);
         let target_shape = self.interner.object_shape(target_obj);
+        if source_shape.all_properties_context_sensitive() {
+            return None;
+        }
 
         let mut target_props_by_name: FxHashMap<_, _> = FxHashMap::default();
         for prop in &target_shape.properties {
@@ -1042,6 +1304,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
         let source_fn = self.normalize_function_shape_params_for_context(&source_fn);
         let target_fn = self.normalize_function_shape_params_for_context(&target_fn);
+        if !source_fn.type_params.is_empty() && !target_fn.type_params.is_empty() {
+            return source_ty;
+        }
+
+        // Keep generic callbacks intact for `(...args: I)` targets so the
+        // constraint walker can infer `I` as a tuple from the source parameters.
+        // Contextual instantiation would ask for an element type of unresolved
+        // `I` and collapse to its array constraint.
+        let target_rest_is_outer_inference_placeholder =
+            target_fn.params.last().is_some_and(|param| {
+                if !param.rest {
+                    return false;
+                }
+                matches!(
+                    self.interner.lookup(param.type_id),
+                    Some(TypeData::TypeParameter(info))
+                        if self
+                            .interner
+                            .resolve_atom(info.name)
+                            .as_str()
+                            .starts_with("__infer_")
+                )
+            });
+        if !source_fn.type_params.is_empty() && target_rest_is_outer_inference_placeholder {
+            return source_ty;
+        }
 
         // TypeScript does not use generic construct-signature arguments to infer
         // type parameters for the outer constructor-typed parameter. Leave the
@@ -1364,17 +1652,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_ty: TypeId,
         target_ty: TypeId,
     ) -> bool {
-        let Some(source_fn) = Self::get_contextual_signature_cached(self.interner, source_ty)
-        else {
-            return false;
-        };
-        let Some(target_fn) = Self::get_contextual_signature_cached(self.interner, target_ty)
-        else {
-            return false;
-        };
-
-        self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)
+        self.conflicting_contextual_signature_instantiation_type(source_ty, target_ty)
             .is_some()
+    }
+
+    pub(crate) fn conflicting_contextual_signature_instantiation_type(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> Option<TypeId> {
+        let source_fn = Self::get_contextual_signature_cached(self.interner, source_ty)?;
+        let target_fn = Self::get_contextual_signature_cached(self.interner, target_ty)?;
+
+        let substitution =
+            self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)?;
+        let instantiated = FunctionShape {
+            type_params: vec![],
+            params: target_fn.params.clone(),
+            this_type: target_fn.this_type,
+            return_type: instantiate_type(self.interner, source_fn.return_type, &substitution),
+            type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
+                asserts: pred.asserts,
+                target: pred.target,
+                type_id: pred
+                    .type_id
+                    .map(|ty| instantiate_type(self.interner, ty, &substitution)),
+                parameter_index: pred.parameter_index,
+            }),
+            is_constructor: target_fn.is_constructor,
+            is_method: target_fn.is_method,
+        };
+        Some(self.interner.function(instantiated))
     }
 
     fn conflicting_contextual_param_candidate_substitution(

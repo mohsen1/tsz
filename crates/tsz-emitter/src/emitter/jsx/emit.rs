@@ -102,6 +102,9 @@ impl<'a> Printer<'a> {
             self.write(" ");
         }
         self.write("/>");
+        if let Some(tail) = self.recovered_numeric_jsx_tag_tail(node, jsx.tag_name) {
+            self.write(&tail);
+        }
     }
 
     fn emit_jsx_fragment_preserve(&mut self, node: &Node) {
@@ -117,6 +120,29 @@ impl<'a> Printer<'a> {
             self.emit(child);
         }
         self.write("</>");
+    }
+
+    fn recovered_numeric_jsx_tag_tail(&self, node: &Node, tag_name: NodeIndex) -> Option<String> {
+        if !self.arena.is_missing_recovery_identifier(tag_name) {
+            return None;
+        }
+        let source = self.source_text?;
+        let start = std::cmp::min(node.pos as usize, source.len());
+        let end = std::cmp::min(node.end as usize, source.len());
+        if start >= end {
+            return None;
+        }
+        let text = source[start..end].trim_start();
+        let rest = text.strip_prefix('<')?.trim_start();
+        let digits_len = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if digits_len == 0 || rest.as_bytes().get(digits_len) != Some(&b'>') {
+            return None;
+        }
+        Some(rest[..=digits_len].to_string())
     }
 
     // =========================================================================
@@ -223,6 +249,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_jsx_attrs_as_object(&attrs_info.attrs);
         }
+        self.skip_jsx_attribute_line_comments(attributes);
 
         // Children -- tsc formats children on separate indented lines when there are
         // multiple children OR when any child is itself a JSX element (nested createElement).
@@ -532,8 +559,13 @@ impl<'a> Printer<'a> {
     // Shared JSX Helpers
     // =========================================================================
 
-    /// Get the JSX factory function name (e.g. "React.createElement" or custom)
+    /// Get the JSX factory function name (e.g. "React.createElement" or custom).
+    /// Per-file `@jsx <factory>` pragma takes precedence over the
+    /// `compilerOptions.jsxFactory` value (issue #4010), matching tsc.
     pub(in super::super) fn get_jsx_factory(&self) -> String {
+        if let Some(pragma) = self.extract_jsx_factory_pragma() {
+            return pragma;
+        }
         self.ctx
             .options
             .jsx_factory
@@ -542,8 +574,13 @@ impl<'a> Printer<'a> {
             .to_string()
     }
 
-    /// Get the JSX fragment factory (e.g. "React.Fragment" or custom)
+    /// Get the JSX fragment factory (e.g. "React.Fragment" or custom).
+    /// Per-file `@jsxFrag <factory>` pragma takes precedence over the
+    /// `compilerOptions.jsxFragmentFactory` value (issue #4010).
     pub(in super::super) fn get_jsx_fragment_factory(&self) -> String {
+        if let Some(pragma) = self.extract_jsx_fragment_factory_pragma() {
+            return pragma;
+        }
         self.ctx
             .options
             .jsx_fragment_factory
@@ -856,6 +893,11 @@ impl<'a> Printer<'a> {
             {
                 return JsxAttrValue::Expr(expr.expression);
             }
+            if let Some(expr) = self.arena.get_jsx_expression(node)
+                && expr.dot_dot_dot_token
+            {
+                return JsxAttrValue::EmptyExpression;
+            }
             return JsxAttrValue::Bool(true);
         }
 
@@ -920,6 +962,23 @@ impl<'a> Printer<'a> {
             {
                 self.skip_comments_for_empty_jsx_expr(node);
             }
+        }
+    }
+
+    fn skip_jsx_attribute_line_comments(&mut self, attributes: NodeIndex) {
+        let Some(attrs_node) = self.arena.get(attributes) else {
+            return;
+        };
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= attrs_node.pos && comment.end <= attrs_node.end {
+                if !comment.is_multi_line {
+                    self.comment_emit_idx += 1;
+                    continue;
+                }
+            }
+            break;
         }
     }
 
@@ -1038,11 +1097,18 @@ impl<'a> Printer<'a> {
             && let Some(expr) = self.arena.get_jsx_expression(node)
             && expr.expression.is_some()
         {
-            // Spread children in classic mode: `{...expr}` -> `...expr`
-            if expr.dot_dot_dot_token {
+            // Spread children in classic mode: `{...expr}` -> `...expr`.
+            // tsc unwraps parens that exist solely because of an erased type
+            // cast (`(x as any)` → `x`), so `{...(x as any)}` becomes `...x`,
+            // not `...(x)`. Walk past parens + as/satisfies/type-assertion
+            // wrappers so the spread argument prints unwrapped.
+            let target_expr = if expr.dot_dot_dot_token {
                 self.write("...");
-            }
-            self.emit(expr.expression);
+                self.unwrap_spread_argument(expr.expression)
+            } else {
+                expr.expression
+            };
+            self.emit(target_expr);
             // Emit trailing comments between expression and closing `}` of the
             // JSX expression container, e.g. `{null /* preserved */}` should
             // produce `null /* preserved */` in the createElement args.
@@ -1057,6 +1123,35 @@ impl<'a> Printer<'a> {
         // JSX element, fragment, or self-closing element -- emit recursively
         // This will hit the transform dispatch again for nested JSX.
         self.emit(child);
+    }
+
+    /// Strip outer parens and erased type-cast wrappers (`as`, `satisfies`,
+    /// `<T>x` assertions) around a spread argument. `...(expr as T)` should
+    /// emit as `...expr`; the parens only existed for the cast.
+    fn unwrap_spread_argument(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(n) = self.arena.get(idx) else {
+                return idx;
+            };
+            if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                if let Some(paren) = self.arena.get_parenthesized(n) {
+                    idx = paren.expression;
+                    continue;
+                }
+                return idx;
+            }
+            if n.kind == syntax_kind_ext::AS_EXPRESSION
+                || n.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || n.kind == syntax_kind_ext::TYPE_ASSERTION
+            {
+                if let Some(inner) = self.arena.get_unary_expr(n) {
+                    idx = inner.operand;
+                    continue;
+                }
+                return idx;
+            }
+            return idx;
+        }
     }
 
     /// Emit JSX attributes as a JS object literal: `{ key: value, ... }`
@@ -1119,6 +1214,7 @@ impl<'a> Printer<'a> {
             JsxAttrValue::Expr(idx) => {
                 self.emit(*idx);
             }
+            JsxAttrValue::EmptyExpression => {}
         }
     }
 }

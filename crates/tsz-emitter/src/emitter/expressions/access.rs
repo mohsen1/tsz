@@ -342,33 +342,9 @@ impl<'a> Printer<'a> {
         }
         if let Some(inner_node) = self.arena.get(idx) {
             if inner_node.kind == SyntaxKind::NumericLiteral as u16 {
-                // Check the source text of the numeric literal to see if it already
-                // contains a decimal point or exponent.  If not, we need "..".
-                let needs_extra_dot = if let Some(text) = self.source_text {
-                    let start = inner_node.pos as usize;
-                    let end = inner_node.end as usize;
-                    if end <= text.len() && start < end {
-                        let lit = &text[start..end];
-                        let num_text = lit.trim();
-                        // Only plain decimal integers need `..`.
-                        // Hex (0x/0X), octal (0o/0O), and binary (0b/0B) never
-                        // need it because their prefix already disambiguates.
-                        let is_prefixed = num_text.starts_with("0x")
-                            || num_text.starts_with("0X")
-                            || num_text.starts_with("0o")
-                            || num_text.starts_with("0O")
-                            || num_text.starts_with("0b")
-                            || num_text.starts_with("0B");
-                        !is_prefixed
-                            && !num_text.contains('.')
-                            && !num_text.contains('e')
-                            && !num_text.contains('E')
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                let needs_extra_dot = self
+                    .numeric_literal_emit_text(inner_node)
+                    .is_some_and(|text| text.bytes().all(|b| b.is_ascii_digit()));
                 // If the numeric literal is wrapped in parentheses (or a type
                 // assertion that was erased), the parens already disambiguate and
                 // a single dot suffices: `(1).toString()` not `(1)..toString()`.
@@ -711,12 +687,22 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        // Determine if the paren wraps a type assertion (which gets erased) or
-        // directly wraps an object literal.
-        // - Type assertion case: `(<Type>{}).foo` → `({}.foo)` — suffix stays inside parens
-        //   because the outer statement-level paren provides the disambiguation.
-        // - Direct object literal: `({...})['hello']` → `({...})['hello']` — suffix goes
-        //   outside since the parens just wrap the object literal.
+        // Whether we want to delegate the parens to the inner emit (it will
+        // produce its own `({...})`) or wrap them ourselves. When the AS
+        // chain unwraps to *another* parenthesized expression (e.g. `(({}) as
+        // any).foo` — source already wrote inner parens around the literal),
+        // the inner emit will produce `({...})` and adding our own `(` would
+        // double-wrap as `(({}).foo)`. tsc emits the cleaner `({}).foo`.
+        let inner_already_parens = self.type_assertion_result_is_parenthesized(paren.expression);
+        if inner_already_parens {
+            self.emit(paren.expression);
+            emit_suffix(self);
+            return true;
+        }
+
+        // Type assertion that erases away to a bare object literal:
+        // `(<Type>{}).foo` → `({}.foo)` — wrap ourselves and place suffix
+        // outside (matches tsc's emit for the bare-cast variant).
         let inner_is_erasable = if let Some(inner) = self.arena.get(paren.expression) {
             inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner.kind == syntax_kind_ext::AS_EXPRESSION
@@ -791,11 +777,17 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.emit_property_name_without_import_substitution(access.name_or_argument);
         } else {
+            let before = self.writer.len();
+            self.emit(access.expression);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let base_expr = full[before..after].trim_start().to_string();
+            self.writer.truncate(before);
             let base_temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&base_temp);
             self.write(" = ");
-            self.emit(access.expression);
+            self.write(&base_expr);
             self.write(")");
             self.write(" === null || ");
             self.write(&base_temp);
@@ -828,11 +820,17 @@ impl<'a> Printer<'a> {
             self.emit(access.name_or_argument);
             self.write("]");
         } else {
+            let before = self.writer.len();
+            self.emit(access.expression);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let base_expr = full[before..after].trim_start().to_string();
+            self.writer.truncate(before);
             let base_temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&base_temp);
             self.write(" = ");
-            self.emit(access.expression);
+            self.write(&base_expr);
             self.write(")");
             self.write(" === null || ");
             self.write(&base_temp);
@@ -1129,6 +1127,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -1142,6 +1141,16 @@ mod tests {
         printer.finish().code
     }
 
+    fn emit_js(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
     #[test]
     fn property_access_preserves_comments_between_base_and_dot() {
         let output = emit_es6(
@@ -1153,6 +1162,20 @@ mod tests {
                 r#"this.then(x => result) /*S*/.then(x => "abc") /*string*/.then(x => x.length) /*number*/"#
             ),
             "Comments between a property-access base and dot must stay before the dot.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn erased_object_literal_assertion_call_keeps_call_inside_grouping() {
+        let output = emit_js("class A { }\n(<A>{}).toString();\n");
+
+        assert!(
+            output.contains("({}.toString());"),
+            "Call on erased object-literal assertion should stay inside object-literal grouping.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(({}.toString)())"),
+            "Call on erased object-literal assertion should not parenthesize the callee separately.\nOutput:\n{output}"
         );
     }
 
@@ -1413,6 +1436,31 @@ mod tests {
         );
     }
 
+    /// Downleveled decimal/exponent spellings can emit as plain integers.
+    /// The dot decision must be based on emitted text: `08.8e5.foo` becomes
+    /// `880000..foo`, not `880000.foo`.
+    #[test]
+    fn downleveled_numeric_literal_property_access_plain_integer() {
+        let source = "08.8e5 .foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("880000..foo"),
+            "Downleveled numeric literal property access must use `..` when emitted as an integer.\nOutput:\n{output}"
+        );
+    }
+
     /// Hex literal `0xff` doesn't need `..` because the `0x` prefix disambiguates.
     #[test]
     fn numeric_literal_property_access_hex() {
@@ -1563,6 +1611,29 @@ mod tests {
         assert!(
             output.contains("var y = O.x;"),
             "Non-enum namespace member access through the same alias must be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn const_enum_declared_in_namespace_inlines_local_and_qualified_access() {
+        let source =
+            "namespace N {\n    export const enum E { A }\n    var x = E.A;\n}\nvar y = N.E.A;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = 0 /* E.A */;"),
+            "Namespace-local const enum access must be inlined by simple name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y = 0 /* N.E.A */;"),
+            "Qualified namespace const enum access must still be inlined outside the namespace.\nOutput:\n{output}"
         );
     }
 

@@ -15,6 +15,7 @@
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -51,6 +52,35 @@ fn compile_and_get_diagnostic_codes_with_options(
         .collect()
 }
 
+fn compile_and_get_diagnostic_messages_with_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 /// Mapped key K iterating `keyof T` (T a free type parameter constrained
 /// to `unknown[]`) used as type argument to a generic constrained to a
 /// numeric-string union must NOT emit TS2344. tsc defers this check.
@@ -65,6 +95,59 @@ type T21<T extends unknown[]> = { [K in keyof T]: T20<K> };
     assert!(
         !diagnostics.contains(&2344),
         "expected no TS2344, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_user_unique_prefix_property_stays_string_key() {
+    let diagnostics = compile_and_get_diagnostic_messages_with_options(
+        r#"
+export {};
+
+type Source = {
+  __unique_1: number;
+  ordinary: string;
+};
+
+type Assert<T extends true> = T;
+
+type IsExactlyStringKeys =
+  keyof Source extends "__unique_1" | "ordinary"
+    ? "__unique_1" | "ordinary" extends keyof Source
+      ? true
+      : false
+    : false;
+
+type Check = Assert<IsExactlyStringKeys>;
+
+type Copy = {
+  [K in keyof Source]: Source[K];
+};
+
+declare const source: Source;
+
+const value = source.__unique_1;
+const key: keyof Source = "__unique_1";
+const copy: Copy = {
+  __unique_1: 1,
+  ordinary: "ok"
+};
+const copyValue = copy.__unique_1;
+
+value;
+key;
+copyValue;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics for user-authored __unique_1 string key, got: {diagnostics:#?}"
     );
 }
 

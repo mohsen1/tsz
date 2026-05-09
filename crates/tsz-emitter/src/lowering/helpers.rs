@@ -322,6 +322,22 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
+    /// Get the property-name node of a class member, when the member has one.
+    fn get_member_name(&self, member_node: &tsz_parser::parser::node::Node) -> Option<NodeIndex> {
+        match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(member_node).map(|m| m.name)
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.arena.get_property_decl(member_node).map(|p| p.name)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.arena.get_accessor(member_node).map(|a| a.name)
+            }
+            _ => None,
+        }
+    }
+
     /// Check if a property access expression accesses a private identifier.
     fn is_private_field_access(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(node_idx) else {
@@ -395,6 +411,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_read(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_read(body)
             {
@@ -420,6 +441,11 @@ impl<'a> LoweringPass<'a> {
                 }
                 continue;
             }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_field_write(name)
+            {
+                return true;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_write(body)
             {
@@ -443,6 +469,11 @@ impl<'a> LoweringPass<'a> {
                     return true;
                 }
                 continue;
+            }
+            if let Some(name) = self.get_member_name(member_node)
+                && self.subtree_has_private_in_expression(name)
+            {
+                return true;
             }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_in_expression(body)
@@ -613,6 +644,41 @@ impl<'a> LoweringPass<'a> {
             let start = body_node.pos;
             let end = body_node.end;
 
+            // First pass: collect indices of private-field property accesses that
+            // appear as assignment LHS or unary mutation operands. These are
+            // already classified by the binary/unary handling and must not be
+            // double-counted as standalone reads.
+            let mut consumed_pa: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            for i in 0..self.arena.len() {
+                let nidx = NodeIndex(i as u32);
+                let Some(n) = self.arena.get(nidx) else {
+                    continue;
+                };
+                if n.pos < start || n.end > end {
+                    continue;
+                }
+                if n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(bin) = self.arena.get_binary_expr(n)
+                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                {
+                    let left = self.unwrap_parens(bin.left);
+                    if self.is_private_field_access(left) {
+                        consumed_pa.insert(left.0);
+                    }
+                }
+                if (n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    || n.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                    && let Some(unary) = self.arena.get_unary_expr(n)
+                    && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                {
+                    let operand = self.unwrap_parens(unary.operand);
+                    if self.is_private_field_access(operand) {
+                        consumed_pa.insert(operand.0);
+                    }
+                }
+            }
+
             for i in 0..self.arena.len() {
                 let nidx = NodeIndex(i as u32);
                 let Some(n) = self.arena.get(nidx) else {
@@ -669,6 +735,17 @@ impl<'a> LoweringPass<'a> {
                         earliest_is_write_only = false;
                     }
                 }
+                // Standalone private-field read (e.g., `return this.#foo;`,
+                // `f(this.#foo)`, `x.#m()`). Skip ones we already classified as
+                // assignment targets or ++/-- operands.
+                if n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && self.is_private_field_access(nidx)
+                    && !consumed_pa.contains(&nidx.0)
+                    && (earliest_pos.is_none() || n.pos < earliest_pos.unwrap())
+                {
+                    earliest_pos = Some(n.pos);
+                    earliest_is_write_only = false;
+                }
             }
         }
 
@@ -691,6 +768,13 @@ impl<'a> LoweringPass<'a> {
             let has_accessor =
                 self.has_class_member_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
             if !has_accessor {
+                continue;
+            }
+
+            if self.has_class_member_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword as u16)
+                || self
+                    .has_class_member_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+            {
                 continue;
             }
 
@@ -967,6 +1051,56 @@ impl<'a> LoweringPass<'a> {
         })
     }
 
+    /// Check if an assignment destructuring pattern has object rest.
+    ///
+    /// Assignment destructuring uses object/array literal nodes rather than
+    /// binding-pattern nodes, but it still lowers object rest through `__rest`.
+    pub(super) fn assignment_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                match elem_node.kind {
+                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => true,
+                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .is_some_and(|prop| {
+                            self.assignment_pattern_has_object_rest(prop.initializer)
+                        }),
+                    _ => false,
+                }
+            });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let Some(lit) = self.arena.get_literal_expr(node) else {
+                return false;
+            };
+            return lit.elements.nodes.iter().any(|&elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    && let Some(spread) = self.arena.get_spread(elem_node)
+                {
+                    return self.assignment_pattern_has_object_rest(spread.expression);
+                }
+                self.assignment_pattern_has_object_rest(elem_idx)
+            });
+        }
+
+        false
+    }
+
     pub(super) fn is_binding_pattern_idx(&self, idx: NodeIndex) -> bool {
         self.arena.get(idx).is_some_and(|n| n.is_binding_pattern())
     }
@@ -1056,6 +1190,82 @@ impl<'a> LoweringPass<'a> {
         Some(&ident.escaped_text)
     }
 
+    pub(super) fn resolve_class_expr_binding_name(&self, class_idx: NodeIndex) -> Option<&str> {
+        let ext = self.arena.get_extended(class_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+
+        let decl = self.arena.get_variable_declaration(parent_node)?;
+        self.get_identifier_text_ref(decl.name)
+            .filter(|name| !name.is_empty())
+    }
+
+    pub(super) fn class_expr_static_comma_needs_set_function_name(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        if class.name.is_some() || self.resolve_class_expr_binding_name(class_idx).is_none() {
+            return false;
+        }
+
+        let needs_private_field_lowering = self.ctx.needs_es2022_lowering;
+        let target_needs_field_lowering =
+            self.ctx.needs_es2022_lowering || !self.ctx.options.use_define_for_class_fields;
+        #[allow(clippy::nonminimal_bool)]
+        let has_static_field_comma_expr = target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(member).is_some_and(|prop| {
+                            self.arena.is_static(&prop.modifiers)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                && !(needs_private_field_lowering
+                                    && is_private_identifier(self.arena, prop.name))
+                        })
+                })
+            });
+        let has_static_block_comma_expr = self.ctx.needs_es2022_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                })
+            });
+        // Static *private* fields are lowered into `_C_x = { value: void 0 }`
+        // entries inside the same comma wrapper, so they count as static
+        // state for the naming-helper decision even though
+        // `has_static_field_comma_expr` skips them above (they go through the
+        // private-field lowering path, not the static-field path).
+        let has_static_private_member = needs_private_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(member).is_some_and(|prop| {
+                            self.arena.is_static(&prop.modifiers)
+                                && is_private_identifier(self.arena, prop.name)
+                        })
+                })
+            });
+        // tsc only emits `__setFunctionName` when the comma wrapper carries
+        // *static* state (a static field initializer, a static private
+        // field, or a static block). Pure instance-private comma forms
+        // — e.g. `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep
+        // the engine's automatic assignment-based naming and do not need
+        // the helper.
+        has_static_field_comma_expr || has_static_block_comma_expr || has_static_private_member
+    }
+
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<IdentifierId> {
         self.get_module_root_name_inner(name_idx, 0)
     }
@@ -1099,7 +1309,10 @@ impl<'a> LoweringPass<'a> {
         &self,
         node: &Node,
     ) -> Option<&tsz_parser::parser::node::BlockData> {
-        if node.kind == syntax_kind_ext::BLOCK || node.kind == syntax_kind_ext::CASE_BLOCK {
+        if node.kind == syntax_kind_ext::BLOCK
+            || node.kind == syntax_kind_ext::CASE_BLOCK
+            || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+        {
             self.arena.blocks.get(node.data_index as usize)
         } else {
             None
@@ -1505,8 +1718,8 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Compute the capture variable name for `_this` in a given scope.
-    /// If the scope contains a variable declaration or function parameter named `_this`,
-    /// returns `_this_1`. Otherwise returns `_this`.
+    /// Keep trying TypeScript's `_this`, `_this_1`, `_this_2`, ... pattern until
+    /// the generated name does not collide with a binding in the same scope.
     pub(super) fn compute_this_capture_name(&self, body_idx: NodeIndex) -> Arc<str> {
         self.compute_this_capture_name_with_params(body_idx, None)
     }
@@ -1517,10 +1730,19 @@ impl<'a> LoweringPass<'a> {
         body_idx: NodeIndex,
         params: Option<&NodeList>,
     ) -> Arc<str> {
-        if self.scope_has_name(body_idx, "_this") || self.params_have_name(params, "_this") {
-            Arc::from("_this_1")
-        } else {
-            Arc::from("_this")
+        let mut suffix = 0usize;
+        loop {
+            let candidate = if suffix == 0 {
+                "_this".to_string()
+            } else {
+                format!("_this_{suffix}")
+            };
+            if !self.scope_has_name(body_idx, &candidate)
+                && !self.params_have_name(params, &candidate)
+            {
+                return Arc::from(candidate);
+            }
+            suffix += 1;
         }
     }
 

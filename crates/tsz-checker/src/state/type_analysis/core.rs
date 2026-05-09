@@ -1018,6 +1018,12 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // The member might be re-exported from another module
         if let Some(ref module_specifier) = symbol.import_module {
+            if self
+                .ctx
+                .namespace_import_alias_has_local_namespace_conflict(symbol)
+            {
+                return None;
+            }
             if symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
@@ -1685,13 +1691,33 @@ impl<'a> CheckerState<'a> {
                         self.ctx.arena.get(data.constraint).is_some_and(|n| {
                             n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY
                         });
+                    let is_direct_mapped_constraint =
+                        self.ctx.arena.get(data.constraint).is_some_and(|n| {
+                            n.kind == tsz_parser::parser::syntax_kind_ext::MAPPED_TYPE
+                        });
+                    let is_direct_resolution_path_constraint =
+                        self.ctx.arena.get(data.constraint).is_some_and(|n| {
+                            matches!(
+                                n.kind,
+                                k if k == tsz_parser::parser::syntax_kind_ext::MAPPED_TYPE
+                                    || k == tsz_parser::parser::syntax_kind_ext::UNION_TYPE
+                                    || k == tsz_parser::parser::syntax_kind_ext::INTERSECTION_TYPE
+                                    || k == tsz_parser::parser::syntax_kind_ext::INDEXED_ACCESS_TYPE
+                            )
+                        });
                     // Skip circular constraint check for `typeof` expressions.
                     // `T extends typeof a` where `a: T` resolves to `T extends T` but is
                     // NOT considered circular by tsc — it's a valid pattern for type narrowing.
                     // tsc's getConstraintOfTypeParameter defers typeof resolution.
                     let is_circular = !is_typeof_constraint
                         && if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
-                            self.is_same_type_parameter(constraint_type, param_type_id, &name)
+                            self.is_same_type_parameter(
+                                constraint_type,
+                                param_type_id,
+                                &name,
+                                is_direct_mapped_constraint,
+                                is_direct_resolution_path_constraint,
+                            )
                         } else {
                             false
                         };
@@ -1704,6 +1730,7 @@ impl<'a> CheckerState<'a> {
                         );
                         Some(TypeId::UNKNOWN)
                     } else {
+                        self.ensure_application_symbols_resolved(constraint_type);
                         Some(constraint_type)
                     }
                 } else {
@@ -1712,6 +1739,7 @@ impl<'a> CheckerState<'a> {
 
                 let default = if data.default != NodeIndex::NONE {
                     let default_type = self.get_type_from_type_node(data.default);
+                    self.ensure_application_symbols_resolved(default_type);
                     (default_type != TypeId::ERROR).then_some(default_type)
                 } else {
                     None
@@ -1875,6 +1903,14 @@ impl<'a> CheckerState<'a> {
         if identifier.escaped_text != "Partial" {
             return false;
         }
+        let TypeSymbolResolution::Type(partial_sym) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return false;
+        };
+        if !self.ctx.symbol_is_from_actual_lib(partial_sym) {
+            return false;
+        }
         let Some(type_args) = &type_ref.type_arguments else {
             return false;
         };
@@ -1989,38 +2025,60 @@ impl<'a> CheckerState<'a> {
 
         // Check cache first
         if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
-            if cached == TypeId::ERROR && self.ctx.symbol_resolution_set.contains(&sym_id) {
-                // Pre-cache ANY sentinel to prevent re-entrancy: provisional_circular_function_symbol_type
-                // processes type annotations which may call get_type_of_symbol for the same symbol
-                // (e.g., `typeof foo<T>` in foo's own return type). Without this sentinel, the re-entrant
-                // call finds ERROR, detects circularity, and calls provisional again → stack overflow.
-                self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
-                if let Some(provisional) = self.provisional_circular_function_symbol_type(sym_id) {
-                    self.ctx.symbol_types.insert(sym_id, provisional);
-                    trace!(
-                        sym_id = sym_id.0,
-                        type_id = provisional.0,
-                        file = self.ctx.file_name.as_str(),
-                        "(cached provisional) get_type_of_symbol"
-                    );
-                    return provisional;
+            let cached_is_stale_alias_placeholder =
+                !self.ctx.symbol_resolution_set.contains(&sym_id)
+                    && crate::query_boundaries::common::lazy_def_id(self.ctx.types, cached)
+                        == self.ctx.get_existing_def_id(sym_id)
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS));
+            if cached_is_stale_alias_placeholder {
+                self.ctx.symbol_types.remove(&sym_id);
+            } else {
+                if cached == TypeId::ERROR && self.ctx.symbol_resolution_set.contains(&sym_id) {
+                    // Pre-cache ANY sentinel to prevent re-entrancy: provisional_circular_function_symbol_type
+                    // processes type annotations which may call get_type_of_symbol for the same symbol
+                    // (e.g., `typeof foo<T>` in foo's own return type). Without this sentinel, the re-entrant
+                    // call finds ERROR, detects circularity, and calls provisional again → stack overflow.
+                    self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
+                    if let Some(provisional) =
+                        self.provisional_circular_function_symbol_type(sym_id)
+                    {
+                        self.ctx.symbol_types.insert(sym_id, provisional);
+                        trace!(
+                            sym_id = sym_id.0,
+                            type_id = provisional.0,
+                            file = self.ctx.file_name.as_str(),
+                            "(cached provisional) get_type_of_symbol"
+                        );
+                        tsz_common::perf_counters::inc(
+                            &tsz_common::perf_counters::counters()
+                                .compute_type_of_symbol_cache_hits,
+                        );
+                        return provisional;
+                    }
+                    // Restore ERROR if provisional failed
+                    self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
                 }
-                // Restore ERROR if provisional failed
-                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+                let cached = self
+                    .ctx
+                    .symbol_types
+                    .get(&sym_id)
+                    .copied()
+                    .unwrap_or(TypeId::ERROR);
+                trace!(
+                    sym_id = sym_id.0,
+                    type_id = cached.0,
+                    file = self.ctx.file_name.as_str(),
+                    "(cached) get_type_of_symbol"
+                );
+                tsz_common::perf_counters::inc(
+                    &tsz_common::perf_counters::counters().compute_type_of_symbol_cache_hits,
+                );
+                return cached;
             }
-            let cached = self
-                .ctx
-                .symbol_types
-                .get(&sym_id)
-                .copied()
-                .unwrap_or(TypeId::ERROR);
-            trace!(
-                sym_id = sym_id.0,
-                type_id = cached.0,
-                file = self.ctx.file_name.as_str(),
-                "(cached) get_type_of_symbol"
-            );
-            return cached;
         }
 
         // Check fuel - return ERROR if exhausted to prevent timeout
@@ -2163,11 +2221,7 @@ impl<'a> CheckerState<'a> {
         let result_is_lazy_to_self = {
             use crate::query_boundaries::common as common_query;
             common_query::lazy_def_id(self.ctx.types.as_type_database(), result)
-                .and_then(|def_id| {
-                    self.ctx
-                        .get_existing_def_id(sym_id)
-                        .map(|own| (def_id, own))
-                })
+                .zip(self.ctx.get_existing_def_id(sym_id))
                 .is_some_and(|(ld, od)| ld == od)
         };
         let result_cached_locally = if result_is_lazy_to_self

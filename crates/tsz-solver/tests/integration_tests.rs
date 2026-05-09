@@ -881,6 +881,52 @@ mod function_variance_tests {
         // when the constraint is satisfied
         assert!(checker.is_assignable(constrained_func, generic_func));
     }
+
+    #[test]
+    fn test_strict_member_compat_rejects_outer_type_param_as_generic_signature() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        checker.set_erase_generics(false);
+
+        let source_t = TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        let source_t_type = interner.type_param(source_t);
+        let source = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: source_t_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let target_t = TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+        let target_t_type = interner.type_param(target_t);
+        let target = interner.function(FunctionShape {
+            type_params: vec![target_t],
+            params: vec![],
+            this_type: None,
+            return_type: target_t_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        assert!(
+            !checker.is_assignable(source, target),
+            "strict TS2416/TS2430 member compatibility must not promote an outer type parameter into a generic signature"
+        );
+    }
 }
 
 /// Test suite for lawyer strict mode integration
@@ -901,6 +947,7 @@ mod lawyer_strict_mode_tests {
             parent_id: None,
             declaration_order: 0,
             is_string_named: false,
+            is_symbol_named: false,
             single_quoted_name: false,
         }])
     }
@@ -2560,6 +2607,7 @@ mod homomorphic_mapped_type_tests {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
             PropertyInfo {
@@ -2574,6 +2622,7 @@ mod homomorphic_mapped_type_tests {
                 parent_id: None,
                 declaration_order: 0,
                 is_string_named: false,
+                is_symbol_named: false,
                 single_quoted_name: false,
             },
         ]);

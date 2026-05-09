@@ -11,10 +11,11 @@ use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // =========================================================================
@@ -93,17 +94,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let index_type = self.check(indexed_access.index_type);
 
             // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
-            if let Some(invalid_member) = self.get_invalid_index_type_member(index_type)
-                && let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
-            {
-                let mut formatter = self.ctx.create_type_formatter();
-                let index_type_str = formatter.format(invalid_member);
-                let message = crate::diagnostics::format_message(
-                    crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                    &[&index_type_str],
-                );
-                self.ctx
-                    .error(inode.pos, inode.end - inode.pos, message, 2538);
+            if let Some(invalid_member) = self.get_invalid_index_type_member(index_type) {
+                let (diag_pos, diag_len) =
+                    self.indexed_access_index_diagnostic_span(node, indexed_access.index_type);
+                for member in self.invalid_index_type_diagnostic_members(index_type, invalid_member)
+                {
+                    let mut formatter = self.ctx.create_type_formatter();
+                    let index_type_str = formatter.format(member);
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        &[&index_type_str],
+                    );
+                    self.ctx.error(diag_pos, diag_len, message, 2538);
+                }
             }
 
             if let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
@@ -135,6 +138,41 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     );
                     return TypeId::ERROR;
                 }
+            }
+
+            let indexed_type = factory.index_access(object_type, index_type);
+            let evaluated_indexed_type =
+                if !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    indexed_type,
+                ) {
+                    Some(
+                        crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+                            self.ctx.types,
+                            &*self.ctx,
+                            indexed_type,
+                            std::iter::empty(),
+                            false,
+                            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                        ),
+                    )
+                } else {
+                    None
+                };
+            if evaluated_indexed_type
+                .as_ref()
+                .is_some_and(|result| result.depth_exceeded)
+            {
+                if let Some(object_node) = self.ctx.arena.get(indexed_access.object_type) {
+                    self.ctx.error(
+                        object_node.pos,
+                        object_node.end - object_node.pos,
+                        crate::diagnostics::diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE
+                            .to_string(),
+                        crate::diagnostics::diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                    );
+                }
+                return TypeId::ERROR;
             }
 
             // TS2493/TS2339: Check positive out-of-bounds index on tuple/union-of-tuples
@@ -180,22 +218,58 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
                 // Union of tuples all out of bounds → TS2339
                 // But suppress if object type is ANY/ERROR/conditional/generic (circular reference implicit any)
-                else if object_type != TypeId::ANY
-                    && object_type != TypeId::ERROR
-                    && !crate::query_boundaries::common::is_error_type(self.ctx.types, object_type)
-                    && !crate::query_boundaries::common::is_conditional_type(
-                        self.ctx.types,
-                        object_type,
-                    )
-                    && !crate::query_boundaries::common::is_generic_application(
-                        self.ctx.types,
-                        object_type,
-                    )
-                    && let Some(members) = crate::query_boundaries::common::union_members(
-                        self.ctx.types,
-                        object_for_tuple_check,
-                    )
-                {
+                else if {
+                    let object_is_deferred_or_generic = object_type == TypeId::ANY
+                        || object_type == TypeId::ERROR
+                        || crate::query_boundaries::common::is_error_type(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        || crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        || crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            object_for_tuple_check,
+                        )
+                        || crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        || crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            object_for_tuple_check,
+                        )
+                        || crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            object_for_tuple_check,
+                        )
+                        || crate::query_boundaries::common::lazy_def_id(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        .and_then(|def_id| self.ctx.definition_store.get_body(def_id))
+                        .is_some_and(|body| {
+                            crate::query_boundaries::common::is_conditional_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_generic_application(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_index_access_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                body,
+                            )
+                        });
+                    !object_is_deferred_or_generic
+                } && let Some(members) = crate::query_boundaries::common::union_members(
+                    self.ctx.types,
+                    object_for_tuple_check,
+                ) {
                     let all_out_of_bounds = !members.is_empty()
                         && members.iter().all(|&m| {
                             if let Some(elems) =
@@ -312,7 +386,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     ) || crate::query_boundaries::common::is_generic_application(
                         self.ctx.types,
                         object_type,
+                    ) || crate::query_boundaries::common::is_generic_application(
+                        self.ctx.types,
+                        resolved_object,
                     ) || self.union_contains_application(resolved_object);
+
+                let alias_body_is_deferred =
+                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)
+                        .and_then(|def_id| self.ctx.definition_store.get_body(def_id))
+                        .is_some_and(|body| {
+                            crate::query_boundaries::common::is_conditional_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_generic_application(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::is_index_access_type(
+                                self.ctx.types,
+                                body,
+                            ) || crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                body,
+                            )
+                        });
 
                 // Suppress TS2339 when the index type itself contains type parameters.
                 // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
@@ -360,6 +456,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if !is_type_param
                     && !is_error_or_any
                     && !is_generic_application
+                    && !alias_body_is_deferred
                     && !index_has_type_params
                     && !is_lazy_with_potential_generic
                     && !is_conditional
@@ -428,21 +525,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            let indexed_type = factory.index_access(object_type, index_type);
-            if !crate::query_boundaries::common::contains_type_parameters(
-                self.ctx.types,
-                indexed_type,
-            ) {
-                let evaluated =
-                    crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
-                        self.ctx.types,
-                        &*self.ctx,
-                        indexed_type,
-                        std::iter::empty(),
-                        false,
-                        self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                    )
-                    .result;
+            if let Some(evaluated_result) = evaluated_indexed_type {
+                let evaluated = evaluated_result.result;
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
                     && self.is_full_enum_member_union(evaluated)
@@ -593,9 +677,213 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         crate::query_boundaries::common::get_invalid_index_type_member(self.ctx.types, type_id)
     }
 
+    fn invalid_index_type_diagnostic_members(
+        &self,
+        index_type: TypeId,
+        invalid_member: TypeId,
+    ) -> Vec<TypeId> {
+        if invalid_member == TypeId::BOOLEAN
+            && crate::query_boundaries::common::union_members(self.ctx.types, index_type).is_some()
+        {
+            vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
+        } else {
+            vec![invalid_member]
+        }
+    }
+
+    fn indexed_access_index_diagnostic_span(
+        &self,
+        indexed_access_node: &Node,
+        index_type_idx: NodeIndex,
+    ) -> (u32, u32) {
+        // The index type node's own AST span anchors the diagnostic. The
+        // fallback handles the trailing-`]` case (e.g. `any[[]]` where the
+        // index type's own text is `[]` and we want to anchor at the opening
+        // `[`). No textual outer-bracket search — that would mis-resolve
+        // when the object side uses `[]` array notation, e.g.
+        // `string[][boolean]` whose first `[` belongs to the array, or
+        // `any[[]]` whose last `[` belongs to the inner tuple.
+        self.index_type_node_fallback_span(index_type_idx)
+            .unwrap_or((
+                indexed_access_node.pos,
+                indexed_access_node.end - indexed_access_node.pos,
+            ))
+    }
+
+    fn index_type_node_fallback_span(&self, index_type_idx: NodeIndex) -> Option<(u32, u32)> {
+        let node = self.ctx.arena.get(index_type_idx)?;
+        let source_file = self.ctx.arena.source_files.first()?;
+        let source = source_file.text.as_ref();
+        let start = node.pos as usize;
+        let end = node.end as usize;
+        let text = source.get(start..end)?;
+        if let Some(index_text) = text.trim().strip_suffix(']').map(str::trim_end)
+            && !index_text.is_empty()
+        {
+            let leading_ws = text.len() - text.trim_start().len();
+            return Some(((start + leading_ws) as u32, index_text.len() as u32));
+        }
+
+        Some((node.pos, node.end.saturating_sub(node.pos)))
+    }
+
     // =========================================================================
     // Type Query (typeof)
     // =========================================================================
+
+    fn apply_instantiation_expression_type_arguments(
+        &mut self,
+        expr_type: TypeId,
+        type_arguments: &NodeList,
+    ) -> TypeId {
+        if self
+            .instantiation_expression_applicability_error_type(
+                expr_type,
+                type_arguments.nodes.len(),
+            )
+            .is_some()
+        {
+            return TypeId::ERROR;
+        }
+
+        let type_args: Vec<TypeId> = type_arguments
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.check(arg_idx))
+            .collect();
+        if type_args.is_empty() {
+            return expr_type;
+        }
+
+        let application = self.ctx.types.application(expr_type, type_args);
+        let evaluated = crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+            self.ctx.types,
+            &*self.ctx,
+            application,
+            std::iter::empty(),
+            false,
+            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+        )
+        .result;
+        if evaluated != TypeId::ERROR && evaluated != application {
+            evaluated
+        } else {
+            application
+        }
+    }
+
+    fn instantiation_expression_applicability_error_type(
+        &self,
+        expr_type: TypeId,
+        type_argument_count: usize,
+    ) -> Option<TypeId> {
+        if expr_type == TypeId::ERROR || expr_type == TypeId::ANY {
+            return None;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, expr_type)
+        {
+            let mut invalid = Vec::new();
+            let mut saw_applicable = false;
+            let mut saw_signature = false;
+            for member in members.iter().copied() {
+                let has_applicable =
+                    self.instantiation_type_has_applicable_signature(member, type_argument_count);
+                saw_applicable |= has_applicable;
+                let has_signature = self.instantiation_type_has_signature(member);
+                saw_signature |= has_signature;
+                if !has_applicable && has_signature {
+                    invalid.push(member);
+                }
+            }
+            if saw_applicable && invalid.is_empty() {
+                return None;
+            }
+            if saw_applicable {
+                return if invalid.len() == 1 {
+                    invalid.first().copied()
+                } else {
+                    Some(self.ctx.types.union(invalid))
+                };
+            }
+            return if !saw_signature || invalid.len() == members.len() {
+                Some(expr_type)
+            } else if invalid.len() == 1 {
+                invalid.first().copied()
+            } else {
+                Some(self.ctx.types.union(invalid))
+            };
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, expr_type)
+        {
+            if members.iter().copied().any(|member| {
+                self.instantiation_type_has_applicable_signature(member, type_argument_count)
+            }) {
+                return None;
+            }
+            return Some(expr_type);
+        }
+
+        if self.instantiation_type_has_applicable_signature(expr_type, type_argument_count) {
+            None
+        } else {
+            Some(expr_type)
+        }
+    }
+
+    fn instantiation_type_has_applicable_signature(
+        &self,
+        type_id: TypeId,
+        type_argument_count: usize,
+    ) -> bool {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            && shape.type_params.len() == type_argument_count
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+            && sigs
+                .iter()
+                .any(|sig| sig.type_params.len() == type_argument_count)
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            && sigs
+                .iter()
+                .any(|sig| sig.type_params.len() == type_argument_count)
+        {
+            return true;
+        }
+        false
+    }
+
+    fn instantiation_type_has_signature(&self, type_id: TypeId) -> bool {
+        if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            .is_some()
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)
+            && !sigs.is_empty()
+        {
+            return true;
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            && !sigs.is_empty()
+        {
+            return true;
+        }
+        false
+    }
 
     /// Get type from a type query node (typeof X).
     ///
@@ -616,11 +904,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // so that constraint checking (TS2344) sees the instantiated type rather
         // than the raw function type. This matches tsc behavior: `typeof fn<Args>`
         // produces an instantiation expression type, not the original function type.
-        let type_arg_node_indices: Vec<NodeIndex> = type_query
-            .type_arguments
-            .as_ref()
-            .map(|args| args.nodes.clone())
-            .unwrap_or_default();
+        let type_arguments = type_query.type_arguments.clone();
         let use_flow_sensitive_query =
             !is_type_query_in_non_flow_sensitive_signature_parameter(self.ctx.arena, idx);
 
@@ -679,23 +963,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         }
 
-        // Prefer the already-computed value-space type at this query site when available.
-        // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
-        if use_flow_sensitive_query
-            && let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
-            && expr_type != TypeId::ERROR
-        {
-            // Apply type arguments from `typeof expr<Args>` instantiation expressions.
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(expr_type, type_args);
-            }
-            return expr_type;
-        }
-
         let name_opt = if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
             if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                 self.ctx
@@ -733,14 +1000,52 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
             && let Some(&param_type) = self.ctx.typeof_param_scope.get(ident.escaped_text.as_str())
         {
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(param_type, type_args);
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(param_type, type_arguments);
             }
             return param_type;
+        }
+
+        if let Some(object_type) = self.const_array_to_enum_object_type_query(type_query.expr_name)
+        {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(object_type, type_arguments);
+            }
+            return object_type;
+        }
+
+        if let Some(literal_type) =
+            self.const_object_member_literal_type_query(type_query.expr_name)
+        {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(literal_type, type_arguments);
+            }
+            return literal_type;
+        }
+
+        if let Some(property_type) = self.value_property_type_query(type_query.expr_name) {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(property_type, type_arguments);
+            }
+            return property_type;
+        }
+
+        // Prefer the already-computed value-space type at this query site when available.
+        // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
+        if use_flow_sensitive_query
+            && let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
+            && expr_type != TypeId::ERROR
+        {
+            // Apply type arguments from `typeof expr<Args>` instantiation expressions.
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(expr_type, type_arguments);
+            }
+            return expr_type;
         }
 
         // For qualified names (e.g., typeof M.F2), resolve the symbol through
@@ -789,6 +1094,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         if var_decl.type_annotation.is_some() {
                             return Some(var_decl.type_annotation);
                         }
+                    } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+                        let param = self.ctx.arena.get_parameter(decl_node)?;
+                        if param.type_annotation.is_some() {
+                            return Some(param.type_annotation);
+                        }
+                    } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && let Some(ext) = self.ctx.arena.get_extended(decl)
+                        && ext.parent.is_some()
+                        && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                        && parent_node.kind == syntax_kind_ext::PARAMETER
+                    {
+                        let param = self.ctx.arena.get_parameter(parent_node)?;
+                        if param.name == decl && param.type_annotation.is_some() {
+                            return Some(param.type_annotation);
+                        }
                     }
                     None
                 });
@@ -805,12 +1125,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && declared_type != TypeId::ERROR
             {
                 if !use_flow_sensitive_query {
-                    if !type_arg_node_indices.is_empty() {
-                        let type_args: Vec<TypeId> = type_arg_node_indices
-                            .iter()
-                            .map(|&arg_idx| self.check(arg_idx))
-                            .collect();
-                        return self.ctx.types.application(declared_type, type_args);
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            declared_type,
+                            type_arguments,
+                        );
                     }
                     return declared_type;
                 }
@@ -866,12 +1185,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     let narrowed =
                         analyzer.get_flow_type(type_query.expr_name, declared_type, flow_node);
                     if narrowed != TypeId::ERROR {
-                        if !type_arg_node_indices.is_empty() {
-                            let type_args: Vec<TypeId> = type_arg_node_indices
-                                .iter()
-                                .map(|&arg_idx| self.check(arg_idx))
-                                .collect();
-                            return self.ctx.types.application(narrowed, type_args);
+                        if let Some(type_arguments) = &type_arguments {
+                            return self.apply_instantiation_expression_type_arguments(
+                                narrowed,
+                                type_arguments,
+                            );
                         }
                         return narrowed;
                     }
@@ -880,12 +1198,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             let factory = self.ctx.types.factory();
             let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
-            if !type_arg_node_indices.is_empty() {
-                let type_args: Vec<TypeId> = type_arg_node_indices
-                    .iter()
-                    .map(|&arg_idx| self.check(arg_idx))
-                    .collect();
-                return self.ctx.types.application(base, type_args);
+            if let Some(type_arguments) = &type_arguments {
+                return self.apply_instantiation_expression_type_arguments(base, type_arguments);
             }
             return base;
         }
@@ -957,23 +1271,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if !use_flow_sensitive_query
                     && let Some(declared_type) = self.declared_type_for_type_query_symbol(sym_id)
                 {
-                    if !type_arg_node_indices.is_empty() {
-                        let type_args: Vec<TypeId> = type_arg_node_indices
-                            .iter()
-                            .map(|&arg_idx| self.check(arg_idx))
-                            .collect();
-                        return self.ctx.types.application(declared_type, type_args);
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            declared_type,
+                            type_arguments,
+                        );
                     }
                     return declared_type;
                 }
                 let factory = self.ctx.types.factory();
                 let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
-                if !type_arg_node_indices.is_empty() {
-                    let type_args: Vec<TypeId> = type_arg_node_indices
-                        .iter()
-                        .map(|&arg_idx| self.check(arg_idx))
-                        .collect();
-                    return self.ctx.types.application(base, type_args);
+                if let Some(type_arguments) = &type_arguments {
+                    return self
+                        .apply_instantiation_expression_type_arguments(base, type_arguments);
                 }
                 return base;
             }
@@ -983,7 +1293,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 name,
                 "undefined" | "NaN" | "Infinity" | "globalThis" | "arguments"
             );
-            if is_global_name {
+            if name == "globalThis" {
+                return self.get_global_this_type(type_query.expr_name);
+            } else if is_global_name {
                 // Fall through to TypeLowering
             } else {
                 // Name not found in any scope — emit TS2304
@@ -1022,6 +1334,404 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         lowering.lower_type(idx)
     }
 
+    pub(crate) fn const_object_member_literal_type_query(
+        &self,
+        expr_name: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
+        let node = self.ctx.arena.get(expr_name)?;
+
+        let (base, property_name_node) = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            (access.expression, access.name_or_argument)
+        } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = self.ctx.arena.get_qualified_name(node)?;
+            (qualified.left, qualified.right)
+        } else {
+            return None;
+        };
+
+        let property_name = self.property_name_text(property_name_node)?;
+        let base = self.ctx.arena.skip_parenthesized_and_assertions(base);
+        let base_node = self.ctx.arena.get(base)?;
+        if base_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.ctx.binder.resolve_identifier(self.ctx.arena, base)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) {
+            return None;
+        }
+
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return self.array_to_enum_member_literal_type(initializer, &property_name);
+        }
+
+        let literal = self.ctx.arena.get_literal_expr(init_node)?;
+        for &element in &literal.elements.nodes {
+            let element_node = self.ctx.arena.get(element)?;
+            if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let prop = self.ctx.arena.get_property_assignment(element_node)?;
+                if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
+                    return self.literal_type_from_const_member_initializer(prop.initializer);
+                }
+            } else if element_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                let prop = self.ctx.arena.get_shorthand_property(element_node)?;
+                if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
+                    return self.literal_type_from_const_member_initializer(prop.name);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn const_array_to_enum_object_type_query(
+        &self,
+        expr_name: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
+        let node = self.ctx.arena.get(expr_name)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_name)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) {
+            return None;
+        }
+
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let literal_names = self.array_to_enum_literal_names(decl.initializer)?;
+        if literal_names.is_empty() {
+            return None;
+        }
+
+        let props = literal_names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let literal_type = self.ctx.types.literal_string(name);
+                tsz_solver::PropertyInfo {
+                    name: self.ctx.types.intern_string(name),
+                    type_id: literal_type,
+                    write_type: literal_type,
+                    optional: false,
+                    readonly: true,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: tsz_common::Visibility::Public,
+                    parent_id: None,
+                    declaration_order: index as u32,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                }
+            })
+            .collect();
+
+        Some(self.ctx.types.factory().object(props))
+    }
+
+    fn array_to_enum_member_literal_type(
+        &self,
+        initializer: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        self.array_to_enum_literal_names(initializer)?
+            .into_iter()
+            .find(|name| name == property_name)
+            .map(|name| self.ctx.types.literal_string(&name))
+    }
+
+    fn array_to_enum_literal_names(&self, initializer: NodeIndex) -> Option<Vec<String>> {
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer);
+        let node = self.ctx.arena.get(initializer)?;
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.ctx.arena.get_call_expr(node)?;
+        if !self.call_expression_is_array_to_enum(call.expression) {
+            return None;
+        }
+
+        let first_arg = call.arguments.as_ref()?.nodes.first().copied()?;
+        let arg = self.ctx.arena.skip_parenthesized_and_assertions(first_arg);
+        let arg_node = self.ctx.arena.get(arg)?;
+        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let array = self.ctx.arena.get_literal_expr(arg_node)?;
+        let mut names = Vec::new();
+        for &element in &array.elements.nodes {
+            let element = self.ctx.arena.skip_parenthesized_and_assertions(element);
+            let element_node = self.ctx.arena.get(element)?;
+            if (element_node.kind == SyntaxKind::StringLiteral as u16
+                || element_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                && let Some(lit) = self.ctx.arena.get_literal(element_node)
+            {
+                names.push(lit.text.clone());
+            }
+        }
+
+        Some(names)
+    }
+
+    fn call_expression_is_array_to_enum(&self, callee: NodeIndex) -> bool {
+        let callee = self.ctx.arena.skip_parenthesized_and_assertions(callee);
+        let Some(node) = self.ctx.arena.get(callee) else {
+            return false;
+        };
+
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return ident.escaped_text == "arrayToEnum"
+                && self.array_to_enum_callee_returns_identity_mapped_type(callee);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+            && !access.question_dot_token
+            && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            return ident.escaped_text == "arrayToEnum";
+        }
+
+        false
+    }
+
+    fn array_to_enum_callee_returns_identity_mapped_type(&self, callee: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_array_to_enum_callee_symbol(callee) else {
+            return false;
+        };
+        let arena = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .unwrap_or(self.ctx.arena);
+        let Some(symbol) = self.array_to_enum_cross_file_symbol(sym_id) else {
+            return false;
+        };
+        let mut decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            match symbol.primary_declaration() {
+                Some(decl) => decl,
+                None => return false,
+            }
+        };
+        let mut decl_node = match arena.get(decl_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let Some(parent) = arena.get_extended(decl_idx).map(|ext| ext.parent) else {
+                return false;
+            };
+            decl_idx = parent;
+            let Some(parent_node) = arena.get(decl_idx) else {
+                return false;
+            };
+            decl_node = parent_node;
+        }
+
+        let return_type = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(decl) = arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+            let Some(init_node) = arena.get(decl.initializer) else {
+                return false;
+            };
+            let Some(func) = arena.get_function(init_node) else {
+                return false;
+            };
+            func.type_annotation
+        } else {
+            let Some(func) = arena.get_function(decl_node) else {
+                return false;
+            };
+            func.type_annotation
+        };
+
+        self.type_node_is_identity_mapped_type_in_arena(arena, return_type)
+    }
+
+    fn resolve_array_to_enum_callee_symbol(
+        &self,
+        callee: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let node = self.ctx.arena.get(callee)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.ctx.binder.resolve_identifier(self.ctx.arena, callee);
+        }
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let left_sym = self.resolve_array_to_enum_callee_symbol(access.expression)?;
+        let left_symbol = self.array_to_enum_cross_file_symbol(left_sym)?;
+        let right_name = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .map(|ident| ident.escaped_text.as_str())?;
+        left_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(right_name))
+            .or_else(|| {
+                left_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|members| members.get(right_name))
+            })
+    }
+
+    fn type_node_is_identity_mapped_type(&self, type_node: NodeIndex) -> bool {
+        self.type_node_is_identity_mapped_type_in_arena(self.ctx.arena, type_node)
+    }
+
+    fn array_to_enum_cross_file_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<&tsz_binder::Symbol> {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(symbol) = binder.get_symbol(sym_id)
+        {
+            return Some(symbol);
+        }
+        self.ctx.binder.get_symbol(sym_id)
+    }
+
+    fn type_node_is_identity_mapped_type_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        type_node: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(type_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::MAPPED_TYPE {
+            return false;
+        }
+        let Some(mapped) = arena.get_mapped_type(node) else {
+            return false;
+        };
+        let Some(param) = arena
+            .get(mapped.type_parameter)
+            .and_then(|node| arena.get_type_parameter(node))
+        else {
+            return false;
+        };
+        let Some(param_name) = arena.get_identifier_at(param.name) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(mapped.type_node)
+            .is_some_and(|name| name.escaped_text == param_name.escaped_text)
+    }
+
+    pub(crate) fn property_name_text(&self, name: NodeIndex) -> Option<String> {
+        let name = self.ctx.arena.skip_parenthesized_and_assertions(name);
+        let node = self.ctx.arena.get(name)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return Some(ident.escaped_text.clone());
+        }
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            return self.ctx.arena.get_literal(node).map(|lit| lit.text.clone());
+        }
+        None
+    }
+
+    fn literal_type_from_const_member_initializer(&self, initializer: NodeIndex) -> Option<TypeId> {
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer);
+        let node = self.ctx.arena.get(initializer)?;
+        let factory = self.ctx.types.factory();
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx
+                    .arena
+                    .get_literal(node)
+                    .map(|lit| factory.literal_string(&lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .ctx
+                .arena
+                .get_literal(node)
+                .and_then(|lit| {
+                    lit.value
+                        .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
+                })
+                .map(|value| factory.literal_number(value)),
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(factory.literal_boolean(true)),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some(factory.literal_boolean(false)),
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
+            _ => None,
+        }
+    }
+
     fn declared_type_for_type_query_symbol(
         &mut self,
         sym_id: tsz_binder::SymbolId,
@@ -1053,11 +1763,96 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .type_annotation
                 .is_some()
                 .then_some(param.type_annotation)
+        } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.get_extended(decl)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                let param = self.ctx.arena.get_parameter(parent_node)?;
+                (param.name == decl && param.type_annotation.is_some())
+                    .then_some(param.type_annotation)
+            } else {
+                None
+            }
         } else {
             None
         }?;
 
         Some(self.check(type_ann)).filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
+    }
+
+    fn get_global_this_type(&mut self, _error_node: NodeIndex) -> TypeId {
+        let mut names = rustc_hash::FxHashSet::default();
+        for (name, _) in self.ctx.binder.file_locals.iter() {
+            names.insert(name.clone());
+        }
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            for (name, _) in lib_ctx.binder.file_locals.iter() {
+                names.insert(name.clone());
+            }
+        }
+        names.insert("globalThis".to_string());
+
+        let mut properties = Vec::new();
+        for name in names {
+            let type_id = if name == "globalThis" {
+                TypeId::UNKNOWN
+            } else {
+                let Some(sym_id) = self.global_this_surface_symbol(&name) else {
+                    continue;
+                };
+                self.ctx
+                    .symbol_types
+                    .get(&sym_id)
+                    .copied()
+                    .filter(|&type_id| type_id != TypeId::ERROR)
+                    .or_else(|| self.declared_type_for_type_query_symbol(sym_id))
+                    .unwrap_or_else(|| {
+                        self.ctx
+                            .types
+                            .factory()
+                            .type_query(tsz_solver::SymbolRef(sym_id.0))
+                    })
+            };
+
+            let prop_name = self.ctx.types.intern_string(&name);
+            let mut prop = PropertyInfo::new(prop_name, type_id);
+            prop.write_type = type_id;
+            prop.readonly = name == "globalThis";
+            prop.parent_id = self.global_this_surface_symbol(&name);
+            prop.declaration_order = properties.len() as u32;
+            properties.push(prop);
+        }
+
+        self.ctx.types.factory().object_with_index(ObjectShape {
+            properties,
+            ..ObjectShape::default()
+        })
+    }
+
+    fn global_this_surface_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+        use tsz_binder::symbol_flags;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.has_any_flags(symbol_flags::VALUE)
+            && (!symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                || symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+        {
+            return Some(sym_id);
+        }
+
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
+                && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
+                && symbol.has_any_flags(symbol_flags::VALUE)
+                && (!symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                    || symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     /// Emit TS2693 for a type-only symbol used in a typeof type query.

@@ -6,7 +6,7 @@ use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{constraint_is_primitive_type, unique_placeholder_name};
+use super::{constraint_is_primitive_type_with_resolver, unique_placeholder_name};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Fast path for identity-style generic calls:
@@ -44,6 +44,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
+        if self.contextual_type.is_some_and(|contextual_type| {
+            self.is_contextually_sensitive(arg_types[0])
+                && Self::get_contextual_signature_cached(self.interner, contextual_type).is_some()
+        }) {
+            return None;
+        }
+
         // Bail out for self-referential constraints like `T extends Test<keyof T>`.
         // The fast path cannot properly instantiate the constraint with the inferred
         // type (it checks the raw constraint), and it uses `widen_type` which
@@ -66,8 +73,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 constraint,
             )
         });
-        let inferred_ty = if tp.is_const {
-            arg_ty
+        let constraint_allows_mutable_array = constraint.is_some_and(|c| {
+            crate::type_queries::constraint_allows_mutable_array_like(
+                self.interner.as_type_database(),
+                c,
+            )
+        });
+        let inferred_ty = if tp.is_const && !constraint_allows_mutable_array {
+            crate::operations::widening::apply_const_assertion(
+                self.interner.as_type_database(),
+                arg_ty,
+            )
         } else {
             // When the declared constraint is a primitive type (string, number,
             // boolean, bigint) or a union thereof, preserve literal types without
@@ -75,8 +91,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // isLiteralType(constraint) and skips getWidenedLiteralType.
             // Example: `<T extends string>(x: T): T` called with `"hello"`
             // should infer T = "hello", not T = string.
-            let constraint_is_primitive =
-                constraint.is_some_and(|c| constraint_is_primitive_type(self.interner, c));
+            let constraint_is_primitive = constraint.is_some_and(|c| {
+                let resolver = self
+                    .checker
+                    .type_resolver()
+                    .unwrap_or_else(|| self.interner.as_type_resolver());
+                constraint_is_primitive_type_with_resolver(self.interner, resolver, c)
+            });
             if constraint_is_primitive {
                 arg_ty
             } else {
@@ -125,6 +146,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some(constraint) = constraint
             && !self.checker.is_assignable_to(effective_arg_ty, constraint)
             && !self.is_function_union_compat(effective_arg_ty, constraint)
+            && !self.callable_satisfies_top_rest_any_constraint(effective_arg_ty, constraint)
         {
             // In the trivial single-type-param fast path, the parameter IS the
             // type parameter itself, so a constraint violation means the argument
@@ -305,6 +327,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // (e.g., `(...args: any[]) => any`) produces a merged Callable whose
             // conflicting parameter types cause `get_parameter_type` to return None,
             // triggering false TS7006 errors.
+
+            // Mirror tsc's `widenLiteralTypes` gate (checker.ts ~26595): if the
+            // type parameter occurs at the top level of the signature's return
+            // type and has not yet been fixed, fresh literal candidates must
+            // NOT be widened during this Round 1 → Round 2 substitution. This
+            // preserves literal target types like `U=1` for context-sensitive
+            // arguments whose contextual signature embeds the type parameter
+            // (e.g. `cb: (a: T) => U`). All type parameters are unfixed at this
+            // point in `compute_contextual_types`, so the flag is conditioned
+            // solely on the structural top-level test.
+            if crate::visitor::is_type_parameter_at_top_level(
+                self.interner.as_type_database(),
+                func.return_type,
+                tp.name,
+            ) {
+                infer_ctx.mark_top_level_in_return_type_unfixed(var);
+            }
         }
 
         // 2. Instantiate parameters with placeholders
@@ -465,6 +504,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             else {
                 break;
             };
+            if self.arg_targets_aggregate_rest_param(&instantiated_params, i, arg_type) {
+                continue;
+            }
 
             let Some((contextual_arg_type, contextual_target_type)) =
                 self.contextual_round1_arg_types(arg_type, target_type)
