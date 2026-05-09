@@ -37,6 +37,73 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn bare_type_alias_annotation_declared_type(
+        &mut self,
+        annotation_idx: NodeIndex,
+        resolved_type: TypeId,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(annotation_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        // Suppress when the alias body has explicit type arguments
+        // (e.g. `type B = A<X>;`). tsc unfolds such aliases at TS2739
+        // source display to `A<X>`, so storing the bare alias would lose
+        // the unfold target. Bare-reference bodies (`type B = A;` where
+        // `A` carries defaults) keep the alias name.
+        let body_has_explicit_type_args = symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            let Some(body_node) = self.ctx.arena.get(alias.type_node) else {
+                return false;
+            };
+            if body_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            self.ctx
+                .arena
+                .get_type_ref(body_node)
+                .is_some_and(|body_ref| body_ref.type_arguments.is_some())
+        });
+        if body_has_explicit_type_args {
+            return None;
+        }
+        let resolves_to_application =
+            crate::query_boundaries::common::application_info(self.ctx.types, resolved_type)
+                .is_some();
+        let resolves_to_named_object =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_type)
+                .and_then(|shape| shape.symbol)
+                .and_then(|target_sym| self.ctx.binder.get_symbol(target_sym))
+                .is_some_and(|target_symbol| {
+                    target_symbol.has_any_flags(
+                        tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::INTERFACE,
+                    )
+                });
+        if !resolves_to_application && !resolves_to_named_object {
+            return None;
+        }
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        Some(self.ctx.types.lazy(def_id))
+    }
+
     fn initializer_supports_binding_pattern_context(
         &self,
         pattern_idx: NodeIndex,
@@ -785,6 +852,13 @@ impl<'a> CheckerState<'a> {
                 checker.check_type_for_missing_names_skip_top_level_ref(var_decl.type_annotation);
                 checker.check_type_for_parameter_properties(var_decl.type_annotation);
                 let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
+                let type_id = if var_decl.initializer.is_none() {
+                    checker
+                        .bare_type_alias_annotation_declared_type(var_decl.type_annotation, type_id)
+                        .unwrap_or(type_id)
+                } else {
+                    type_id
+                };
                 // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'.
                 // When the annotation is invalid, fall back to the catch-variable default
                 // (any/unknown) so the catch body sees the same type tsc uses, preventing
