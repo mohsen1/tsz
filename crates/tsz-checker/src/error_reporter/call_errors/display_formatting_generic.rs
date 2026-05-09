@@ -65,7 +65,11 @@ impl<'a> CheckerState<'a> {
         //    renders both source and target as primitives ('string' /
         //    'number') instead of preserving the inference candidate's
         //    literal display.
-        // 3. Bare implementation-signature type parameters that are not part
+        // 3. Non-rest parameter whose declared constraint chain bottoms out
+        //    at another, unconstrained type parameter. Once an earlier
+        //    inference fixes that terminal type parameter to a primitive base,
+        //    tsc reports the later mismatch using widened primitive display.
+        // 4. Bare implementation-signature type parameters that are not part
         //    of the annotated return surface widen after a previous argument
         //    fixes the primitive base. If the return annotation exposes the
         //    type parameter, tsc preserves literal candidates.
@@ -82,17 +86,14 @@ impl<'a> CheckerState<'a> {
             let info =
                 query_common::type_param_info(self.ctx.types.as_type_database(), param.type_id)?;
             // Widen when the type parameter's declared-constraint chain
-            // bottoms out at a primitive whose base matches `param_base`.
-            // The `<T, U extends T>` conformance case also widens when the
-            // return annotation exposes `U`; the existing `: void` case keeps
-            // literal candidates, so do not treat every unconstrained terminal
-            // type parameter as a widening trigger.
+            // bottoms out at a primitive whose base matches `param_base`, or
+            // when it bottoms out at another unconstrained type parameter.
+            // The current type parameter still needs a declared constraint;
+            // plain `<T>(a: T, b: T)` keeps the literal candidate display.
             let constraint_matches_param_base = self
                 .resolve_type_parameter_primitive_constraint_base(info)
                 .is_some_and(|base| base == param_base)
-                || (!self.current_file_is_jsx_source()
-                    && self.declared_constraint_chain_ends_at_unconstrained_type_param(info)
-                    && self.ast_function_return_mentions_type_param(call.expression, info.name));
+                || self.declared_constraint_chain_ends_at_unconstrained_type_param(info);
             if !constraint_matches_param_base {
                 let implemented_signature_param = self
                     .ast_generic_implementation_param_name_for_call_arg(call.expression, arg_index)
@@ -389,7 +390,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(return_annotation) = func.type_annotation.into_option()
                         && let Some(return_display) =
                             self.sanitized_type_node_display(return_annotation)
-                        && self.return_display_mentions_generic_name(
+                        && Self::type_display_mentions_name(
                             &return_display,
                             ident.escaped_text.as_str(),
                         )
@@ -402,46 +403,6 @@ impl<'a> CheckerState<'a> {
         }
 
         None
-    }
-
-    fn ast_function_return_mentions_type_param(
-        &mut self,
-        callee_expr: NodeIndex,
-        type_param_name: tsz_common::interner::Atom,
-    ) -> bool {
-        let type_param_name = self.ctx.types.resolve_atom_ref(type_param_name).to_string();
-        let Some(callee_sym) = self
-            .resolve_identifier_symbol(callee_expr)
-            .or_else(|| self.resolve_qualified_symbol(callee_expr))
-        else {
-            return false;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(callee_sym) else {
-            return false;
-        };
-        let declarations = symbol.declarations.clone();
-
-        for decl_idx in declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(func) = self.ctx.arena.get_function(node) else {
-                continue;
-            };
-            let Some(return_annotation) = func.type_annotation.into_option() else {
-                continue;
-            };
-            if self
-                .sanitized_type_node_display(return_annotation)
-                .is_some_and(|display| {
-                    Self::type_display_mentions_name(&display, type_param_name.as_str())
-                })
-            {
-                return true;
-            }
-        }
-
-        false
     }
 
     fn type_display_mentions_name(display: &str, name: &str) -> bool {
@@ -468,21 +429,5 @@ impl<'a> CheckerState<'a> {
 
     fn is_type_identifier_continue(ch: Option<char>) -> bool {
         ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
-    }
-
-    fn return_display_mentions_generic_name(&self, display: &str, name: &str) -> bool {
-        if self.current_file_is_jsx_source() {
-            // Keep JSX runtime diagnostics on the historical display path:
-            // React helper return surfaces commonly contain generic letters
-            // inside larger type names, and the exact-name tightening changes
-            // conformance fingerprints for those generated calls.
-            display.contains(name)
-        } else {
-            Self::type_display_mentions_name(display, name)
-        }
-    }
-
-    fn current_file_is_jsx_source(&self) -> bool {
-        self.ctx.file_name.ends_with(".tsx") || self.ctx.file_name.ends_with(".jsx")
     }
 }

@@ -1345,19 +1345,19 @@ fn ts2345_widens_literals_when_constraint_chains_to_unconstrained_type_param() {
     // For `<T, U extends T>(x: T, y: U)` called with two fresh literal
     // arguments that widen to different primitives (e.g. `foo(1, '')`),
     // tsc widens both sides of the TS2345 diagnostic to their primitive
-    // bases — `'string' is not assignable to 'number'` — rather than
-    // preserving the literal candidates `'""' / '1'`. The widening kicks
-    // in because U's declared-constraint chain bottoms out at *another*
-    // type parameter (T) whose own declared constraint is empty, so the
-    // failing constraint check operates on the inferred (and widened)
-    // value of T rather than on the literal candidate.
+    // bases, regardless of whether the return annotation exposes `U`.
     //
     // Use two name choices for the bound variables to guard against
     // hardcoded-name regressions (per the anti-hardcoding directive).
-    for (t_name, u_name) in &[("T", "U"), ("X", "P")] {
+    for (t_name, u_name, return_type) in &[
+        ("T", "U", "U"),
+        ("T", "U", "void"),
+        ("X", "P", "P"),
+        ("X", "P", "void"),
+    ] {
         let source = format!(
             "function foo<{t_name}, {u_name} extends {t_name}>\
-             (x: {t_name}, y: {u_name}): {u_name} {{ return y; }}\nfoo(1, '');\n"
+             (x: {t_name}, y: {u_name}): {return_type} {{ return y as any; }}\nfoo(1, '');\n"
         );
         let diagnostics = check_source_with_strict_null(&source);
         let diag = diagnostics
