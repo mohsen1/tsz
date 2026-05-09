@@ -11,42 +11,22 @@
 //! constructors inside an IIFE — produces a misleading "type 'prototype'"
 //! display that does not match tsc.
 
-use rustc_hash::FxHashSet;
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        allow_js: true,
-        check_js: true,
-        no_implicit_any: false,
-        ..CheckerOptions::default()
-    };
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    let _: FxHashSet<u32> = FxHashSet::default();
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: false,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 fn assert_prototype_addon_message_is_structural(diags: &[(u32, String)]) {

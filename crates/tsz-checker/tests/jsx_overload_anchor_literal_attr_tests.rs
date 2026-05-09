@@ -7,12 +7,8 @@
 //! Regression target: `contextuallyTypedStringLiteralsInJsxAttributes02.tsx`
 //! (b4 case — `<MainButton goTo="home" extra />`).
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 const JSX_PREAMBLE: &str = r#"
 declare namespace JSX {
@@ -24,34 +20,17 @@ declare namespace JSX {
 "#;
 
 fn jsx_diagnostics(source: &str) -> Vec<(u32, u32, String)> {
-    let file_name = "test.tsx";
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let options = CheckerOptions {
-        jsx_mode: JsxMode::Preserve,
-        ..CheckerOptions::default()
-    };
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.start, d.message_text.clone()))
-        .collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.tsx",
+        CheckerOptions {
+            jsx_mode: JsxMode::Preserve,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.start, d.message_text))
+    .collect()
 }
 
 #[test]
