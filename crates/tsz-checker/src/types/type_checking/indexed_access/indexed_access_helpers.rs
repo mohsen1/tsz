@@ -67,6 +67,9 @@ pub(super) fn indexed_access_object_alias_application_exceeds_depth(
     if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
         return false;
     }
+    if checker.ctx.symbol_resolution_set.contains(&sym_id) {
+        return false;
+    }
     let declarations = symbol.declarations.clone();
 
     declarations.into_iter().any(|decl_idx| {

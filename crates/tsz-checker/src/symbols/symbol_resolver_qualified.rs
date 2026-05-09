@@ -298,6 +298,7 @@ impl<'a> CheckerState<'a> {
             other => return other,
         };
         let lib_binders = self.get_lib_binders();
+        let unresolved_left_sym = left_sym;
         let left_sym_has_local_namespace_conflict = self
             .ctx
             .binder
@@ -363,7 +364,7 @@ impl<'a> CheckerState<'a> {
         // Look up the symbol across binders (file + libs).
         // After alias resolution, left_sym may point to a symbol in a different
         // file's binder. Use get_cross_file_symbol to avoid SymbolId collisions.
-        let original_left_sym = left_sym;
+        let original_left_sym = unresolved_left_sym;
         let Some(left_symbol) = self
             .get_cross_file_symbol(left_sym)
             .or_else(|| self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders))
@@ -456,8 +457,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if !left_has_local_namespace_conflict
-            && let Some(reexported_sym) =
-                self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
+            && let Some(reexported_sym) = self.resolve_member_from_import_equals_alias(
+                original_left_sym,
+                right_name,
+                visited_aliases,
+            )
         {
             let reexported_sym =
                 self.propagate_cross_file_member_target(left_sym, reexported_sym, right_name);
