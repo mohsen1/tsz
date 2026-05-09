@@ -12,7 +12,36 @@ use crate::types::{
 };
 use crate::utils;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::trace;
+
+// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
+// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
+// #4805 / #4807 / #4810.
+thread_local! {
+    static SIGNATURES_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_signatures_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = SIGNATURES_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    SIGNATURES_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn type_contains_noinfer_marker(&mut self, ty: TypeId) -> bool {
@@ -446,8 +475,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if var_map.is_empty() {
             return ty;
         }
-        let mut visited = FxHashSet::default();
-        if !self.type_contains_placeholder(ty, var_map, &mut visited) {
+        let contains_placeholder =
+            with_signatures_visited(|visited| self.type_contains_placeholder(ty, var_map, visited));
+        if !contains_placeholder {
             return ty;
         }
 
@@ -1021,10 +1051,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // whole remaining source tuple through the mapped target. Per-element
                 // inference would compare each `{ value: ... }` against the mapped
                 // rest element and lose the tuple position needed for reverse mapping.
-                let rest_target_contains_placeholder = {
-                    let mut visited = FxHashSet::default();
-                    self.type_contains_placeholder(t_elem.type_id, var_map, &mut visited)
-                };
+                let rest_target_contains_placeholder = with_signatures_visited(|visited| {
+                    self.type_contains_placeholder(t_elem.type_id, var_map, visited)
+                });
                 if target[i + 1..].is_empty()
                     && (rest_target_contains_placeholder
                         || crate::type_queries::is_homomorphic_mapped_type_context(
