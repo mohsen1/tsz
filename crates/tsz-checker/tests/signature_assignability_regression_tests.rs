@@ -1,5 +1,3 @@
-use rustc_hash::FxHashSet;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
@@ -126,35 +124,7 @@ fn get_codes_with_options(source: &str, options: CheckerOptions) -> Vec<u32> {
 }
 
 fn load_named_lib_files_for_test(lib_names: &[&str]) -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../TypeScript/lib"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert((*file_name).to_string()) {
-                    break;
-                }
-                lib_files.push(Arc::new(LibFile::from_source(
-                    (*file_name).to_string(),
-                    content,
-                )));
-                break;
-            }
-        }
-    }
-
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(lib_names)
 }
 
 fn check_source_with_named_libs(
