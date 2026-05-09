@@ -9,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pick  # noqa: E402
-from pick import Failure, resolve_test_source  # noqa: E402
+from pick import Failure, display_path, resolve_test_source  # noqa: E402
 
 
 def make_failure(path: str) -> Failure:
@@ -61,6 +61,44 @@ class TestResolveTestSource(unittest.TestCase):
                 "/tmp/tsz-snap-refresh/TypeScript/tests/cases/compiler/missing.ts"
             )
             self.assertIsNone(resolve_test_source(Path(tmp), failure))
+
+
+class TestDisplayPath(unittest.TestCase):
+    """`display_path` rewrites the snapshot's foreign absolute path into a
+    locally-navigable form when a repo root is provided. Without that, the
+    `path:` line printed by the picker points at someone else's worktree
+    (e.g. `/Users/<author>/code/tsz/.worktrees/<wt>/TypeScript/...`) and is
+    useless for opening or grepping the test on this machine."""
+
+    def test_strips_foreign_prefix_when_root_provided(self) -> None:
+        failure = make_failure(
+            "/Users/someone/code/tsz/.worktrees/wt/TypeScript/tests/cases/compiler/x.ts"
+        )
+        self.assertEqual(
+            display_path(failure, Path("/home/user/tsz")),
+            "TypeScript/tests/cases/compiler/x.ts",
+        )
+
+    def test_returns_raw_path_when_no_root(self) -> None:
+        raw = "/tmp/tsz-snap-refresh/TypeScript/tests/cases/compiler/x.ts"
+        self.assertEqual(display_path(make_failure(raw)), raw)
+
+    def test_returns_raw_path_when_no_typescript_segment(self) -> None:
+        raw = "/some/other/path/x.ts"
+        self.assertEqual(display_path(make_failure(raw), Path("/home/user/tsz")), raw)
+
+    def test_iteration_var_name_is_not_hardcoded(self) -> None:
+        # Defence against the anti-hardcoding directive: the rewrite must
+        # depend on the `TypeScript/` segment, not on any contributor name
+        # that happens to appear in the absolute prefix.
+        for username in ("alice", "BOB", "octocat-2"):
+            failure = make_failure(
+                f"/Users/{username}/code/tsz/TypeScript/tests/cases/compiler/x.ts"
+            )
+            self.assertEqual(
+                display_path(failure, Path("/home/user/tsz")),
+                "TypeScript/tests/cases/compiler/x.ts",
+            )
 
 
 class TestInitTypescriptSubmodule(unittest.TestCase):
