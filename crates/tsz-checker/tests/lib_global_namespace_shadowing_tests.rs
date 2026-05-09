@@ -121,3 +121,50 @@ const s: Symbol = {} as Symbol;
         "no name/typing errors expected for local interface usage as type; got: {codes:?}"
     );
 }
+
+#[test]
+fn unique_symbol_shadow_does_not_pollute_indexed_access_traversal() {
+    // Regression test for issue #4687: a module-local
+    // `const Readonly: unique symbol` shadowing lib's `type Readonly<T>`
+    // must NOT carry lib's type-alias declaration onto the shadow symbol's
+    // `declarations` vec.
+    //
+    // Before the fix, the preserved lib type-alias declaration leaked into
+    // property / indexed-access traversal for TSchema-style code, causing
+    // independently defined types (`Input` and `Output`) to be conflated
+    // during `Static<T>` evaluation. tsc renders the diagnostic with the
+    // source's true shape; tsz used to render both source and target with
+    // the second type's shape.
+    //
+    // The minimum reproducer here just exercises the binder's preservation
+    // path: shadowing a lib type-alias with a `unique symbol` const and
+    // then using the symbol as a computed property key. We assert no
+    // unrelated diagnostics fire — specifically, no TS2339 or TS2749 from
+    // the lib type-alias being incorrectly resolved against a value-only
+    // symbol.
+    let codes = diagnostic_codes(
+        r#"
+export {};
+declare const Readonly: unique symbol;
+declare const Optional: unique symbol;
+interface TSchema {
+    [Readonly]?: string;
+    [Optional]?: string;
+    static: unknown;
+}
+declare const schema: TSchema;
+const k = schema[Readonly];
+"#,
+    );
+    let blocking: Vec<u32> = codes
+        .iter()
+        .copied()
+        .filter(|&c| c == 2339 || c == 2749 || c == 2304 || c == 2538)
+        .collect();
+    assert!(
+        blocking.is_empty(),
+        "no resolution errors expected for unique-symbol const shadowing lib type-alias; \
+         the lib type alias must not pollute the shadow symbol's declarations vec; \
+         got: {codes:?}"
+    );
+}
