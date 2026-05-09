@@ -1574,9 +1574,11 @@ fn compile_inner(
     // PERF: Start cloning checker lib binders in a background thread while we
     // build the user program. The checker needs fresh binder state (separate from
     // the binding-phase libs) because it mutates during declaration merging.
-    // By overlapping this with user file parsing+binding, we save ~100ms on
-    // workloads that load many lib files (e.g., default target with dom.d.ts).
-    let checker_lib_handle = if !resolved.no_check {
+    // For single-file work this can introduce cross-thread ordering
+    // nondeterminism in rare cases; keep the optimization only when it is likely
+    // to help on larger projects.
+    let should_clone_libs_in_parallel = !resolved.no_check && sources.len() > 1;
+    let checker_lib_handle = if should_clone_libs_in_parallel {
         let lib_files_clone = lib_files.clone();
         Some(
             std::thread::Builder::new()
@@ -1624,7 +1626,8 @@ fn compile_inner(
     let build_lib_contexts_start = Instant::now();
     let checker_libs = match checker_lib_handle {
         Some(handle) => handle.join().expect("checker lib loading panicked"),
-        None => check::CheckerLibSet::default(),
+        None if resolved.no_check => check::CheckerLibSet::default(),
+        None => load_checker_libs(&lib_files),
     };
     perf_log_phase("build_lib_contexts", build_lib_contexts_start);
 
