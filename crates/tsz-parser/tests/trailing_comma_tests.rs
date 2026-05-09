@@ -3,11 +3,10 @@
 //! These tests verify that the parser correctly identifies trailing commas
 //! in various contexts where TypeScript allows them.
 
-use crate::parser::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 fn parse_code(code: &str) -> Vec<crate::parser::ParseDiagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_source(code);
     parser.get_diagnostics().to_vec()
 }
 

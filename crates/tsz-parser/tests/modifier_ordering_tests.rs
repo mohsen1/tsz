@@ -1,10 +1,9 @@
 //! Tests for class member modifier ordering (TS1029) and ambient context (TS1040).
 
-use crate::parser::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 fn parse_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     parser
         .get_diagnostics()
         .iter()

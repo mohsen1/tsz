@@ -9,11 +9,10 @@
 //! `0123` as a legacy-octal numeric literal (with TS1121) and `n` as an
 //! identifier that starts a second declarator.
 
-use crate::parser::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 fn parse_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     parser
         .get_diagnostics()
         .iter()
