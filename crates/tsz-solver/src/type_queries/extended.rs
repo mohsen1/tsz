@@ -10,9 +10,36 @@
 use crate::def::DefId;
 use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 
 use super::core::is_keyof_type;
 use super::data::contains_type_parameters_db;
+
+// Reusable scratch `FxHashSet<TypeId>` for the three index-type DFS walkers
+// in this module. Mirrors the pool pattern from #4722 / #4790 and follow-ups.
+thread_local! {
+    static EXTENDED_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_extended_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = EXTENDED_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    EXTENDED_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 // =============================================================================
 // Full Literal Type Classification (includes boolean)
@@ -108,8 +135,7 @@ pub fn get_number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
 /// Returns the specific `TypeId` within the given type (e.g., inside a union)
 /// that makes it invalid for indexing.
 pub fn get_invalid_index_type_member(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    let mut visited = FxHashSet::default();
-    is_invalid_index_type_inner(db, type_id, &mut visited)
+    with_extended_visited(|visited| is_invalid_index_type_inner(db, type_id, visited))
 }
 
 fn is_invalid_index_type_inner(
@@ -200,8 +226,7 @@ fn is_invalid_index_type_inner(
 }
 
 fn is_index_key_anchor(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let mut visited = FxHashSet::default();
-    is_index_key_anchor_inner(db, type_id, &mut visited)
+    with_extended_visited(|visited| is_index_key_anchor_inner(db, type_id, visited))
 }
 
 fn is_index_key_anchor_inner(
@@ -256,8 +281,7 @@ pub fn get_invalid_index_type_member_strict(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
-    let mut visited = FxHashSet::default();
-    is_invalid_index_type_strict_inner(db, type_id, &mut visited)
+    with_extended_visited(|visited| is_invalid_index_type_strict_inner(db, type_id, visited))
 }
 
 fn is_invalid_index_type_strict_inner(
