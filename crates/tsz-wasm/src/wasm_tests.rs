@@ -314,6 +314,82 @@ fn test_transpile_module_accepts_file_name_option() {
 }
 
 #[test]
+fn test_transpile_module_emits_external_source_map() {
+    let json = transpile_module(
+        "const n: number = 1;\n",
+        r#"{"target":1,"sourceMap":true,"fileName":"virtual/input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+
+    let output = parsed["outputText"].as_str().unwrap();
+    // Source map URL comment must be appended and reference the JS basename.
+    assert!(
+        output.contains("//# sourceMappingURL=input.js.map"),
+        "missing sourceMappingURL comment in output: {output:?}"
+    );
+    // Inline base64 map MUST NOT be present in the external-map case.
+    assert!(
+        !output.contains("data:application/json;base64,"),
+        "external sourceMap should not inline the map: {output:?}"
+    );
+
+    let map_text = parsed["sourceMapText"]
+        .as_str()
+        .expect("sourceMapText should be set when sourceMap is requested");
+    let map: Value = serde_json::from_str(map_text).expect("sourceMapText is valid JSON");
+    assert_eq!(map["version"].as_u64().unwrap(), 3);
+    assert_eq!(map["file"].as_str().unwrap(), "input.js");
+    let sources: Vec<&str> = map["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(sources, vec!["input.ts"]);
+    assert!(!map["mappings"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn test_transpile_module_emits_inline_source_map() {
+    let json = transpile_module(
+        "const n: number = 1;\n",
+        r#"{"target":1,"inlineSourceMap":true,"fileName":"input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["diagnostics"].as_array().unwrap().len(), 0);
+
+    let output = parsed["outputText"].as_str().unwrap();
+    assert!(
+        output.contains("//# sourceMappingURL=data:application/json;base64,"),
+        "missing inline sourceMappingURL data URL in output: {output:?}"
+    );
+    // External `.map` URL must not be present in the inline case.
+    assert!(
+        !output.contains("//# sourceMappingURL=input.js.map"),
+        "inline sourceMap should not reference an external .map: {output:?}"
+    );
+    // Inline form keeps the map embedded; the separate field should be absent.
+    assert!(parsed["sourceMapText"].is_null());
+}
+
+#[test]
+fn test_transpile_module_omits_source_map_when_not_requested() {
+    let json = transpile_module(
+        "const n: number = 1;\n",
+        r#"{"target":1,"fileName":"input.ts"}"#,
+    );
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let output = parsed["outputText"].as_str().unwrap();
+
+    assert!(parsed["sourceMapText"].is_null());
+    assert!(
+        !output.contains("//# sourceMappingURL"),
+        "no sourceMappingURL should be emitted without sourceMap option: {output:?}"
+    );
+}
+
+#[test]
 fn test_ts_program_emit_json_uses_module_file_extensions() {
     let mut program = TsProgram::new();
     program

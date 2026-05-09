@@ -10,6 +10,7 @@ use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 use tsz::lowering::LoweringPass;
 use tsz::parser::{NodeArena, NodeIndex, ParserState, syntax_kind_ext};
+use tsz_common::source_map::base64_encode;
 
 use super::options::{module_kind_from_u8, target_kind_from_u8};
 
@@ -124,6 +125,7 @@ struct TranspileCompilation {
     root_idx: NodeIndex,
     output_text: String,
     file_is_module: bool,
+    source_map_text: Option<String>,
 }
 
 fn invalid_options_output(error: serde_json::Error) -> String {
@@ -146,6 +148,7 @@ fn compile_transpile_source(
     source: &str,
     file_name: &str,
     printer_opts: PrinterOptions,
+    source_map: Option<SourceMapRequest<'_>>,
 ) -> TranspileCompilation {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root_idx = parser.parse_source_file();
@@ -162,8 +165,16 @@ fn compile_transpile_source(
     printer.set_target(ctx.options.target);
     printer.set_auto_detect_module(ctx.auto_detect_module);
     printer.set_source_text(source);
+    if let Some(req) = source_map {
+        printer.enable_source_map(req.output_name, req.source_name);
+    }
     printer.emit(root_idx);
     let output_text = printer.get_output().to_string();
+    let source_map_text = if source_map.is_some() {
+        printer.generate_source_map_json()
+    } else {
+        None
+    };
     drop(printer);
 
     TranspileCompilation {
@@ -171,7 +182,45 @@ fn compile_transpile_source(
         root_idx,
         output_text,
         file_is_module,
+        source_map_text,
     }
+}
+
+#[derive(Clone, Copy)]
+struct SourceMapRequest<'a> {
+    /// Generated output file name (used as the source map's `file` field).
+    output_name: &'a str,
+    /// Source file name (used as the entry in the source map's `sources` field).
+    source_name: &'a str,
+}
+
+/// Compute the JS output file name for a transpile source file name.
+///
+/// Mirrors tsc's transpileModule behavior, where the output extension follows
+/// the source extension: `.ts`/`.tsx` -> `.js`, `.mts` -> `.mjs`, `.cts` -> `.cjs`.
+/// The directory portion of the path is preserved.
+fn js_output_name_for_source_map(file_name: &str) -> String {
+    if let Some(stem) = file_name.strip_suffix(".mts") {
+        return format!("{stem}.mjs");
+    }
+    if let Some(stem) = file_name.strip_suffix(".cts") {
+        return format!("{stem}.cjs");
+    }
+    if let Some(stem) = file_name
+        .strip_suffix(".tsx")
+        .or_else(|| file_name.strip_suffix(".ts"))
+    {
+        return format!("{stem}.js");
+    }
+    format!("{file_name}.js")
+}
+
+/// Return just the basename of `path` (everything after the last `/` or `\`).
+fn basename(path: &str) -> &str {
+    let after_slash = path.rsplit_once('/').map_or(path, |(_, rest)| rest);
+    after_slash
+        .rsplit_once('\\')
+        .map_or(after_slash, |(_, rest)| rest)
 }
 
 fn source_file_has_module_syntax(arena: &NodeArena, root_idx: NodeIndex) -> bool {
@@ -247,9 +296,39 @@ pub fn transpile_module(source: &str, options_json: &str) -> String {
 
     let printer_opts = options.to_printer_options();
     let module_kind = printer_opts.module;
-    let compiled = compile_transpile_source(source, options.file_name(), printer_opts);
-    let output_text =
+    let file_name = options.file_name().to_string();
+    let want_external_map = options.source_map.unwrap_or(false);
+    let want_inline_map = options.inline_source_map.unwrap_or(false);
+    let want_any_map = want_external_map || want_inline_map;
+
+    // tsc's transpileModule resolves the source map's `file` and the
+    // `sourceMappingURL` comment to the output file's basename.
+    let output_name = basename(&js_output_name_for_source_map(&file_name)).to_string();
+    let source_name = basename(&file_name).to_string();
+
+    let request = want_any_map.then_some(SourceMapRequest {
+        output_name: &output_name,
+        source_name: &source_name,
+    });
+
+    let compiled = compile_transpile_source(source, &file_name, printer_opts, request);
+    let mut output_text =
         preserve_empty_module_output(compiled.output_text, compiled.file_is_module, module_kind);
+
+    // Append the sourceMappingURL comment when requested. `inlineSourceMap`
+    // wins over the external `sourceMap` form (matches tsc behavior).
+    let mut source_map_text: Option<String> = None;
+    if want_any_map && let Some(map_json) = compiled.source_map_text {
+        if want_inline_map {
+            let encoded = base64_encode(map_json.as_bytes());
+            output_text.push_str(&format!(
+                "//# sourceMappingURL=data:application/json;base64,{encoded}\n"
+            ));
+        } else {
+            output_text.push_str(&format!("//# sourceMappingURL={output_name}.map\n"));
+            source_map_text = Some(map_json);
+        }
+    }
 
     // Generate declaration file if requested
     let declaration_text = options.declaration.unwrap_or(false).then(|| {
@@ -260,7 +339,7 @@ pub fn transpile_module(source: &str, options_json: &str) -> String {
     // Build result
     let result = TranspileOutput {
         output_text,
-        source_map_text: None, // TODO: implement source maps
+        source_map_text,
         declaration_text,
         diagnostics: Vec::new(),
     };
@@ -280,7 +359,7 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     };
 
     let module_kind = opts.module;
-    let compiled = compile_transpile_source(source, DEFAULT_TRANSPILE_FILE_NAME, opts);
+    let compiled = compile_transpile_source(source, DEFAULT_TRANSPILE_FILE_NAME, opts, None);
     preserve_empty_module_output(compiled.output_text, compiled.file_is_module, module_kind)
 }
 
