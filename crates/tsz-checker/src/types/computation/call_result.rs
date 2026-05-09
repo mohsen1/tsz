@@ -203,6 +203,9 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_idx: NodeIndex,
     ) {
+        if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
+            return;
+        }
         if self.should_suppress_self_referential_mapped_constraint_arg_mismatch(
             arg_type, param_type, arg_idx,
         ) {
