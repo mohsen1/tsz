@@ -128,22 +128,33 @@ pub struct TokenInfo {
     pub end: u32,
 }
 
-/// Scan/tokenize source text using a source file
+/// Scan/tokenize source text.
 ///
-/// Returns JSON array of tokens extracted from the parsed AST
+/// Drives the underlying scanner and returns a JSON array of `TokenInfo`
+/// entries — `{ kind, text, start, end }` — covering every token in the
+/// source, including trivia, up to (but excluding) the final
+/// `EndOfFileToken`. Positions are byte offsets into the input.
 #[wasm_bindgen(js_name = scanTokens)]
 pub fn scan_tokens(source_text: &str) -> String {
-    // Use the TsSourceFile to parse, which gives us access to the AST
-    // For a simple tokenizer, we return basic tokens from the source
-    let mut sf =
-        super::source_file::TsSourceFile::new("tokens.ts".to_string(), source_text.to_string());
+    let mut scanner = tsz_scanner::scanner_impl::ScannerState::new(source_text.to_string(), false);
+    let mut tokens: Vec<TokenInfo> = Vec::new();
 
-    // Get statement handles to trigger parsing
-    let _ = sf.get_statement_handles();
+    loop {
+        let kind = scanner.scan();
+        if kind == tsz_scanner::SyntaxKind::EndOfFileToken {
+            break;
+        }
+        let start = scanner.get_token_start();
+        let end = scanner.get_token_end();
+        tokens.push(TokenInfo {
+            kind: kind as u16,
+            text: scanner.get_token_text(),
+            start: start as u32,
+            end: end as u32,
+        });
+    }
 
-    // For now, return a simple representation
-    // A full scanner would need to be exposed from the scanner module
-    "[]".to_string()
+    serde_json::to_string(&tokens).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Get the name of a `SyntaxKind`

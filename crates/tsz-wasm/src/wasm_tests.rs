@@ -11,7 +11,7 @@ use crate::wasm_api::language_service::TsLanguageService;
 use crate::wasm_api::program::create_ts_program;
 use crate::wasm_api::utilities::{
     create_source_file, is_keyword, is_punctuation, parse_config_file_text_to_json,
-    parse_json_text, syntax_kind_to_name, token_to_string,
+    parse_json_text, scan_tokens, syntax_kind_to_name, token_to_string,
 };
 use crate::{Parser, TsDiagnostic, TsProgram, TsSourceFile, TsSymbol, TsType};
 use tsz_scanner::SyntaxKind;
@@ -591,5 +591,59 @@ fn test_ts_program_target_drives_semantic_diagnostics() {
     assert!(
         !codes_es2020.contains(&2737),
         "ES2020 target must not surface TS2737 for BigInt literal, got {codes_es2020:?}"
+    );
+}
+
+#[test]
+fn test_scan_tokens_emits_real_token_stream() {
+    // Empty input must produce an empty array, not "[]" by accident from a stub.
+    let empty = scan_tokens("");
+    assert_eq!(empty, "[]");
+
+    // A small program must produce the expected token sequence with byte-accurate
+    // start/end ranges, kinds matching SyntaxKind, and verbatim source slices.
+    let source = "const x = 42;";
+    let json = scan_tokens(source);
+    let tokens: Value = serde_json::from_str(&json).expect("scan_tokens output is valid JSON");
+    let arr = tokens.as_array().expect("scan_tokens returns a JSON array");
+
+    // With skip_trivia=false the scanner emits whitespace as separate tokens.
+    let kinds: Vec<u16> = arr
+        .iter()
+        .map(|t| t["kind"].as_u64().unwrap() as u16)
+        .collect();
+    let expected_kinds: Vec<u16> = vec![
+        SyntaxKind::ConstKeyword as u16,
+        SyntaxKind::WhitespaceTrivia as u16,
+        SyntaxKind::Identifier as u16,
+        SyntaxKind::WhitespaceTrivia as u16,
+        SyntaxKind::EqualsToken as u16,
+        SyntaxKind::WhitespaceTrivia as u16,
+        SyntaxKind::NumericLiteral as u16,
+        SyntaxKind::SemicolonToken as u16,
+    ];
+    assert_eq!(kinds, expected_kinds, "kinds={kinds:?} json={json}");
+
+    // start/end must cover the source contiguously and agree with `text`.
+    let mut cursor: u32 = 0;
+    for token in arr {
+        let start = token["start"].as_u64().unwrap() as u32;
+        let end = token["end"].as_u64().unwrap() as u32;
+        let text = token["text"].as_str().unwrap();
+        assert_eq!(start, cursor, "tokens must be contiguous: {token}");
+        assert_eq!(end as usize - start as usize, text.len(), "{token}");
+        assert_eq!(&source[start as usize..end as usize], text);
+        cursor = end;
+    }
+    assert_eq!(
+        cursor as usize,
+        source.len(),
+        "tokens must cover the source"
+    );
+
+    // EndOfFileToken (kind 1) must NOT be included in the array.
+    assert!(
+        !kinds.contains(&(SyntaxKind::EndOfFileToken as u16)),
+        "scan_tokens must not emit EndOfFileToken"
     );
 }
