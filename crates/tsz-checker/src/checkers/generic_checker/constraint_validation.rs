@@ -1656,12 +1656,10 @@ impl<'a> CheckerState<'a> {
         if let Some(alias_object_type) =
             self.resolve_record_alias_type_for_indexed_access_value(object_type)
             && alias_object_type != object_type
-        {
-            if let Some(value_type) =
+            && let Some(value_type) =
                 self.constraint_check_indexed_access_value_type(alias_object_type, index_type)
-            {
-                return Some(value_type);
-            }
+        {
+            return Some(value_type);
         }
 
         // For concrete object maps like `HTMLElementTagNameMap`, an indexed access
@@ -1736,13 +1734,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let body = def.body?;
-        let subst =
-            crate::query_boundaries::common::TypeSubstitution::from_args(
-                self.ctx.types,
-                &def.type_params,
-                &app.args,
-            );
-        let instantiated = crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+        let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &def.type_params,
+            &app.args,
+        );
+        let instantiated =
+            crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
         let evaluated = self.evaluate_type_for_assignability(instantiated);
         Some(self.resolve_lazy_type(evaluated))
     }
