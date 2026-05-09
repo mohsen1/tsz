@@ -340,12 +340,15 @@ impl<'a> CheckerState<'a> {
                         name,
                     )
                 });
-            // Skip normalization for TypeQuery return types to preserve the typeof
-            // syntax. Resolving TypeQuery to the full function type causes double
-            // arrows like `() => () => typeof fn` instead of `() => typeof fn`.
+            // Skip normalization for TypeQuery and conditional return types to
+            // preserve their source-level surface. Normalizing conditional return
+            // types here eagerly evaluates nested branches and widens literals
+            // like `1` to `number`, which then leaks into assignability display.
             let skip_for_type_query =
                 tsz_solver::type_queries::is_type_query_type(self.ctx.types, shape.return_type);
-            let skip = skip_for_type_params || skip_for_type_query;
+            let skip_for_conditional =
+                tsz_solver::is_conditional_type(self.ctx.types, shape.return_type);
+            let skip = skip_for_type_params || skip_for_type_query || skip_for_conditional;
             let evaluated = if skip {
                 shape.return_type
             } else {

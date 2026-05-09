@@ -1369,14 +1369,24 @@ impl<'a> CheckerState<'a> {
                 // behavior in `elaborateElementwise`.  tsc does not widen
                 // literal types in the TS2418 message.
                 if is_computed_property {
+                    let diagnostic_target = {
+                        let stripped = tsz_solver::remove_undefined(
+                            self.ctx.types.as_type_database(),
+                            target_prop_type_for_diagnostic,
+                        );
+                        if stripped == target_prop_type {
+                            stripped
+                        } else {
+                            target_prop_type_for_diagnostic
+                        }
+                    };
                     // For TS2418, use the literal type from the initializer
                     // expression when available (tsc shows "str" not string).
                     let computed_source = self
                         .literal_type_from_initializer(prop_value_idx)
                         .unwrap_or(source_prop_type);
                     let src_str = self.format_type_for_assignability_message(computed_source);
-                    let tgt_str =
-                        self.format_type_for_assignability_message(target_prop_type_for_diagnostic);
+                    let tgt_str = self.format_type_for_assignability_message(diagnostic_target);
                     let msg = format_message(
                         diagnostic_messages::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -1395,6 +1405,17 @@ impl<'a> CheckerState<'a> {
                         };
                     let source_prop_type_for_diagnostic =
                         self.widen_function_like_call_source(source_prop_type_for_diagnostic);
+                    let diagnostic_target = {
+                        let stripped = tsz_solver::remove_undefined(
+                            self.ctx.types.as_type_database(),
+                            target_prop_type_for_diagnostic,
+                        );
+                        if stripped == target_prop_type {
+                            stripped
+                        } else {
+                            target_prop_type_for_diagnostic
+                        }
+                    };
                     // TSC's elaborateElementwise uses TS2322 ("Type X is not
                     // assignable to type Y") for `this` keyword property values
                     // instead of the more specific TS2741 missing-property code.
@@ -1406,16 +1427,16 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(prop_value_idx)
                         .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
-                    if target_prop_type != target_prop_type_for_diagnostic {
+                    if target_prop_type != diagnostic_target {
                         self.error_type_not_assignable_at_with_display_types(
                             source_prop_type_for_diagnostic,
-                            target_prop_type_for_diagnostic,
+                            diagnostic_target,
                             prop_name_idx,
                         );
                     } else {
                         self.error_type_not_assignable_at_with_anchor_elaboration_inner(
                             source_prop_type_for_diagnostic,
-                            target_prop_type_for_diagnostic,
+                            diagnostic_target,
                             prop_name_idx,
                             value_is_this_keyword,
                         );

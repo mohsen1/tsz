@@ -4,6 +4,74 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn lightweight_prototype_binding_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        use tsz_solver::{CallSignature, CallableShape, ParamInfo};
+
+        let node = self.ctx.arena.get(idx)?;
+        let (parameters, type_annotation, is_method) =
+            if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                (&method.parameters.nodes, method.type_annotation, true)
+            } else if let Some(func) = self.ctx.arena.get_function(node) {
+                (&func.parameters.nodes, func.type_annotation, false)
+            } else {
+                return None;
+            };
+
+        let params = parameters
+            .iter()
+            .filter_map(|&param_idx| {
+                let param = self
+                    .ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.ctx.arena.get_parameter(param_node))?;
+                if let Some(name_node) = self.ctx.arena.get(param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text == "this"
+                {
+                    return None;
+                }
+                Some(ParamInfo {
+                    name: self
+                        .ctx
+                        .arena
+                        .get(param.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
+                    type_id: if param.type_annotation.is_some() {
+                        self.get_type_from_type_node(param.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    },
+                    optional: param.question_token || param.initializer.is_some(),
+                    rest: param.dot_dot_dot_token,
+                })
+            })
+            .collect();
+        let return_type = if type_annotation.is_some() {
+            self.get_type_from_type_node(type_annotation)
+        } else {
+            TypeId::ANY
+        };
+
+        Some(self.ctx.types.factory().callable(CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params: Vec::new(),
+                params,
+                this_type: None,
+                return_type,
+                type_predicate: None,
+                is_method,
+            }],
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        }))
+    }
+
     fn assignment_chain_terminal_object_literal(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -62,7 +130,9 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let prop_name_atom = self.ctx.types.intern_string(&prop_name_str);
-                let rhs_type = self.get_type_of_function(elem_idx);
+                let rhs_type = self
+                    .lightweight_prototype_binding_type(elem_idx)
+                    .unwrap_or(TypeId::ANY);
                 method_bindings.push((
                     prop_name_atom,
                     tsz_solver::PropertyInfo {
@@ -97,7 +167,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let prop_name_atom = self.ctx.types.intern_string(&prop_name_str);
-            let rhs_type = self.get_type_of_node(prop.initializer);
+            let rhs_type = self
+                .lightweight_prototype_binding_type(prop.initializer)
+                .unwrap_or_else(|| self.get_type_of_node(prop.initializer));
             method_bindings.push((
                 prop_name_atom,
                 tsz_solver::PropertyInfo {
@@ -366,7 +438,9 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(method_name_str) = resolved_property_name {
                 let method_name_atom = self.ctx.types.intern_string(&method_name_str);
-                let rhs_type = self.get_type_of_node(binary.right);
+                let rhs_type = self
+                    .lightweight_prototype_binding_type(binary.right)
+                    .unwrap_or_else(|| self.get_type_of_node(binary.right));
                 let is_method_like = self
                     .ctx
                     .arena

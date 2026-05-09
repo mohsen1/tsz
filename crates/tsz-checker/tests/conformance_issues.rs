@@ -11811,6 +11811,115 @@ Object.defineProperty(module.exports, "setonlyAccessor", {
 }
 
 #[test]
+fn test_exports_define_property_descriptor_setter_matches_conformance() {
+    let files = [
+        (
+            "mod1.js",
+            r#"
+Object.defineProperty(exports, "thing", { value: 42, writable: true });
+Object.defineProperty(exports, "readonlyProp", { value: "Smith", writable: false });
+Object.defineProperty(exports, "rwAccessors", { get() { return 98122 }, set(_) { /*ignore*/ } });
+Object.defineProperty(exports, "readonlyAccessor", { get() { return 21.75 } });
+Object.defineProperty(exports, "setonlyAccessor", {
+    /** @param {string} str */
+    set(str) {
+        this.rwAccessors = Number(str)
+    }
+});
+"#,
+        ),
+        (
+            "mod2.js",
+            r#"
+Object.defineProperty(module.exports, "thing", { value: "yes", writable: true });
+Object.defineProperty(module.exports, "readonlyProp", { value: "Smith", writable: false });
+Object.defineProperty(module.exports, "rwAccessors", { get() { return 98122 }, set(_) { /*ignore*/ } });
+Object.defineProperty(module.exports, "readonlyAccessor", { get() { return 21.75 } });
+Object.defineProperty(module.exports, "setonlyAccessor", {
+    /** @param {string} str */
+    set(str) {
+        this.rwAccessors = Number(str)
+    }
+});
+"#,
+        ),
+        (
+            "index.js",
+            r#"
+/** @type {number} */
+const q = require("./mod1").thing;
+
+/** @type {string} */
+const u = require("./mod2").thing;
+"#,
+        ),
+        (
+            "validator.ts",
+            r#"
+import "./";
+
+import m1 = require("./mod1");
+
+m1.thing;
+m1.readonlyProp;
+m1.rwAccessors;
+m1.readonlyAccessor;
+m1.setonlyAccessor;
+
+m1.thing = 10;
+m1.rwAccessors = 11;
+m1.setonlyAccessor = "yes";
+
+m1.readonlyProp = "name";
+m1.readonlyAccessor = 12;
+m1.thing = "no";
+m1.rwAccessors = "no";
+m1.setonlyAccessor = 0;
+
+import m2 = require("./mod2");
+
+m2.thing;
+m2.readonlyProp;
+m2.rwAccessors;
+m2.readonlyAccessor;
+m2.setonlyAccessor;
+
+m2.thing = "ok";
+m2.rwAccessors = 11;
+m2.setonlyAccessor = "yes";
+
+m2.readonlyProp = "name";
+m2.readonlyAccessor = 12;
+m2.thing = 0;
+m2.rwAccessors = "no";
+m2.setonlyAccessor = 0;
+"#,
+        ),
+    ];
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "validator.ts",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7006: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7006)
+        .collect();
+    assert!(
+        ts7006.is_empty(),
+        "Expected Object.defineProperty export descriptors with paired getters to suppress TS7006. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_exports_property_assignment_contextually_types_object_literal_methods() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[(
@@ -22418,6 +22527,48 @@ m1.setonlyAccessor = 0;
     assert!(
         has_rw_setter_mismatch,
         "Expected rwAccessors setter writes to be checked against the getter's number type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_js_namespace_enum_expando_member_writes_stay_readonly() {
+    let files = [
+        (
+            "lovefield-ts.d.ts",
+            r#"
+declare namespace lf {
+    export enum Order { ASC, DESC }
+}
+"#,
+        ),
+        (
+            "enums.js",
+            r#"
+lf.Order = {}
+lf.Order.DESC = 0;
+lf.Order.ASC = 1;
+"#,
+        ),
+    ];
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "enums.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2540: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2540)
+        .collect();
+    assert_eq!(
+        ts2540.len(),
+        2,
+        "Expected enum member expando writes to keep TS2540 after enum container rebinding. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

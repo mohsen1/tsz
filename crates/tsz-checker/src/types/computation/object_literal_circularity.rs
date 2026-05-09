@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
                         let return_type = if other_method.type_annotation.is_some() {
                             self.get_type_from_type_node(other_method.type_annotation)
                         } else {
-                            TypeId::ANY
+                            TypeId::VOID
                         };
                         (params, return_type)
                     })
@@ -142,7 +142,7 @@ impl<'a> CheckerState<'a> {
                                 optional: false,
                                 rest: true,
                             }],
-                            TypeId::ANY,
+                            TypeId::VOID,
                         )
                     });
 
@@ -179,7 +179,13 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        self.ctx.types.factory().object(this_props)
+        let object_type = self.ctx.types.factory().object(this_props.clone());
+        let mut display_props = this_props;
+        display_props.sort_by_key(|prop| prop.name);
+        self.ctx
+            .types
+            .store_display_properties(object_type, display_props);
+        object_type
     }
 
     /// Build a synthetic `this` type for a function expression that is a property
@@ -251,7 +257,7 @@ impl<'a> CheckerState<'a> {
                     let return_type = if other_method.type_annotation.is_some() {
                         self.get_type_from_type_node(other_method.type_annotation)
                     } else {
-                        TypeId::ANY
+                        TypeId::VOID
                     };
                     (params, return_type)
                 })
@@ -263,7 +269,7 @@ impl<'a> CheckerState<'a> {
                             optional: false,
                             rest: true,
                         }],
-                        TypeId::ANY,
+                        TypeId::VOID,
                     )
                 });
 
@@ -297,7 +303,13 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        self.ctx.types.factory().object(this_props)
+        let object_type = self.ctx.types.factory().object(this_props.clone());
+        let mut display_props = this_props;
+        display_props.sort_by_key(|prop| prop.name);
+        self.ctx
+            .types
+            .store_display_properties(object_type, display_props);
+        object_type
     }
 
     pub(super) fn widen_primitive_literal_type_display(display: &str) -> String {

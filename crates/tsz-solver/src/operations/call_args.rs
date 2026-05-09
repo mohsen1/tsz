@@ -378,6 +378,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
             if let Some(param_info) = self.param_info_for_arg_index(params, i)
+                && !param_info.rest
                 && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(param_info.type_id)
                 && let Some(constraint) = tp.constraint
                 && !crate::type_queries::contains_type_parameters_db(

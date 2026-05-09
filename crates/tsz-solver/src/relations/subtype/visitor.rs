@@ -250,11 +250,19 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // earlier check when target is a type parameter (line 2575). This code exists
         // for cases where the intersection check happens via other paths.
 
-        // Intersection <: Target requires AT LEAST ONE member to be subtype
+        // Intersection <: Target requires AT LEAST ONE member to be subtype.
+        // For object-like targets, skip this shortcut and let structural checks
+        // determine compatibility (avoids accepting conflicting intersections).
         let member_list = self.checker.interner.type_list(TypeListId(list_id));
-        for &member in member_list.iter() {
-            if self.checker.check_subtype(member, self.target).is_true() {
-                return SubtypeResult::True;
+        let evaluated_target = self.checker.evaluate_type(self.target);
+        let target_is_object_like = object_shape_id(self.checker.interner, evaluated_target)
+            .is_some()
+            || object_with_index_shape_id(self.checker.interner, evaluated_target).is_some();
+        if !target_is_object_like {
+            for &member in member_list.iter() {
+                if self.checker.check_subtype(member, self.target).is_true() {
+                    return SubtypeResult::True;
+                }
             }
         }
 

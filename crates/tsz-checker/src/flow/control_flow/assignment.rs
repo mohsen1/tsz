@@ -320,7 +320,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // null semantically belongs to the declared type — a strict-mode concept.
                 if (literal_type == TypeId::NULL || literal_type == TypeId::UNDEFINED)
                     && let Some(annotation_type) =
-                        self.annotation_type_from_var_decl_node(assignment_node)
+                        self.annotation_type_from_assignment_node(assignment_node, target)
                     && !self.is_assignable_to_strict_null(literal_type, annotation_type)
                 {
                     return None;
@@ -353,7 +353,7 @@ impl<'a> FlowAnalyzer<'a> {
                     // declared type unchanged when no union member matches, and
                     // for non-union types it returns the declared type directly.
                     if let Some(annotation_type) =
-                        self.annotation_type_from_var_decl_node(assignment_node)
+                        self.annotation_type_from_assignment_node(assignment_node, target)
                         && let Some(rhs_type) = self
                             .node_types
                             .and_then(|nt| nt.get(&rhs.0).copied())
@@ -371,7 +371,7 @@ impl<'a> FlowAnalyzer<'a> {
             // has a type annotation that doesn't include undefined, use the declared type.
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
                 if let Some(annotation_type) =
-                    self.annotation_type_from_var_decl_node(assignment_node)
+                    self.annotation_type_from_assignment_node(assignment_node, target)
                     && !self.is_assignable_to_strict_null(nullish_type, annotation_type)
                 {
                     return None;

@@ -11,6 +11,66 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn format_enum_member_name_for_message(&self, parent_name: &str, member_name: &str) -> String {
+        if member_name.contains('.') || member_name.starts_with(&format!("{parent_name}.")) {
+            member_name.to_string()
+        } else {
+            format!("{parent_name}.{member_name}")
+        }
+    }
+
+    pub(crate) fn normalize_template_placeholder_spacing_for_display(&self, text: &str) -> String {
+        if !text.contains("${") {
+            return text.to_string();
+        }
+
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = String::with_capacity(text.len());
+        let mut i = 0usize;
+
+        while i < chars.len() {
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+                out.push('$');
+                out.push('{');
+                i += 2;
+
+                while i < chars.len() && chars[i].is_whitespace() {
+                    i += 1;
+                }
+
+                let mut depth = 1usize;
+                let mut inner = String::new();
+                while i < chars.len() {
+                    let ch = chars[i];
+                    i += 1;
+                    if ch == '{' {
+                        depth += 1;
+                        inner.push(ch);
+                        continue;
+                    }
+                    if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        inner.push(ch);
+                        continue;
+                    }
+                    inner.push(ch);
+                }
+
+                out.push_str(inner.trim_end());
+                out.push('}');
+                continue;
+            }
+
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        out
+    }
+
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
         // If the type is a TypeParameter or Infer, format it directly as
         // its name.  This must happen before any evaluation/resolution that
@@ -296,7 +356,7 @@ impl<'a> CheckerState<'a> {
         {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
-        formatted
+        self.normalize_template_placeholder_spacing_for_display(&formatted)
     }
 
     pub(crate) fn format_assignability_type_for_message(
@@ -304,6 +364,9 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         other: TypeId,
     ) -> String {
+        if self.target_preserves_literal_surface(other) {
+            return self.format_type_diagnostic(ty);
+        }
         if tsz_solver::literal_value(self.ctx.types, ty).is_some()
             && tsz_solver::string_intrinsic_components(self.ctx.types, other)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
@@ -317,6 +380,9 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(type_name) = self.format_disambiguated_nominal_name_for_assignment(ty, other) {
             return type_name;
+        }
+        if let Some(named_union) = self.format_named_union_for_assignability_message(ty) {
+            return named_union;
         }
 
         // When displaying the TARGET type and the SOURCE is non-nullable,
@@ -334,7 +400,7 @@ impl<'a> CheckerState<'a> {
     /// counterpart in the assignability check) is non-nullable, strip the
     /// top-level null/undefined members from `ty`.  This matches tsc which
     /// shows only the non-nullable part of the target to reduce noise.
-    fn strip_nullish_for_assignability_display(
+    pub(crate) fn strip_nullish_for_assignability_display(
         &mut self,
         ty: TypeId,
         other: TypeId,
@@ -372,6 +438,12 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.factory().union(filtered))
     }
 
+    pub(crate) fn should_strip_nullish_for_property_display(&self, target: TypeId) -> bool {
+        crate::query_boundaries::common::union_members(self.ctx.types, target).is_some()
+            || crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+                .is_some()
+    }
+
     fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
         let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
         if members.len() < 2 {
@@ -404,10 +476,75 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn format_named_union_for_assignability_message(&mut self, ty: TypeId) -> Option<String> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut rendered = Vec::with_capacity(members.len());
+        let mut saw_named_member = false;
+        let mut has_null = false;
+        let mut has_undefined = false;
+
+        for member in members {
+            if member == TypeId::NULL {
+                has_null = true;
+                continue;
+            }
+            if member == TypeId::UNDEFINED {
+                has_undefined = true;
+                continue;
+            }
+
+            let display =
+                if let Some(enum_name) = self.format_qualified_enum_name_for_message(member) {
+                    enum_name
+                } else if let Some(alias_name) = self.lookup_type_alias_name_for_display(member) {
+                    alias_name
+                } else if let Some(sym_id) = self.nominal_shape_symbol_for_display(member) {
+                    let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                    let formatted = self.format_type_diagnostic(member);
+                    if formatted.contains('<')
+                        && !formatted.starts_with('{')
+                        && !formatted.starts_with('(')
+                    {
+                        formatted
+                    } else {
+                        symbol.escaped_name.clone()
+                    }
+                } else {
+                    return None;
+                };
+            saw_named_member = true;
+            rendered.push(display);
+        }
+
+        if !saw_named_member {
+            return None;
+        }
+
+        if has_null {
+            rendered.push("null".to_string());
+        }
+        if has_undefined {
+            rendered.push("undefined".to_string());
+        }
+
+        Some(rendered.join(" | "))
+    }
+
     fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
         let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0 {
+            let parent = self.ctx.binder.get_symbol(symbol.parent)?;
+            let member_name = symbol.escaped_name.as_str();
+            return Some(
+                self.format_enum_member_name_for_message(&parent.escaped_name, member_name),
+            );
+        }
         let mut parts = vec![symbol.escaped_name.clone()];
         let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration

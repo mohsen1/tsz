@@ -788,9 +788,11 @@ impl<'a> CheckerState<'a> {
                             exports_table.iter().find_map(|(_, &export_sym_id)| {
                                 self.ctx.resolve_symbol_file_index(export_sym_id)
                             });
-                        let mut export_equals_type = exports_table
-                            .get("export=")
-                            .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+                        let mut export_equals_type =
+                            exports_table.get("export=").map(|export_equals_sym| {
+                                let export_equals_type = self.get_type_of_symbol(export_equals_sym);
+                                self.widen_type_for_display(export_equals_type)
+                            });
                         let surface = exports_table_target
                             .map(|target_idx| self.resolve_js_export_surface(target_idx))
                             .or_else(|| {
@@ -1116,9 +1118,11 @@ impl<'a> CheckerState<'a> {
                             exports_table.iter().find_map(|(_, &export_sym_id)| {
                                 self.ctx.resolve_symbol_file_index(export_sym_id)
                             });
-                        let mut export_equals_type = exports_table
-                            .get("export=")
-                            .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+                        let mut export_equals_type =
+                            exports_table.get("export=").map(|export_equals_sym| {
+                                let export_equals_type = self.get_type_of_symbol(export_equals_sym);
+                                self.widen_type_for_display(export_equals_type)
+                            });
                         let surface = exports_table_target
                             .map(|target_idx| self.resolve_js_export_surface(target_idx))
                             .or_else(|| {
@@ -1400,6 +1404,13 @@ impl<'a> CheckerState<'a> {
                         && direct_export_type != TypeId::UNKNOWN
                         && direct_export_type != TypeId::ERROR
                     {
+                        let direct_export_type =
+                            crate::query_boundaries::common::widen_literal_type(
+                                self.ctx.types,
+                                direct_export_type,
+                            );
+                        let direct_export_type = self
+                            .widen_fresh_object_literal_properties_for_display(direct_export_type);
                         return (direct_export_type, Vec::new());
                     }
                 }
@@ -1430,17 +1441,17 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(exports_table) = self.resolve_effective_module_exports(module_name)
                     {
-                        // When the CJS module has `export =`, the default import
-                        // in Node ESM/CJS interop gets the `export =` value
-                        // directly (module.exports). This preserves call/construct
-                        // signatures when the `export =` target is a function or
-                        // class. Without this, we'd wrap it in a plain object
-                        // type that loses callability.
-                        if is_node_esm_importing_cjs
-                            && exports_table.has("export=")
+                        if exports_table.has("export=")
                             && let Some(export_eq_sym) = exports_table.get("export=")
                         {
                             let export_eq_type = self.get_type_of_symbol(export_eq_sym);
+                            let export_eq_type =
+                                crate::query_boundaries::common::widen_literal_type(
+                                    self.ctx.types,
+                                    export_eq_type,
+                                );
+                            let export_eq_type = self
+                                .widen_fresh_object_literal_properties_for_display(export_eq_type);
                             self.ctx.module_namespace_resolution_set.remove(module_name);
                             return (export_eq_type, Vec::new());
                         }
@@ -1536,6 +1547,9 @@ impl<'a> CheckerState<'a> {
                         self.record_cross_file_symbol_if_needed(alias_id, export_name, module_name);
                         let mut result = self.get_type_of_symbol(alias_id);
                         result = self.apply_module_augmentations(module_name, export_name, result);
+                        if export_name == "default" {
+                            result = self.widen_type_for_display(result);
+                        }
                         let should_cache_on_export_symbol =
                             self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
                                 (sym.flags & symbol_flags::TYPE) == 0
@@ -1577,6 +1591,13 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_symbol(export_sym_id)
                     };
                     result = self.apply_module_augmentations(module_name, export_name, result);
+                    if export_name == "default" {
+                        result = crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            result,
+                        );
+                        result = self.widen_fresh_object_literal_properties_for_display(result);
+                    }
                     let should_cache_on_export_symbol =
                         self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
                             (sym.flags & symbol_flags::TYPE) == 0

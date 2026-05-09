@@ -85,7 +85,8 @@ impl<'a> CheckerState<'a> {
 
             if let Some(method) = self.ctx.arena.get_method_decl(element_node)
                 && self
-                    .get_property_name_resolved(method.name)
+                    .get_property_name(method.name)
+                    .or_else(|| self.get_property_name_resolved(method.name))
                     .is_some_and(|name| name == method_name)
             {
                 let method_type = self.get_type_of_function(element_idx);
@@ -99,7 +100,8 @@ impl<'a> CheckerState<'a> {
                 && element_node.kind == syntax_kind_ext::GET_ACCESSOR
                 && let Some(accessor) = self.ctx.arena.get_accessor(element_node)
                 && self
-                    .get_property_name_resolved(accessor.name)
+                    .get_property_name(accessor.name)
+                    .or_else(|| self.get_property_name_resolved(accessor.name))
                     .is_some_and(|name| name == method_name)
             {
                 self.get_type_of_function(element_idx);

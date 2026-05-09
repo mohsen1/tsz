@@ -494,6 +494,33 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
     ) -> Option<SymbolId> {
         let all_binders = self.ctx.all_binders.as_ref()?;
+        let mut fallback: Option<(SymbolId, usize)> = None;
+        let mut preferred: Option<(SymbolId, usize)> = None;
+
+        let mut consider_member = |member_id: SymbolId, file_idx: usize| {
+            let is_enum_member = self
+                .ctx
+                .binder
+                .get_symbol(member_id)
+                .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+            if is_enum_member {
+                return;
+            }
+
+            fallback.get_or_insert((member_id, file_idx));
+
+            let is_value_bearing = !self.symbol_member_is_type_only(member_id, Some(member_name))
+                || self.ctx.binder.get_symbol(member_id).is_some_and(|symbol| {
+                    symbol.declarations.iter().copied().any(|decl_idx| {
+                        self.declaration_is_checked_js_constructor_value_declaration(
+                            member_id, decl_idx,
+                        )
+                    })
+                });
+            if is_value_bearing {
+                preferred = Some((member_id, file_idx));
+            }
+        };
 
         // Use the pre-built global index for O(1) namespace lookup
         if let Some(entries) = self
@@ -511,16 +538,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(exports) = ns_symbol.exports.as_ref()
                     && let Some(member_id) = exports.get(member_name)
                 {
-                    // Filter out enum members - they should only be accessible via qualified form
-                    let is_enum_member = self
-                        .ctx
-                        .binder
-                        .get_symbol(member_id)
-                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
-                    if !is_enum_member {
-                        self.record_cross_file_member(member_id, member_name, file_idx);
-                        return Some(member_id);
-                    }
+                    consider_member(member_id, file_idx);
                 }
             }
         }
@@ -548,13 +566,14 @@ impl<'a> CheckerState<'a> {
                     && let Some(nested_exports) = nested_ns.exports.as_ref()
                     && let Some(member_id) = nested_exports.get(member_name)
                 {
-                    self.record_cross_file_member(member_id, member_name, file_idx);
-                    return Some(member_id);
+                    consider_member(member_id, file_idx);
                 }
             }
         }
 
-        None
+        let (member_id, file_idx) = preferred.or(fallback)?;
+        self.record_cross_file_member(member_id, member_name, file_idx);
+        Some(member_id)
     }
 
     /// Record a cross-file symbol origin for proper arena delegation.
@@ -831,6 +850,15 @@ impl<'a> CheckerState<'a> {
                 return Some(reexported_sym);
             }
 
+            if let Some(members) = left_symbol.members.as_ref()
+                && let Some(member_sym) = members.get(right_name)
+            {
+                return Some(
+                    self.resolve_alias_symbol(member_sym, visited_aliases)
+                        .unwrap_or(member_sym),
+                );
+            }
+
             // Cross-file namespace merging fallback: if the member wasn't found in
             // the resolved symbol's exports, check other files' namespace declarations
             // with the same name. This handles `namespace A` declared across files.
@@ -903,6 +931,15 @@ impl<'a> CheckerState<'a> {
             self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
         {
             return Some(reexported_sym);
+        }
+
+        if let Some(members) = left_symbol.members.as_ref()
+            && let Some(member_sym) = members.get(right_name)
+        {
+            return Some(
+                self.resolve_alias_symbol(member_sym, visited_aliases)
+                    .unwrap_or(member_sym),
+            );
         }
 
         // Cross-file namespace merging fallback for qualified names in type position.

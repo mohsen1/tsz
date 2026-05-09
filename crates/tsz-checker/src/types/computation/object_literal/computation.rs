@@ -319,19 +319,41 @@ impl<'a> CheckerState<'a> {
                 contextual_type = Some(narrowed);
             }
         }
-        let prototype_owner_this_type = if self.is_js_file() {
-            self.js_prototype_owner_expression_for_node(idx)
-                .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
-                .and_then(|owner_target| {
-                    self.js_constructor_body_instance_type_for_function(owner_target)
-                })
-        } else {
+        let prototype_owner_expr = self
+            .is_js_file()
+            .then(|| self.js_prototype_owner_expression_for_node(idx))
+            .flatten();
+        let prototype_owner_this_type = prototype_owner_expr
+            .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
+            .and_then(|owner_target| {
+                self.js_constructor_body_instance_type_for_function(owner_target)
+            });
+        let in_js_prototype_object_literal = self.is_js_file() && prototype_owner_expr.is_some();
+        let effective_contextual_type = if in_js_prototype_object_literal {
             None
+        } else {
+            contextual_type
         };
-        let contextual_receiver_this_type = prototype_owner_this_type.or_else(|| {
-            self.contextual_object_receiver_this_type(contextual_type, marker_this_type)
-        });
-        let base_request = request.contextual_opt(contextual_type);
+        let object_receiver_this_type = self
+            .contextual_object_receiver_this_type(effective_contextual_type, marker_this_type)
+            .or_else(|| {
+                prototype_owner_this_type.map(|_| {
+                    self.build_object_literal_fn_property_synthetic_this_type(
+                        &properties,
+                        &obj_all_method_names,
+                        "",
+                    )
+                })
+            });
+        let contextual_receiver_this_type = if in_js_prototype_object_literal {
+            object_receiver_this_type
+        } else {
+            self.merge_contextual_receiver_this_types(
+                prototype_owner_this_type,
+                object_receiver_this_type,
+            )
+        };
+        let base_request = request.contextual_opt(effective_contextual_type);
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -394,7 +416,7 @@ impl<'a> CheckerState<'a> {
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
                     // evaluate them with the full resolver first so the solver can
                     // extract property types from the resulting concrete object type.
-                    let property_context_type = if let Some(ctx_type) = contextual_type {
+                    let property_context_type = if let Some(ctx_type) = effective_contextual_type {
                         let lookup_type = self.contextual_lookup_type(ctx_type);
                         let lookup_presence =
                             self.named_contextual_property_presence(lookup_type, &name);
@@ -440,9 +462,11 @@ impl<'a> CheckerState<'a> {
                     let initializer_context_type =
                         if let Some(jsdoc_callable_context_type) = jsdoc_callable_context_type {
                             Some(jsdoc_callable_context_type)
+                        } else if initializer_is_function_like && in_js_prototype_object_literal {
+                            None
                         } else if jsdoc_declared_type.is_none() {
                             self.function_initializer_context_type(
-                                contextual_type,
+                                effective_contextual_type,
                                 &name,
                                 property_context_type,
                                 prop.initializer,
@@ -456,7 +480,7 @@ impl<'a> CheckerState<'a> {
                     // When a JSDoc @type is present, use it as the contextual type
                     // so that literal values like `"a"` preserve their literal type
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
-                    let had_object_context = contextual_type.is_some();
+                    let had_object_context = effective_contextual_type.is_some();
                     // When the outer contextual type is a union with a non-nullish
                     // non-object member (e.g. `string | FullRule`), tsc does not
                     // provide a contextual type for function-like property initializers.
@@ -467,9 +491,10 @@ impl<'a> CheckerState<'a> {
                     let suppress_function_ctx = jsdoc_declared_type.is_none()
                         && initializer_context_type.is_none()
                         && initializer_is_function_like
-                        && original_contextual_type.is_some_and(|ctx_type| {
-                            self.contextual_type_has_primitive_union_member(ctx_type)
-                        });
+                        && (in_js_prototype_object_literal
+                            || original_contextual_type.is_some_and(|ctx_type| {
+                                self.contextual_type_has_primitive_union_member(ctx_type)
+                            }));
                     let resolved_prop_ctx = self.substitute_contextual_this_type(
                         jsdoc_declared_type.or(initializer_context_type).or(
                             if suppress_function_ctx {
@@ -494,7 +519,7 @@ impl<'a> CheckerState<'a> {
                             // as the contextual type for function-like initializers. This
                             // prevents false TS7006 emissions on callback parameters
                             // inside object literals spread into generic JSX components.
-                            if contextual_type == Some(TypeId::UNKNOWN)
+                            if effective_contextual_type == Some(TypeId::UNKNOWN)
                                 && let Some(init_node) = self.ctx.arena.get(prop.initializer)
                                 && matches!(
                                     init_node.kind,
@@ -543,12 +568,32 @@ impl<'a> CheckerState<'a> {
                         let mut pushed_prop_fn_this = false;
                         if initializer_is_function_expression
                             && marker_this_type.is_none()
-                            && self.current_this_type().is_none()
+                            && self
+                                .current_this_type()
+                                .is_none_or(|ty| matches!(ty, TypeId::ANY | TypeId::UNKNOWN))
                         {
-                            if let Some(receiver_this_type) = contextual_receiver_this_type {
+                            if in_js_prototype_object_literal {
+                                self.invalidate_initializer_for_context_change(prop.initializer);
+                            }
+                            let prototype_initializer_this_type = if in_js_prototype_object_literal
+                            {
+                                prototype_owner_expr.and_then(|owner_expr| {
+                                    let owner_type = self.get_type_of_node(owner_expr);
+                                    self.synthesize_js_constructor_instance_type(
+                                        owner_expr,
+                                        owner_type,
+                                        &[],
+                                    )
+                                })
+                            } else {
+                                None
+                            };
+                            if let Some(receiver_this_type) =
+                                prototype_initializer_this_type.or(contextual_receiver_this_type)
+                            {
                                 self.ctx.this_type_stack.push(receiver_this_type);
                                 pushed_prop_fn_this = true;
-                            } else if let Some(ctx_type) = contextual_type {
+                            } else if let Some(ctx_type) = effective_contextual_type {
                                 let ctx_type = self.evaluate_contextual_type(ctx_type);
                                 self.ctx.this_type_stack.push(ctx_type);
                                 pushed_prop_fn_this = true;
@@ -1256,7 +1301,7 @@ impl<'a> CheckerState<'a> {
                             )
                         })
                         .flatten();
-                    let method_context_type = contextual_type.and_then(|ctx_type| {
+                    let method_context_type = effective_contextual_type.and_then(|ctx_type| {
                         self.contextual_method_context_type_for_lookup(ctx_type, &name)
                     });
                     let method_context_type = self.substitute_contextual_this_type(
@@ -1266,8 +1311,8 @@ impl<'a> CheckerState<'a> {
                     let method_request = base_request.contextual_opt(
                         self.contextual_type_option_for_expression(
                             jsdoc_method_context_type
-                                .or(method_context_type)
-                                .or(define_property_context_type),
+                                .or(define_property_context_type)
+                                .or(method_context_type),
                         ),
                     );
 
@@ -1275,11 +1320,15 @@ impl<'a> CheckerState<'a> {
                     // contextual type as `this` inside method bodies.
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
-                    if marker_this_type.is_none() && self.current_this_type().is_none() {
+                    if marker_this_type.is_none()
+                        && self
+                            .current_this_type()
+                            .is_none_or(|ty| matches!(ty, TypeId::ANY | TypeId::UNKNOWN))
+                    {
                         if let Some(receiver_this_type) = contextual_receiver_this_type {
                             self.ctx.this_type_stack.push(receiver_this_type);
                             pushed_contextual_this = true;
-                        } else if let Some(ctx_type) = contextual_type {
+                        } else if let Some(ctx_type) = effective_contextual_type {
                             let ctx_type = self.evaluate_contextual_type(ctx_type);
                             self.ctx.this_type_stack.push(ctx_type);
                             pushed_contextual_this = true;

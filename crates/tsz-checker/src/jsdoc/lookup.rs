@@ -794,10 +794,10 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query_boundaries::type_construction::TypeInterner;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_parser::parser::node::NodeAccess;
-    use tsz_solver::TypeInterner;
 
     fn enclosing_expression_statement(parser: &ParserState, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;

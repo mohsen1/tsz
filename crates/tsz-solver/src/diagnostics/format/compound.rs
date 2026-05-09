@@ -829,7 +829,13 @@ impl<'a> TypeFormatter<'a> {
 
         if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             let parent = arena.get(symbol.parent)?;
-            return Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name));
+            let member_name = symbol.escaped_name.as_str();
+            if member_name.contains('.')
+                || member_name.starts_with(&format!("{}.", parent.escaped_name))
+            {
+                return Some(member_name.to_string());
+            }
+            return Some(format!("{}.{}", parent.escaped_name, member_name));
         }
 
         if symbol.has_any_flags(symbol_flags::ENUM) {
@@ -1383,7 +1389,7 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
-        Some(qualified_name)
+        Some(self.qualify_namespace_name_if_needed(sym_id, &sym.escaped_name, qualified_name))
     }
 
     /// Resolve a `SymbolRef` (from `TypeQuery` / `ModuleNamespace`) to a display name.
@@ -1444,10 +1450,28 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
 
-            return qualified_name;
+            return self.qualify_namespace_name_if_needed(
+                SymbolId(sym_raw),
+                &symbol.escaped_name,
+                qualified_name,
+            );
         }
 
         // Fallback: use the short (unqualified) definition name.
         self.atom(def.name).to_string()
+    }
+
+    const fn qualify_namespace_name_if_needed(
+        &self,
+        _sym_id: SymbolId,
+        _original_name: &str,
+        current_name: String,
+    ) -> String {
+        // tsc generally keeps namespace-contained type names short in diagnostics
+        // (`iface`, `A<T>`) rather than auto-prefixing them with their containing
+        // namespace/module. Blind collision-based qualification makes many
+        // diagnostics noisier (`EmptyTypes.iface`, `Generics.A<T>`) without
+        // matching tsc's scope-aware display rules, so keep the current short name.
+        current_name
     }
 }

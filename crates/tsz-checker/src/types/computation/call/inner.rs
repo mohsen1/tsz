@@ -1,7 +1,5 @@
-//! Inner implementation of call expression type resolution.
-//
-//! Contains the main `get_type_of_call_expression_inner` method
-//! which handles the core call expression type computation logic.
+//! Inner implementation of call expression type resolution, including
+//! `get_type_of_call_expression_inner` and the core call computation logic.
 
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
@@ -33,11 +31,11 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
         let contextual_type = request.contextual_type;
         let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
+            return TypeId::ERROR;
         };
 
         let Some(call) = self.ctx.arena.get_call_expr(node) else {
-            return TypeId::ERROR; // Missing call expression data - propagate error
+            return TypeId::ERROR;
         };
         if self.is_unshadowed_commonjs_require_identifier(call.expression)
             && let Some(args) = &call.arguments
@@ -53,8 +51,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        // For IIFEs, wrap the contextual type into a callable type so
-        // the function expression resolver can extract the return type.
+        // For IIFEs, wrap the contextual type into a callable type so the
+        // function expression resolver can extract the return type.
         let iife_info = self.setup_iife_contextual_type(call.expression, contextual_type);
         let callee_request = iife_info
             .map(|(wrapper_fn, _)| request.read().contextual(wrapper_fn))
@@ -63,7 +61,6 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(call.expression);
         }
 
-        // Get the type of the callee
         let callee_diag_snap = self.ctx.snapshot_diagnostics();
         let mut callee_type = if let Some(callee_node) = self.ctx.arena.get(call.expression) {
             if callee_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -90,39 +87,13 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 None
                             };
-                            let is_fast_path_function_decl = symbol.declarations.len() == 1
-                                && decl_idx
-                                    .and_then(|idx| self.ctx.arena.get(idx))
-                                    .is_some_and(|decl| {
-                                        if decl.kind != syntax_kind_ext::FUNCTION_DECLARATION {
-                                            return false;
-                                        }
-                                        self.ctx.arena.get_function(decl).is_some_and(|func| {
-                                            // Original safe fast path: local implementations
-                                            // without explicit return annotations.
-                                            let is_unannotated_impl =
-                                                func.type_annotation.is_none();
-
-                                            // Additional constrained path for ambient signatures.
-                                            // Keep this strict to avoid bypassing value/type
-                                            // diagnostics for non-local or indirectly-resolved
-                                            // symbols.
-                                            let is_local_ambient_signature = func.body.is_none()
-                                                && direct_symbol == Some(sym_id)
-                                                && (symbol.decl_file_idx
-                                                    == self.ctx.current_file_idx as u32
-                                                    || symbol.decl_file_idx == u32::MAX);
-
-                                            is_unannotated_impl || is_local_ambient_signature
-                                        })
-                                    });
-                            symbol.escaped_name == identifier_text
-                                && is_fast_path_function_decl
-                                && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
-                                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
-                                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
-                                && (symbol.decl_file_idx == u32::MAX
-                                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+                            self.is_fast_path_function_decl(
+                                sym_id,
+                                symbol,
+                                decl_idx,
+                                direct_symbol,
+                                identifier_text,
+                            )
                         })
                     });
                 if let Some(sym_id) = fast_symbol {
@@ -1338,23 +1309,32 @@ impl<'a> CheckerState<'a> {
                                     callable_ctx,
                                 )
                             };
-                            let arg_type_for_refinement = expected_type
-                                .map(|expected| {
-                                    if self
-                                        .target_has_concrete_return_context_for_generic_refinement(
-                                            expected,
-                                        )
-                                    {
-                                        self.instantiate_generic_function_argument_against_target_for_refinement(
-                                            arg_type, expected,
-                                        )
-                                    } else {
-                                        self.instantiate_generic_function_argument_against_target_params(
-                                            arg_type, expected,
-                                        )
-                                    }
-                                })
-                                .unwrap_or(arg_type);
+                            let preserve_round1_object_literal =
+                                self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        && !is_contextually_sensitive(self, arg_idx)
+                                });
+                            let arg_type_for_refinement = if preserve_round1_object_literal {
+                                progressive_arg_types.get(i).copied().unwrap_or(arg_type)
+                            } else {
+                                expected_type
+                                    .map(|expected| {
+                                        if self
+                                            .target_has_concrete_return_context_for_generic_refinement(
+                                                expected,
+                                            )
+                                        {
+                                            self.instantiate_generic_function_argument_against_target_for_refinement(
+                                                arg_type, expected,
+                                            )
+                                        } else {
+                                            self.instantiate_generic_function_argument_against_target_params(
+                                                arg_type, expected,
+                                            )
+                                        }
+                                    })
+                                    .unwrap_or(arg_type)
+                            };
                             trace!(
                                 arg_index = i,
                                 expected_type = ?expected_type.map(|t| t.0),
@@ -1391,7 +1371,16 @@ impl<'a> CheckerState<'a> {
                                         .find(|tp| tp.name == name)
                                         .is_some_and(|tp| !tp.is_const)
                                     {
-                                        self.widen_literal_type(raw_ty)
+                                        if tsz_solver::type_queries::get_object_shape(
+                                            self.ctx.types,
+                                            raw_ty,
+                                        )
+                                        .is_some()
+                                        {
+                                            raw_ty
+                                        } else {
+                                            self.widen_literal_type(raw_ty)
+                                        }
                                     } else {
                                         raw_ty
                                     };

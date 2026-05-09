@@ -101,7 +101,88 @@ impl<'a> CheckerState<'a> {
             .get(logical_idx)
             .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION);
         if !is_binary {
-            if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            let mut fresh_js_write_base_type = || -> Option<TypeId> {
+                if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+                    return None;
+                }
+                let node = self.ctx.arena.get(logical_idx)?;
+                if node.kind != SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                let ext = self.ctx.arena.get_extended(logical_idx)?;
+                if !ext.parent.is_some() {
+                    return None;
+                }
+                let parent_idx = ext.parent;
+                let parent_node = self.ctx.arena.get(parent_idx)?;
+                if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && parent_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                {
+                    return None;
+                }
+                let access = self.ctx.arena.get_access_expr(parent_node)?;
+                if access.expression != logical_idx
+                    || !self.property_access_is_direct_write_target(parent_idx)
+                {
+                    return None;
+                }
+
+                let ident = self.ctx.arena.get_identifier(node)?;
+                if self.is_known_global_value_name(&ident.escaped_text) {
+                    let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
+                    if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                        return Some(value_type);
+                    }
+                }
+
+                let sym_id = self.resolve_identifier_symbol_without_tracking(logical_idx)?;
+                let symbol = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
+
+                let mut declaration_indices = symbol.declarations.clone();
+                if symbol.value_declaration.is_some()
+                    && !declaration_indices.contains(&symbol.value_declaration)
+                {
+                    declaration_indices.push(symbol.value_declaration);
+                }
+
+                for decl_idx in declaration_indices {
+                    if !decl_idx.is_some() {
+                        continue;
+                    }
+                    let value_type = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+                    if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                        return Some(value_type);
+                    }
+                }
+
+                let value_type = self.get_type_of_symbol(sym_id);
+                (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR).then_some(value_type)
+            };
+
+            if let Some(fresh_type) = fresh_js_write_base_type() {
+                return fresh_type;
+            }
+
+            let skip_cached_no_flow_base =
+                self.is_js_file()
+                    && self.ctx.compiler_options.check_js
+                    && self.ctx.arena.get(logical_idx).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    });
+            if self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && let Some(node) = self.ctx.arena.get(logical_idx)
+                && node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(node)
+                && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(logical_idx)
+                && let Some(preferred_type) =
+                    self.preferred_non_js_cross_file_global_value_type(&ident.escaped_text, sym_id)
+            {
+                return preferred_type;
+            }
+            if !skip_cached_no_flow_base && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
                 return cached;
             }
         }

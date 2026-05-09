@@ -179,7 +179,7 @@ fn check_entry_with_libs(
 
 #[test]
 fn merged_checked_js_global_uses_non_js_type_for_ts2339() {
-    let diagnostics = check_entry(
+    let diagnostics = check_entry_with_libs(
         &[
             (
                 "a.js",

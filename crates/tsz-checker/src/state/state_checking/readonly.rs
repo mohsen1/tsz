@@ -219,7 +219,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if self.is_enum_member_property(access.expression, &prop_name) {
+        if self.is_enum_member_property(access.expression, &prop_name)
+            || (self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && self.is_js_namespace_enum_rebind_assignment_target(access.expression))
+        {
             self.error_delete_readonly_property_at(target_idx);
             return true;
         }
@@ -457,7 +461,11 @@ impl<'a> CheckerState<'a> {
         // Check if the property is an enum member (TS2540) BEFORE property existence check.
         // Enum members may not be found by resolve_property_access_with_env because
         // they are resolved through the binder's enum symbol, not the type system.
-        if self.is_enum_member_property(access.expression, &prop_name) {
+        if self.is_enum_member_property(access.expression, &prop_name)
+            || (self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && self.is_js_namespace_enum_rebind_assignment_target(access.expression))
+        {
             self.error_readonly_property_at(&prop_name, access.name_or_argument);
             return true;
         }
@@ -743,6 +751,25 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
+        let expr = self.ctx.arena.skip_parenthesized(expr);
+
+        let resolved_direct = self
+            .resolve_qualified_symbol(expr)
+            .or_else(|| self.resolve_identifier_symbol(expr))
+            .map(|sym_id| {
+                self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                    .unwrap_or(sym_id)
+            });
+        if let Some(sym_id) = resolved_direct
+            && let Some(symbol) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            && (symbol.flags & symbol_flags::ENUM) != 0
+            && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+        {
+            return true;
+        }
+
         let Some(node) = self.ctx.arena.get(expr) else {
             return false;
         };
@@ -751,40 +778,69 @@ impl<'a> CheckerState<'a> {
             // Handle ns.Foo — resolve LHS, then look up property in exports
             if let Some(access) = self.ctx.arena.get_access_expr(node)
                 && let lhs = self.ctx.arena.skip_parenthesized(access.expression)
-                && let Some(lhs_sym_id) = self.resolve_identifier_symbol(lhs)
+                && let Some(lhs_sym_id) = self
+                    .resolve_identifier_symbol(lhs)
+                    .or_else(|| self.resolve_qualified_symbol(lhs))
                 && let Some(prop_ident) = self.ctx.arena.get_identifier_at(access.name_or_argument)
             {
                 // Follow aliases (imported namespaces)
                 let resolved_sym_id = self
                     .resolve_alias_symbol(lhs_sym_id, &mut Vec::new())
                     .unwrap_or(lhs_sym_id);
-                let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
+                let Some(resolved_symbol) = self
+                    .get_cross_file_symbol(resolved_sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
+                else {
                     return false;
                 };
 
-                if (resolved_symbol.flags & symbol_flags::NAMESPACE) == 0 {
+                if (resolved_symbol.flags
+                    & (symbol_flags::NAMESPACE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::MODULE))
+                    == 0
+                {
                     return false;
                 }
 
                 let name = prop_ident.escaped_text.as_str();
                 if let Some(ref exports) = resolved_symbol.exports
                     && let Some(member_sym_id) = exports.get(name)
-                    && let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id)
+                    && let Some(member_symbol) = self
+                        .get_cross_file_symbol(member_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
                 {
                     return member_symbol.flags & symbol_flags::ENUM != 0;
+                }
+
+                if let Some(ns_name) = self.entity_name_text(access.expression)
+                    && let Some(member_sym_id) =
+                        self.resolve_namespace_member_from_all_binders(&ns_name, name)
+                    && let Some(member_symbol) = self
+                        .get_cross_file_symbol(member_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
+                {
+                    return (member_symbol.flags & symbol_flags::ENUM) != 0
+                        && (member_symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
                 }
             }
             return false;
         }
 
         // Simple identifier case — follow aliases for imported enums
-        let Some(sym_id) = self.resolve_identifier_symbol(expr) else {
+        let Some(sym_id) = self
+            .resolve_identifier_symbol(expr)
+            .or_else(|| self.resolve_qualified_symbol(expr))
+        else {
             return false;
         };
         let resolved_sym_id = self
             .resolve_alias_symbol(sym_id, &mut Vec::new())
             .unwrap_or(sym_id);
-        let Some(symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
+        let Some(symbol) = self
+            .get_cross_file_symbol(resolved_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
+        else {
             return false;
         };
         symbol.flags & symbol_flags::ENUM != 0

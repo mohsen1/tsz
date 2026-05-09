@@ -13,6 +13,63 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
+    pub(crate) fn assignment_rhs_this_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let mut current = idx;
+        for _ in 0..3 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
+                if let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                    && binary.right == current
+                    && self.is_assignment_operator(binary.operator_token)
+                {
+                    let left = binary.left;
+                    if let Some(left_node) = self.ctx.arena.get(left)
+                        && (left_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                            || left_node.kind
+                                == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                        && let Some(access) = self.ctx.arena.get_access_expr(left_node)
+                    {
+                        if let Some(proto_node) = self.ctx.arena.get(access.expression)
+                            && (proto_node.kind
+                                == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                                || proto_node.kind
+                                    == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                            && let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node)
+                            && let Some(proto_name_node) =
+                                self.ctx.arena.get(proto_access.name_or_argument)
+                            && let Some(proto_ident) =
+                                self.ctx.arena.get_identifier(proto_name_node)
+                            && proto_ident.escaped_text == "prototype"
+                        {
+                            let constructor_type = self.get_type_of_node(proto_access.expression);
+                            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+                                proto_access.expression,
+                                constructor_type,
+                                &[],
+                            ) {
+                                return Some(instance_type);
+                            }
+                        }
+                        let receiver = self.get_type_of_node(access.expression);
+                        if receiver != tsz_solver::TypeId::ERROR {
+                            return Some(receiver);
+                        }
+                    }
+                }
+                break;
+            } else if parent_node.kind
+                == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            {
+                current = parent;
+                continue;
+            }
+            break;
+        }
+        None
+    }
+
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_function_impl(idx, &TypingRequest::NONE)
@@ -1295,54 +1352,18 @@ impl<'a> CheckerState<'a> {
             if is_arrow_function {
                 outer_this_type
             } else {
-                ctx_helper.as_ref().and_then(|h| h.get_this_type())
-                    .or(js_constructor_instance_type)
-                    .or(js_prototype_owner_instance_type)
+                ctx_helper
+                    .as_ref()
+                    .and_then(|h| h.get_this_type())
                     .or_else(|| {
-                        // Traverse up to see if we are the RHS of `obj.prop = func` or `obj.prop ??= func`
-                        let mut current = idx;
-                        for _ in 0..3 {
-                            let parent = self.ctx.arena.get_extended(current)?.parent;
-                            let parent_node = self.ctx.arena.get(parent)?;
-                            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
-                                if let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
-                                    && binary.right == current && self.is_assignment_operator(binary.operator_token) {
-                                        let left = binary.left;
-                                        if let Some(left_node) = self.ctx.arena.get(left)
-                                            && (left_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                                || left_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                                                && let Some(access) = self.ctx.arena.get_access_expr(left_node) {
-                                                    if let Some(proto_node) = self.ctx.arena.get(access.expression)
-                                                        && (proto_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                                            || proto_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                                                        && let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node)
-                                                        && let Some(proto_name_node) = self.ctx.arena.get(proto_access.name_or_argument)
-                                                        && let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node)
-                                                        && proto_ident.escaped_text == "prototype" {
-                                                            let constructor_type = self.get_type_of_node(proto_access.expression);
-                                                            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
-                                                                proto_access.expression,
-                                                                constructor_type,
-                                                                &[],
-                                                            ) {
-                                                                return Some(instance_type);
-                                                            }
-                                                        }
-                                                    let receiver = self.get_type_of_node(access.expression);
-                                                    if receiver != tsz_solver::TypeId::ERROR {
-                                                        return Some(receiver);
-                                                    }
-                                                }
-                                    }
-                                break; // Only check immediate assignment parent
-                            } else if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                current = parent; // Skip parens
-                                continue;
-                            }
-                            break;
-                        }
-                        None
+                        prototype_owner_expr
+                            .is_some()
+                            .then(|| self.current_this_type())
+                            .flatten()
                     })
+                    .or(js_constructor_instance_type)
+                    .or_else(|| self.assignment_rhs_this_type(idx))
+                    .or(js_prototype_owner_instance_type)
             }
         });
 

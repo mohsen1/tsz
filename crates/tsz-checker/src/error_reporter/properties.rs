@@ -342,6 +342,11 @@ impl<'a> CheckerState<'a> {
                 });
 
         if is_element_access_receiver {
+            if let Some(init_type) = self.object_literal_initializer_display_type_for_receiver(idx)
+            {
+                let widened = self.widen_type_for_display(init_type);
+                return self.format_type_diagnostic(widened);
+            }
             return self.format_type_diagnostic_structural(type_id);
         }
 
@@ -412,6 +417,83 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
+        }
+
+        // Checked-JS function declarations support expando writes like
+        // `fn.extra = value` without TS2339. Suppress the diagnostic when the
+        // property name belongs to a direct write target rooted at a function
+        // symbol, even if an intermediate query transiently observed the RHS type.
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && let Some(parent) = self.ctx.arena.get_extended(idx)
+            && parent.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.name_or_argument == idx
+            && self
+                .ctx
+                .arena
+                .get_extended(parent.parent)
+                .is_some_and(|prop_ext| {
+                    let parent_idx = prop_ext.parent;
+                    self.ctx
+                        .arena
+                        .get(parent_idx)
+                        .and_then(|write_parent| {
+                            if write_parent.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                                let binary = self.ctx.arena.get_binary_expr(write_parent)?;
+                                return Some(
+                                    binary.left == parent.parent
+                                        && self.is_assignment_operator(binary.operator_token),
+                                );
+                            }
+                            if write_parent.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                                || write_parent.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                            {
+                                let unary = self.ctx.arena.get_unary_expr(write_parent)?;
+                                return Some(
+                                    unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
+                                        || unary.operator
+                                            == tsz_scanner::SyntaxKind::MinusMinusToken as u16,
+                                );
+                            }
+                            Some(false)
+                        })
+                        .unwrap_or(false)
+                })
+            && let Some(obj_sym) =
+                self.resolve_identifier_symbol_without_tracking(access.expression)
+            && let Some(symbol) = self
+                .get_cross_file_symbol(obj_sym)
+                .or_else(|| self.ctx.binder.get_symbol(obj_sym))
+            && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
+            && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+        {
+            return;
+        }
+
+        // In JS/checkJs, `Object.defineProperty(...)` can be handled by the
+        // checker’s descriptor-aware paths even when generic member lookup on
+        // the global Object value misses. Suppress the fallback TS2339 here so
+        // those specialized defineProperty semantics can proceed without the
+        // spurious property-not-found diagnostic.
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && prop_name == "defineProperty"
+            && let Some(parent) = self.ctx.arena.get_extended(idx)
+            && parent.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.name_or_argument == idx
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|base_ident| base_ident.escaped_text == "Object")
+        {
+            return;
         }
 
         // Suppress cascaded TS2339 from failed generic inference when the receiver
@@ -1210,7 +1292,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 num.to_string()
             };
-            let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
+            let object_str = self
+                .object_literal_initializer_display_type_for_receiver(expr_idx)
+                .map(|init_type| {
+                    self.format_type_diagnostic(self.widen_type_for_display(init_type))
+                })
+                .unwrap_or_else(|| self.property_receiver_display_for_node(object_type, expr_idx));
             let message = format!("Property '{prop_name}' does not exist on type '{object_str}'.");
             self.error_at_anchor(
                 expr_idx,
@@ -1336,7 +1423,12 @@ impl<'a> CheckerState<'a> {
                     )
                 })
                 .unwrap_or(object_type);
-        let object_str = self.property_receiver_display_for_node(display_object_type, expr_idx);
+        let object_str = self
+            .object_literal_initializer_display_type_for_receiver(expr_idx)
+            .map(|init_type| self.format_type_for_assignability_message(init_type))
+            .unwrap_or_else(|| {
+                self.property_receiver_display_for_node(display_object_type, expr_idx)
+            });
         let message = format!(
             "Element implicitly has an 'any' type because expression of type '{index_str}' can't be used to index type '{object_str}'."
         );
@@ -1776,6 +1868,10 @@ impl<'a> CheckerState<'a> {
             _ => return false,
         };
 
+        if !self.is_lib_origin_dom_named_type(type_id) {
+            return false;
+        }
+
         // Check if the type is structurally empty (no user-defined properties).
         // Interfaces may be lazy or materialized - check both paths.
         if tsz_solver::is_empty_object_type(self.ctx.types, type_id) {
@@ -1808,6 +1904,25 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn is_lib_origin_dom_named_type(&self, type_id: TypeId) -> bool {
+        let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
+            .or_else(|| {
+                self.ctx
+                    .resolve_type_to_symbol_id(type_id)
+                    .and_then(|sym_id| self.ctx.get_existing_def_id(sym_id))
+            })
+        else {
+            return false;
+        };
+
+        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+            return false;
+        };
+
+        self.ctx.binder.lib_symbol_ids.contains(&sym_id)
     }
 
     /// Try to get the display name for a type, checking symbol and def store.

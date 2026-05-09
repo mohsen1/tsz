@@ -4,6 +4,32 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
+    fn declaration_like_function_owner_rhs(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.is_function_like() {
+            return Some(expr_idx);
+        }
+
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+
+        let binary = self.ctx.arena.get_binary_expr(node)?;
+        if binary.operator_token != tsz_scanner::SyntaxKind::BarBarToken as u16
+            && binary.operator_token != tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
+        {
+            return None;
+        }
+
+        let rhs_idx = self.ctx.arena.skip_parenthesized(binary.right);
+        self.ctx
+            .arena
+            .get(rhs_idx)
+            .filter(|rhs_node| rhs_node.is_function_like())
+            .map(|_| rhs_idx)
+    }
+
     pub(crate) fn js_prototype_owner_expression_for_node(
         &self,
         node_idx: NodeIndex,
@@ -138,6 +164,27 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         let owner_text = self.expression_text(owner_expr)?;
 
+        if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(owner_expr)
+            && let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+        {
+            let value_decl = symbol.value_declaration;
+            if let Some(value_node) = self.ctx.arena.get(value_decl) {
+                if value_node.is_function_like() {
+                    return Some(value_decl);
+                }
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node)
+                    && let Some(init_target) =
+                        self.declaration_like_function_owner_rhs(var_decl.initializer)
+                {
+                    return Some(init_target);
+                }
+            }
+        }
+
         if !owner_text.contains('.')
             && let Some(sym_id) = self.ctx.binder.file_locals.get(owner_text.as_str())
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -148,9 +195,10 @@ impl<'a> CheckerState<'a> {
                 return Some(value_decl);
             }
             if let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node) {
-                let init_node = self.ctx.arena.get(var_decl.initializer)?;
-                if init_node.is_function_like() {
-                    return Some(var_decl.initializer);
+                if let Some(init_target) =
+                    self.declaration_like_function_owner_rhs(var_decl.initializer)
+                {
+                    return Some(init_target);
                 }
             }
         }
@@ -169,11 +217,8 @@ impl<'a> CheckerState<'a> {
             if self.expression_text(binary.left).as_deref() != Some(owner_text.as_str()) {
                 continue;
             }
-            let Some(right_node) = self.ctx.arena.get(binary.right) else {
-                continue;
-            };
-            if right_node.is_function_like() {
-                return Some(binary.right);
+            if let Some(right_target) = self.declaration_like_function_owner_rhs(binary.right) {
+                return Some(right_target);
             }
         }
 
@@ -213,36 +258,6 @@ impl<'a> CheckerState<'a> {
             })?;
         let mut properties = rustc_hash::FxHashMap::default();
         self.collect_js_constructor_this_properties(body_idx, &mut properties, None, false);
-        if let Some(func_node) = self.ctx.arena.get(func_idx)
-            && let Some(func) = self.ctx.arena.get_function(func_node)
-            && let Some(func_name) = func.name.into_option().and_then(|name_idx| {
-                self.ctx
-                    .arena
-                    .get(name_idx)
-                    .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
-            })
-            && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
-        {
-            let (method_bindings, this_props, _) =
-                self.collect_prototype_members_and_this_properties(func_idx, &func_name, sym_id);
-            for (name, prop) in method_bindings {
-                properties.entry(name).or_insert(prop);
-            }
-            for (name, mut prop) in this_props {
-                let factory = self.ctx.types.factory();
-                let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
-                if let Some(existing) = properties.get_mut(&name) {
-                    if existing.write_type == TypeId::ANY {
-                        existing.type_id = factory.union2(existing.type_id, widened_prop_type);
-                    }
-                } else {
-                    prop.type_id = widened_prop_type;
-                    prop.write_type = prop.type_id;
-                    properties.insert(name, prop);
-                }
-            }
-        }
 
         if properties.is_empty() {
             None

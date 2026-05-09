@@ -330,33 +330,45 @@ impl<'a> CheckerState<'a> {
                 source_property_type,
                 target_property_type,
                 ..
-            } => vec![
-                DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Error,
-                    code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length,
-                    message_text: format_message(
-                        diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                        &[&self.ctx.types.resolve_atom_ref(*property_name)],
-                    ),
-                },
-                DiagnosticRelatedInformation {
-                    category: DiagnosticCategory::Message,
-                    code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    file: self.ctx.file_name.clone(),
-                    start,
-                    length,
-                    message_text: format_message(
-                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[
-                            &self.format_type_diagnostic(*source_property_type),
-                            &self.format_type_diagnostic(*target_property_type),
-                        ],
-                    ),
-                },
-            ],
+            } => {
+                let target_property_type = if self.should_strip_nullish_for_property_display(target)
+                {
+                    self.strip_nullish_for_assignability_display(
+                        *target_property_type,
+                        *source_property_type,
+                    )
+                    .unwrap_or(*target_property_type)
+                } else {
+                    *target_property_type
+                };
+                vec![
+                    DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Error,
+                        code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length,
+                        message_text: format_message(
+                            diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                            &[&self.ctx.types.resolve_atom_ref(*property_name)],
+                        ),
+                    },
+                    DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length,
+                        message_text: format_message(
+                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            &[
+                                &self.format_type_diagnostic(*source_property_type),
+                                &self.format_type_diagnostic(target_property_type),
+                            ],
+                        ),
+                    },
+                ]
+            }
             SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
                 vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,

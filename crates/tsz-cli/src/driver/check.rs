@@ -165,6 +165,7 @@ fn post_process_checker_diagnostics(
             2345, // TS2345: Argument not assignable
             2339, // TS2339: Property does not exist
             2343, // TS2343: Access modifier error
+            2882, // TS2882: Cannot find module/type declarations for side-effect import
             2304, // TS2304: Cannot find name
             2307, // TS2307: Cannot find module
             7006, // TS7006: Parameter implicitly has 'any' type
@@ -2395,6 +2396,23 @@ mod tests {
         resolved
     }
 
+    fn resolved_options_for_es2015_checked_js_test() -> ResolvedCompilerOptions {
+        let mut args = default_cli_args_for_test();
+        args.ignore_config = true;
+        args.allow_js = true;
+        args.check_js = true;
+        args.target = Some(crate::args::Target::Es2015);
+
+        let mut resolved = crate::config::resolve_compiler_options(None)
+            .expect("resolve default compiler options");
+        crate::driver::apply_cli_overrides(&mut resolved, &args).expect("apply cli overrides");
+        if matches!(resolved.printer.module, ModuleKind::None) {
+            resolved.printer.module = ModuleKind::ES2015;
+            resolved.checker.module = ModuleKind::ES2015;
+        }
+        resolved
+    }
+
     fn mapped_type_indexed_access_constraint_repro() -> &'static str {
         r#"type Identity<T> = { [K in keyof T]: T[K] };
 
@@ -2449,6 +2467,45 @@ const resolveMapper1 = <K extends keyof typeof mapper>(
 const resolveMapper2 = <K extends keyof typeof mapper>(
     key: K, o: MapperArgs<K>) => mapper[key]?.(o);
 "#
+    }
+
+    #[test]
+    fn test_collect_diagnostics_keeps_js_namespace_enum_member_writes_readonly() {
+        let resolved = resolved_options_for_es2015_checked_js_test();
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "enums.js",
+                    r#"
+lf.Order = {}
+lf.Order.DESC = 0;
+lf.Order.ASC = 1;
+"#,
+                ),
+                (
+                    "lovefield-ts.d.ts",
+                    r#"
+declare namespace lf {
+    export enum Order { ASC, DESC }
+}
+"#,
+                ),
+            ],
+            &resolved,
+            std::path::Path::new("/"),
+        );
+
+        let ts2540: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY
+            })
+            .collect();
+        assert_eq!(
+            ts2540.len(),
+            2,
+            "Expected CLI collect_diagnostics to preserve readonly enum member writes in checked JS, got: {diagnostics:?}"
+        );
     }
 
     #[test]

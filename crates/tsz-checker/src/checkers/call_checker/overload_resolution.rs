@@ -989,6 +989,10 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 fallback_return,
                             )
+                            && !crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                fallback_return,
+                            )
                         {
                             mismatch_recovery_return = Some(fallback_return);
                         }

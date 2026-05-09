@@ -617,6 +617,192 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn is_checked_js_constructor_property_declaration(
+        &self,
+        target_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> bool {
+        fn declaration_like_function_rhs(
+            checker: &CheckerState<'_>,
+            expr_idx: NodeIndex,
+        ) -> Option<NodeIndex> {
+            let expr_idx = checker
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(expr_idx);
+            let node = checker.ctx.arena.get(expr_idx)?;
+            if matches!(
+                node.kind,
+                k if k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                    || k == tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION
+            ) {
+                return Some(expr_idx);
+            }
+
+            if node.kind != tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
+                return None;
+            }
+
+            let binary = checker.ctx.arena.get_binary_expr(node)?;
+            if binary.operator_token != SyntaxKind::BarBarToken as u16
+                && binary.operator_token != SyntaxKind::QuestionQuestionToken as u16
+            {
+                return None;
+            }
+
+            let rhs_idx = checker
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(binary.right);
+            let rhs_node = checker.ctx.arena.get(rhs_idx)?;
+            matches!(
+                rhs_node.kind,
+                k if k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                    || k == tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION
+            )
+            .then_some(rhs_idx)
+        }
+
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return false;
+        }
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+        let Some(prop_name) = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .map(|ident| ident.escaped_text.to_string())
+        else {
+            return false;
+        };
+        let Some(prop_name_initial) = prop_name.chars().next() else {
+            return false;
+        };
+        if !prop_name_initial.is_ascii_uppercase() {
+            return false;
+        };
+
+        if declaration_like_function_rhs(self, right_idx).is_none() {
+            return false;
+        }
+
+        // Primary path: when qualified-name resolution finds a member symbol and any
+        // of its declarations is a checked-JS constructor assignment.
+        if let Some(checked_ctor_sym_id) = self.resolve_qualified_symbol(target_idx) {
+            if let Some(symbol) = self
+                .get_cross_file_symbol(checked_ctor_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(checked_ctor_sym_id))
+            {
+                if symbol.declarations.iter().copied().any(|decl_idx| {
+                    self.declaration_is_checked_js_constructor_value_declaration(
+                        checked_ctor_sym_id,
+                        decl_idx,
+                    )
+                }) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Fallback path for JS expando containers where qualified resolution misses
+        // the member symbol but binder metadata still records the assignment
+        // (`var X = {}; X.Y = function(){}` style). This should behave like a
+        // constructor declaration write in TS.
+        fn property_access_chain(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let left = property_access_chain(arena, access.expression)?;
+                let right = arena
+                    .get_identifier_at(access.name_or_argument)?
+                    .escaped_text
+                    .clone();
+                return Some(format!("{left}.{right}"));
+            }
+            None
+        }
+        fn root_identifier(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<NodeIndex> {
+            let mut current = idx;
+            loop {
+                let node = arena.get(current)?;
+                match node.kind {
+                    k if k == SyntaxKind::Identifier as u16 => return Some(current),
+                    k if k == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                        let access = arena.get_access_expr(node)?;
+                        current = access.expression;
+                    }
+                    _ => return None,
+                }
+            }
+        }
+
+        let Some(object_key) = property_access_chain(self.ctx.arena, access.expression) else {
+            return false;
+        };
+        let mut has_expando_property = self
+            .collect_expando_properties_for_root(&object_key)
+            .contains(&prop_name);
+        if !has_expando_property {
+            if let Some((_, last_segment)) = object_key.rsplit_once('.') {
+                has_expando_property = self
+                    .collect_expando_properties_for_root(last_segment)
+                    .contains(&prop_name);
+            }
+        }
+        if !has_expando_property {
+            return false;
+        }
+
+        let Some(root_ident_idx) = root_identifier(self.ctx.arena, access.expression) else {
+            return false;
+        };
+        let Some(root_sym_id) = self
+            .resolve_identifier_symbol(root_ident_idx)
+            .or_else(|| self.resolve_qualified_symbol(root_ident_idx))
+        else {
+            return false;
+        };
+        let Some(root_symbol) = self
+            .get_cross_file_symbol(root_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(root_sym_id))
+        else {
+            return false;
+        };
+
+        if (root_symbol.flags & symbol_flags::ALIAS) != 0 && root_symbol.import_module.is_some() {
+            return false;
+        }
+        if (root_symbol.flags & symbol_flags::CLASS) != 0 {
+            return false;
+        }
+
+        true
+    }
+
     /// Check if an expression is rooted at `exports` or `module.exports`.
     /// Walks up the property access chain to the root.
     fn is_exports_rooted_access(&self, expr_idx: NodeIndex) -> bool {
@@ -662,7 +848,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_js_namespace_enum_rebind_assignment_target(&self, target_idx: NodeIndex) -> bool {
+    fn resolves_to_js_namespace_enum_object(&self, expr_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -670,43 +856,50 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
-        let Some(target_node) = self.ctx.arena.get(target_idx) else {
-            return false;
-        };
-        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return false;
-        }
-
-        if let Some(member_sym_id) = self.resolve_qualified_symbol(target_idx)
-            && let Some(member_symbol) = self
-                .get_cross_file_symbol(member_sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
-            && (member_symbol.flags & symbol_flags::ENUM) != 0
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        if let Some(enum_sym_id) = self.resolve_qualified_symbol(expr_idx)
+            && let Some(enum_symbol) = self
+                .get_cross_file_symbol(enum_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(enum_sym_id))
         {
-            let parent_sym_id = member_symbol.parent;
-            if let Some(parent_symbol) = self
-                .get_cross_file_symbol(parent_sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-                && (parent_symbol.flags
-                    & (symbol_flags::MODULE
-                        | symbol_flags::NAMESPACE
-                        | symbol_flags::NAMESPACE_MODULE))
-                    != 0
-                && (parent_symbol.flags & symbol_flags::ENUM) == 0
+            if (enum_symbol.flags & symbol_flags::ENUM) != 0
+                && (enum_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
             {
-                return true;
+                let parent_sym_id = enum_symbol.parent;
+                if let Some(parent_symbol) = self
+                    .get_cross_file_symbol(parent_sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+                    && (parent_symbol.flags
+                        & (symbol_flags::MODULE
+                            | symbol_flags::NAMESPACE
+                            | symbol_flags::NAMESPACE_MODULE))
+                        != 0
+                    && (parent_symbol.flags & symbol_flags::ENUM) == 0
+                {
+                    return true;
+                }
             }
         }
 
-        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+
         let Some(prop_ident) = self.ctx.arena.get_identifier_at(access.name_or_argument) else {
             return false;
         };
 
-        let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression) else {
+        let Some(base_sym_id) = self
+            .resolve_identifier_symbol(access.expression)
+            .or_else(|| self.resolve_qualified_symbol(access.expression))
+        else {
             return false;
         };
         let Some(base_symbol) = self
@@ -736,6 +929,21 @@ impl<'a> CheckerState<'a> {
         };
 
         (member_symbol.flags & symbol_flags::ENUM) != 0
+    }
+
+    pub(crate) fn is_js_namespace_enum_rebind_assignment_target(
+        &self,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        self.resolves_to_js_namespace_enum_object(target_idx)
     }
 
     fn error_top_level_js_this_computed_element_assignment(
@@ -848,6 +1056,25 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    fn js_statement_has_typedef_like_jsdoc(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(stmt_idx) else {
+            return false;
+        };
+        if sf.comments.is_empty() || !sf.comments.iter().any(|comment| comment.is_multi_line) {
+            return false;
+        }
+
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        self.try_leading_jsdoc(
+            &comments,
+            self.effective_jsdoc_pos_for_node(stmt_idx, &comments, &source_text)
+                .unwrap_or_default(),
+            &source_text,
+        )
+        .is_some_and(|jsdoc| jsdoc.contains("@typedef") || jsdoc.contains("@callback"))
+    }
+
     /// Check an assignment expression (=).
     ///
     /// ## Contextual Typing:
@@ -932,7 +1159,11 @@ impl<'a> CheckerState<'a> {
             && self.ctx.compiler_options.check_js
             && let Some(jsdoc_left_type) = self
                 .enclosing_expression_statement(expr_idx)
-                .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
+                .and_then(|stmt_idx| {
+                    (!self.js_statement_has_typedef_like_jsdoc(stmt_idx))
+                        .then(|| self.js_statement_declared_type(stmt_idx))
+                        .flatten()
+                })
                 .or_else(|| {
                     // Nested assignments inside JS accessors/functions should not inherit
                     // an enclosing declaration's JSDoc @type as the assignment target.
@@ -954,11 +1185,46 @@ impl<'a> CheckerState<'a> {
             left_type = jsdoc_left_type;
         }
 
+        let is_nested_assignment = self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .and_then(|_| {
+                let expr_node = tsz_parser::parser::node::NodeView::new(self.ctx.arena, expr_idx)?;
+                let parent_idx = expr_node.parent();
+                (parent_idx != NodeIndex::NONE).then_some(parent_idx)
+            })
+            .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+            .filter(|parent_node| parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+            .and_then(|parent_node| self.ctx.arena.get_binary_expr(parent_node))
+            .is_some_and(|parent_binary| parent_binary.right == expr_idx);
+
+        let rhs_is_assignment_expression = self
+            .ctx
+            .arena
+            .get(right_idx)
+            .filter(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+            .and_then(|node| self.ctx.arena.get_binary_expr(node))
+            .is_some_and(|binary| binary.operator_token == SyntaxKind::EqualsToken as u16);
+
         if is_function_assignment {
             // TS2629/TS2628/TS2630 are terminal for simple assignment targets in tsc.
             // Do not contextually type the RHS against the class/function/enum object
             // type, or we can produce spurious follow-on errors like missing
             // `prototype` on a function expression assigned to a class symbol.
+            return self.get_type_of_node(right_idx);
+        }
+
+        if !is_const
+            && self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && self
+                .enclosing_expression_statement(expr_idx)
+                .is_some_and(|stmt_idx| self.js_statement_has_typedef_like_jsdoc(stmt_idx))
+        {
+            // JSDoc typedef/callback hosts are declaration-like assignments in JS.
+            // The RHS initializes the named typedef container rather than being
+            // checked against an existing value type.
             return self.get_type_of_node(right_idx);
         }
 
@@ -978,9 +1244,23 @@ impl<'a> CheckerState<'a> {
             // In JS files, `exports.X = value` is a declaration, not an assignment.
             // The type is inferred from the union of all assigned values, so individual
             // assignments should not be checked against the inferred type.
-            if !has_explicit_jsdoc_left_type {
+            //
+            // However, we still need to check concrete inferred targets. For example,
+            // `assignmentToVoidZero1` expects TS2322 on `exports.x = void 0` once later
+            // writes establish that `x` is `1`. Nested assignment chains should also
+            // stay checked so each step can report the concrete mismatch.
+            if !has_explicit_jsdoc_left_type
+                && !is_nested_assignment
+                && !rhs_is_assignment_expression
+            {
                 return self.get_type_of_node(right_idx);
             }
+        }
+
+        let is_namespace_enum_rebind =
+            !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx);
+        if is_namespace_enum_rebind {
+            return self.get_type_of_node(right_idx);
         }
 
         if !is_const && self.is_js_container_export_declaration(left_idx) {
@@ -992,6 +1272,17 @@ impl<'a> CheckerState<'a> {
             if !has_explicit_jsdoc_left_type {
                 return self.get_type_of_node(right_idx);
             }
+        }
+
+        if !is_const
+            && !has_explicit_jsdoc_left_type
+            && self.is_checked_js_constructor_property_declaration(left_idx, right_idx)
+        {
+            // In checked-JS, assignments to `Ctor.prop` where `Ctor` is a checked
+            // JS constructor declaration are declaration-like container writes.
+            // tsc uses these to build the merged container type and reports property
+            // lookup failures (TS2339), not assignment compatibility errors.
+            return self.get_type_of_node(right_idx);
         }
 
         let contextual_request = if is_destructuring {
@@ -1062,18 +1353,9 @@ impl<'a> CheckerState<'a> {
         let mut is_not_iterable = false;
         if is_array_destructuring {
             // TS2488: Array destructuring assignments require an iterable RHS.
-            // Keep parity with `[] = value` behavior by skipping empty patterns.
-            let should_check_iterability = self
-                .ctx
-                .arena
-                .get(left_idx)
-                .and_then(|node| self.ctx.arena.get_literal_expr(node))
-                .is_none_or(|array_lit| !array_lit.elements.nodes.is_empty());
-            if should_check_iterability {
-                let is_iterable =
-                    self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
-                is_not_iterable = !is_iterable;
-            }
+            let is_iterable =
+                self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
+            is_not_iterable = !is_iterable;
             self.check_array_destructuring_rest_position(left_idx);
             if !is_not_iterable {
                 self.check_tuple_destructuring_bounds(left_idx, right_type);
@@ -1099,10 +1381,6 @@ impl<'a> CheckerState<'a> {
         let is_element_access =
             left_node.is_some_and(|n| n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
         let suppress_for_readonly = is_readonly_target && !is_element_access;
-
-        if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
-            return right_type;
-        }
 
         if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
             return right_type;

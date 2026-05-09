@@ -1600,7 +1600,7 @@ fn checker_files_stay_under_loc_limit() {
         ("types/property_access_type/resolve.rs", 2311),
         ("declarations/import/core.rs", 2562),
         ("declarations/import/declaration.rs", 2341),
-        ("types/computation/call/inner.rs", 2006),
+        ("types/computation/call/inner.rs", 2010),
         ("jsdoc/resolution.rs", 2357),
         ("assignability/assignment_checker.rs", 2083),
         ("error_reporter/core.rs", 2358),

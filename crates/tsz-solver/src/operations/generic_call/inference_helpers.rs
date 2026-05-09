@@ -946,23 +946,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             let has_generic_contextual_type = self.contextual_type.is_some_and(|ctx| {
                 crate::type_queries::get_function_shape(self.interner.as_type_database(), ctx)
-                    .is_some_and(|shape| {
-                        !shape.type_params.is_empty()
-                            && shape.params.iter().any(|param| {
-                                crate::type_queries::get_function_shape(
-                                    self.interner.as_type_database(),
-                                    param.type_id,
-                                )
-                                .is_some_and(|inner| !inner.type_params.is_empty())
-                                    || crate::type_queries::get_call_signatures(
-                                        self.interner.as_type_database(),
-                                        param.type_id,
-                                    )
-                                    .is_some_and(|sigs| {
-                                        sigs.iter().any(|sig| !sig.type_params.is_empty())
-                                    })
-                            })
-                    })
+                    .is_some_and(|shape| !shape.type_params.is_empty())
             });
             if has_generic_contextual_type {
                 // Case 2: let constrain_types handle it with fresh variables

@@ -553,6 +553,7 @@ impl<'a> CheckerState<'a> {
                 expando_root,
                 ty,
             );
+            ty = self.widen_fresh_object_literal_properties_for_display(ty);
             return crate::query_boundaries::common::widen_freshness(self.ctx.types, ty);
         }
 
@@ -600,6 +601,7 @@ impl<'a> CheckerState<'a> {
             expando_root,
             ty,
         );
+        ty = checker.widen_fresh_object_literal_properties_for_display(ty);
         ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
         ty = if crate::query_boundaries::common::is_unique_symbol_type(checker.ctx.types, ty) {
             ty
@@ -1085,7 +1087,10 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         if target_file_idx == self.ctx.current_file_idx {
             let request = TypingRequest::NONE.contextual_opt(contextual_type);
-            return self.get_type_of_function_impl(method_idx, &request);
+            if request.contextual_type.is_some() {
+                self.invalidate_function_like_for_contextual_retry(method_idx);
+            }
+            return self.speculative_type_of_function(method_idx, &request);
         }
 
         let Some(all_arenas) = self.ctx.all_arenas.clone() else {
@@ -1118,7 +1123,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
 
         let request = TypingRequest::NONE.contextual_opt(contextual_type);
-        let ty = checker.get_type_of_function_impl(method_idx, &request);
+        if request.contextual_type.is_some() {
+            checker.invalidate_function_like_for_contextual_retry(method_idx);
+        }
+        let ty = checker.speculative_type_of_function(method_idx, &request);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
     }

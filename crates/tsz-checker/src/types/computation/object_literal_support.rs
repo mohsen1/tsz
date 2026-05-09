@@ -6,6 +6,70 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::{PropertyInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn merge_contextual_receiver_this_types(
+        &mut self,
+        base_type: Option<TypeId>,
+        overlay_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let (Some(base_type), Some(overlay_type)) = (base_type, overlay_type) else {
+            return base_type.or(overlay_type);
+        };
+
+        if matches!(base_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+            return Some(overlay_type);
+        }
+        if matches!(overlay_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+            return Some(base_type);
+        }
+
+        let Some(base_shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, base_type)
+        else {
+            return Some(overlay_type);
+        };
+        let Some(overlay_shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, overlay_type)
+        else {
+            return Some(base_type);
+        };
+
+        let mut merged = base_shape.properties.clone();
+        for overlay_prop in &overlay_shape.properties {
+            if let Some(existing) = merged
+                .iter_mut()
+                .find(|prop| prop.name == overlay_prop.name)
+            {
+                *existing = overlay_prop.clone();
+            } else {
+                merged.push(overlay_prop.clone());
+            }
+        }
+
+        let merged_type = self.ctx.types.factory().object(merged);
+        if let Some(display_props) = self.ctx.types.get_display_properties(overlay_type) {
+            self.ctx
+                .types
+                .store_display_properties(merged_type, display_props.as_ref().clone());
+        } else {
+            let mut display_props = overlay_shape.properties.clone();
+            display_props.sort_by_key(|prop| prop.name);
+            self.ctx
+                .types
+                .store_display_properties(merged_type, display_props);
+        }
+        if let Some(alias_origin) = self.ctx.types.get_display_alias(overlay_type) {
+            self.ctx
+                .types
+                .store_display_alias(merged_type, alias_origin);
+        }
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(overlay_type) {
+            self.ctx
+                .definition_store
+                .register_type_to_def(merged_type, def_id);
+        }
+        Some(merged_type)
+    }
+
     const fn implicit_any_like_diagnostic_code(code: u32) -> bool {
         matches!(
             code,

@@ -162,6 +162,57 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    fn normalize_template_placeholder_spacing(message: String) -> String {
+        if !message.contains("${") {
+            return message;
+        }
+
+        let chars: Vec<char> = message.chars().collect();
+        let mut out = String::with_capacity(message.len());
+        let mut i = 0usize;
+
+        while i < chars.len() {
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+                out.push('$');
+                out.push('{');
+                i += 2;
+                while i < chars.len() && chars[i].is_whitespace() {
+                    i += 1;
+                }
+
+                let mut depth = 1usize;
+                let mut inner = String::new();
+                while i < chars.len() {
+                    let ch = chars[i];
+                    i += 1;
+                    if ch == '{' {
+                        depth += 1;
+                        inner.push(ch);
+                        continue;
+                    }
+                    if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        inner.push(ch);
+                        continue;
+                    }
+                    inner.push(ch);
+                }
+
+                out.push_str(inner.trim_end());
+                out.push('}');
+                continue;
+            }
+
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        out
+    }
+
     /// Create a new diagnostic.
     pub fn new(
         file_name: impl Into<String>,
@@ -170,10 +221,11 @@ impl Diagnostic {
         severity: DiagnosticSeverity,
         code: u32,
     ) -> Self {
+        let message = Self::normalize_template_placeholder_spacing(message.into());
         Self {
             file_name: file_name.into(),
             span,
-            message: message.into(),
+            message,
             severity,
             code,
             domain: DiagnosticDomain::TypeScript,
@@ -596,9 +648,62 @@ impl Extend<Diagnostic> for DiagnosticBag {
 /// assert_eq!(msg, "Type 'number' is not assignable to type 'string'.");
 /// ```
 pub fn format_message(template: &str, args: &[&str]) -> String {
+    fn normalize_template_placeholder_spacing(arg: &str) -> String {
+        if !arg.contains("${") {
+            return arg.to_string();
+        }
+
+        let chars: Vec<char> = arg.chars().collect();
+        let mut out = String::with_capacity(arg.len());
+        let mut i = 0usize;
+
+        while i < chars.len() {
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+                out.push('$');
+                out.push('{');
+                i += 2;
+
+                while i < chars.len() && chars[i].is_whitespace() {
+                    i += 1;
+                }
+
+                let mut depth = 1usize;
+                let mut inner = String::new();
+                while i < chars.len() {
+                    let ch = chars[i];
+                    i += 1;
+                    if ch == '{' {
+                        depth += 1;
+                        inner.push(ch);
+                        continue;
+                    }
+                    if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        inner.push(ch);
+                        continue;
+                    }
+                    inner.push(ch);
+                }
+
+                out.push_str(inner.trim_end());
+                out.push('}');
+                continue;
+            }
+
+            out.push(chars[i]);
+            i += 1;
+        }
+
+        out
+    }
+
     let mut result = template.to_string();
     for (i, arg) in args.iter().enumerate() {
-        result = result.replace(&format!("{{{i}}}"), arg);
+        let normalized = normalize_template_placeholder_spacing(arg);
+        result = result.replace(&format!("{{{i}}}"), &normalized);
     }
     result
 }

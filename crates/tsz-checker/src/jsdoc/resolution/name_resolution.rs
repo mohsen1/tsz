@@ -1091,7 +1091,12 @@ impl<'a> CheckerState<'a> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let first_member = segments.next()?;
-        let root_sym = self.ctx.binder.file_locals.get(root_name)?;
+        let root_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
+            self.ctx
+                .lib_contexts
+                .iter()
+                .find_map(|ctx| ctx.binder.file_locals.get(root_name))
+        })?;
         let root_symbol = self.ctx.binder.get_symbol(root_sym)?;
 
         let decl = root_symbol.value_declaration;
@@ -1157,21 +1162,40 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn resolve_jsdoc_entity_name_symbol(
-        &self,
+        &mut self,
         name: &str,
     ) -> Option<tsz_binder::SymbolId> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
-        let mut current_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
-            self.ctx
+        let (mut current_sym, current_file_idx) =
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(root_name) {
+                (sym_id, Some(self.ctx.current_file_idx))
+            } else if let Some(sym_id) = self
+                .ctx
                 .lib_contexts
                 .iter()
                 .find_map(|ctx| ctx.binder.file_locals.get(root_name))
-        })?;
+            {
+                (sym_id, None)
+            } else if let Some((sym_id, file_idx)) =
+                self.resolve_jsdoc_cross_file_root_symbol(root_name)
+            {
+                (sym_id, Some(file_idx))
+            } else {
+                return None;
+            };
+        if let Some(current_file_idx) = current_file_idx {
+            self.ctx
+                .register_symbol_file_target(current_sym, current_file_idx);
+        }
         let lib_binders = self.get_lib_binders();
 
         for segment in segments {
             if let Some(member_sym) = self.jsdoc_direct_module_member_symbol(current_sym, segment) {
+                if let Some(current_file_idx) = current_file_idx {
+                    self.ctx
+                        .register_symbol_file_target(member_sym, current_file_idx);
+                }
                 current_sym = member_sym;
                 continue;
             }
@@ -1198,6 +1222,10 @@ impl<'a> CheckerState<'a> {
                         .and_then(|members| members.get(segment))
                 })
             {
+                if let Some(current_file_idx) = current_file_idx {
+                    self.ctx
+                        .register_symbol_file_target(member_sym, current_file_idx);
+                }
                 current_sym = member_sym;
                 continue;
             }
@@ -1209,6 +1237,10 @@ impl<'a> CheckerState<'a> {
                     segment,
                     &mut visited_aliases,
                 ) {
+                    if let Some(current_file_idx) = current_file_idx {
+                        self.ctx
+                            .register_symbol_file_target(member_sym, current_file_idx);
+                    }
                     current_sym = member_sym;
                     continue;
                 }
@@ -1220,6 +1252,10 @@ impl<'a> CheckerState<'a> {
                     segment,
                 )
             {
+                if let Some(current_file_idx) = current_file_idx {
+                    self.ctx
+                        .register_symbol_file_target(member_sym, current_file_idx);
+                }
                 current_sym = member_sym;
                 continue;
             }
@@ -1232,6 +1268,23 @@ impl<'a> CheckerState<'a> {
             self.resolve_alias_symbol(current_sym, &mut visited_aliases)
                 .unwrap_or(current_sym),
         )
+    }
+
+    fn resolve_jsdoc_cross_file_root_symbol(
+        &mut self,
+        root_name: &str,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let all_binders = self.ctx.all_binders.as_ref()?;
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+            if let Some(sym_id) = binder.file_locals.get(root_name) {
+                return Some((sym_id, file_idx));
+            }
+        }
+
+        None
     }
 
     fn resolve_jsdoc_commonjs_binding_element_type(
