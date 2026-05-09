@@ -1,34 +1,10 @@
 //! Tests for TS2370: A rest parameter must be of an array type
 
-use crate::CheckerState;
 use crate::diagnostics::diagnostic_codes;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn has_error_ts2370(source: &str) -> bool {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .any(|d| d.code == diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE)
+    crate::test_utils::check_source_codes(source)
+        .contains(&diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE)
 }
 
 #[test]
