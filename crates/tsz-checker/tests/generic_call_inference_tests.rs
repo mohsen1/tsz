@@ -186,6 +186,20 @@ fn relevant_strict_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn relevant_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_default_lib_files();
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect()
+}
+
 #[test]
 fn variadic_rest_tuple_satisfies_array_rest_constraint() {
     let source = r#"
@@ -2431,6 +2445,214 @@ pipe(
     assert!(
         !diags.iter().any(|(code, _)| *code == 2345),
         "self-referential NoExcessProperties constraint should not raise false TS2345. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_nested_generic_spread_inference() {
+    let source = r#"
+declare function wrap<X>(x: X): { x: X };
+declare function call<A extends unknown[], T>(x: { x: (...args: A) => T }, ...args: A): T;
+
+const leak = call(wrap(<T>(x: T) => x), 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "nested generic spread inference should not produce TS2345. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_inferential_typing_with_function_type() {
+    let source = r#"
+declare function map<T, U>(x: T, f: (s: T) => U): U;
+declare function identity<V>(y: V): V;
+
+var s = map("", identity);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "generic function argument identity should not produce TS2345. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_generic_method_overspecialization() {
+    let source = r#"
+var names = ["list", "table1", "table2", "table3", "summary"];
+
+interface HTMLElement {
+    clientWidth: number;
+    isDisabled: boolean;
+}
+
+declare var document: Document;
+interface Document {
+    getElementById(elementId: string): HTMLElement;
+}
+
+var elements = names.map(function (name) {
+    return document.getElementById(name);
+});
+
+var xxx = elements.filter(function (e) {
+    return !e.isDisabled;
+});
+
+var widths:number[] = elements.map(function (e) {
+    return e.clientWidth;
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2344),
+        "generic method overspecialization should not produce TS2344. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_inference_does_not_add_undefined_or_null() {
+    let source = r#"
+interface NodeArray<T extends Node> extends ReadonlyArray<T> {}
+
+interface Node {
+    forEachChild<T>(cbNode: (node: Node) => T | undefined, cbNodeArray?: (nodes: NodeArray<Node>) => T | undefined): T | undefined;
+}
+
+declare function toArray<T>(value: T | T[]): T[];
+declare function toArray<T>(value: T | readonly T[]): readonly T[];
+
+function flatMapChildren<T>(node: Node, cb: (child: Node) => readonly T[] | T | undefined): readonly T[] {
+    const result: T[] = [];
+    node.forEachChild(child => {
+        const value = cb(child);
+        if (value !== undefined) {
+            result.push(...toArray(value));
+        }
+    });
+    return result;
+}
+
+function flatMapChildren2<T>(node: Node, cb: (child: Node) => readonly T[] | T | null): readonly T[] {
+    const result: T[] = [];
+    node.forEachChild(child => {
+        const value = cb(child);
+        if (value !== null) {
+            result.push(...toArray(value));
+        }
+    });
+    return result;
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2344),
+        "inference should not add undefined or null to T. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conformance_probe_infer_from_generic_function_return_types_2() {
+    let source = r#"
+type Mapper<T, U> = (x: T) => U;
+
+declare function wrap<T, U>(cb: Mapper<T, U>): Mapper<T, U>;
+
+declare function arrayize<T, U>(cb: Mapper<T, U>): Mapper<T, U[]>;
+
+declare function combine<A, B, C>(f: (x: A) => B, g: (x: B) => C): (x: A) => C;
+
+declare function foo(f: Mapper<string, number>): void;
+
+let f1: Mapper<string, number> = s => s.length;
+let f2: Mapper<string, number> = wrap(s => s.length);
+let f3: Mapper<string, number[]> = arrayize(wrap(s => s.length));
+let f4: Mapper<string, boolean> = combine(wrap(s => s.length), wrap(n => n >= 10));
+
+foo(wrap(s => s.length));
+
+let a1 = ["a", "b"].map(s => s.length);
+let a2 = ["a", "b"].map(wrap(s => s.length));
+let a3 = ["a", "b"].map(wrap(arrayize(s => s.length)));
+let a4 = ["a", "b"].map(combine(wrap(s => s.length), wrap(n => n > 10)));
+let a5 = ["a", "b"].map(combine(identity, wrap(s => s.length)));
+let a6 = ["a", "b"].map(combine(wrap(s => s.length), identity));
+
+class SetOf<A> {
+  _store: A[];
+
+  add(a: A) {
+    this._store.push(a);
+  }
+
+  transform<B>(transformer: (a: SetOf<A>) => SetOf<B>): SetOf<B> {
+    return transformer(this);
+  }
+
+  forEach(fn: (a: A, index: number) => void) {
+      this._store.forEach((a, i) => fn(a, i));
+  }
+}
+
+function compose<A, B, C, D, E>(
+  fnA: (a: SetOf<A>) => SetOf<B>,
+  fnB: (b: SetOf<B>) => SetOf<C>,
+  fnC: (c: SetOf<C>) => SetOf<D>,
+  fnD: (c: SetOf<D>) => SetOf<E>,
+):(x: SetOf<A>) => SetOf<E>;
+function compose<T>(...fns: ((x: T) => T)[]): (x: T) => T {
+  return (x: T) => fns.reduce((prev, fn) => fn(prev), x);
+}
+
+function map<A, B>(fn: (a: A) => B): (s: SetOf<A>) => SetOf<B> {
+  return (a: SetOf<A>) => {
+    const b: SetOf<B> = new SetOf();
+    a.forEach(x => b.add(fn(x)));
+    return b;
+  }
+}
+
+function filter<A>(predicate: (a: A) => boolean): (s: SetOf<A>) => SetOf<A> {
+  return (a: SetOf<A>) => {
+    const result = new SetOf<A>();
+    a.forEach(x => {
+      if (predicate(x)) result.add(x);
+    });
+   return result;
+  }
+}
+
+const testSet = new SetOf<number>();
+testSet.add(1);
+testSet.add(2);
+testSet.add(3);
+
+const t1 = testSet.transform(
+  compose(
+    filter(x => x % 1 === 0),
+    map(x => x + x),
+    map(x => x + '!!!'),
+    map(x => x.toUpperCase())
+  )
+)
+
+declare function identity<T>(x: T): T;
+
+const t2 = testSet.transform(
+  compose(
+    filter(x => x % 1 === 0),
+    identity,
+    map(x => x + '!!!'),
+    map(x => x.toUpperCase())
+  )
+)
+"#;
+    let diags = relevant_default_lib_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2345),
+        "higher-order inference should not produce extra TS2322/TS2345. Got: {diags:#?}"
     );
 }
 
