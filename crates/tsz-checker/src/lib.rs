@@ -421,6 +421,9 @@ mod flow_boundary_contract_tests;
 #[path = "../tests/for_in_narrowing_tests.rs"]
 mod for_in_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/generic_callback_outer_context_tests.rs"]
+mod generic_callback_outer_context_tests;
+#[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
