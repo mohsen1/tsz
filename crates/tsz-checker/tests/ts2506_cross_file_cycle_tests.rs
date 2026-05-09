@@ -15,50 +15,14 @@
 //!
 //! These tests are the unit-level guard for that behavior.
 
-use std::sync::Arc;
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn compile_script_files(files: &[(&str, &str)], entry_idx: usize) -> Vec<u32> {
-    let mut arenas = Vec::with_capacity(files.len());
-    let mut binders = Vec::with_capacity(files.len());
-    let mut roots = Vec::with_capacity(files.len());
-    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
-
-    for (name, source) in files {
-        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-        arenas.push(Arc::new(parser.get_arena().clone()));
-        binders.push(Arc::new(binder));
-        roots.push(root);
-    }
-
-    let all_arenas = Arc::new(arenas);
-    let all_binders = Arc::new(binders);
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
-    let mut checker = CheckerState::new(
-        all_arenas[entry_idx].as_ref(),
-        all_binders[entry_idx].as_ref(),
-        &types,
-        file_names[entry_idx].clone(),
-        options,
-    );
-
-    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-    checker.ctx.set_all_binders(Arc::clone(&all_binders));
-    checker.ctx.set_current_file_idx(entry_idx);
-    checker.ctx.set_lib_contexts(Vec::new());
-
-    checker.check_source_file(roots[entry_idx]);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    let entry_file = files[entry_idx].0;
+    tsz_checker::test_utils::check_multi_file(files, entry_file, CheckerOptions::default())
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
 }
 
 /// 3-class cycle split across 3 script files. Whichever file is the entry,

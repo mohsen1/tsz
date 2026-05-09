@@ -16,43 +16,12 @@
 //! off the structural condition (surface has any named/CJS/prototype
 //! exports), not on a specific identifier name.
 
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn diagnostic_codes_for_two_files(target_source: &str, importer_source: &str) -> Vec<u32> {
-    let mut parser_target = ParserState::new("main.js".to_string(), target_source.to_string());
-    let root_target = parser_target.parse_source_file();
-    let mut binder_target = BinderState::new();
-    binder_target.bind_source_file(parser_target.get_arena(), root_target);
-
-    let mut parser_importer =
-        ParserState::new("importer.js".to_string(), importer_source.to_string());
-    let root_importer = parser_importer.parse_source_file();
-    let mut binder_importer = BinderState::new();
-    binder_importer.bind_source_file(parser_importer.get_arena(), root_importer);
-
-    let arena_target = Arc::new(parser_target.get_arena().clone());
-    let arena_importer = Arc::new(parser_importer.get_arena().clone());
-    let all_arenas = Arc::new(vec![Arc::clone(&arena_target), Arc::clone(&arena_importer)]);
-
-    let binder_target = Arc::new(binder_target);
-    let binder_importer = Arc::new(binder_importer);
-    let all_binders = Arc::new(vec![
-        Arc::clone(&binder_target),
-        Arc::clone(&binder_importer),
-    ]);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        arena_importer.as_ref(),
-        binder_importer.as_ref(),
-        &types,
-        "importer.js".to_string(),
+    tsz_checker::test_utils::check_multi_file(
+        &[("main.js", target_source), ("importer.js", importer_source)],
+        "importer.js",
         CheckerOptions {
             allow_js: true,
             check_js: true,
@@ -60,27 +29,10 @@ fn diagnostic_codes_for_two_files(target_source: &str, importer_source: &str) ->
             no_lib: true,
             ..Default::default()
         },
-    );
-
-    checker.ctx.set_all_arenas(all_arenas);
-    checker.ctx.set_all_binders(all_binders);
-    checker.ctx.set_current_file_idx(1);
-
-    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    resolved_module_paths.insert((1, "./main".to_string()), 0);
-    resolved_module_paths.insert((1, "./main.js".to_string()), 0);
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::new(resolved_module_paths));
-
-    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
-    resolved_modules.insert("./main".to_string());
-    resolved_modules.insert("./main.js".to_string());
-    checker.ctx.set_resolved_modules(resolved_modules);
-
-    checker.check_source_file(root_importer);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 const TS2305: u32 = 2305;
