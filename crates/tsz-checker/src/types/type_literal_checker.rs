@@ -714,6 +714,52 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn check_type_literal_self_indexed_property_annotations(
+        &mut self,
+        type_node_idx: NodeIndex,
+        owner_name: &str,
+    ) {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(type_node) else {
+            return;
+        };
+
+        let members: Vec<NodeIndex> = type_lit.members.nodes.to_vec();
+        for member_idx in members {
+            let Some(member) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                continue;
+            }
+            let Some(sig) = self.ctx.arena.get_signature(member) else {
+                continue;
+            };
+            if sig.type_annotation.is_none() {
+                continue;
+            }
+            let Some(name) = self.get_property_name_resolved(sig.name) else {
+                continue;
+            };
+            if !self.indexed_access_references_owner_property(
+                sig.type_annotation,
+                owner_name,
+                &name,
+            ) {
+                continue;
+            }
+            let message = format!(
+                "'{name}' is referenced directly or indirectly in its own type annotation."
+            );
+            self.error_at_node(sig.name, &message, 2502);
+        }
+    }
+
     pub(crate) fn type_literal_has_circular_accessor_reference(
         &self,
         type_node_idx: NodeIndex,

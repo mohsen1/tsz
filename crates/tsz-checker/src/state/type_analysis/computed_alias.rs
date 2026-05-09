@@ -595,6 +595,9 @@ impl<'a> CheckerState<'a> {
             let Some(sym_id) = sym_id else {
                 continue;
             };
+            if self.ctx.symbol_resolution_set.contains(&sym_id) {
+                continue;
+            }
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             if let Some(cached) = self.ctx.get_def_type_params(def_id) {
                 let cached_is_placeholder = !cached.is_empty()

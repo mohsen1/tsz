@@ -167,7 +167,15 @@ impl<'a> CheckerState<'a> {
                         decl_arena,
                         type_alias.type_node,
                     );
-                    let mut alias_type = self.get_type_from_type_node(type_alias.type_node);
+                    let mut alias_type = if self.alias_ast_is_deferred(sym_id)
+                        && self.alias_ast_refs_symbol_or_resolution_chain_alias(
+                            type_alias.type_node,
+                            sym_id,
+                        ) {
+                        crate::TypeNodeChecker::new(&mut self.ctx).check(type_alias.type_node)
+                    } else {
+                        self.get_type_from_type_node(type_alias.type_node)
+                    };
                     // Resolve TypeQuery references with flow narrowing while type
                     // parameters are still in scope. This prevents false TS2304
                     // errors for type params used as type arguments in typeof

@@ -16,7 +16,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             self.ensure_def_id_with_alias(sym_id)
         };
-        self.ensure_type_alias_resolved(sym_id, def_id);
+        if !self.ctx.symbol_resolution_set.contains(&sym_id) {
+            self.ensure_type_alias_resolved(sym_id, def_id);
+        }
         Some(def_id)
     }
 
@@ -78,7 +80,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let def_id = self
                     .ctx
                     .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
-                self.ensure_type_alias_resolved(sym_id, def_id);
+                if !self.ctx.symbol_resolution_set.contains(&sym_id) {
+                    self.ensure_type_alias_resolved(sym_id, def_id);
+                }
                 return Some(def_id);
             }
 
@@ -97,7 +101,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let def_id = self
                 .ctx
                 .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
-            self.ensure_type_alias_resolved(sym_id, def_id);
+            if !self.ctx.symbol_resolution_set.contains(&sym_id) {
+                self.ensure_type_alias_resolved(sym_id, def_id);
+            }
             Some(def_id)
         };
         let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {

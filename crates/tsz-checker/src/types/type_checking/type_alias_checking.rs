@@ -183,9 +183,18 @@ impl<'a> CheckerState<'a> {
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
         // This must be done while type parameters are still in scope.
+        let has_deferred_self_reference = alias_sym_id.is_some_and(|alias_sid| {
+            self.alias_ast_is_deferred(alias_sid)
+                && self.ctx.symbol_resolution_set.contains(&alias_sid)
+                && self.alias_ast_refs_symbol_or_resolution_chain_alias(alias.type_node, alias_sid)
+        });
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
-            let body_type = self.get_type_from_type_node(alias.type_node);
+            let body_type = if has_deferred_self_reference {
+                crate::TypeNodeChecker::new(&mut self.ctx).check(alias.type_node)
+            } else {
+                self.get_type_from_type_node(alias.type_node)
+            };
             if variance_annotations_supported {
                 self.check_variance_annotations_with_body(
                     node_idx,
@@ -197,8 +206,12 @@ impl<'a> CheckerState<'a> {
             body_type
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
-        let _ = self.evaluate_type_with_env_uncached(body_type);
-        let body_evaluation_too_complex = self.ctx.types.take_union_too_complex();
+        let body_evaluation_too_complex = if has_deferred_self_reference {
+            false
+        } else {
+            let _ = self.evaluate_type_with_env_uncached(body_type);
+            self.ctx.types.take_union_too_complex()
+        };
         if body_type != TypeId::ERROR
             && let Some(alias_sid) = alias_sym_id
         {
@@ -364,8 +377,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.check_type_node(alias.type_node);
-        self.check_type_for_missing_names(alias.type_node);
+        if has_deferred_self_reference {
+            if let Some(owner_name) = alias_name_str.as_deref() {
+                self.check_type_literal_self_indexed_property_annotations(
+                    alias.type_node,
+                    owner_name,
+                );
+            }
+            if self
+                .ctx
+                .arena
+                .get(alias.type_node)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_LITERAL)
+                && self.type_literal_has_circular_accessor_reference(alias.type_node)
+            {
+                let _ = self.get_type_from_type_literal(alias.type_node);
+            }
+        } else {
+            self.check_type_node(alias.type_node);
+            self.check_type_for_missing_names(alias.type_node);
+        }
 
         if inserted_for_circular_check && let Some(sid) = alias_sym_id {
             self.ctx.symbol_resolution_set.remove(&sid);
