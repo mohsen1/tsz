@@ -98,6 +98,97 @@ const a2 = null as A2<{ x: number }>;
 }
 
 #[test]
+fn ts2352_distinguishes_sibling_aliases_with_identical_bodies() {
+    // Regression for `parenthesisDoesNotBlockAliasSymbolCreation.ts`:
+    // when two aliases (`InvalidKeys` and `InvalidKeys2`) have the same
+    // mapped-type body — one written without parens and one with parens —
+    // tsc preserves the alias name written at each cast site rather than
+    // collapsing both to the same name.
+    //
+    // tsz had a regression where `display_alias` is a single global
+    // `evaluated -> application` map. Once one sibling's evaluation
+    // populated it, the other sibling's evaluation could be skipped via
+    // the application-eval cache, leaving the wrong alias name on the
+    // shared evaluated TypeId. The diagnostic for the second cast then
+    // showed the first alias's name.
+    //
+    // The structural rule: when formatting the cast target for TS2352,
+    // the printer must consult the *as-written* type (which still names
+    // the alias used at this site) rather than the evaluated body whose
+    // `display_alias` reflects whichever sibling was last to write it.
+    let source = r#"
+type InvalidKeys<K extends string|number|symbol> = { [P in K]? : never };
+type InvalidKeys2<K extends string|number|symbol> = (
+    { [P in K]? : never }
+);
+
+type A<T> = (
+    T & InvalidKeys<"a">
+);
+type A2<T> = (
+    T & InvalidKeys2<"a">
+);
+
+const a = null as A<{ x : number }>;
+const a2 = null as A2<{ x : number }>;
+const a3 = null as { x : number } & InvalidKeys<"a">;
+const a4 = null as { x : number } & InvalidKeys2<"a">;
+"#;
+    let diags = checker_diagnostics(source);
+    let msgs = ts2352_messages(&diags);
+
+    assert!(
+        msgs.iter().any(|m| m.contains("'A<{ x: number; }>'")),
+        "expected 'A<{{ x: number; }}>' for cast `null as A<...>`. Got: {msgs:?}"
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("'A2<{ x: number; }>'")),
+        "expected 'A2<{{ x: number; }}>' for cast `null as A2<...>`. Got: {msgs:?}"
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("'{ x: number; } & InvalidKeys<\"a\">'")),
+        "expected '{{ x: number; }} & InvalidKeys<\"a\">' for the cast that names InvalidKeys. Got: {msgs:?}"
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("'{ x: number; } & InvalidKeys2<\"a\">'")),
+        "expected '{{ x: number; }} & InvalidKeys2<\"a\">' for the cast that names InvalidKeys2. \
+         Sibling aliases with structurally identical bodies must keep the name written at each cast site. \
+         Got: {msgs:?}"
+    );
+}
+
+#[test]
+fn ts2352_distinguishes_sibling_aliases_when_iteration_var_renamed() {
+    // Same invariant, but rename the mapped iteration variable to confirm the
+    // fix is not keyed on a specific identifier name (e.g. `P` vs `K`).
+    let source = r#"
+type InvalidKeys<K extends string|number|symbol> = { [Q in K]? : never };
+type InvalidKeys2<K extends string|number|symbol> = (
+    { [X in K]? : never }
+);
+
+const a3 = null as { x : number } & InvalidKeys<"a">;
+const a4 = null as { x : number } & InvalidKeys2<"a">;
+"#;
+    let diags = checker_diagnostics(source);
+    let msgs = ts2352_messages(&diags);
+
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("'{ x: number; } & InvalidKeys<\"a\">'")),
+        "expected InvalidKeys form preserved. Got: {msgs:?}"
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("'{ x: number; } & InvalidKeys2<\"a\">'")),
+        "expected InvalidKeys2 form preserved (iteration-var rename must not affect alias display). \
+         Got: {msgs:?}"
+    );
+}
+
+#[test]
 fn ts2352_no_alias_case_still_shows_expanded_intersection() {
     // Control: when there is no enclosing alias, tsc displays the structural
     // intersection (no alias to preserve). This must remain unchanged.
