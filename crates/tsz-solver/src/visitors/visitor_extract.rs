@@ -13,7 +13,36 @@ use crate::types::{
 use crate::visitor::TypeVisitor;
 use crate::{SymbolRef, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 use tsz_common::interner::Atom;
+
+// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS walks in this
+// module (`contains_unresolved_application`, `collect_infer_bindings`).
+// Mirrors the pool pattern from #4722 / #4790. Reentrant calls fall through
+// to fresh allocations because `take()` empties the slot.
+thread_local! {
+    static EXTRACT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_extract_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = EXTRACT_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    EXTRACT_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 struct TypeDataDataVisitor<F, T>
 where
@@ -459,8 +488,7 @@ pub fn contains_unresolved_application(types: &dyn TypeDatabase, type_id: TypeId
             _ => false,
         }
     }
-    let mut visited = rustc_hash::FxHashSet::default();
-    walk(types, type_id, &mut visited, 0)
+    with_extract_visited(|visited| walk(types, type_id, visited, 0))
 }
 
 /// Extract the mapped type id if this is a mapped type.
@@ -656,8 +684,9 @@ pub fn callable_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Ca
 /// belongs in the solver.
 pub fn collect_infer_bindings(types: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId)> {
     let mut result = Vec::new();
-    let mut visited = FxHashSet::default();
-    collect_infer_bindings_inner(types, type_id, &mut result, &mut visited);
+    with_extract_visited(|visited| {
+        collect_infer_bindings_inner(types, type_id, &mut result, visited);
+    });
     result
 }
 
