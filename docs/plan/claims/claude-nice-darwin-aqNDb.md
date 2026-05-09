@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-09
 - **Branch**: `claude/nice-darwin-aqNDb`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #4875
+- **Status**: ready
 - **Workstream**: emit/source-map robustness (issue #4780)
 
 ## Intent
@@ -28,4 +28,6 @@ invariant on the public methods and lock it in with a unit test.
 
 ## Verification
 
-- `cargo nextest run -p tsz-common`
+- `cargo test -p tsz-common --lib --tests` → 418 passed
+- `cargo test -p tsz-emitter` → all green (no source-map regressions)
+- `cargo test -p tsz-core --tests source_map` → 931 passed
