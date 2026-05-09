@@ -378,6 +378,12 @@ impl<'a> CheckerState<'a> {
         }
 
         if has_deferred_self_reference {
+            if let Some(owner_name) = alias_name_str.as_deref() {
+                self.check_type_literal_self_indexed_property_annotations(
+                    alias.type_node,
+                    owner_name,
+                );
+            }
             if self
                 .ctx
                 .arena
