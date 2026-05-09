@@ -62,16 +62,8 @@ impl LocaleMessages {
     /// Get the translated message for a diagnostic code.
     ///
     /// Returns the translated message if available, otherwise returns the fallback.
-    pub fn get_message<'a>(&self, code: u32, fallback: &'a str) -> &'a str {
-        // Note: We return the fallback because the translated message has a different
-        // lifetime. In practice, callers should use `get_message_owned` for translations.
-        if self.messages.contains_key(&code) {
-            // Translation exists but we return fallback due to lifetime constraints
-            // The caller should use get_message_owned for actual translation
-            fallback
-        } else {
-            fallback
-        }
+    pub fn get_message<'a>(&'a self, code: u32, fallback: &'a str) -> &'a str {
+        self.messages.get(&code).map_or(fallback, String::as_str)
     }
 
     /// Get the translated message for a diagnostic code, returning an owned String.
