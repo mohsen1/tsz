@@ -4,11 +4,10 @@
 //! to verify that `parse_error_for_missing_semicolon_after` produces the
 //! correct error codes and messages.
 
-use crate::parser::state::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 fn parse_and_collect_codes(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     parser
         .parse_diagnostics
         .iter()
