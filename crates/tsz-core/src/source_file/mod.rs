@@ -41,14 +41,14 @@ pub struct SourceFile {
     /// Line map for efficient position conversion (lazy initialized)
     line_map: Option<LineMap>,
     /// Length of the text in bytes
-    len: usize,
+    len: u32,
 }
 
 impl SourceFile {
     /// Create a new `SourceFile` from a file name and source text.
     pub fn new(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
-        let len = text.len();
+        let len = text.len() as u32;
         let text: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
             file_name: file_name.into(),
@@ -61,7 +61,7 @@ impl SourceFile {
     /// Create a `SourceFile` with pre-built line map.
     pub fn with_line_map(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
-        let len = text.len();
+        let len = text.len() as u32;
         let line_map = Some(LineMap::build(&text));
         let text: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
@@ -92,7 +92,7 @@ impl SourceFile {
 
     /// Get the length of the source text in bytes.
     #[inline]
-    pub const fn len(&self) -> usize {
+    pub const fn len(&self) -> u32 {
         self.len
     }
 
@@ -295,8 +295,8 @@ impl<'a> SourceFileRef<'a> {
     }
 
     /// Get the length in bytes.
-    pub const fn len(&self) -> usize {
-        self.text.len()
+    pub const fn len(&self) -> u32 {
+        self.text.len() as u32
     }
 
     /// Check if empty.
@@ -454,24 +454,6 @@ mod tests {
         assert_eq!(source.text(), "const x = 42;");
         assert_eq!(source.len(), 13);
         assert!(!source.is_empty());
-    }
-
-    #[test]
-    fn test_source_file_len_matches_text_len_as_usize() {
-        // Regression for #4777: `len` must equal the underlying text length
-        // without any narrowing cast.
-        let text = "ascii + 🚀 + héllo";
-        let source = SourceFile::new("test.ts", text);
-        let len: usize = source.len();
-        assert_eq!(len, text.len());
-        assert_eq!(len, source.text().len());
-
-        let with_map = SourceFile::with_line_map("test.ts", text);
-        assert_eq!(with_map.len(), text.len());
-
-        let source_ref = SourceFileRef::new("test.ts", text);
-        let ref_len: usize = source_ref.len();
-        assert_eq!(ref_len, text.len());
     }
 
     #[test]

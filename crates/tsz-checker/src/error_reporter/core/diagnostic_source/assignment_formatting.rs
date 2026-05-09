@@ -779,6 +779,16 @@ impl<'a> CheckerState<'a> {
             {
                 return tuple_display;
             }
+            // When the target is a generic Application of a Lazy type alias
+            // whose body recursively references the same alias (e.g.
+            // `T2<U>` for `type T2<T> = [42, T2<{ x: T }>]`), expanding to
+            // the alias body produces an unbounded `[42, [42, [..., ...]]]`
+            // cascade because the printer flattens every nested Application
+            // when alias names are skipped. tsc keeps the alias annotation
+            // (`T2<U>`) in this case; preserve it here too.
+            if self.is_recursive_type_alias_application_for_display(target) {
+                return self.format_annotation_like_type(&display);
+            }
             let preserve_tuple_alias_display = !display_trimmed.starts_with('{')
                 && !display_trimmed.starts_with('(')
                 && !display_trimmed.contains('[')
@@ -909,6 +919,19 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::application_info(self.ctx.types, alias)
                         .is_some()
                 })
+    }
+
+    /// True when `target` is `Application(Lazy(D), args)` and the alias body
+    /// of `D` reaches another reference to `D` (directly or transitively).
+    /// Used to suppress the `raw_tuple_…_without_alias` expansion path: a
+    /// recursive alias rendered with alias names skipped collapses to an
+    /// unbounded `[..., ...]` cascade rather than a useful structural form.
+    fn is_recursive_type_alias_application_for_display(&self, target: TypeId) -> bool {
+        crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            target,
+        )
     }
 
     fn raw_tuple_assignment_target_display_without_alias(
