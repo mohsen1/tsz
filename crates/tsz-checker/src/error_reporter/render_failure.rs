@@ -1664,12 +1664,21 @@ impl<'a> CheckerState<'a> {
 
         // Generic wrapper alias path: `type IndirectArrayish<U extends ...> =
         // Objectish<U>;` — when source is `IndirectArrayish<any>` and the
-        // body is itself an `Application` of a different named alias, tsc
-        // unfolds one level to display `Objectish<any>` (the body alias's
-        // application form with the wrapper's type-args substituted into the
-        // body's slots). See `compiler/mappedTypeWithAny.ts` line 47 — tsc
-        // displays `Objectish<any>` for `arr = indirectArrayish` rather than
-        // the wrapper name `IndirectArrayish<any>`.
+        // body is itself an `Application` of a different named *type alias*
+        // (not an interface or class), tsc unfolds one level to display
+        // `Objectish<any>` (the body alias's application form with the
+        // wrapper's type-args substituted into the body's slots). See
+        // `compiler/mappedTypeWithAny.ts` line 47 — tsc displays
+        // `Objectish<any>` for `arr = indirectArrayish` rather than the
+        // wrapper name `IndirectArrayish<any>`.
+        //
+        // Restriction to body-defs that are themselves `TypeAlias`: when the
+        // body wraps an `interface` (or `class`), tsc preserves the wrapper
+        // alias name. For example, given `interface Shape<V> { value: V }`
+        // and `type VarianceShape<V> = Shape<V>`, tsc displays
+        // `VarianceShape<1>`, not `Shape<1>`. Unfolding through interfaces
+        // erases the user-written alias the diagnostic should anchor on.
+        // See `compiler/varianceReferences.ts` for the canonical case.
         let body = def.body?;
         let body_app_id = crate::query_boundaries::common::application_id(self.ctx.types, body)?;
         let body_app = self.ctx.types.type_application(body_app_id);
@@ -1677,6 +1686,30 @@ impl<'a> CheckerState<'a> {
         let body_def_id =
             crate::query_boundaries::common::lazy_def_id(self.ctx.types, body_app.base)?;
         if body_def_id == def_id {
+            return None;
+        }
+        // Only unfold when the body's def is itself a type alias whose body
+        // is a mapped type. tsc preserves the wrapper name otherwise:
+        //
+        // - For type-alias-of-interface (`type VarianceShape<V> = Shape<V>`),
+        //   the wrapper alias is preserved (`VarianceShape<1>`).
+        // - For type-alias-of-class chains, likewise preserved.
+        // - For type-alias-of-type-alias chains where the inner body is
+        //   structural rather than mapped (`type Level1of3Shape<V> =
+        //   Level2of3Shape<V>` resolving through interfaces), the outermost
+        //   wrapper is preserved (`VarianceDeepShape<1>`, not
+        //   `Level1of3Shape<1>`).
+        //
+        // The unfolding only kicks in when the body alias is itself a
+        // mapped-type alias (`type Objectish<T> = { [K in keyof T]: T[K] }`),
+        // which is the `compiler/mappedTypeWithAny.ts` case where tsc shows
+        // `Objectish<any>` for `IndirectArrayish<any>`.
+        let body_def = self.ctx.definition_store.get(body_def_id)?;
+        if body_def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body_def_body = body_def.body?;
+        if !crate::query_boundaries::common::is_mapped_type(self.ctx.types, body_def_body) {
             return None;
         }
         // Substitute the wrapper's type-params with the source application's

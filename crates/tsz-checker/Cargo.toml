@@ -690,6 +690,10 @@ name = "elaboration_wrapper_init_tests"
 path = "tests/elaboration_wrapper_init_tests.rs"
 
 [[test]]
+name = "wrapper_alias_preserves_outer_name_tests"
+path = "tests/wrapper_alias_preserves_outer_name_tests.rs"
+
+[[test]]
 name = "ts2339_union_narrow_display_tests"
 path = "tests/ts2339_union_narrow_display_tests.rs"
 
