@@ -416,6 +416,22 @@ impl BinderState {
                     if has_attributes {
                         continue;
                     }
+                    // Do not redeclare a name that already has an alias in this
+                    // scope (runtime ES import or earlier JSDoc `@import`). The
+                    // type-only JSDoc binding must not override the existing
+                    // alias's `is_type_only`, otherwise the runtime import is
+                    // misreported as a type-only JS import (TS18042). The
+                    // resulting duplicate identifier is reported as TS2300 by
+                    // the JSDoc duplicate-import check in the checker.
+                    let already_aliased =
+                        self.current_scope.get(&local_name).is_some_and(|existing| {
+                            self.symbols
+                                .get(existing)
+                                .is_some_and(|sym| (sym.flags & symbol_flags::ALIAS) != 0)
+                        });
+                    if already_aliased {
+                        continue;
+                    }
                     let sym_id =
                         self.declare_symbol(arena, &local_name, symbol_flags::ALIAS, root, false);
                     if let Some(sym) = self.symbols.get_mut(sym_id) {

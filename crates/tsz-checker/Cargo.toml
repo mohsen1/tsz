@@ -902,6 +902,10 @@ name = "jsdoc_import_default_and_named_tests"
 path = "tests/jsdoc_import_default_and_named_tests.rs"
 
 [[test]]
+name = "jsdoc_import_runtime_duplicate_tests"
+path = "tests/jsdoc_import_runtime_duplicate_tests.rs"
+
+[[test]]
 name = "local_undefined_globalthis_shadow_tests"
 path = "tests/local_undefined_globalthis_shadow_tests.rs"
 
@@ -914,8 +918,8 @@ name = "generic_call_primitive_widening_display_tests"
 path = "tests/generic_call_primitive_widening_display_tests.rs"
 
 [[test]]
-name = "union_target_literal_primitive_mismatch_tests"
-path = "tests/union_target_literal_primitive_mismatch_tests.rs"
+name = "class_implements_predicate_inference_tests"
+path = "tests/class_implements_predicate_inference_tests.rs"
 
 [[test]]
 name = "issue_3768_outer_call_inference_regression_tests"
