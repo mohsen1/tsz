@@ -331,6 +331,14 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
                         );
                     }
+                    if is_non_generic_mapped_cycle {
+                        self.report_instantiated_type_alias_mapped_constraint_cycles(
+                            sym_id,
+                            &params,
+                            &[],
+                            sym_id,
+                        );
+                    }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if !params.is_empty() {
                         self.ctx.insert_def_type_params(def_id, params.clone());
