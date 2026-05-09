@@ -151,30 +151,65 @@ fn are_referenced_projects_uptodate(
                     // Convert relative path to absolute path
                     let dts_absolute_path = project_dir.join(latest_dts);
 
-                    // Get the modification time of the .d.ts file
-                    if let Ok(metadata) = std::fs::metadata(&dts_absolute_path)
-                        && let Ok(dts_modified) = metadata.modified()
+                    // The referenced project's BuildInfo names this .d.ts as its
+                    // latest declaration output. If we cannot read its modification
+                    // time — typically because the file was deleted, replaced, or is
+                    // temporarily unreadable — we cannot prove the parent project is
+                    // up-to-date, so treat the reference as stale and force a rebuild.
+                    let dts_modified = match std::fs::metadata(&dts_absolute_path)
+                        .and_then(|metadata| metadata.modified())
                     {
-                        // Convert the .d.ts modification time to seconds since epoch
-                        if let Ok(dts_secs) = dts_modified.duration_since(std::time::UNIX_EPOCH) {
-                            let dts_timestamp = dts_secs.as_secs();
-
-                            // Compare with our build time
-                            if dts_timestamp > build_info.build_time {
-                                if args.build_verbose {
-                                    let project_name = reference
-                                        .config_path
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("unknown");
-                                    info!(
-                                        "Referenced project's .d.ts is newer: {} ({} > {})",
-                                        project_name, dts_timestamp, build_info.build_time
-                                    );
-                                }
-                                return false;
+                        Ok(modified) => modified,
+                        Err(error) => {
+                            if args.build_verbose {
+                                let project_name = reference
+                                    .config_path
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("unknown");
+                                info!(
+                                    "Referenced project's recorded latest .d.ts is unavailable, treating as stale: {} at {} ({})",
+                                    project_name,
+                                    dts_absolute_path.display(),
+                                    error,
+                                );
                             }
+                            return false;
                         }
+                    };
+
+                    // mtime predating the Unix epoch is essentially unreachable on
+                    // real filesystems but we still cannot derive a comparable
+                    // timestamp, so treat as stale rather than silently passing.
+                    let dts_secs = match dts_modified.duration_since(std::time::UNIX_EPOCH) {
+                        Ok(d) => d,
+                        Err(_) => return false,
+                    };
+                    let dts_timestamp = dts_secs.as_secs();
+
+                    // Compare with our build time. We intentionally use `>=`
+                    // rather than `>` so that a referenced project that
+                    // rebuilds within the same Unix second as our recorded
+                    // build_time still forces a parent rebuild — at second
+                    // resolution we cannot tell "ref finished a millisecond
+                    // before us" from "ref finished a millisecond after",
+                    // and in that ambiguity the only safe option is to
+                    // rebuild. The "ref dts is genuinely older" path keeps
+                    // working because mtime < build_time still produces a
+                    // false comparison. See issue #4754.
+                    if dts_timestamp >= build_info.build_time {
+                        if args.build_verbose {
+                            let project_name = reference
+                                .config_path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown");
+                            info!(
+                                "Referenced project's .d.ts is newer or same-second: {} ({} >= {})",
+                                project_name, dts_timestamp, build_info.build_time
+                            );
+                        }
+                        return false;
                     }
                 }
             }
@@ -478,6 +513,43 @@ mod tests {
         assert!(is_project_up_to_date(&project, &cli_args()));
     }
 
+    // Regression for issue #4753: when a referenced project records a
+    // latest_changed_dts_file but that file no longer exists on disk,
+    // the parent project must NOT be reported as up-to-date. Previously,
+    // metadata/modified() failures fell through silently and the parent
+    // project was incorrectly considered fresh.
+    #[test]
+    fn is_project_up_to_date_returns_false_when_referenced_dts_output_is_missing() {
+        let temp = create_project_dir("missing_referenced_dts");
+        let root_dir = temp.path().join("main");
+        let ref_dir = temp.path().join("ref");
+        fs::create_dir_all(&root_dir).unwrap();
+        fs::create_dir_all(&ref_dir).unwrap();
+        let config_path = write_project_config(&root_dir);
+        let source_path = write_source_file(&root_dir, "src/index.ts", "export const x = 1;");
+        // u64::MAX so the test cannot accidentally pass via timestamp comparison
+        // even if the artifact happened to exist.
+        write_root_build_info(&root_dir, &source_path, None, Some(u64::MAX));
+
+        let ref_config_path = ref_dir.join("tsconfig.json");
+        fs::write(&ref_config_path, "{}").unwrap();
+        // Deliberately do NOT create dist/index.d.ts so the metadata read fails.
+        write_reference_build_info(&ref_dir, Some("dist/index.d.ts"));
+        assert!(
+            !ref_dir.join("dist/index.d.ts").exists(),
+            "test precondition: referenced .d.ts should be absent"
+        );
+
+        let project = make_project(
+            config_path,
+            root_dir,
+            vec![resolved_reference(ref_config_path)],
+            None,
+        );
+
+        assert!(!is_project_up_to_date(&project, &cli_args()));
+    }
+
     #[test]
     fn is_project_up_to_date_allows_referenced_project_with_older_dts_output() {
         let temp = create_project_dir("older_dts");
@@ -507,5 +579,60 @@ mod tests {
         );
 
         assert!(is_project_up_to_date(&project, &cli_args()));
+    }
+
+    // Regression for issue #4754: when a referenced project's
+    // latest_changed_dts_file has an mtime in exactly the same Unix
+    // second as the parent's recorded build_time, the parent must NOT
+    // be reported as up-to-date. Pre-fix, the strict `>` comparison
+    // returned false here and silently skipped a needed rebuild.
+    #[test]
+    fn is_project_up_to_date_returns_false_when_referenced_dts_matches_build_time_at_second_resolution()
+     {
+        let temp = create_project_dir("same_second_dts");
+        let root_dir = temp.path().join("main");
+        let ref_dir = temp.path().join("ref");
+        fs::create_dir_all(&root_dir).unwrap();
+        fs::create_dir_all(&ref_dir).unwrap();
+        let config_path = write_project_config(&root_dir);
+        let source_path = write_source_file(&root_dir, "src/index.ts", "export const x = 1;");
+
+        // Write the referenced .d.ts first so we can read its actual
+        // mtime — that is the precise second we need build_time to
+        // collide with.
+        let dts_path = write_source_file(
+            &ref_dir,
+            "dist/index.d.ts",
+            "export declare const y: number;",
+        );
+        let dts_mtime_secs = fs::metadata(&dts_path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Set parent build_time to exactly the dts mtime second to
+        // simulate "ref project rebuilt within the same Unix second
+        // as the parent build". Pre-fix this collides as `dts > bt`
+        // -> false; post-fix it triggers `dts >= bt` -> rebuild.
+        write_root_build_info(&root_dir, &source_path, None, Some(dts_mtime_secs));
+
+        let ref_config_path = ref_dir.join("tsconfig.json");
+        fs::write(&ref_config_path, "{}").unwrap();
+        write_reference_build_info(&ref_dir, Some("dist/index.d.ts"));
+
+        let project = make_project(
+            config_path,
+            root_dir,
+            vec![resolved_reference(ref_config_path)],
+            None,
+        );
+
+        assert!(
+            !is_project_up_to_date(&project, &cli_args()),
+            "expected same-second match to force a rebuild (issue #4754)"
+        );
     }
 }

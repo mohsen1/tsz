@@ -167,7 +167,15 @@ impl<'a> CheckerState<'a> {
                         decl_arena,
                         type_alias.type_node,
                     );
-                    let mut alias_type = self.get_type_from_type_node(type_alias.type_node);
+                    let mut alias_type = if self.alias_ast_is_deferred(sym_id)
+                        && self.alias_ast_refs_symbol_or_resolution_chain_alias(
+                            type_alias.type_node,
+                            sym_id,
+                        ) {
+                        crate::TypeNodeChecker::new(&mut self.ctx).check(type_alias.type_node)
+                    } else {
+                        self.get_type_from_type_node(type_alias.type_node)
+                    };
                     // Resolve TypeQuery references with flow narrowing while type
                     // parameters are still in scope. This prevents false TS2304
                     // errors for type params used as type arguments in typeof
@@ -321,6 +329,14 @@ impl<'a> CheckerState<'a> {
                             type_alias.name,
                             &message,
                             diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                        );
+                    }
+                    if is_non_generic_mapped_cycle {
+                        self.report_instantiated_type_alias_mapped_constraint_cycles(
+                            sym_id,
+                            &params,
+                            &[],
+                            sym_id,
                         );
                     }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -1219,7 +1235,13 @@ impl<'a> CheckerState<'a> {
                                 {
                                     continue;
                                 }
-                                let mut prop_type = self.get_type_of_symbol(export_sym_id);
+                                let mut prop_type = self
+                                    .namespace_default_reexport_property_type(
+                                        module_name,
+                                        declaring_file_idx,
+                                        name,
+                                    )
+                                    .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id));
 
                                 // Rule #44: Apply module augmentations to each exported type
                                 prop_type =

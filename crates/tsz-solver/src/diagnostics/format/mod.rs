@@ -160,13 +160,6 @@ pub struct TypeFormatter<'a> {
     /// When true, generic mapped type aliases that evaluate to scalar types are
     /// displayed as their evaluated result. Used for assignability diagnostics.
     expand_scalar_mapped_alias_applications: bool,
-    /// When true, the canonical `string | number | symbol` union (the body of
-    /// the lib `PropertyKey` alias and of `keyof any`) is rendered structurally
-    /// rather than collapsed to `'PropertyKey'`. tsc shows the structural form
-    /// in TS2344 ("does not satisfy the constraint 'X'") and similar contexts
-    /// where the constraint comes from `keyof any` rather than the
-    /// `PropertyKey` alias.
-    expand_primitive_key_union: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -376,7 +369,6 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
-            expand_primitive_key_union: false,
         }
     }
 
@@ -590,7 +582,6 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
-            expand_primitive_key_union: false,
         }
     }
 
@@ -642,17 +633,6 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_diagnostic_mode(mut self) -> Self {
         self.skip_union_optionalize = true;
         self.diagnostic_mode = true;
-        self
-    }
-
-    /// Render the canonical `string | number | symbol` union structurally
-    /// rather than collapsing it to `'PropertyKey'`. tsc emits the structural
-    /// form for TS2344 ("does not satisfy the constraint 'X'") regardless of
-    /// whether the source declared the constraint as `keyof any`, the literal
-    /// union, or the `PropertyKey` alias — `aliasSymbol` is stripped during
-    /// constraint formatting in the diagnostic builder.
-    pub const fn with_expand_primitive_key_union(mut self) -> Self {
-        self.expand_primitive_key_union = true;
         self
     }
 
@@ -1426,22 +1406,7 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
-                // The canonical `string | number | symbol` union is the body
-                // of the lib's `PropertyKey` alias. tsc carries an
-                // `aliasSymbol` per occurrence so e.g. `K extends PropertyKey`
-                // displays `'PropertyKey'`, while `K extends keyof any`
-                // (which evaluates to the same union but has no alias)
-                // displays `'string | number | symbol'`. tsz interns this
-                // union to a single shared `TypeId`, so we can't track the
-                // alias per-occurrence. The pragmatic compromise: in
-                // `diagnostic_mode` we collapse to `PropertyKey` because the
-                // overwhelming majority of user-facing call sites came from a
-                // `PropertyKey` annotation; the few sites that came from
-                // `keyof any` opt out via `expand_primitive_key_union`.
-                if self.diagnostic_mode
-                    && !self.expand_primitive_key_union
-                    && self.is_primitive_key_union_data(key)
-                {
+                if self.diagnostic_mode && self.is_primitive_key_union_data(key) {
                     return Cow::Borrowed("PropertyKey");
                 }
                 // tsc preserves top-level alias names that would otherwise be

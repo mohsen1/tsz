@@ -4259,6 +4259,14 @@ fn resolve_lib_files_with_options_inner(
         return Ok(Vec::new());
     }
 
+    if should_use_embedded_libs() {
+        return resolve_lib_files_from_embedded_inner(
+            lib_list,
+            follow_references,
+            initial_is_required,
+        );
+    }
+
     match default_lib_dir() {
         Ok(lib_dir) => resolve_lib_files_from_dir_inner(
             lib_list,
@@ -4383,12 +4391,14 @@ fn apply_explicit_lib_aliases(lib_list: &[String]) -> Vec<String> {
 /// This means `--target es5` loads lib.d.ts -> dom -> es2015 (transitively),
 /// which is exactly what tsc does (verified with `tsc --target es5 --listFiles`).
 pub fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
+    let root_lib = default_lib_name_for_target(target);
+    if should_use_embedded_libs() {
+        return resolve_lib_files_from_embedded(&[root_lib.to_string()], true);
+    }
+
     match default_lib_dir() {
         Ok(lib_dir) => resolve_default_lib_files_from_dir(target, &lib_dir),
-        Err(_) => {
-            let root_lib = default_lib_name_for_target(target);
-            resolve_lib_files_from_embedded(&[root_lib.to_string()], true)
-        }
+        Err(_) => resolve_lib_files_from_embedded(&[root_lib.to_string()], true),
     }
 }
 
@@ -4476,6 +4486,17 @@ pub const fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
 /// process lifetime.
 static DEFAULT_LIB_DIR_CACHE: std::sync::OnceLock<Result<PathBuf, String>> =
     std::sync::OnceLock::new();
+
+fn should_use_embedded_libs() -> bool {
+    if env::var_os("TSZ_LIB_DIR").is_some() {
+        return false;
+    }
+
+    env::var_os("TSZ_USE_EMBEDDED_LIBS").is_some_and(|value| {
+        let normalized = value.to_string_lossy().trim().to_ascii_lowercase();
+        !matches!(normalized.as_str(), "" | "0" | "false" | "no" | "off")
+    })
+}
 
 pub fn default_lib_dir() -> Result<PathBuf> {
     let cached =

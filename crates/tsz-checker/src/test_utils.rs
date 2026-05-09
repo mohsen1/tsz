@@ -368,6 +368,75 @@ pub fn check_source_with_libs(
     checker.ctx.diagnostics.clone()
 }
 
+/// Parse, bind, and type-check a multi-file project, returning the entry
+/// file's diagnostics.
+///
+/// `files` is `&[(file_name, source)]`. Each file is parsed and bound
+/// independently; the entry file (matched by exact `file_name`) is the
+/// one that drives the checker run. Module-resolution maps are built
+/// from the file-name set via [`build_module_resolution_maps`], and the
+/// checker's cross-arena state (`set_all_arenas` / `set_all_binders` /
+/// `set_current_file_idx` / `set_resolved_module_paths` /
+/// `set_resolved_modules`) is wired up before
+/// `check_source_file(entry_root)`.
+///
+/// Use this for cross-file regression tests that rely on
+/// import-resolution or cross-file symbol delegation. For tests that
+/// only need a single file, prefer [`check_source`] /
+/// [`check_with_options`].
+///
+/// Like [`check_source`], `lib_contexts` is left empty so tests run
+/// without lib definitions.
+pub fn check_multi_file(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> Vec<Diagnostic> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .unwrap_or_else(|| panic!("entry_file {entry_file:?} not found in files"));
+    let (resolved_module_paths, resolved_modules) =
+        crate::module_resolution::build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+    checker.ctx.diagnostics.clone()
+}
+
 #[cfg(test)]
 mod tests {
     //! Self-tests for the `test_utils` helpers themselves.

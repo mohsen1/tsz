@@ -254,6 +254,10 @@ name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 
 [[test]]
+name = "typeof_import_commonjs_object_literal_export_tests"
+path = "tests/typeof_import_commonjs_object_literal_export_tests.rs"
+
+[[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
@@ -440,6 +444,10 @@ path = "tests/project_env_tests.rs"
 [[test]]
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
+
+[[test]]
+name = "issue_3768_generic_callback_outer_inference_tests"
+path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
 
 [[test]]
 name = "tuple_type_assertion_inference_tests"
@@ -916,6 +924,10 @@ path = "tests/window_indexed_access_callback_contextual_typing_tests.rs"
 [[test]]
 name = "generic_call_primitive_widening_display_tests"
 path = "tests/generic_call_primitive_widening_display_tests.rs"
+
+[[test]]
+name = "bare_alias_display_tests"
+path = "tests/bare_alias_display_tests.rs"
 
 [[test]]
 name = "class_implements_predicate_inference_tests"

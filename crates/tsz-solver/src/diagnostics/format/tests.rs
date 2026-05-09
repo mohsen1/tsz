@@ -97,36 +97,11 @@ fn primitive_key_union_registered_to_type_alias_formats_structurally_without_ori
 
 #[test]
 fn primitive_key_union_formats_as_property_key_in_diagnostic_mode() {
-    // tsc carries an `aliasSymbol` on the constraint type when the source
-    // wrote `K extends PropertyKey`, and `typeToString` honours it. tsz
-    // interns `string | number | symbol` to a single shared TypeId, so we
-    // can't track the alias per-occurrence. Diagnostic mode collapses the
-    // shared union to `'PropertyKey'` because the overwhelming majority of
-    // user-facing constraint diagnostics came from a `PropertyKey`
-    // annotation. The structural form is opted into via
-    // `with_expand_primitive_key_union()` (see the test below) for sites
-    // where tsc strips `aliasSymbol` — most notably the TS2344 message.
     let db = TypeInterner::new();
     let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
 
     let mut fmt = TypeFormatter::new(&db).with_diagnostic_mode();
     assert_eq!(fmt.format(primitive_key_union), "PropertyKey");
-}
-
-#[test]
-fn primitive_key_union_expands_structurally_when_alias_collapse_is_opted_out() {
-    // tsc renders the `keyof any` constraint of `Record<K extends keyof any, T>`
-    // as `string | number | symbol` for TS2344, regardless of whether the
-    // user spelled the constraint as `keyof any`, the literal union, or
-    // `PropertyKey`. The TS2344 emitter strips `aliasSymbol` on the
-    // constraint type before formatting.
-    let db = TypeInterner::new();
-    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-
-    let mut fmt = TypeFormatter::new(&db)
-        .with_diagnostic_mode()
-        .with_expand_primitive_key_union();
-    assert_eq!(fmt.format(primitive_key_union), "string | number | symbol");
 }
 
 #[test]

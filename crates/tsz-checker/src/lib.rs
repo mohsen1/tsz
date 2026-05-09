@@ -535,6 +535,9 @@ mod private_brands;
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
 #[cfg(test)]
+#[path = "../tests/recursive_alias_application_target_display_tests.rs"]
+mod recursive_alias_application_target_display_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]

@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-09T11:25:13Z",
-  "git_sha": "5a0ade1d5e899debf0e38ae2606fc2a46360dfd2",
+  "timestamp": "2026-05-09T20:47:11Z",
+  "git_sha": "40b918ebc4d2cb4941b04bb386d6d18e0c007dda",
   "summary": {
     "total_tests": 12582,
-    "passed": 12522,
-    "failed": 60,
-    "pass_rate": 99.5
+    "passed": 12538,
+    "failed": 44,
+    "pass_rate": 99.7
   },
   "areas_by_pass_rate": [
     {
@@ -108,10 +108,10 @@
     },
     {
       "area": "compiler",
-      "total": 6507,
-      "passed": 6483,
-      "failed": 24,
-      "pass_rate": 99.63
+      "total": 6520,
+      "passed": 6497,
+      "failed": 23,
+      "pass_rate": 99.65
     },
     {
       "area": "ambient",
@@ -728,7 +728,7 @@
     "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 45,
+    "fingerprint_only": 44,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }

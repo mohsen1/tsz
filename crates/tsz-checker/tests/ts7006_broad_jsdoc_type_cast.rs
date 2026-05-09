@@ -8,35 +8,22 @@
 //! closures, so an unannotated parameter inside such a cast still
 //! triggers TS7006 under `--noImplicitAny`.
 
-use crate::CheckerState;
 use crate::context::CheckerOptions;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn diagnostics_for_js(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("repro.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        allow_js: true,
-        check_js: true,
-        no_implicit_any: true,
-        ..CheckerOptions::default()
-    };
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "repro.js".to_string(),
-        options,
-    );
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    crate::test_utils::check_source(
+        source,
+        "repro.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 /// `/** @type {*} */(...)` — JSDoc-specific "any" alias. The cast

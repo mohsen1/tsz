@@ -620,7 +620,26 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::collect_type_queries(self.ctx.types, resolved_type)
                 .iter()
                 .any(|sym_ref| sym_ref.0 == sym_id.0);
-        let evaluated = if has_typeof_self {
+        let has_deferred_resolution_chain_ref =
+            common::is_structurally_deferred_type(self.ctx.types, resolved_type)
+                && common::collect_lazy_def_ids(self.ctx.types, resolved_type)
+                    .into_iter()
+                    .any(|def_id| {
+                        self.ctx
+                            .def_to_symbol
+                            .borrow()
+                            .get(&def_id)
+                            .copied()
+                            .is_some_and(|target_sym_id| {
+                                self.ctx.symbol_resolution_set.contains(&target_sym_id)
+                                    && self.ctx.binder.get_symbol(target_sym_id).is_some_and(
+                                        |symbol| {
+                                            symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                                        },
+                                    )
+                            })
+                    });
+        let evaluated = if has_typeof_self || has_deferred_resolution_chain_ref {
             resolved_type
         } else {
             match classify_for_traversal(self.ctx.types, resolved_type) {
@@ -817,6 +836,46 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    pub(crate) fn alias_ast_refs_symbol_or_resolution_chain_alias(
+        &self,
+        root_idx: NodeIndex,
+        primary_sym_id: SymbolId,
+    ) -> bool {
+        let mut stack = vec![root_idx];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+
+            let lookup_target_idx = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx.arena.get_type_ref(node).map(|tr| tr.type_name)
+            } else if node.kind == SyntaxKind::Identifier as u16 {
+                Some(node_idx)
+            } else {
+                None
+            };
+            if let Some(target_idx) = lookup_target_idx
+                && let Some(sym_raw) = self.resolve_type_symbol_for_lowering(target_idx)
+            {
+                let sym_id = SymbolId(sym_raw);
+                if (sym_id == primary_sym_id || self.ctx.symbol_resolution_set.contains(&sym_id))
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                {
+                    return true;
+                }
+            }
+
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                stack.push(child_idx);
+            }
+        }
+        false
     }
 
     /// True when the `typeof X` target's variable annotation references any type

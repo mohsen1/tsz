@@ -553,8 +553,9 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
     };
 
     // Try the exports map first
+    let compiler_version = types_versions_compiler_version(options);
     if let Some(exports) = &package_json.exports
-        && let Some(target) = resolve_exports_subpath(exports, ".", &conditions)
+        && let Some(target) = resolve_exports_subpath(exports, ".", &conditions, compiler_version)
         && let Some(target_path) = package_relative_target_path(package_root, &target)
     {
         // Try to find a declaration file at the target
@@ -2388,10 +2389,13 @@ fn resolve_node_module_specifier(
                             Some(value) => format!("./{value}"),
                             None => ".".to_string(),
                         };
-                        if let Some(target) =
-                            resolve_exports_subpath(exports, &subpath_key, &conditions)
-                            && let Some(resolved) =
-                                try_remap_output_to_source(dir, &target, from_file, options)
+                        if let Some(target) = resolve_exports_subpath(
+                            exports,
+                            &subpath_key,
+                            &conditions,
+                            types_versions_compiler_version(options),
+                        ) && let Some(resolved) =
+                            try_remap_output_to_source(dir, &target, from_file, options)
                         {
                             return Some(resolved);
                         }
@@ -2524,6 +2528,7 @@ fn resolve_package_imports_specifier(
     resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let conditions = export_conditions(options);
+    let compiler_version = types_versions_compiler_version(options);
     let mut current = from_file.parent().unwrap_or(base_dir);
 
     loop {
@@ -2532,8 +2537,12 @@ fn resolve_package_imports_specifier(
             && let Some(imports) = package_json.imports.as_ref()
         {
             let package_type = package_type_from_json(Some(&package_json));
-            for target in resolve_imports_subpath_candidates(imports, module_specifier, &conditions)
-            {
+            for target in resolve_imports_subpath_candidates(
+                imports,
+                module_specifier,
+                &conditions,
+                compiler_version,
+            ) {
                 let target = target.trim();
                 if target.starts_with("./") {
                     if package_relative_target_path(current, target).is_none() {
@@ -2604,9 +2613,13 @@ fn resolve_package_specifier(
                 Some(value) => format!("./{value}"),
                 None => ".".to_string(),
             };
-            if let Some(target) = resolve_exports_subpath(exports, &subpath_key, conditions)
-                && let Some(resolved) =
-                    resolve_export_entry(package_root, &target, options, package_type)
+            if let Some(target) = resolve_exports_subpath(
+                exports,
+                &subpath_key,
+                conditions,
+                types_versions_compiler_version(options),
+            ) && let Some(resolved) =
+                resolve_export_entry(package_root, &target, options, package_type)
             {
                 return Some(resolved);
             }
@@ -3359,12 +3372,15 @@ fn resolve_exports_subpath(
     exports: &serde_json::Value,
     subpath_key: &str,
     conditions: &[&str],
+    compiler_version: SemVer,
 ) -> Option<String> {
     match exports {
         serde_json::Value::String(value) => (subpath_key == ".").then(|| value.clone()),
         serde_json::Value::Array(list) => {
             for entry in list {
-                if let Some(resolved) = resolve_exports_subpath(entry, subpath_key, conditions) {
+                if let Some(resolved) =
+                    resolve_exports_subpath(entry, subpath_key, conditions, compiler_version)
+                {
                     return Some(resolved);
                 }
             }
@@ -3374,7 +3390,8 @@ fn resolve_exports_subpath(
             let has_subpath_keys = map.keys().any(|key| key.starts_with('.'));
             if has_subpath_keys {
                 if let Some(value) = map.get(subpath_key)
-                    && let Some(target) = resolve_exports_target(value, conditions)
+                    && let Some(target) =
+                        resolve_exports_target(value, conditions, compiler_version)
                 {
                     return Some(target);
                 }
@@ -3395,14 +3412,15 @@ fn resolve_exports_subpath(
                 }
 
                 if let Some((_, wildcard, value)) = best_match
-                    && let Some(target) = resolve_exports_target(value, conditions)
+                    && let Some(target) =
+                        resolve_exports_target(value, conditions, compiler_version)
                 {
                     return Some(apply_exports_subpath(&target, &wildcard));
                 }
 
                 None
             } else if subpath_key == "." {
-                resolve_exports_target(exports, conditions)
+                resolve_exports_target(exports, conditions, compiler_version)
             } else {
                 None
             }
@@ -3411,15 +3429,7 @@ fn resolve_exports_subpath(
     }
 }
 
-fn resolve_exports_target(target: &serde_json::Value, conditions: &[&str]) -> Option<String> {
-    resolve_exports_target_versioned(
-        target,
-        conditions,
-        default_types_versions_compiler_version(),
-    )
-}
-
-fn resolve_exports_target_versioned(
+fn resolve_exports_target(
     target: &serde_json::Value,
     conditions: &[&str],
     compiler_version: SemVer,
@@ -3428,8 +3438,7 @@ fn resolve_exports_target_versioned(
         serde_json::Value::String(value) => Some(value.clone()),
         serde_json::Value::Array(list) => {
             for entry in list {
-                if let Some(resolved) =
-                    resolve_exports_target_versioned(entry, conditions, compiler_version)
+                if let Some(resolved) = resolve_exports_target(entry, conditions, compiler_version)
                 {
                     return Some(resolved);
                 }
@@ -3448,13 +3457,13 @@ fn resolve_exports_target_versioned(
                     if conditions.contains(&base_condition)
                         && match_types_versions_range(version_range, compiler_version).is_some()
                         && let Some(resolved) =
-                            resolve_exports_target_versioned(value, conditions, compiler_version)
+                            resolve_exports_target(value, conditions, compiler_version)
                     {
                         return Some(resolved);
                     }
                 } else if conditions.contains(&key.as_str())
                     && let Some(resolved) =
-                        resolve_exports_target_versioned(value, conditions, compiler_version)
+                        resolve_exports_target(value, conditions, compiler_version)
                 {
                     return Some(resolved);
                 }
@@ -3468,17 +3477,6 @@ fn resolve_exports_target_versioned(
 fn resolve_exports_target_candidates(
     target: &serde_json::Value,
     conditions: &[&str],
-) -> Vec<String> {
-    resolve_exports_target_candidates_versioned(
-        target,
-        conditions,
-        default_types_versions_compiler_version(),
-    )
-}
-
-fn resolve_exports_target_candidates_versioned(
-    target: &serde_json::Value,
-    conditions: &[&str],
     compiler_version: SemVer,
 ) -> Vec<String> {
     match target {
@@ -3486,7 +3484,7 @@ fn resolve_exports_target_candidates_versioned(
         serde_json::Value::Array(list) => {
             let mut candidates = Vec::new();
             for entry in list {
-                candidates.extend(resolve_exports_target_candidates_versioned(
+                candidates.extend(resolve_exports_target_candidates(
                     entry,
                     conditions,
                     compiler_version,
@@ -3506,7 +3504,7 @@ fn resolve_exports_target_candidates_versioned(
                         if value.is_null() {
                             return Vec::new();
                         }
-                        candidates.extend(resolve_exports_target_candidates_versioned(
+                        candidates.extend(resolve_exports_target_candidates(
                             value,
                             conditions,
                             compiler_version,
@@ -3516,7 +3514,7 @@ fn resolve_exports_target_candidates_versioned(
                     if value.is_null() {
                         return Vec::new();
                     }
-                    candidates.extend(resolve_exports_target_candidates_versioned(
+                    candidates.extend(resolve_exports_target_candidates(
                         value,
                         conditions,
                         compiler_version,
@@ -3533,6 +3531,7 @@ fn resolve_imports_subpath_candidates(
     imports: &serde_json::Value,
     subpath_key: &str,
     conditions: &[&str],
+    compiler_version: SemVer,
 ) -> Vec<String> {
     let serde_json::Value::Object(map) = imports else {
         return Vec::new();
@@ -3544,7 +3543,7 @@ fn resolve_imports_subpath_candidates(
     }
 
     if let Some(value) = map.get(subpath_key) {
-        return resolve_exports_target_candidates(value, conditions);
+        return resolve_exports_target_candidates(value, conditions, compiler_version);
     }
 
     let mut best_match: Option<(usize, String, &serde_json::Value)> = None;
@@ -3563,7 +3562,7 @@ fn resolve_imports_subpath_candidates(
     }
 
     if let Some((_, wildcard, value)) = best_match {
-        return resolve_exports_target_candidates(value, conditions)
+        return resolve_exports_target_candidates(value, conditions, compiler_version)
             .into_iter()
             .map(|target| apply_exports_subpath(&target, &wildcard))
             .collect();

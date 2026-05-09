@@ -14,66 +14,25 @@
 //! Fix: reject lib candidates whose `parent` is a callable
 //! (FUNCTION / METHOD / CONSTRUCTOR / `GET_ACCESSOR` / `SET_ACCESSOR` / SIGNATURE).
 
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_binder::lib_loader::LibFile;
-use tsz_binder::state::LibContext as BinderLibContext;
-use tsz_checker::context::{CheckerOptions, LibContext};
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn load_lib_files() -> Vec<Arc<LibFile>> {
-    tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
-}
+use tsz_checker::context::CheckerOptions;
 
 fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    let lib_files = load_lib_files();
+    let lib_files =
+        tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"]);
     if lib_files.is_empty() {
         // Lib files not available in this build environment — skip.
         return Vec::new();
     }
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    let binder_lib_contexts: Vec<_> = lib_files
-        .iter()
-        .map(|lib| BinderLibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
         CheckerOptions::default(),
-    );
-
-    let checker_lib_contexts: Vec<LibContext> = lib_files
-        .iter()
-        .map(|lib| LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    checker.ctx.set_lib_contexts(checker_lib_contexts);
-    checker.ctx.set_actual_lib_file_count(lib_files.len());
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+        &lib_files,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 #[test]

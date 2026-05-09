@@ -3968,6 +3968,171 @@ fn test_call_hierarchy_incoming_file_start_query_returns_no_calls() {
     );
 }
 
+/// Issue #3753 follow-up: default-export incoming calls.
+///
+/// `/a.ts` declares `export default function target()`. `/b.ts` invokes it
+/// via a default-import (`import target from "./a"`). tsc reports `caller`
+/// in /b.ts as an incoming call of `target`; the cross-file caller scan
+/// previously only fired the default-import branch when the user asked
+/// for incoming calls on a symbol literally named "default", so for this
+/// shape (where the prepared name is "target") it returned [].
+#[test]
+fn test_call_hierarchy_incoming_handles_default_import_for_default_export() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export default function target() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import target from \"./a\";\nexport function caller() { target(); }\n".to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 25,
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    let caller = calls
+        .iter()
+        .find(|c| c["from"]["name"] == "caller")
+        .unwrap_or_else(|| panic!("expected default-import caller 'caller', got: {calls:?}"));
+
+    let from_file = caller["from"]["file"].as_str().unwrap_or("");
+    assert!(
+        from_file.ends_with("/b.ts"),
+        "cross-file caller should live in /b.ts, got file={from_file:?} call={caller:?}"
+    );
+}
+
+/// Issue #3753 follow-up: a default-import bound to a *different* local
+/// name still reaches the default export. The local-name choice is the
+/// importer's affair; tsc keys the resolution off the export name.
+#[test]
+fn test_call_hierarchy_incoming_handles_renamed_default_import() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export default function target() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import renamed from \"./a\";\nexport function caller() { renamed(); }\n".to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 25,
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    assert!(
+        calls.iter().any(|c| c["from"]["name"] == "caller"
+            && c["from"]["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with("/b.ts"))),
+        "expected renamed default-import caller in /b.ts, got: {calls:?}"
+    );
+}
+
+/// Issue #3753 follow-up: `import { default as target }` is a named-import
+/// shape that resolves to the default export. The named-import branch must
+/// match `default` against a default-exported target alongside its
+/// declared name.
+#[test]
+fn test_call_hierarchy_incoming_handles_named_default_alias_for_default_export() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export default function target() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { default as target } from \"./a\";\nexport function caller() { target(); }\n"
+            .to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 25,
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    assert!(
+        calls.iter().any(|c| c["from"]["name"] == "caller"
+            && c["from"]["file"]
+                .as_str()
+                .is_some_and(|f| f.ends_with("/b.ts"))),
+        "expected `import {{ default as target }}` caller in /b.ts, got: {calls:?}"
+    );
+}
+
+/// Default-export detection must stay scoped to default-exported symbols.
+/// A regular `export function NAME` must not start matching default-import
+/// bindings — those bind to `default`, not `NAME`. Without this guard, any
+/// `import x from "./a"` in any other file would falsely register against
+/// every named export of /a.ts.
+#[test]
+fn test_call_hierarchy_incoming_named_export_does_not_capture_unrelated_default_import() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export function target() {}\nexport default function other() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import other from \"./a\";\nexport function caller() { other(); }\n".to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 1,
+            "offset": 17,
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+
+    assert!(
+        !calls.iter().any(|c| c["from"]["name"] == "caller"),
+        "named export `target` must not capture the default-import of `other`, got: {calls:?}"
+    );
+}
+
 #[test]
 fn test_format_range_paste_applies_cleanly() {
     // When the server format handler runs, edits may come from either the

@@ -9,82 +9,23 @@
 //!
 //! Conformance: `conformance/salsa/plainJSReservedStrict.ts`.
 
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::state::LibContext as BinderLibContext;
-use tsz_binder::{BinderState, lib_loader::LibFile};
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-    let mut lib_files = Vec::new();
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-    lib_files
-}
 
 /// Run the checker against `source` (parsed as `file_name`) with `lib.es5.d.ts`
 /// merged into the binder, returning the resulting diagnostics.
 fn check_with_lib(source: &str, file_name: &str) -> Vec<Diagnostic> {
-    let lib_files = load_es5_lib_files_for_test();
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
     assert!(
         !lib_files.is_empty(),
-        "Expected to find lib.es5.d.ts for the test (checked TypeScript/lib and \
-         scripts/conformance/node_modules paths)"
+        "Expected to find lib.es5.d.ts for the test"
     );
-
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    let lib_contexts: Vec<_> = lib_files
-        .iter()
-        .map(|lib| BinderLibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    binder.merge_lib_contexts_into_binder(&lib_contexts);
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-    let checker_lib_contexts: Vec<_> = lib_files
-        .iter()
-        .map(|lib| CheckerLibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    checker.ctx.set_lib_contexts(checker_lib_contexts);
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        file_name,
+        CheckerOptions::default(),
+        &lib_files,
+    )
 }
 
 /// `const eval = 1` in a plain-JS script vs `declare function eval(...)` in

@@ -4,39 +4,22 @@
 // available. With `noLib`, the user owns the global type surface; tsc skips
 // the check.
 
-use tsz_binder::BinderState;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn promise_2318_diagnostics(source: &str, no_lib: bool) -> Vec<String> {
-    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "a.ts".to_string(),
+    tsz_checker::test_utils::check_source(
+        source,
+        "a.ts",
         CheckerOptions {
             no_lib,
             target: ScriptTarget::ES2015,
             ..Default::default()
         },
-    );
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2318 && d.message_text.contains("Promise"))
-        .map(|d| d.message_text.clone())
-        .collect()
+    )
+    .into_iter()
+    .filter(|d| d.code == 2318 && d.message_text.contains("Promise"))
+    .map(|d| d.message_text)
+    .collect()
 }
 
 #[test]

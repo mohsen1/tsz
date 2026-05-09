@@ -5,12 +5,7 @@
 //! is used as a source in subsequent assignments.
 
 use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
 use crate::test_fixtures::TestContext;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -27,42 +22,14 @@ interface Promise<T> {}
 
 fn test_no_errors(source: &str) {
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-
     let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+        &source,
+        "test.ts",
         CheckerOptions::default(),
+        &ctx.lib_files,
     );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let errors: Vec<_> = diagnostics
         .iter()
         .filter(|d| d.code != 2318) // Ignore TS2318: Cannot find global type (no lib files in tests)
         .collect();
@@ -81,43 +48,14 @@ fn test_no_errors(source: &str) {
 
 fn test_expect_error(source: &str, expected_error_substring: &str) {
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-
     let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+        &source,
+        "test.ts",
         CheckerOptions::default(),
+        &ctx.lib_files,
     );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    // Check that we got at least one error with the expected substring
-    let found_error = checker
-        .ctx
-        .diagnostics
+    let found_error = diagnostics
         .iter()
         .any(|d| d.message_text.contains(expected_error_substring));
 
@@ -125,9 +63,7 @@ fn test_expect_error(source: &str, expected_error_substring: &str) {
         panic!(
             "Expected error containing '{}', but got:\n{}",
             expected_error_substring,
-            checker
-                .ctx
-                .diagnostics
+            diagnostics
                 .iter()
                 .map(|d| format!("  {}", d.message_text))
                 .collect::<Vec<_>>()

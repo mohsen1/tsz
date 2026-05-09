@@ -18,14 +18,6 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
     let options = CheckerOptions {
         strict: true,
         allow_js: true,
@@ -34,18 +26,7 @@ fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
     }
     .apply_strict_defaults();
 
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
+    tsz_checker::test_utils::check_source(source, "test.js", options)
         .into_iter()
         .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text))

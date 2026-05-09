@@ -2126,6 +2126,11 @@ Installer.prototype.second = function () {
         5,
         "Expected closed constructor properties to report the same assignment mismatches as tsc, got: {diagnostics:?}"
     );
+    assert_eq!(
+        codes.iter().filter(|&&code| code == 2531).count(),
+        1,
+        "Expected unchecked nullable constructor property access to report TS2531 once, got: {diagnostics:?}"
+    );
     let ts7008_messages: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 7008)

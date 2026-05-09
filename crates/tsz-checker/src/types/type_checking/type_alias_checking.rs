@@ -11,11 +11,40 @@
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
 use crate::state::CheckerState;
+use std::cell::RefCell;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::def::DefId;
+
+// Reusable scratch `FxHashSet<DefId>` for the alias-resolution DFS in this
+// module. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
+thread_local! {
+    static ALIAS_DEFID_VISITED_POOL: RefCell<Option<rustc_hash::FxHashSet<DefId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_alias_defid_visited<R>(f: impl FnOnce(&mut rustc_hash::FxHashSet<DefId>) -> R) -> R {
+    let mut visited = ALIAS_DEFID_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    ALIAS_DEFID_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a> CheckerState<'a> {
     fn type_node_is_nested_in_type_literal(&self, node_idx: NodeIndex) -> bool {
@@ -64,30 +93,30 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut visited = rustc_hash::FxHashSet::default();
-        let mut pending = vec![start_def_id];
-        let mut steps = 0usize;
-        while let Some(def_id) = pending.pop() {
-            if !visited.insert(def_id) {
-                continue;
+        with_alias_defid_visited(|visited| {
+            let mut pending = vec![start_def_id];
+            let mut steps = 0usize;
+            while let Some(def_id) = pending.pop() {
+                if !visited.insert(def_id) {
+                    continue;
+                }
+                if resolving_defs.contains(&def_id) {
+                    return true;
+                }
+                let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+                    continue;
+                };
+                steps += 1;
+                if steps > 64 {
+                    break;
+                }
+                pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
+                    self.ctx.types,
+                    body,
+                ));
             }
-            if resolving_defs.contains(&def_id) {
-                return true;
-            }
-            let Some(body) = self.ctx.definition_store.get_body(def_id) else {
-                continue;
-            };
-            steps += 1;
-            if steps > 64 {
-                break;
-            }
-            pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
-                self.ctx.types,
-                body,
-            ));
-        }
-
-        false
+            false
+        })
     }
 
     /// Check a type alias declaration.
@@ -183,9 +212,18 @@ impl<'a> CheckerState<'a> {
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
         // This must be done while type parameters are still in scope.
+        let has_deferred_self_reference = alias_sym_id.is_some_and(|alias_sid| {
+            self.alias_ast_is_deferred(alias_sid)
+                && self.ctx.symbol_resolution_set.contains(&alias_sid)
+                && self.alias_ast_refs_symbol_or_resolution_chain_alias(alias.type_node, alias_sid)
+        });
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
-            let body_type = self.get_type_from_type_node(alias.type_node);
+            let body_type = if has_deferred_self_reference {
+                crate::TypeNodeChecker::new(&mut self.ctx).check(alias.type_node)
+            } else {
+                self.get_type_from_type_node(alias.type_node)
+            };
             if variance_annotations_supported {
                 self.check_variance_annotations_with_body(
                     node_idx,
@@ -197,8 +235,12 @@ impl<'a> CheckerState<'a> {
             body_type
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
-        let _ = self.evaluate_type_with_env_uncached(body_type);
-        let body_evaluation_too_complex = self.ctx.types.take_union_too_complex();
+        let body_evaluation_too_complex = if has_deferred_self_reference {
+            false
+        } else {
+            let _ = self.evaluate_type_with_env_uncached(body_type);
+            self.ctx.types.take_union_too_complex()
+        };
         if body_type != TypeId::ERROR
             && let Some(alias_sid) = alias_sym_id
         {
@@ -364,8 +406,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.check_type_node(alias.type_node);
-        self.check_type_for_missing_names(alias.type_node);
+        if has_deferred_self_reference {
+            if let Some(owner_name) = alias_name_str.as_deref() {
+                self.check_type_literal_self_indexed_property_annotations(
+                    alias.type_node,
+                    owner_name,
+                );
+            }
+            if self
+                .ctx
+                .arena
+                .get(alias.type_node)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_LITERAL)
+                && self.type_literal_has_circular_accessor_reference(alias.type_node)
+            {
+                let _ = self.get_type_from_type_literal(alias.type_node);
+            }
+        } else {
+            self.check_type_node(alias.type_node);
+            self.check_type_for_missing_names(alias.type_node);
+        }
 
         if inserted_for_circular_check && let Some(sid) = alias_sym_id {
             self.ctx.symbol_resolution_set.remove(&sid);

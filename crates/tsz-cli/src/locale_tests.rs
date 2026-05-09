@@ -49,8 +49,27 @@ fn test_load_german_locale() {
 }
 
 #[test]
-fn test_get_message_returns_fallback_for_borrowed_api_even_when_translation_exists() {
+fn test_get_message_returns_translation_when_available() {
     let locale = LocaleMessages::load("ja").expect("ja locale should load");
+    let fallback = "Cannot find name '{0}'.";
+
+    let message = locale.get_message(2304, fallback);
+    assert_ne!(message, fallback);
+    assert!(message.contains("名前"));
+    assert_eq!(message, locale.get_message_owned(2304, fallback).as_str());
+}
+
+#[test]
+fn test_get_message_returns_fallback_when_translation_missing() {
+    let locale = LocaleMessages::load("ja").expect("ja locale should load");
+    let fallback = "Unknown error";
+
+    assert_eq!(locale.get_message(99999, fallback), fallback);
+}
+
+#[test]
+fn test_get_message_returns_fallback_for_default_locale() {
+    let locale = LocaleMessages::default();
     let fallback = "Cannot find name '{0}'.";
 
     assert_eq!(locale.get_message(2304, fallback), fallback);

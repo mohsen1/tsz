@@ -2692,6 +2692,52 @@ impl Server {
         None
     }
 
+    /// Issue #3753 follow-up: report whether `target_name` (a top-level local
+    /// in `target_file`) is also the file's default export — i.e. the same
+    /// declaration backs both `module_exports[target_file][target_name]` and
+    /// `module_exports[target_file]["default"]`. tsc treats `import x from
+    /// "./a"` and `import { x } from "./a"` as both reaching such a function,
+    /// so the cross-file caller scan needs to accept default-import bindings
+    /// in addition to named-import bindings.
+    ///
+    /// Returns false when the file can't be parsed/bound, when no `default`
+    /// export exists, or when `target_name` and `default` resolve to disjoint
+    /// declaration nodes (the typical case for plain `export function`).
+    fn target_is_default_export(&self, target_file: &str, target_name: &str) -> bool {
+        if target_name == "default" {
+            return false;
+        }
+        let Some((_arena, binder, _root, _src)) = self.parse_and_bind_file(target_file) else {
+            return false;
+        };
+        let Some(file_exports) = binder.module_exports.get(target_file) else {
+            return false;
+        };
+        let Some(default_sid) = file_exports.get("default") else {
+            return false;
+        };
+        let Some(target_sid) = file_exports.get(target_name) else {
+            return false;
+        };
+        if default_sid == target_sid {
+            return true;
+        }
+        let Some(default_sym) = binder.symbols.get(default_sid) else {
+            return false;
+        };
+        let Some(target_sym) = binder.symbols.get(target_sid) else {
+            return false;
+        };
+        // Same declaration node backs both keys: `export default function NAME`,
+        // `function NAME() {}; export { NAME as default }`, etc.
+        for &decl in &default_sym.declarations {
+            if target_sym.declarations.contains(&decl) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Issue #3753: scan the other open files for cross-file callers that
     /// reach `target_item` via an `import` binding. tsc reports those as
     /// incoming calls; without this scan tsz only saw within-file callers
@@ -2714,6 +2760,14 @@ impl Server {
         let mut results: Vec<CallHierarchyIncomingCall> = Vec::new();
         let target_file_canon = Self::canonicalize_path_str(target_file);
         let target_name = target_item.name.clone();
+        // Issue #3753 follow-up: a function exported as `export default
+        // function NAME` (or `export { NAME as default }`) is reachable in
+        // other files via either `import { NAME } from "./a"` or `import
+        // <local> from "./a"`. tsc reports both as incoming calls of NAME.
+        // Detect whether the target is the file's default export so the
+        // default-import / `default`-aliased-named-import branches below also
+        // bind to it, not just exported-name matches.
+        let target_is_default_export = self.target_is_default_export(target_file, &target_name);
         // Snapshot the keys so we don't iterate while parse_and_bind_file
         // potentially mutates `open_files`.
         let other_files: Vec<String> = self
@@ -2790,8 +2844,12 @@ impl Server {
                     let clause = arena.get_import_clause(clause_node);
                     if let Some(clause) = clause {
                         // Default binding (`import target from "./a"`):
+                        // fires when the user asked for incoming calls on a
+                        // symbol literally named "default", or when the
+                        // resolved target is the file's default export — both
+                        // forms are reachable from any default-import binding.
                         if !clause.name.is_none()
-                            && target_name == "default"
+                            && (target_name == "default" || target_is_default_export)
                             && let Some(name_node) = arena.get(clause.name)
                             && let Some(ident) = arena.get_identifier(name_node)
                         {
@@ -2843,7 +2901,9 @@ impl Server {
                                     } else {
                                         continue;
                                     };
-                                    if exported != target_name {
+                                    let exported_matches = exported == target_name
+                                        || (target_is_default_export && exported == "default");
+                                    if !exported_matches {
                                         continue;
                                     }
                                     let Some(name_node) = arena.get(specifier.name) else {

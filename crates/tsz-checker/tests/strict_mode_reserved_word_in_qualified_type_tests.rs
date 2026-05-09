@@ -13,31 +13,8 @@
 //! `private`, `protected`, `package`, `interface`, `implements`,
 //! `static`, `let`, `yield` triggers it.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_checker::context::CheckerOptions;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
 fn checker_diag_codes(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let opts = CheckerOptions::default();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        opts,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    tsz_checker::test_utils::check_source_codes(source)
 }
 
 const TS1212: u32 = 1212;
