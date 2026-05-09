@@ -361,14 +361,12 @@ impl<'a> CheckerState<'a> {
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
-            if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
-                && let Some(unfolded) = self.ts2739_alias_of_application_source_display(source)
-            {
-                source_str = self.format_type_diagnostic(unfolded);
-            }
-            if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
-                target_str = self.format_type_diagnostic(unfolded);
-            }
+            // NOTE: do not apply `ts2739_alias_of_application_source_display`
+            // here. That helper unfolds `type B = A<X>` to `A<X>` for the
+            // TS2739 / TS2741 missing-properties messages where tsc displays
+            // the body application form. For the generic TS2322 mismatch,
+            // tsc preserves the alias name (`B`), so the unfold must stay
+            // scoped to the missing-property render paths above.
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
                 source_str = display;
             }
