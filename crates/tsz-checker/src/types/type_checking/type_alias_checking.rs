@@ -186,6 +186,7 @@ impl<'a> CheckerState<'a> {
         let has_deferred_self_reference = alias_sym_id.is_some_and(|alias_sid| {
             self.alias_ast_is_deferred(alias_sid)
                 && self.ctx.symbol_resolution_set.contains(&alias_sid)
+                && self.alias_ast_refs_symbol_or_resolution_chain_alias(alias.type_node, alias_sid)
         });
         let body_type = {
             let _ = self.ctx.types.take_union_too_complex();
@@ -376,7 +377,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if !has_deferred_self_reference {
+        if has_deferred_self_reference {
+            if self
+                .ctx
+                .arena
+                .get(alias.type_node)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_LITERAL)
+                && self.type_literal_has_circular_accessor_reference(alias.type_node)
+            {
+                let _ = self.get_type_from_type_literal(alias.type_node);
+            }
+        } else {
             self.check_type_node(alias.type_node);
             self.check_type_for_missing_names(alias.type_node);
         }

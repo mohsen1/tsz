@@ -838,6 +838,46 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn alias_ast_refs_symbol_or_resolution_chain_alias(
+        &self,
+        root_idx: NodeIndex,
+        primary_sym_id: SymbolId,
+    ) -> bool {
+        let mut stack = vec![root_idx];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+
+            let lookup_target_idx = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx.arena.get_type_ref(node).map(|tr| tr.type_name)
+            } else if node.kind == SyntaxKind::Identifier as u16 {
+                Some(node_idx)
+            } else {
+                None
+            };
+            if let Some(target_idx) = lookup_target_idx
+                && let Some(sym_raw) = self.resolve_type_symbol_for_lowering(target_idx)
+            {
+                let sym_id = SymbolId(sym_raw);
+                if (sym_id == primary_sym_id || self.ctx.symbol_resolution_set.contains(&sym_id))
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                {
+                    return true;
+                }
+            }
+
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                stack.push(child_idx);
+            }
+        }
+        false
+    }
+
     /// True when the `typeof X` target's variable annotation references any type
     /// alias in the current resolution chain. Marks the chain as circular when
     /// found. AST-only — never resolves x's type, to avoid re-entering alias
