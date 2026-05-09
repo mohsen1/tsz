@@ -4358,6 +4358,70 @@ class C12 {
     );
 }
 
+/// Regression: a `TupleType` whose source has JSDoc comments preceding
+/// individual members must round-trip in d.ts emit as a multi-line
+/// tuple with each comment on its own line, mirroring tsc's behaviour
+/// (see `namedTupleMembers.SegmentAnnotated`).
+///
+/// Counter-regression: tuples *without* leading JSDoc on any member
+/// must keep the compact one-line shape — the multi-line switch is
+/// JSDoc-only, not "any time we have named tuple members" or "any
+/// time we have a rest element".
+#[test]
+fn ts_tuple_with_jsdoc_member_emits_multiline_with_comments() {
+    let output = emit_dts(
+        r#"
+export type SegmentAnnotated = [
+    /**
+     * Size of message buffer segment handles
+     */
+    length: number,
+    /**
+     * Number of segments handled at once
+     */
+    count: number
+];
+"#,
+    );
+    assert!(
+        output.contains("/**\n     * Size of message buffer segment handles\n     */"),
+        "tuple-member JSDoc should round-trip in d.ts emit: {output}"
+    );
+    assert!(
+        output.contains("/**\n     * Number of segments handled at once\n     */"),
+        "second tuple-member JSDoc should round-trip too: {output}"
+    );
+    let length_idx = output.find("length: number").expect("length member");
+    let count_idx = output.find("count: number").expect("count member");
+    assert!(
+        length_idx < count_idx,
+        "tuple member order must be preserved: {output}"
+    );
+}
+
+#[test]
+fn ts_tuple_without_jsdoc_member_keeps_single_line_form() {
+    let output = emit_dts(
+        r#"
+export type Segment = [length: number, count: number];
+export type WithRest = [first: number, second?: number, ...rest: string[]];
+"#,
+    );
+    let trimmed = output.trim();
+    assert!(
+        trimmed
+            .lines()
+            .any(|l| l.contains("export type Segment = [length: number, count: number];")),
+        "non-annotated tuple should stay single-line: {output}"
+    );
+    assert!(
+        trimmed.lines().any(|l| l.contains(
+            "export type WithRest = [first: number, second?: number, ...rest: string[]];"
+        )),
+        "rest-only tuple without JSDoc should stay single-line: {output}"
+    );
+}
+
 /// Counter-regression: when computed-named instance members appear in
 /// source order *before* static members, the static members must still
 /// hoist to the top of the d.ts class body — that's the actual rule
