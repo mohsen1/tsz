@@ -23,7 +23,6 @@
 //! requires the comprehensive default-target lib graph and the
 //! implements-clause path; that is exercised as a conformance test.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use tsz_binder::{BinderState, lib_loader::LibFile};
@@ -36,26 +35,7 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut loaded = Vec::new();
-    for name in names {
-        let candidates = [
-            manifest_dir.join(format!("../../scripts/node_modules/typescript/lib/{name}")),
-            manifest_dir.join(format!(
-                "../../scripts/conformance/node_modules/typescript/lib/{name}"
-            )),
-            manifest_dir.join(format!("../../TypeScript/lib/{name}")),
-        ];
-        for path in candidates {
-            if path.exists()
-                && let Ok(content) = std::fs::read_to_string(&path)
-            {
-                loaded.push(Arc::new(LibFile::from_source((*name).to_string(), content)));
-                break;
-            }
-        }
-    }
-    loaded
+    tsz_checker::test_utils::load_compiled_lib_files(names)
 }
 
 fn check_with_iterable_libs(source: &str) -> Vec<Diagnostic> {
