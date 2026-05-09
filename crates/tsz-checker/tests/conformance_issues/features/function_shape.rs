@@ -1,6 +1,42 @@
 use super::super::core::*;
 
 #[test]
+fn test_recursive_spread_conditional_return_does_not_report_identical_option_arg() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+export {}
+export interface Option<T> {
+    zip1<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray1<O>]>;
+    zip2<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray2<O>]>;
+    zip3<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray3<O>]>;
+}
+
+type UnzipOption<T> = T extends Option<infer V> ? V : never;
+type UnzipOptionArray1<T> = { [k in keyof T]: T[k] extends Option<any> ? UnzipOption<T[k]> : never };
+type UnzipOptionArray2<T> = { [k in keyof T]: UnzipOption<T[k]> };
+type UnzipOptionArray3<T> = { [k in keyof T]: T[k] extends Option<infer V> ? V : never };
+
+declare const opt1: Option<number>;
+declare const opt2: Option<string>;
+declare const opt3: Option<boolean>;
+
+const zipped1 = opt1.zip1(opt2, opt3);
+const zipped2 = opt1.zip2(opt2, opt3);
+const zipped3 = opt1.zip3(opt2, opt3);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect TS2345 when recursive spread conditional aliases reduce to identical Option<T> arguments. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_literal_widening_direct_generic_callee_keeps_call_signature() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"

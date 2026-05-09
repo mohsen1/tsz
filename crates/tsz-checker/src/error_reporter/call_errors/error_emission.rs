@@ -16,15 +16,11 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Report an argument not assignable error using solver diagnostics with source tracking.
-    /// When solver failure analysis identifies a specific reason (e.g. missing property),
-    /// the detailed diagnostic is emitted as related information matching tsc's behavior.
-    pub fn error_argument_not_assignable_at(
+    pub(crate) fn should_suppress_argument_not_assignable_diagnostic(
         &mut self,
         arg_type: TypeId,
         param_type: TypeId,
-        idx: NodeIndex,
-    ) {
+    ) -> bool {
         // Suppress when types are identical or either is a special escape-hatch type.
         if arg_type == param_type
             || arg_type == TypeId::ERROR
@@ -36,6 +32,65 @@ impl<'a> CheckerState<'a> {
             || arg_type == TypeId::UNKNOWN
             || param_type == TypeId::UNKNOWN
         {
+            return true;
+        }
+
+        if crate::query_boundaries::assignability::are_types_structurally_identical(
+            self.ctx.types,
+            &self.ctx,
+            arg_type,
+            param_type,
+        ) {
+            return true;
+        }
+
+        self.same_non_class_nominal_display(arg_type, param_type)
+    }
+
+    fn same_non_class_nominal_display(&mut self, arg_type: TypeId, param_type: TypeId) -> bool {
+        let arg_display = self.format_type_diagnostic(arg_type);
+        if arg_display != self.format_type_diagnostic(param_type)
+            || !arg_display.contains('<')
+            || arg_display.starts_with("typeof ")
+        {
+            return false;
+        }
+
+        match (
+            self.non_class_nominal_def(arg_type),
+            self.non_class_nominal_def(param_type),
+        ) {
+            (Some(arg_def), Some(param_def)) => arg_def == param_def,
+            (Some(_), None) | (None, Some(_)) => true,
+            (None, None) => false,
+        }
+    }
+
+    fn non_class_nominal_def(&mut self, type_id: TypeId) -> Option<tsz_solver::DefId> {
+        let def_id = self.nominal_def_for_argument_display(type_id).or_else(|| {
+            let evaluated = self.evaluate_type_for_assignability(type_id);
+            self.nominal_def_for_argument_display(evaluated)
+        })?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        (!matches!(def.kind, tsz_solver::def::DefKind::Class)).then_some(def_id)
+    }
+
+    fn nominal_def_for_argument_display(&self, type_id: TypeId) -> Option<tsz_solver::DefId> {
+        crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+            .and_then(|app| crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base))
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id))
+    }
+
+    /// Report an argument not assignable error using solver diagnostics with source tracking.
+    /// When solver failure analysis identifies a specific reason (e.g. missing property),
+    /// the detailed diagnostic is emitted as related information matching tsc's behavior.
+    pub fn error_argument_not_assignable_at(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
             return;
         }
 
