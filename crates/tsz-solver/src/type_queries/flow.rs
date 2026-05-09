@@ -11,7 +11,36 @@ use crate::type_queries::{
     get_callable_shape_for_type, get_string_literal_value, get_union_members, is_invokable_type,
 };
 use crate::types::{CallSignature, ParamInfo, TypeData, TypeId};
+use rustc_hash::FxHashSet;
+use std::cell::RefCell;
 use tsz_common::Atom;
+
+// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS used by
+// `has_type_query_for_symbol`. Mirrors the pool pattern from #4722 / #4790
+// and several follow-up PRs.
+thread_local! {
+    static FLOW_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_flow_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = FLOW_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    FLOW_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 // =============================================================================
 // Control Flow Type Classification Helpers
@@ -1755,73 +1784,70 @@ pub fn has_type_query_for_symbol(
     target_sym_id: u32,
     mut resolve_lazy: impl FnMut(TypeId) -> TypeId,
 ) -> bool {
-    use crate::TypeData;
-    use rustc_hash::FxHashSet;
-
-    let mut worklist = vec![type_id];
-    let mut visited = FxHashSet::default();
-
-    while let Some(ty) = worklist.pop() {
-        if !visited.insert(ty) {
-            continue;
-        }
-
-        if ty.is_intrinsic() {
-            continue;
-        }
-
-        let resolved = resolve_lazy(ty);
-        if resolved != ty {
-            worklist.push(resolved);
-            continue;
-        }
-
-        let Some(key) = db.lookup(ty) else { continue };
-        match key {
-            TypeData::TypeQuery(sym_ref) if sym_ref.0 == target_sym_id => {
-                return true;
+    with_flow_visited(|visited| {
+        let mut worklist = vec![type_id];
+        while let Some(ty) = worklist.pop() {
+            if !visited.insert(ty) {
+                continue;
             }
-            TypeData::Array(elem) => worklist.push(elem),
-            TypeData::Union(list) | TypeData::Intersection(list) => {
-                let members = db.type_list(list);
-                worklist.extend(members.iter().copied());
+
+            if ty.is_intrinsic() {
+                continue;
             }
-            TypeData::Tuple(list) => {
-                let elements = db.tuple_list(list);
-                for elem in elements.iter() {
-                    worklist.push(elem.type_id);
+
+            let resolved = resolve_lazy(ty);
+            if resolved != ty {
+                worklist.push(resolved);
+                continue;
+            }
+
+            let Some(key) = db.lookup(ty) else { continue };
+            match key {
+                TypeData::TypeQuery(sym_ref) if sym_ref.0 == target_sym_id => {
+                    return true;
                 }
+                TypeData::Array(elem) => worklist.push(elem),
+                TypeData::Union(list) | TypeData::Intersection(list) => {
+                    let members = db.type_list(list);
+                    worklist.extend(members.iter().copied());
+                }
+                TypeData::Tuple(list) => {
+                    let elements = db.tuple_list(list);
+                    for elem in elements.iter() {
+                        worklist.push(elem.type_id);
+                    }
+                }
+                TypeData::Conditional(id) => {
+                    let cond = db.conditional_type(id);
+                    worklist.push(cond.check_type);
+                    worklist.push(cond.extends_type);
+                    worklist.push(cond.true_type);
+                    worklist.push(cond.false_type);
+                }
+                TypeData::Application(id) => {
+                    let app = db.type_application(id);
+                    worklist.push(app.base);
+                    worklist.extend(&app.args);
+                }
+                TypeData::IndexAccess(obj, idx) => {
+                    worklist.push(obj);
+                    worklist.push(idx);
+                }
+                TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
+                    worklist.push(inner);
+                }
+                TypeData::Function(_)
+                | TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Mapped(_) => {
+                    // These types break the "direct" reference cycle logic for TS2502.
+                    // Recursive types via function return/params or object properties are allowed.
+                }
+                _ => {}
             }
-            TypeData::Conditional(id) => {
-                let cond = db.conditional_type(id);
-                worklist.push(cond.check_type);
-                worklist.push(cond.extends_type);
-                worklist.push(cond.true_type);
-                worklist.push(cond.false_type);
-            }
-            TypeData::Application(id) => {
-                let app = db.type_application(id);
-                worklist.push(app.base);
-                worklist.extend(&app.args);
-            }
-            TypeData::IndexAccess(obj, idx) => {
-                worklist.push(obj);
-                worklist.push(idx);
-            }
-            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
-                worklist.push(inner);
-            }
-            TypeData::Function(_)
-            | TypeData::Object(_)
-            | TypeData::ObjectWithIndex(_)
-            | TypeData::Mapped(_) => {
-                // These types break the "direct" reference cycle logic for TS2502.
-                // Recursive types via function return/params or object properties are allowed.
-            }
-            _ => {}
         }
-    }
-    false
+        false
+    })
 }
 
 /// Extract contextual type parameters from a type.
