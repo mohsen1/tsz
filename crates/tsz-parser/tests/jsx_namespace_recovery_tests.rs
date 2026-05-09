@@ -1,9 +1,8 @@
-use crate::parser::state::ParserState;
+use crate::parser::test_fixture::parse_source_named;
 use tsz_common::diagnostics::diagnostic_codes;
 
 fn parse_diagnostics(source: &str) -> Vec<(u32, u32, String)> {
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_named("test.tsx", source);
     parser
         .parse_diagnostics
         .iter()
