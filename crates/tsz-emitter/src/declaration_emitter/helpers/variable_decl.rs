@@ -198,7 +198,29 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 let has_public_import_type = Self::type_text_starts_with_import_type(&type_text)
                     && !self.import_type_uses_private_package_subpath(&type_text);
+                let type_text = self.qualify_current_namespace_self_type_text(&type_text);
+                let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
+                let type_text = self
+                    .expand_portable_mapped_object_text_in_current_context(&type_text)
+                    .unwrap_or(type_text);
+                let type_text = Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
+                    .unwrap_or(type_text);
+                let type_text = Self::normalize_inferred_array_any_text(&type_text);
+                let has_reusable_surface_type = self
+                    .type_text_is_directly_nameable_reference(&type_text)
+                    && (Self::type_text_starts_with_import_type(&type_text)
+                        || type_text.contains(['<', '.']));
+                self.write(": ");
+                if keyword == "const"
+                    && let Some(formatted) =
+                        self.call_initializer_unexported_alias_literal_text(initializer)
+                {
+                    self.write(&formatted);
+                } else {
+                    self.write(&type_text);
+                }
                 if !has_public_import_type
+                    && !has_reusable_surface_type
                     && let Some(name_text) = self.get_identifier_text(decl_name)
                     && let Some(name_node) = self.arena.get(decl_name)
                     && let Some(file_path) = self.current_file_path.clone()
@@ -210,23 +232,6 @@ impl<'a> DeclarationEmitter<'a> {
                         name_node.pos,
                         name_node.end - name_node.pos,
                     );
-                }
-                let type_text = self.qualify_current_namespace_self_type_text(&type_text);
-                let type_text = Self::strip_synthetic_anonymous_object_members(&type_text);
-                let type_text = self
-                    .expand_portable_mapped_object_text_in_current_context(&type_text)
-                    .unwrap_or(type_text);
-                let type_text = Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
-                    .unwrap_or(type_text);
-                let type_text = Self::normalize_inferred_array_any_text(&type_text);
-                self.write(": ");
-                if keyword == "const"
-                    && let Some(formatted) =
-                        self.call_initializer_unexported_alias_literal_text(initializer)
-                {
-                    self.write(&formatted);
-                } else {
-                    self.write(&type_text);
                 }
             } else if has_initializer
                 && (self.emit_ts_late_bound_function_initializer_type_annotation(
@@ -291,6 +296,9 @@ impl<'a> DeclarationEmitter<'a> {
                     self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
                 }
 
+                let initializer_preferred_type_text = has_initializer
+                    .then_some(initializer)
+                    .and_then(|initializer| self.preferred_expression_type_text(initializer));
                 let directly_nameable_type_text = Some(selected_type_text)
                     .filter(|text| self.type_text_is_directly_nameable_reference(text))
                     .or_else(|| {
@@ -301,8 +309,17 @@ impl<'a> DeclarationEmitter<'a> {
                         (printed_is_safe_fallback
                             && self.type_text_is_directly_nameable_reference(&printed_type_text))
                         .then_some(printed_type_text.as_str())
+                    })
+                    .or_else(|| {
+                        initializer_preferred_type_text
+                            .as_deref()
+                            .filter(|text| self.type_text_is_directly_nameable_reference(text))
                     });
                 let preferred_type_is_directly_nameable = directly_nameable_type_text.is_some();
+                let has_reusable_tagged_template_surface = has_initializer
+                    && self.arena.get(initializer).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+                    });
                 // TS2883: Check for non-portable inferred type references
                 if let Some(name_text) = self.get_identifier_text(decl_name)
                     && let Some(name_node) = self.arena.get(decl_name)
@@ -349,7 +366,9 @@ impl<'a> DeclarationEmitter<'a> {
                             directly_nameable_type_text.is_some_and(|t| {
                                 is_safe_import_type || t.contains('<') || t.contains('.')
                             });
-                        if !preferred_type_is_directly_nameable || !is_safe_reused_surface_type {
+                        if (!preferred_type_is_directly_nameable || !is_safe_reused_surface_type)
+                            && !has_reusable_tagged_template_surface
+                        {
                             ran_symbol_check = true;
                             self.check_non_portable_type_references(
                                 type_id,
@@ -360,18 +379,13 @@ impl<'a> DeclarationEmitter<'a> {
                             );
                         }
                     }
-                    // For call initializers, the inferred type may be printable
-                    // while losing the declaration-site aliases that determine
-                    // portability. Trace through the callee's declared return
-                    // annotation. TS2883 normalization already drops duplicate
-                    // named-reference diagnostics, while this preserves nested
-                    // declaration-site imports that the inferred type graph can
-                    // lose.
-                    let has_public_import_type = directly_nameable_type_text.is_some_and(|text| {
-                        Self::type_text_starts_with_import_type(text)
-                            && !self.import_type_uses_private_package_subpath(text)
-                    });
-                    if has_initializer && !has_public_import_type {
+                    let has_safe_reused_surface_type =
+                        directly_nameable_type_text.is_some_and(|text| {
+                            (Self::type_text_starts_with_import_type(text)
+                                && !self.import_type_uses_private_package_subpath(text))
+                                || text.contains(['<', '.'])
+                        }) || has_reusable_tagged_template_surface;
+                    if has_initializer && !has_safe_reused_surface_type {
                         self.check_call_expression_return_type_portability(
                             initializer,
                             &name_text,
