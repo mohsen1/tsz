@@ -6,12 +6,7 @@
 //! (`number` for `12`), not the JSDoc-declared target (`string`). This is the
 //! same shape as the existing CommonJS `module.exports = X` carve-out.
 
-use rustc_hash::FxHashSet;
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
     diagnostics_for_js_with_no_implicit_any(source, false)
@@ -21,37 +16,22 @@ fn diagnostics_for_js_with_no_implicit_any(
     source: &str,
     no_implicit_any: bool,
 ) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        allow_js: true,
-        check_js: true,
-        strict: true,
-        no_implicit_this: true,
-        strict_null_checks: true,
-        no_implicit_any,
-        ..CheckerOptions::default()
-    };
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    let _: FxHashSet<u32> = FxHashSet::default(); // keep import alive in case
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_this: true,
+            strict_null_checks: true,
+            no_implicit_any,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 /// A checked-JS constructor assigned to a variable can acquire instance
