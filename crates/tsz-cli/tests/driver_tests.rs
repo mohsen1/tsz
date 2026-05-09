@@ -8211,10 +8211,10 @@ fn compile_resolves_package_exports_versioned_condition_respects_compiler_versio
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.iter().any(|diag| {
-            diag.file
-                .contains("node_modules/inner/types-v7/index.d.ts")
-        }),
+        result
+            .diagnostics
+            .iter()
+            .any(|diag| { diag.file.contains("node_modules/inner/types-v7/index.d.ts") }),
         "expected `types@>=7` branch to be selected under the override; got diagnostics: {:?}",
         result.diagnostics
     );
