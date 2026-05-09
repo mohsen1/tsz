@@ -11,7 +11,7 @@ use crate::wasm_api::language_service::TsLanguageService;
 use crate::wasm_api::program::create_ts_program;
 use crate::wasm_api::utilities::{
     create_source_file, is_keyword, is_punctuation, parse_config_file_text_to_json,
-    parse_json_text, syntax_kind_to_name, token_to_string,
+    parse_json_text, scan_tokens, syntax_kind_to_name, token_to_string,
 };
 use crate::{Parser, TsDiagnostic, TsProgram, TsSourceFile, TsSymbol, TsType};
 use tsz_scanner::SyntaxKind;
@@ -377,6 +377,61 @@ fn test_wasm_utility_kind_predicates_and_token_text() {
     assert!(is_punctuation(SyntaxKind::SlashToken as u16));
     assert_eq!(token_to_string(42), Some("/".to_string()));
     assert!(is_keyword(SyntaxKind::ClassKeyword as u16));
+}
+
+#[test]
+fn test_wasm_scan_tokens_returns_real_tokens() {
+    // Empty input -> empty array.
+    let empty = scan_tokens("");
+    let empty_value: Value = serde_json::from_str(&empty).unwrap();
+    assert!(empty_value.is_array());
+    assert_eq!(empty_value.as_array().unwrap().len(), 0);
+
+    // `let x = 1;` produces five non-trivia tokens with the expected kinds,
+    // text, and source spans. Trivia is skipped to match TS's default
+    // `createScanner(target, /*skipTrivia*/ true)` contract.
+    let json = scan_tokens("let x = 1;");
+    let value: Value = serde_json::from_str(&json).unwrap();
+    let arr = value
+        .as_array()
+        .expect("scanTokens should return a JSON array");
+    assert_eq!(arr.len(), 5, "expected 5 tokens, got: {json}");
+
+    let expected: &[(u16, &str, u32, u32)] = &[
+        (SyntaxKind::LetKeyword as u16, "let", 0, 3),
+        (SyntaxKind::Identifier as u16, "x", 4, 5),
+        (SyntaxKind::EqualsToken as u16, "=", 6, 7),
+        (SyntaxKind::NumericLiteral as u16, "1", 8, 9),
+        (SyntaxKind::SemicolonToken as u16, ";", 9, 10),
+    ];
+    for (i, (kind, text, start, end)) in expected.iter().enumerate() {
+        let tok = &arr[i];
+        assert_eq!(
+            tok["kind"].as_u64().unwrap() as u16,
+            *kind,
+            "kind mismatch at {i}"
+        );
+        assert_eq!(tok["text"].as_str().unwrap(), *text, "text mismatch at {i}");
+        assert_eq!(
+            tok["start"].as_u64().unwrap() as u32,
+            *start,
+            "start mismatch at {i}"
+        );
+        assert_eq!(
+            tok["end"].as_u64().unwrap() as u32,
+            *end,
+            "end mismatch at {i}"
+        );
+    }
+
+    // EndOfFileToken is not emitted as a token entry.
+    for tok in arr {
+        assert_ne!(
+            tok["kind"].as_u64().unwrap() as u16,
+            SyntaxKind::EndOfFileToken as u16,
+            "EndOfFileToken should be omitted"
+        );
+    }
 }
 
 #[test]
