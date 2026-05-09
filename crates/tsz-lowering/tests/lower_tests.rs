@@ -2612,15 +2612,7 @@ interface Foo {
     bar(x: number): number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let arena = std::mem::take(&mut parser.arena);
+    let arena = parse_and_take_arena(source);
     let interner = TypeInterner::new();
     let lowering = TypeLowering::new(&arena, &interner);
 
