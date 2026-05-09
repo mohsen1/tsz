@@ -59,6 +59,32 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
             return None;
         }
+        // Suppress when the alias body has explicit type arguments
+        // (e.g. `type B = A<X>;`). tsc unfolds such aliases at TS2739
+        // source display to `A<X>`, so storing the bare alias would lose
+        // the unfold target. Bare-reference bodies (`type B = A;` where
+        // `A` carries defaults) keep the alias name.
+        let body_has_explicit_type_args = symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            let Some(body_node) = self.ctx.arena.get(alias.type_node) else {
+                return false;
+            };
+            if body_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            self.ctx
+                .arena
+                .get_type_ref(body_node)
+                .is_some_and(|body_ref| body_ref.type_arguments.is_some())
+        });
+        if body_has_explicit_type_args {
+            return None;
+        }
         let resolves_to_application =
             crate::query_boundaries::common::application_info(self.ctx.types, resolved_type)
                 .is_some();
