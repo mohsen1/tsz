@@ -125,6 +125,26 @@ fn object_type_nested_multiline() {
 }
 
 #[test]
+fn recursive_printing_respects_max_depth() {
+    let interner = tsz_solver::TypeInterner::new();
+    let name_inner = interner.intern_string("inner");
+    let name_leaf = interner.intern_string("leaf");
+
+    let inner_obj = interner.object(vec![tsz_solver::types::PropertyInfo::new(
+        name_leaf,
+        TypeId::STRING,
+    )]);
+    let outer_obj = interner.object(vec![tsz_solver::types::PropertyInfo::new(
+        name_inner, inner_obj,
+    )]);
+
+    let printer = TypePrinter::new(&interner).with_max_depth(2);
+    let result = printer.print_type(outer_obj);
+
+    assert_eq!(result, "{ inner: { leaf: any } }");
+}
+
+#[test]
 fn empty_object_type_stays_inline() {
     let interner = tsz_solver::TypeInterner::new();
     let obj = interner.object(vec![]);
