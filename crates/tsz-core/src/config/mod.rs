@@ -1,8 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
-use serde::{Deserialize, Deserializer};
-use std::collections::VecDeque;
-
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Deserializer};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -4299,22 +4297,20 @@ fn resolve_lib_files_from_dir_inner(
     }
 
     let lib_map = build_lib_map(lib_dir)?;
-    let mut resolved = Vec::new();
-    // (lib_name, is_initial) — initial entries come from user compilerOptions.lib
-    // and must resolve; transitive entries come from `/// <reference lib="..." />`
-    // directives inside lib files (or user sources) and are skipped silently when
-    // unknown, matching `tsc` behavior. This matters in practice: rxjs and other
-    // older libraries reference libs like `esnext.asynciterable` that have since
-    // been renamed/folded into newer lib names.
-    let mut pending: VecDeque<(String, bool)> = lib_list
-        .iter()
-        .map(|value| (normalize_lib_name(value), initial_is_required))
-        .collect();
     let mut visited = FxHashSet::default();
+    let mut resolved = Vec::new();
 
-    while let Some((lib_name, is_required)) = pending.pop_front() {
-        if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
-            continue;
+    fn visit_lib(
+        lib_name: String,
+        is_required: bool,
+        follow_references: bool,
+        lib_dir: &Path,
+        lib_map: &FxHashMap<String, PathBuf>,
+        visited: &mut FxHashSet<String>,
+        resolved: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        if lib_name.is_empty() || visited.contains(&lib_name) {
+            return Ok(());
         }
 
         let path = match lib_map.get(&lib_name) {
@@ -4327,19 +4323,61 @@ fn resolve_lib_files_from_dir_inner(
                         lib_dir.display()
                     ));
                 }
-                continue;
+                return Ok(());
             }
         };
-        resolved.push(path.clone());
+        visited.insert(lib_name);
 
-        // Only follow /// <reference lib="..." /> directives if requested
-        if follow_references {
+        let references = if follow_references {
             let contents = std::fs::read_to_string(&path)
                 .with_context(|| format!("failed to read lib file {}", path.display()))?;
-            for reference in extract_lib_references(&contents) {
-                pending.push_back((reference, false));
-            }
+            extract_lib_references(&contents)
+        } else {
+            Vec::new()
+        };
+
+        if let Some(reference) = references.first() {
+            visit_lib(
+                reference.clone(),
+                false,
+                follow_references,
+                lib_dir,
+                lib_map,
+                visited,
+                resolved,
+            )?;
         }
+
+        resolved.push(path);
+
+        for reference in references.into_iter().skip(1) {
+            visit_lib(
+                reference,
+                false,
+                follow_references,
+                lib_dir,
+                lib_map,
+                visited,
+                resolved,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    // Initial entries come from user compilerOptions.lib and must resolve;
+    // transitive entries come from lib-file `/// <reference lib="..." />`
+    // directives and are skipped silently when unknown, matching `tsc`.
+    for value in lib_list {
+        visit_lib(
+            normalize_lib_name(value),
+            initial_is_required,
+            follow_references,
+            lib_dir,
+            &lib_map,
+            &mut visited,
+            &mut resolved,
+        )?;
     }
 
     Ok(resolved)
@@ -4626,18 +4664,20 @@ fn resolve_lib_files_from_embedded_inner(
 
     let lib_map = build_lib_map_from_embedded();
     let embedded_dir = Path::new(EMBEDDED_LIB_DIR);
-    let mut resolved = Vec::new();
-    // See sibling `resolve_lib_files_from_dir_with_options` for why transitive
-    // references are skipped silently when unknown.
-    let mut pending: VecDeque<(String, bool)> = lib_list
-        .iter()
-        .map(|value| (normalize_lib_name(value), initial_is_required))
-        .collect();
     let mut visited = FxHashSet::default();
+    let mut resolved = Vec::new();
 
-    while let Some((lib_name, is_required)) = pending.pop_front() {
-        if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
-            continue;
+    fn visit_lib(
+        lib_name: String,
+        is_required: bool,
+        follow_references: bool,
+        embedded_dir: &Path,
+        lib_map: &FxHashMap<&'static str, &'static str>,
+        visited: &mut FxHashSet<String>,
+        resolved: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        if lib_name.is_empty() || visited.contains(&lib_name) {
+            return Ok(());
         }
 
         let filename = match lib_map.get(lib_name.as_str()) {
@@ -4648,17 +4688,58 @@ fn resolve_lib_files_from_embedded_inner(
                         "unsupported compilerOptions.lib '{lib_name}' (not found in embedded libs)",
                     ));
                 }
-                continue;
+                return Ok(());
             }
         };
+        visited.insert(lib_name);
+
+        let references = if follow_references {
+            crate::embedded_libs::get_lib_content(filename)
+                .map(extract_lib_references)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        if let Some(reference) = references.first() {
+            visit_lib(
+                reference.clone(),
+                false,
+                follow_references,
+                embedded_dir,
+                lib_map,
+                visited,
+                resolved,
+            )?;
+        }
+
         resolved.push(embedded_dir.join(filename));
 
-        if follow_references && let Some(content) = crate::embedded_libs::get_lib_content(filename)
-        {
-            for reference in extract_lib_references(content) {
-                pending.push_back((reference, false));
-            }
+        for reference in references.into_iter().skip(1) {
+            visit_lib(
+                reference,
+                false,
+                follow_references,
+                embedded_dir,
+                lib_map,
+                visited,
+                resolved,
+            )?;
         }
+
+        Ok(())
+    }
+
+    for value in lib_list {
+        visit_lib(
+            normalize_lib_name(value),
+            initial_is_required,
+            follow_references,
+            embedded_dir,
+            &lib_map,
+            &mut visited,
+            &mut resolved,
+        )?;
     }
 
     Ok(resolved)
@@ -8234,6 +8315,44 @@ mod tests {
         assert!(
             names.iter().any(|n| n == "esnext.collection.d.ts"),
             "expected esnext.collection in resolved set, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_esnext_lib_loads_dependency_chain_before_root() {
+        let paths = resolve_lib_files_from_embedded(&["esnext".to_string()], true)
+            .expect("embedded esnext should resolve");
+        let names: Vec<String> = paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(String::from))
+            .collect();
+        let es5 = names
+            .iter()
+            .position(|name| name == "es5.d.ts")
+            .expect("esnext should include es5 through referenced libs");
+        let esnext = names
+            .iter()
+            .position(|name| name == "esnext.d.ts")
+            .expect("esnext root should be included");
+        let es2021 = names
+            .iter()
+            .position(|name| name == "es2021.d.ts")
+            .expect("esnext should include es2021 through referenced libs");
+        let es2021_intl = names
+            .iter()
+            .position(|name| name == "es2021.intl.d.ts")
+            .expect("esnext should include es2021.intl through referenced libs");
+        let esnext_intl = names
+            .iter()
+            .position(|name| name == "esnext.intl.d.ts")
+            .expect("esnext should include esnext.intl through referenced libs");
+        assert!(
+            es5 < esnext,
+            "tsc loads base ES libs before lib.esnext.d.ts; got {names:?}"
+        );
+        assert!(
+            esnext < esnext_intl && es2021 < es2021_intl,
+            "tsc loads umbrella libs before component libs; got {names:?}"
         );
     }
 
