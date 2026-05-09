@@ -243,8 +243,10 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
+                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
                 .or_else(|| self.get_node_type_or_names(&[method_name]))
-                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name));
+                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
+                .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
             if let Some(method_type_id) = method_type_id
                 && let Some(return_type_id) =
@@ -343,8 +345,10 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
+                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
                 .or_else(|| self.get_node_type_or_names(&[method_name]))
-                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name));
+                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
+                .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
             if let Some(method_type_id) = method_type_id
                 && let Some(return_type_id) =
