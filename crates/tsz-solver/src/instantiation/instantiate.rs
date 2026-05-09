@@ -21,7 +21,36 @@ use crate::types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::cell::RefCell;
 use tsz_common::interner::Atom;
+
+// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS used by
+// `instantiate_type_params_to_constraints`. Mirrors the pool pattern from
+// #4722 / #4790 / #4801.
+thread_local! {
+    static CONSTRAINT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = CONSTRAINT_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    CONSTRAINT_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Mode bit: `substitute_infer = true`.
 const MODE_SUBSTITUTE_INFER: u8 = 0b001;
@@ -1976,13 +2005,14 @@ pub fn instantiate_type_cached(
 /// such as `T` or `K`.
 pub fn instantiate_type_params_to_constraints(db: &dyn QueryDatabase, type_id: TypeId) -> TypeId {
     let mut substitution = TypeSubstitution::new();
-    let mut visited = FxHashSet::default();
-    collect_type_param_constraint_substitutions(
-        db.as_type_database(),
-        type_id,
-        &mut substitution,
-        &mut visited,
-    );
+    with_constraint_visited(|visited| {
+        collect_type_param_constraint_substitutions(
+            db.as_type_database(),
+            type_id,
+            &mut substitution,
+            visited,
+        );
+    });
     if substitution.is_empty() {
         type_id
     } else {
