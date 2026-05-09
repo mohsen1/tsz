@@ -5,7 +5,6 @@
 //! 2. TS2304 is NOT emitted when lib.d.ts is loaded and provides the name
 //! 3. The "Any poisoning" effect is eliminated
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_binder::{BinderState, lib_loader::LibFile};
@@ -21,48 +20,11 @@ fn diagnostic_contains(diagnostic: &Diagnostic, fragment: &str) -> bool {
 }
 
 fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
 fn load_es5_and_dom_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let mut lib_files = load_es5_lib_files_for_test();
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
-    ];
-
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-
-    lib_files
+    tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
 }
 
 /// Helper function to check source with lib.es5.d.ts and return diagnostics.
@@ -118,38 +80,12 @@ fn check_without_lib(source: &str) -> Vec<Diagnostic> {
 fn check_with_lib(source: &str) -> Vec<Diagnostic> {
     // Load ES5 plus DOM so built-in browser globals like `console` resolve.
     let lib_files = load_es5_and_dom_lib_files_for_test();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<CheckerLibContext> = lib_files
-            .iter()
-            .map(|lib| CheckerLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
 }
 
 fn check_js_without_lib(source: &str) -> Vec<Diagnostic> {
