@@ -758,18 +758,29 @@ impl SymbolArena {
     ///
     /// After calling this, new allocations start at N (after the reserved range).
     ///
+    /// Placeholder IDs are assigned consistently with `alloc`/`alloc_from`,
+    /// i.e. shifted by the arena's `base_offset`, so that `get`/`get_mut`
+    /// lookups and the symbol's own `id` agree in arenas with non-zero
+    /// `base_offset` (e.g. checker-local arenas).
+    ///
     /// # Panics
     ///
-    /// Panics if any index in `current_len..count` cannot be converted into a
-    /// `u32`.
+    /// Panics if any reserved ID would overflow a `u32` once shifted by
+    /// `base_offset`.
     pub fn reserve_symbol_ids(&mut self, count: usize) {
         let current_len = self.symbols.len();
         if count > current_len {
             let symbols = Arc::make_mut(&mut self.symbols);
             symbols.reserve(count);
             for id in current_len..count {
+                let raw = u32::try_from(id).expect("symbol arena length exceeds u32");
+                let symbol_id = SymbolId(
+                    self.base_offset
+                        .checked_add(raw)
+                        .expect("symbol ID exceeds u32 with base offset"),
+                );
                 symbols.push(Symbol::new(
-                    SymbolId(u32::try_from(id).expect("symbol ID exceeds u32")),
+                    symbol_id,
                     0,
                     String::new(), // Empty placeholder
                 ));
@@ -849,5 +860,49 @@ mod tests {
     fn primary_declaration_none_when_empty() {
         let s = sym();
         assert_eq!(s.primary_declaration(), None);
+    }
+
+    #[test]
+    fn reserve_symbol_ids_assigns_zero_based_ids_with_default_arena() {
+        let mut arena = SymbolArena::new();
+        arena.reserve_symbol_ids(3);
+        assert_eq!(arena.len(), 3);
+        for i in 0..3u32 {
+            let s = arena.get(SymbolId(i)).expect("reserved symbol present");
+            assert_eq!(s.id, SymbolId(i));
+        }
+    }
+
+    #[test]
+    fn reserve_symbol_ids_shifts_ids_by_base_offset() {
+        let base = SymbolArena::CHECKER_SYMBOL_BASE;
+        let mut arena = SymbolArena::new_with_base(base);
+        arena.reserve_symbol_ids(4);
+        assert_eq!(arena.len(), 4);
+
+        // Each placeholder's stored id must be base_offset + index, matching
+        // the contract used by `alloc`/`alloc_from` and `get`/`get_mut`.
+        for i in 0..4u32 {
+            let id = SymbolId(base + i);
+            let s = arena
+                .get(id)
+                .expect("placeholder reachable via base-shifted id");
+            assert_eq!(s.id, id);
+        }
+
+        // IDs below base_offset must still be rejected (different arena).
+        assert!(arena.get(SymbolId(0)).is_none());
+    }
+
+    #[test]
+    fn reserve_symbol_ids_then_alloc_continues_id_sequence() {
+        let base = SymbolArena::CHECKER_SYMBOL_BASE;
+        let mut arena = SymbolArena::new_with_base(base);
+        arena.reserve_symbol_ids(2);
+        let next = arena.alloc(0, String::new());
+        // After reserving 2 placeholders, the next alloc must produce
+        // base_offset + 2 (i.e. continue past the reserved range).
+        assert_eq!(next, SymbolId(base + 2));
+        assert_eq!(arena.get(next).map(|s| s.id), Some(next));
     }
 }
