@@ -637,6 +637,49 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Merge value-side property exports from a CommonJS module's JS export
+    /// surface into a typeof-import namespace `props` list. Supplements the
+    /// binder's `module_exports` table for files where the binder records only
+    /// an `export=` (or nothing at all) for `module.exports = { … }`-style
+    /// object-literal exports, so `typeof import("./mod").foo` can find `foo`
+    /// as a value member instead of falsely emitting TS2694.
+    ///
+    /// Existing props (added from the binder's exports table or
+    /// [`append_export_equals_import_type_namespace_props`]) take precedence —
+    /// this only fills in names that are not already present.
+    pub(crate) fn merge_js_export_surface_into_typeof_import_namespace_props(
+        &mut self,
+        module_name: &str,
+        declaring_file_idx: Option<usize>,
+        props: &mut Vec<PropertyInfo>,
+    ) {
+        let Some(js_surface) =
+            self.resolve_js_export_surface_for_module(module_name, declaring_file_idx)
+        else {
+            return;
+        };
+        for prop in js_surface.named_exports {
+            let prop_name_atom = self.ctx.types.resolve_atom_ref(prop.name);
+            let prop_name = prop_name_atom.as_ref();
+            if prop_name == "export=" {
+                continue;
+            }
+            if props
+                .iter()
+                .any(|p| self.ctx.types.resolve_atom_ref(p.name).as_ref() == prop_name)
+            {
+                continue;
+            }
+            let mut new_prop = prop.clone();
+            new_prop.declaration_order = if prop_name == "default" {
+                1
+            } else {
+                (props.len() as u32) + 2
+            };
+            props.push(new_prop);
+        }
+    }
+
     /// Compute type of a symbol (internal, not cached).
     ///
     /// Uses `TypeLowering` to bridge symbol declarations to solver types.
