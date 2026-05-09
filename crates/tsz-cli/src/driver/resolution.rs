@@ -1755,6 +1755,9 @@ fn root_dirs_relative_candidates(
             if candidate == direct_candidate || candidates.iter().any(|seen| seen == &candidate) {
                 continue;
             }
+            tsz_common::perf_counters::inc(
+                &tsz_common::perf_counters::counters().resolver_candidate_paths_total,
+            );
             candidates.push(candidate);
         }
     }
@@ -1909,6 +1912,9 @@ fn candidates_with_suffixes_and_extension(
     let mut candidates = Vec::new();
     for suffix in suffixes {
         if let Some(candidate) = path_with_suffix_and_extension(base, suffix, extension) {
+            tsz_common::perf_counters::inc(
+                &tsz_common::perf_counters::counters().resolver_candidate_paths_total,
+            );
             candidates.push(candidate);
         }
     }

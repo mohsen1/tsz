@@ -654,7 +654,7 @@ impl PerfCounters {
              is_dir calls                     n/a  (not wired in this PR)\n  \
              read_dir calls                   n/a  (not wired in this PR)\n  \
              read_package_json calls    {:>12}\n  \
-             candidate paths total            n/a  (not wired in this PR)\n",
+             candidate paths total      {:>12}\n",
             load(&c.delegate_cross_arena_calls),
             load(&c.delegate_cross_arena_cache_hits_lib),
             load(&c.delegate_cross_arena_cache_hits_cross_file),
@@ -680,6 +680,7 @@ impl PerfCounters {
             load(&c.interner_mapped_intern_calls),
             load(&c.resolver_lookup_calls),
             load(&c.resolver_read_package_json_calls),
+            load(&c.resolver_candidate_paths_total),
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
