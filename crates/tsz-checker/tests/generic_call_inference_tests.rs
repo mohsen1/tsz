@@ -2709,23 +2709,10 @@ const d = pipe(fooBare);
 /// accepts it and propagates the constraint into the result type
 /// (`<T extends { value: T; }>(x: T) => T`).
 ///
-/// Root cause: when `constrain_types_impl`'s Function/Function branch
-/// (`crates/tsz-solver/src/operations/constraints/walker.rs:1262`) instantiates
-/// the source's type parameter with a fresh inference variable, the
-/// self-referential constraint contains the fresh placeholder and is dropped at
-/// `walker.rs:1306`. The fresh variable becomes the only candidate for the
-/// outer call's `A`/`B` placeholders; when no other candidates arrive, both
-/// placeholders fall back to `unknown`
-/// (`crates/tsz-solver/src/inference/infer_resolve.rs:553`), and the original
-/// generic source is no longer assignable against the materialized
-/// `(...args: [x: unknown]) => unknown` target.
-///
-/// This test is `#[ignore]`d until proper higher-order function inference
-/// (TS 3.4 PR microsoft/TypeScript#30215) is implemented. Conformance test:
-/// `compiler/genericFunctionInference1.ts` (lines 20, 21, 33, 34 — the
-/// recursive-constraint subset of the eight extra TS2345 diagnostics).
+/// Conformance test: `compiler/genericFunctionInference1.ts` (lines 20, 21,
+/// 33, 34 — the recursive-constraint subset of the eight extra TS2345
+/// diagnostics).
 #[test]
-#[ignore = "Requires higher-order function inference for self-referential type-parameter constraints; tracks compiler/genericFunctionInference1.ts."]
 fn pipe_accepts_generic_argument_with_self_referential_constraint() {
     let source = r#"
 declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;

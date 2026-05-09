@@ -15,6 +15,37 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
 }
 
 #[test]
+fn circular_interface_access_type_args_do_not_stack_overflow() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Mxs = Mx<'list', Mxs['p1']>;
+
+interface Mx<T, K> {
+  p1: T;
+  p2: K;
+}
+
+type ArrElem = ['list', ArrElem[number][0]][];
+
+type TupleElem = [['list', TupleElem[0][0]]];
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 4109),
+        "Expected TS4109 for circular type argument access.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 4110),
+        "Expected TS4110 for circular tuple element access.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2589),
+        "Should not recover the circularity as TS2589.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_constrained_type_param_no_false_ts2304() {
     let diagnostics = compile_and_get_diagnostics(
         r"

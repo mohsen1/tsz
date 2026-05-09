@@ -2,7 +2,7 @@ use crate::transforms::emit_utils::sanitize_module_name;
 use crate::transforms::ir::IRNode;
 use crate::transforms::module_commonjs::*;
 use crate::transforms::module_commonjs_ir::CommonJsTransformContext;
-use tsz_parser::parser::ParserState;
+use tsz_parser::parser::{NodeIndex, ParserState};
 
 fn parse_collect_exports(source: &str) -> Vec<String> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -12,6 +12,30 @@ fn parse_collect_exports(source: &str) -> Vec<String> {
         .get_source_file(parser.arena.get(root).expect("root node must exist"))
         .expect("source file must exist");
     collect_export_names(&parser.arena, &source_file.statements.nodes)
+}
+
+/// Parse `source` and return the parser plus the index of its first
+/// top-level statement. Used by tests that exercise per-statement
+/// transforms (e.g. `get_import_bindings`).
+fn parse_first_statement(source: &str) -> (ParserState, NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let stmt_idx = {
+        let root_node = parser
+            .arena
+            .get(root)
+            .expect("root node must exist in arena");
+        let source_file = parser
+            .arena
+            .get_source_file(root_node)
+            .expect("failed to get source file");
+        *source_file
+            .statements
+            .nodes
+            .first()
+            .expect("source should have one statement")
+    };
+    (parser, stmt_idx)
 }
 
 fn parse_transform_cjs(source: &str) -> Vec<IRNode> {
@@ -92,22 +116,7 @@ fn test_emit_reexport_property_alias() {
 fn test_get_import_bindings_default_import_uses_default_property() {
     use tsz_parser::parser::syntax_kind_ext;
 
-    let source = "import foo from \"./module\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let root_node = parser
-        .arena
-        .get(root)
-        .expect("root node must exist in arena");
-    let source_file = parser
-        .arena
-        .get_source_file(root_node)
-        .expect("failed to get source file");
-    let stmt_idx = *source_file
-        .statements
-        .nodes
-        .first()
-        .expect("source should have one statement");
+    let (parser, stmt_idx) = parse_first_statement("import foo from \"./module\";");
     let stmt_node = parser
         .arena
         .get(stmt_idx)
@@ -123,22 +132,7 @@ fn test_get_import_bindings_default_import_uses_default_property() {
 fn test_namespace_import_without_es_module_interop() {
     use tsz_parser::parser::syntax_kind_ext;
 
-    let source = r#"import * as ns from "./module";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let root_node = parser
-        .arena
-        .get(root)
-        .expect("root node must exist in arena");
-    let source_file = parser
-        .arena
-        .get_source_file(root_node)
-        .expect("failed to get source file");
-    let stmt_idx = *source_file
-        .statements
-        .nodes
-        .first()
-        .expect("source should have one statement");
+    let (parser, stmt_idx) = parse_first_statement(r#"import * as ns from "./module";"#);
     let stmt_node = parser
         .arena
         .get(stmt_idx)
