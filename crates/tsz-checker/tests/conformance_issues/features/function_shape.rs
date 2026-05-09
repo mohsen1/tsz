@@ -1,6 +1,81 @@
 use super::super::core::*;
 
 #[test]
+fn test_literal_widening_direct_generic_callee_keeps_call_signature() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function f1() {
+    const c1 = "hello";
+    let v1 = c1;
+    const c2 = c1;
+    let v2 = c2;
+}
+
+function f2(cond: boolean) {
+    const c1 = cond ? "foo" : "bar";
+    const c2: "foo" | "bar" = c1;
+    const c3 = cond ? c1 : c2;
+    const c4 = cond ? c3 : "baz";
+    let v4 = c4;
+}
+
+function f3() {
+    const c1 = 123;
+    let v1 = c1;
+    const c2 = c1;
+    let v2 = c2;
+}
+
+function f4(cond: boolean) {
+    const c1 = cond ? 123 : 456;
+    const c2: 123 | 456 = c1;
+    const c3 = cond ? c1 : c2;
+    const c4 = cond ? c3 : 789;
+    let v4 = c4;
+}
+
+function f5() {
+    const c1 = "foo";
+    let v1 = c1;
+    const c2: "foo" = "foo";
+    let v2 = c2;
+    const c3 = "foo" as "foo";
+    let v3 = c3;
+    const c4 = <"foo">"foo";
+    let v4 = c4;
+}
+
+declare function nonWidening<T extends string | number | symbol>(x: T): T;
+
+function f6(cond: boolean) {
+    let y1 = nonWidening("a");
+    let y2 = nonWidening(10);
+    let y3 = nonWidening(cond ? "a" : 10);
+}
+
+export function Set<K extends string>(...keys: K[]): Record<K, true | undefined> {
+  const result = {} as Record<K, true | undefined>;
+  keys.forEach(key => result[key] = true);
+  return result;
+}
+
+export function keys<K extends string, V>(obj: Record<K, V>): K[] {
+  return Object.keys(obj) as K[];
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2349),
+        "Direct declared generic callees should keep call signatures after module export processing. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_filtering_mapped_callbacks_use_widened_round2_context() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
