@@ -11,36 +11,14 @@
 //! - Union callee types
 //! - Generic call inference with overloads
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     get_diagnostics_with_options(source, &CheckerOptions::default())
 }
 
 fn get_diagnostics_with_options(source: &str, options: &CheckerOptions) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options.clone(),
-    );
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
+    tsz_checker::test_utils::check_with_options(source, options.clone())
         .into_iter()
         .filter(|d| d.code != 2318) // Filter "Cannot find global type"
         .map(|d| (d.code, d.message_text))
