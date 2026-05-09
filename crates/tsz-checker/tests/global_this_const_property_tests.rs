@@ -16,75 +16,23 @@
 //! The fix narrows the lookup to declarations whose syntactic kind is
 //! plausibly a global value (not `Parameter`).
 
-use std::path::Path;
-use std::sync::Arc;
-use tsz_binder::state::LibContext as BinderLibContext;
-use tsz_binder::{BinderState, lib_loader::LibFile};
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::context::LibContext as CheckerLibContext;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn load_es5_lib_files() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-    let mut out = Vec::new();
-    for path in &candidates {
-        if path.exists()
-            && let Ok(content) = std::fs::read_to_string(path)
-        {
-            let name = path.file_name().unwrap().to_string_lossy().to_string();
-            out.push(Arc::new(LibFile::from_source(name, content)));
-        }
-    }
-    out
-}
 
 fn diagnostic_codes_with_lib(source: &str) -> Vec<u32> {
-    let lib_files = load_es5_lib_files();
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
     assert!(
         !lib_files.is_empty(),
         "lib.es5.d.ts not found — required for this regression test"
     );
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    let binder_lib_contexts: Vec<_> = lib_files
-        .iter()
-        .map(|lib| BinderLibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
         CheckerOptions::default(),
-    );
-    let checker_lib_contexts: Vec<_> = lib_files
-        .iter()
-        .map(|lib| CheckerLibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    checker.ctx.set_lib_contexts(checker_lib_contexts);
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+        &lib_files,
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 /// `const y` is block-scoped and not a property of `typeof globalThis`.
