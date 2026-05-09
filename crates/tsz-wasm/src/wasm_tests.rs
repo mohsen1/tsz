@@ -8,7 +8,7 @@ use crate::wasm_api::diagnostics::{
 use crate::wasm_api::emit::{transpile, transpile_module};
 use crate::wasm_api::enums::DiagnosticCategory;
 use crate::wasm_api::language_service::TsLanguageService;
-use crate::wasm_api::program::create_ts_program;
+use crate::wasm_api::program::{TsCompilerOptions, create_ts_program};
 use crate::wasm_api::utilities::{
     create_source_file, is_keyword, is_punctuation, parse_config_file_text_to_json,
     parse_json_text, syntax_kind_to_name, token_to_string,
@@ -592,4 +592,81 @@ fn test_ts_program_target_drives_semantic_diagnostics() {
         !codes_es2020.contains(&2737),
         "ES2020 target must not surface TS2737 for BigInt literal, got {codes_es2020:?}"
     );
+}
+
+#[test]
+fn test_ts_compiler_options_threads_allow_js_and_declaration() {
+    // Issue #4748 / #4734: TsCompilerOptions.to_checker_options previously
+    // hardcoded allow_js:false and emit_declarations:false, silently
+    // dropping the user-supplied allowJs / declaration fields.
+
+    let opts: TsCompilerOptions =
+        serde_json::from_str(r#"{"allowJs":true,"declaration":true}"#).unwrap();
+    let checker_opts = opts.to_checker_options();
+    assert!(
+        checker_opts.allow_js,
+        "allowJs:true must propagate to CheckerOptions.allow_js",
+    );
+    assert!(
+        checker_opts.emit_declarations,
+        "declaration:true must propagate to CheckerOptions.emit_declarations",
+    );
+
+    let opts_off: TsCompilerOptions =
+        serde_json::from_str(r#"{"allowJs":false,"declaration":false}"#).unwrap();
+    let checker_opts_off = opts_off.to_checker_options();
+    assert!(!checker_opts_off.allow_js);
+    assert!(!checker_opts_off.emit_declarations);
+
+    // Defaults remain false when fields are omitted.
+    let opts_default: TsCompilerOptions = serde_json::from_str("{}").unwrap();
+    let checker_opts_default = opts_default.to_checker_options();
+    assert!(!checker_opts_default.allow_js);
+    assert!(!checker_opts_default.emit_declarations);
+}
+
+#[test]
+fn test_ts_program_emit_json_threads_declaration_and_source_map_flags() {
+    // Issue #4748 / #4738: emit_json hardcoded per-file metadata to
+    // declaration:false / sourceMap:false; verify the configured values
+    // now flow through to emittedFiles entries.
+
+    let mut program = TsProgram::new();
+    program
+        .set_compiler_options(r#"{"declaration":true,"sourceMap":true}"#)
+        .unwrap();
+    program.add_source_file(
+        "entry.ts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+
+    let json = program.emit_json();
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    let files = parsed["emittedFiles"].as_array().unwrap();
+    assert!(!files.is_empty(), "expected at least one emitted file");
+    for file in files {
+        assert_eq!(
+            file["declaration"],
+            Value::Bool(true),
+            "declaration flag must reflect compiler options",
+        );
+        assert_eq!(
+            file["sourceMap"],
+            Value::Bool(true),
+            "sourceMap flag must reflect compiler options",
+        );
+    }
+
+    // When neither option is set, both flags stay false.
+    let mut program_off = TsProgram::new();
+    program_off.add_source_file(
+        "entry.ts".to_string(),
+        "export const value: number = 1;\n".to_string(),
+    );
+    let json_off = program_off.emit_json();
+    let parsed_off: Value = serde_json::from_str(&json_off).unwrap();
+    for file in parsed_off["emittedFiles"].as_array().unwrap() {
+        assert_eq!(file["declaration"], Value::Bool(false));
+        assert_eq!(file["sourceMap"], Value::Bool(false));
+    }
 }
