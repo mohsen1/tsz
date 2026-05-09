@@ -1084,6 +1084,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                if let Some(module_specifier) = import_module.as_deref()
+                    && let Some(member_type) = self.namespace_default_reexport_property_type(
+                        module_specifier,
+                        self.ctx
+                            .resolve_symbol_file_index(sym_id)
+                            .or(Some(self.ctx.current_file_idx)),
+                        property_name,
+                    )
+                {
+                    return Some(member_type);
+                }
+
                 if let Some(member_id) = direct_member_id {
                     let member_type =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
@@ -1244,6 +1256,18 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .find(|prop| self.ctx.types.resolve_atom(prop.name) == property_name)
                         .map(|prop| prop.type_id);
+                }
+
+                if let Some(module_specifier) = import_module.as_deref()
+                    && let Some(member_type) = self.namespace_default_reexport_property_type(
+                        module_specifier,
+                        self.ctx
+                            .resolve_symbol_file_index(sym_id)
+                            .or(Some(self.ctx.current_file_idx)),
+                        property_name,
+                    )
+                {
+                    return Some(member_type);
                 }
 
                 if let Some(member_id) = direct_member_id {

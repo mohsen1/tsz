@@ -1227,7 +1227,13 @@ impl<'a> CheckerState<'a> {
                                 {
                                     continue;
                                 }
-                                let mut prop_type = self.get_type_of_symbol(export_sym_id);
+                                let mut prop_type = self
+                                    .namespace_default_reexport_property_type(
+                                        module_name,
+                                        declaring_file_idx,
+                                        name,
+                                    )
+                                    .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id));
 
                                 // Rule #44: Apply module augmentations to each exported type
                                 prop_type =
