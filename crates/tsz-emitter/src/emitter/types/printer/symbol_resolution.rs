@@ -534,6 +534,16 @@ impl<'a> TypePrinter<'a> {
 
     /// Convert a `TypeId` to TypeScript syntax string.
     pub fn print_type(&self, type_id: TypeId) -> String {
+        if self.current_depth >= self.max_depth {
+            return "any".to_string();
+        }
+
+        let mut nested = self.clone();
+        nested.current_depth += 1;
+        nested.print_type_inner(type_id)
+    }
+
+    fn print_type_inner(&self, type_id: TypeId) -> String {
         // Fast path: check built-in intrinsics (TypeId < 100)
         if type_id.is_intrinsic() {
             return self.print_intrinsic_type(type_id);

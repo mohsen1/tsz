@@ -80,11 +80,39 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let import = self.ctx.arena.get_import_decl(decl_node)?;
-        if self
-            .get_require_module_specifier(import.module_specifier)
-            .is_some()
-        {
-            return None;
+        if let Some(module_specifier) = self.get_require_module_specifier(import.module_specifier) {
+            if let Some(exports) = self
+                .resolve_effective_module_exports_from_file(
+                    &module_specifier,
+                    Some(self.ctx.current_file_idx),
+                )
+                .or_else(|| self.resolve_effective_module_exports(&module_specifier))
+                && let Some(export_equals_sym) = exports.get("export=")
+            {
+                let mut candidates = Vec::new();
+
+                if let Some(export_equals_symbol) = self.get_cross_file_symbol(export_equals_sym)
+                    && export_equals_symbol.has_any_flags(symbol_flags::ALIAS)
+                {
+                    let mut visited = AliasCycleTracker::new();
+                    if let Some(resolved) =
+                        self.resolve_alias_symbol(export_equals_sym, &mut visited)
+                    {
+                        candidates.push(resolved);
+                    }
+                }
+                candidates.push(export_equals_sym);
+
+                for candidate in candidates {
+                    let ty = self.get_type_of_symbol(candidate);
+                    if ty != TypeId::UNKNOWN && ty != TypeId::ERROR {
+                        return Some(ty);
+                    }
+                }
+            }
+
+            return self
+                .commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx));
         }
 
         let target_sym = self.resolve_qualified_symbol(import.module_specifier)?;

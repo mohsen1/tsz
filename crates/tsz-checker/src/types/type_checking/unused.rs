@@ -1728,10 +1728,9 @@ impl<'a> CheckerState<'a> {
             format!("@returns {{ {name} }}"),
         ];
 
-        let comment_ranges = tsz_common::comments::get_comment_ranges(text);
         let import_brace_pattern = format!("{{ {name} }}");
 
-        for range in &comment_ranges {
+        for range in &sf.comments {
             // Only real JSDoc block comments can contribute type references.
             if !tsz_common::comments::is_jsdoc_comment(range, text) {
                 continue;
