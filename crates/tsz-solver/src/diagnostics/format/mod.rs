@@ -160,6 +160,14 @@ pub struct TypeFormatter<'a> {
     /// When true, generic mapped type aliases that evaluate to scalar types are
     /// displayed as their evaluated result. Used for assignability diagnostics.
     expand_scalar_mapped_alias_applications: bool,
+    /// When true, the canonical primitive key union (`string | number | symbol`,
+    /// shared by `keyof any` and the lib.d.ts alias `PropertyKey`) is rendered
+    /// in its structural form even in diagnostic mode. tsc strips the
+    /// `aliasSymbol` from the constraint type before formatting TS2344 messages
+    /// (`Type 'X' does not satisfy the constraint 'string | number | symbol'`)
+    /// while still keeping `PropertyKey` in other diagnostics. The default is
+    /// false to preserve the existing behavior across every other surface.
+    expand_primitive_key_union: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -369,6 +377,7 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
+            expand_primitive_key_union: false,
         }
     }
 
@@ -582,6 +591,7 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
+            expand_primitive_key_union: false,
         }
     }
 
@@ -633,6 +643,17 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_diagnostic_mode(mut self) -> Self {
         self.skip_union_optionalize = true;
         self.diagnostic_mode = true;
+        self
+    }
+
+    /// Render the canonical primitive key union (`string | number | symbol`)
+    /// in its structural form rather than collapsing it to `PropertyKey`. tsc
+    /// strips the `aliasSymbol` from the constraint type before formatting
+    /// the TS2344 message; opt-in callers (the constraint-not-satisfied
+    /// emitter) use this to mirror that surface without affecting any other
+    /// diagnostic.
+    pub const fn with_expanded_primitive_key_union(mut self) -> Self {
+        self.expand_primitive_key_union = true;
         self
     }
 
@@ -1406,7 +1427,10 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
-                if self.diagnostic_mode && self.is_primitive_key_union_data(key) {
+                if self.diagnostic_mode
+                    && !self.expand_primitive_key_union
+                    && self.is_primitive_key_union_data(key)
+                {
                     return Cow::Borrowed("PropertyKey");
                 }
                 // tsc preserves top-level alias names that would otherwise be
