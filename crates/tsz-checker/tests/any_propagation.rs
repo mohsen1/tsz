@@ -4,12 +4,7 @@
 //! in the Lawyer layer, respecting strict mode settings.
 
 use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
 use crate::test_fixtures::TestContext;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -25,42 +20,14 @@ interface IArguments {}
 
 fn test_no_errors(source: &str) {
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
-
     let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+        &source,
+        "test.ts",
         CheckerOptions::default(),
+        &ctx.lib_files,
     );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let errors: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
             d.category == crate::checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
