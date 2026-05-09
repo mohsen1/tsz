@@ -574,6 +574,24 @@ impl<'a> CheckerState<'a> {
             classification =
                 query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         }
+        if matches!(classification, query::CallSignaturesKind::NoSignatures)
+            && let Some(direct_callee_type) =
+                self.direct_function_call_type_for_type_argument_validation(call.expression)
+        {
+            callee_type_for_resolution = if call.type_arguments.is_some() {
+                self.apply_type_arguments_to_callable_type(
+                    direct_callee_type,
+                    call.type_arguments.as_ref(),
+                )
+            } else {
+                direct_callee_type
+            };
+            resolved_for_classification =
+                self.evaluate_application_type(callee_type_for_resolution);
+            resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
+            classification =
+                query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
+        }
         trace!(
             callee_type_for_resolution = ?callee_type_for_resolution,
             classification = ?classification,

@@ -1,6 +1,117 @@
 use super::super::core::*;
 
 #[test]
+fn test_recursive_spread_conditional_return_does_not_report_identical_option_arg() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+export {}
+export interface Option<T> {
+    zip1<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray1<O>]>;
+    zip2<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray2<O>]>;
+    zip3<O extends Array<Option<any>>>(...others: O): Option<[T, ...UnzipOptionArray3<O>]>;
+}
+
+type UnzipOption<T> = T extends Option<infer V> ? V : never;
+type UnzipOptionArray1<T> = { [k in keyof T]: T[k] extends Option<any> ? UnzipOption<T[k]> : never };
+type UnzipOptionArray2<T> = { [k in keyof T]: UnzipOption<T[k]> };
+type UnzipOptionArray3<T> = { [k in keyof T]: T[k] extends Option<infer V> ? V : never };
+
+declare const opt1: Option<number>;
+declare const opt2: Option<string>;
+declare const opt3: Option<boolean>;
+
+const zipped1 = opt1.zip1(opt2, opt3);
+const zipped2 = opt1.zip2(opt2, opt3);
+const zipped3 = opt1.zip3(opt2, opt3);
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect TS2345 when recursive spread conditional aliases reduce to identical Option<T> arguments. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_literal_widening_direct_generic_callee_keeps_call_signature() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function f1() {
+    const c1 = "hello";
+    let v1 = c1;
+    const c2 = c1;
+    let v2 = c2;
+}
+
+function f2(cond: boolean) {
+    const c1 = cond ? "foo" : "bar";
+    const c2: "foo" | "bar" = c1;
+    const c3 = cond ? c1 : c2;
+    const c4 = cond ? c3 : "baz";
+    let v4 = c4;
+}
+
+function f3() {
+    const c1 = 123;
+    let v1 = c1;
+    const c2 = c1;
+    let v2 = c2;
+}
+
+function f4(cond: boolean) {
+    const c1 = cond ? 123 : 456;
+    const c2: 123 | 456 = c1;
+    const c3 = cond ? c1 : c2;
+    const c4 = cond ? c3 : 789;
+    let v4 = c4;
+}
+
+function f5() {
+    const c1 = "foo";
+    let v1 = c1;
+    const c2: "foo" = "foo";
+    let v2 = c2;
+    const c3 = "foo" as "foo";
+    let v3 = c3;
+    const c4 = <"foo">"foo";
+    let v4 = c4;
+}
+
+declare function nonWidening<T extends string | number | symbol>(x: T): T;
+
+function f6(cond: boolean) {
+    let y1 = nonWidening("a");
+    let y2 = nonWidening(10);
+    let y3 = nonWidening(cond ? "a" : 10);
+}
+
+export function Set<K extends string>(...keys: K[]): Record<K, true | undefined> {
+  const result = {} as Record<K, true | undefined>;
+  keys.forEach(key => result[key] = true);
+  return result;
+}
+
+export function keys<K extends string, V>(obj: Record<K, V>): K[] {
+  return Object.keys(obj) as K[];
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2349),
+        "Direct declared generic callees should keep call signatures after module export processing. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_filtering_mapped_callbacks_use_widened_round2_context() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"

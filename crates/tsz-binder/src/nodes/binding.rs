@@ -110,7 +110,9 @@ impl BinderState {
 
             let (declares_type, declares_value) = match kind {
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => (true, false),
-                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => (true, false),
+                // Skip TYPE_ALIAS_DECLARATION: carrying a lib type alias onto
+                // a module-local shadow symbol pollutes its declarations vec
+                // for indexed-access traversal (see #4687).
                 k if k == syntax_kind_ext::VARIABLE_DECLARATION => (false, true),
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => (false, true),
                 _ => continue,
@@ -1385,6 +1387,20 @@ impl BinderState {
                 .current_scope
                 .get(name)
                 .or_else(|| self.file_locals.get(name));
+        }
+
+        if let Some(node) = arena.get(expression)
+            && node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            && let Some(class) = arena.get_class(node)
+        {
+            if class.name.is_some()
+                && let Some(sym_id) = self.node_symbols.get(&class.name.0)
+            {
+                return Some(*sym_id);
+            }
+            if let Some(sym_id) = self.node_symbols.get(&expression.0) {
+                return Some(*sym_id);
+            }
         }
 
         let mut parts = Vec::new();

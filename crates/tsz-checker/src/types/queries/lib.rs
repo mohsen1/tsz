@@ -751,6 +751,25 @@ impl<'a> CheckerState<'a> {
             .get_cross_file_symbol(member_id)
             .or_else(|| self.ctx.binder.get_symbol(member_id))
             && member_symbol.has_any_flags(symbol_flags::ALIAS)
+            && member_symbol.import_name.is_none()
+            && let Some(module_specifier) = member_symbol.import_module.clone()
+        {
+            let source_file_idx = if member_symbol.decl_file_idx == u32::MAX {
+                self.ctx.current_file_idx
+            } else {
+                member_symbol.decl_file_idx as usize
+            };
+            if let Some(module_type) =
+                self.commonjs_module_value_type(&module_specifier, Some(source_file_idx))
+            {
+                return Some(module_type);
+            }
+        }
+
+        if let Some(member_symbol) = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))
+            && member_symbol.has_any_flags(symbol_flags::ALIAS)
             && member_symbol.import_name.as_deref() == Some("default")
             && let Some(module_specifier) = member_symbol.import_module.clone()
             && let Some(namespace_type) =
