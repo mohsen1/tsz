@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-09T10:29:19Z",
-  "git_sha": "6b672cf25468acb953fdd113ee61f03e8cbdc6e7",
+  "timestamp": "2026-05-09T11:24:48Z",
+  "git_sha": "85e92945975e98018c5b70045844a0e14e72e594",
   "summary": {
     "total_tests": 12582,
-    "passed": 12536,
-    "failed": 46,
+    "passed": 12537,
+    "failed": 45,
     "pass_rate": 99.6
   },
   "areas_by_pass_rate": [
@@ -14,13 +14,6 @@
       "passed": 8,
       "failed": 2,
       "pass_rate": 80.0
-    },
-    {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 24,
-      "failed": 2,
-      "pass_rate": 92.31
     },
     {
       "area": "classes",
@@ -56,6 +49,13 @@
       "passed": 24,
       "failed": 1,
       "pass_rate": 96.0
+    },
+    {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 25,
+      "failed": 1,
+      "pass_rate": 96.15
     },
     {
       "area": "types/members",
@@ -728,7 +728,7 @@
     "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 46,
+    "fingerprint_only": 45,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }
