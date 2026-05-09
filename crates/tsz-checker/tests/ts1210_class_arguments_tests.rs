@@ -1,34 +1,21 @@
 //! Tests for TS1210 in class strict-mode JS contexts.
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::check_source_code_messages;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{check_source, check_source_code_messages};
 
 fn diagnostic_codes_for_js(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "a.js".to_string(),
+    check_source(
+        source,
+        "a.js",
         CheckerOptions {
             strict: true,
             check_js: true,
             ..CheckerOptions::default()
         },
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 #[test]
