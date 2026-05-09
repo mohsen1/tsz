@@ -15,40 +15,6 @@ use tsz_common::interner::Atom;
 
 // Import TypeDatabase trait
 use crate::caches::db::TypeDatabase;
-use std::cell::Cell;
-
-thread_local! {
-    static COLLECT_PROPERTIES_DEPTH: Cell<u32> = const { Cell::new(0) };
-}
-
-// Nested public collect_properties calls can reset TypeEvaluator-local guards
-// while resolving recursive mapped/indexed-access aliases. Cap the whole call
-// chain so apparent-property collection can safely defer instead of expanding
-// indefinitely.
-const MAX_COLLECT_PROPERTIES_DEPTH: u32 = 64;
-
-struct CollectPropertiesDepthGuard;
-
-impl CollectPropertiesDepthGuard {
-    fn enter() -> Option<Self> {
-        COLLECT_PROPERTIES_DEPTH.with(|depth| {
-            let current = depth.get();
-            if current >= MAX_COLLECT_PROPERTIES_DEPTH {
-                return None;
-            }
-            depth.set(current + 1);
-            Some(Self)
-        })
-    }
-}
-
-impl Drop for CollectPropertiesDepthGuard {
-    fn drop(&mut self) {
-        COLLECT_PROPERTIES_DEPTH.with(|depth| {
-            depth.set(depth.get().saturating_sub(1));
-        });
-    }
-}
 
 /// Merge two visibility levels for an intersection property.
 const fn merge_visibility(a: Visibility, b: Visibility) -> Visibility {
@@ -105,10 +71,6 @@ pub fn collect_properties<R>(
 where
     R: TypeResolver,
 {
-    let Some(_depth_guard) = CollectPropertiesDepthGuard::enter() else {
-        return PropertyCollectionResult::NonObject;
-    };
-
     let mut collector = PropertyCollector {
         interner,
         resolver,
