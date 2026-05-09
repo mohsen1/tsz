@@ -14,7 +14,37 @@ use crate::types::{
     TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::{debug, trace};
+
+// Reusable scratch `FxHashSet<TypeId>` for the five `type_contains_placeholder`
+// call-sites in this module. Each call previously allocated a fresh set;
+// pooling shaves the allocator round-trip plus 2–4 grows. Mirrors the pool
+// pattern from #4722 / #4790 / #4801 / #4805 / #4807.
+thread_local! {
+    static PLACEHOLDER_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_placeholder_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = PLACEHOLDER_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    PLACEHOLDER_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Structural walker to collect constraints: source <: target
@@ -500,8 +530,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else {
                     // keyof_inner is not a bare placeholder — it might contain
                     // placeholders deeper (e.g., keyof Application<T>). Try evaluating.
-                    let mut visited = FxHashSet::default();
-                    if self.type_contains_placeholder(keyof_inner, var_map, &mut visited) {
+                    let contains_placeholder = with_placeholder_visited(|visited| {
+                        self.type_contains_placeholder(keyof_inner, var_map, visited)
+                    });
+                    if contains_placeholder {
                         // Contains placeholders — skip for now, will be resolved later
                     } else {
                         // No placeholders — evaluate the keyof and retry
@@ -571,8 +603,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // cannot be evaluated yet, infer against both branch types. Direct
                     // naked type-parameter branches are fallback evidence; structured
                     // branches should win when they can infer more specific candidates.
-                    let mut visited = FxHashSet::default();
-                    if self.type_contains_placeholder(target, var_map, &mut visited) {
+                    let contains_placeholder = with_placeholder_visited(|visited| {
+                        self.type_contains_placeholder(target, var_map, visited)
+                    });
+                    if contains_placeholder {
                         if var_map.contains_key(&cond.check_type)
                             && cond.true_type != TypeId::NEVER
                             && cond.false_type != TypeId::NEVER
@@ -928,12 +962,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // `number` and `"FAILURE"`, constrain each against the Application
                         // individually, and infer T = number | "FAILURE" instead of T = number.
                         let t_app_args_clone = t_app.args.clone();
-                        let has_placeholder = {
-                            let mut visited = FxHashSet::default();
-                            t_app_args_clone.iter().any(|arg| {
-                                self.type_contains_placeholder(*arg, var_map, &mut visited)
-                            })
-                        };
+                        let has_placeholder = with_placeholder_visited(|visited| {
+                            t_app_args_clone
+                                .iter()
+                                .any(|arg| self.type_contains_placeholder(*arg, var_map, visited))
+                        });
                         if has_placeholder
                             && let Some(expanded) =
                                 self.checker.expand_type_alias_application(target)
@@ -1938,10 +1971,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // (e.g., T extends any[] → any[]), which makes TupleMapper<T>
                 // evaluate to Array(Wrap<any>) — losing the T connection.
                 {
-                    let mut visited = FxHashSet::default();
-                    let has_placeholder_arg = t_app_args
-                        .iter()
-                        .any(|arg| self.type_contains_placeholder(*arg, var_map, &mut visited));
+                    let has_placeholder_arg = with_placeholder_visited(|visited| {
+                        t_app_args
+                            .iter()
+                            .any(|arg| self.type_contains_placeholder(*arg, var_map, visited))
+                    });
                     if has_placeholder_arg
                         && let Some(expanded) = self.checker.expand_type_alias_application(target)
                         && expanded != target
@@ -2220,8 +2254,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
             let mut probe_map = FxHashMap::default();
             probe_map.insert(candidate, var);
-            let mut visited = FxHashSet::default();
-            if self.type_contains_placeholder(target, &probe_map, &mut visited) {
+            let contains_placeholder = with_placeholder_visited(|visited| {
+                self.type_contains_placeholder(target, &probe_map, visited)
+            });
+            if contains_placeholder {
                 var_map.remove(&candidate);
             }
         }
