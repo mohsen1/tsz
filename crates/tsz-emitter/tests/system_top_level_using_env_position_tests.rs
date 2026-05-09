@@ -24,11 +24,12 @@ use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_emitter::context::emit::EmitContext;
 use tsz_emitter::emitter::{Printer as EmitterPrinter, PrinterOptions};
 use tsz_emitter::lowering::LoweringPass;
-use tsz_parser::parser::ParserState;
+
+#[path = "test_support.rs"]
+mod test_support;
 
 fn parse_lower_emit(source: &str, opts: PrinterOptions) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = test_support::parse_source(source);
     let ctx = EmitContext::with_options(opts.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
