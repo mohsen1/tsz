@@ -1,11 +1,9 @@
 //! Tests for expression parsing in the parser.
-use crate::parser::ParserState;
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{parse_source, parse_source_named};
 use tsz_common::diagnostics::diagnostic_codes;
 
 fn parse_diagnostics(source: &str) -> usize {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_source(source);
     parser.get_diagnostics().len()
 }
 
@@ -142,8 +140,7 @@ fn object_accessors_without_body_before_close_brace_do_not_report_open_brace_exp
 #[test]
 fn jsx_empty_type_arguments_accept_compound_closer_without_text_child() {
     let source = "const a = <div<>></div>;";
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_source_named("test.tsx", source);
 
     let diags = parser.get_diagnostics();
     assert!(
