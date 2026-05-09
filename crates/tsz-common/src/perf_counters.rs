@@ -642,7 +642,7 @@ impl PerfCounters {
              intern hits                      n/a  (not wired in this PR)\n  \
              intern misses                    n/a  (not wired in this PR)\n  \
              string intern calls        {:>12}\n  \
-             type-list intern calls           n/a  (not wired in this PR)\n  \
+             type-list intern calls     {:>12}\n  \
              object-shape intern calls        n/a  (not wired in this PR)\n  \
              function-shape intern calls      n/a  (not wired in this PR)\n  \
              application intern calls         n/a  (not wired in this PR)\n  \
@@ -672,6 +672,7 @@ impl PerfCounters {
             load(&c.compute_type_of_symbol_calls),
             load(&c.compute_type_of_symbol_cache_hits),
             load(&c.interner_string_intern_calls),
+            load(&c.interner_type_list_intern_calls),
             load(&c.resolver_lookup_calls),
             load(&c.resolver_read_package_json_calls),
         ) + &Self::dump_cross_arena_symbol_miss_classification()

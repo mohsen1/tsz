@@ -1186,12 +1186,18 @@ impl TypeInterner {
     }
 
     pub(in crate::intern) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
+        );
         TypeListId(self.type_lists.intern(&members))
     }
 
     /// Intern a type list from a slice, avoiding Vec conversion when the caller
     /// already has a `SmallVec` or slice reference.
     pub(in crate::intern) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
+        );
         TypeListId(self.type_lists.intern(members))
     }
 
