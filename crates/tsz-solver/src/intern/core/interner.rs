@@ -1681,6 +1681,9 @@ impl TypeInterner {
     }
 
     pub(super) fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_function_shape_intern_calls,
+        );
         FunctionShapeId(self.function_shapes.intern(shape))
     }
 
