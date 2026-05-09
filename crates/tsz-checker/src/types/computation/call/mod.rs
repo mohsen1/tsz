@@ -1320,9 +1320,10 @@ impl<'a> CheckerState<'a> {
         if !self.is_dynamic_import(call) {
             return None;
         }
+        let in_import_type_context = self.is_import_call_in_type_context(idx);
 
         // TS1323: Dynamic imports require a module kind that supports them
-        if !self.ctx.compiler_options.module.supports_dynamic_import() {
+        if !in_import_type_context && !self.ctx.compiler_options.module.supports_dynamic_import() {
             self.error_at_node(
                 idx,
                 crate::diagnostics::diagnostic_messages::DYNAMIC_IMPORTS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_FLAG_IS_SET_TO_ES2020_ES2022,
@@ -1385,6 +1386,30 @@ impl<'a> CheckerState<'a> {
         // Dynamic imports return Promise<typeof module>
         // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports
         Some(self.get_dynamic_import_type(call))
+    }
+
+    fn is_import_call_in_type_context(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..12 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::TYPE_REFERENCE
+                | syntax_kind_ext::TYPE_QUERY
+                | syntax_kind_ext::IMPORT_TYPE => return true,
+                syntax_kind_ext::QUALIFIED_NAME => current = parent_idx,
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Handle `unknown` and `never` callee types with appropriate diagnostics.

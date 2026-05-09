@@ -49,6 +49,37 @@ fn get_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, St
     get_diagnostics_with_module_and_file(source, "test.ts", module)
 }
 
+fn get_js_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        CheckerOptions {
+            module,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn has_ts1323(source: &str, module: ModuleKind) -> bool {
     get_diagnostics_with_module(source, module)
         .iter()
@@ -115,5 +146,36 @@ export const foo: typeof import("./a").A.foo;
     assert!(
         !diags.iter().any(|(code, _)| *code == 1323),
         "Did not expect TS1323 for typeof import(\"./a\").A.foo in a declaration file, got: {diags:?}"
+    );
+}
+
+#[test]
+fn import_type_member_access_does_not_emit_ts1323_for_es2015() {
+    let source = r#"
+type Thing = import("./mod").Thing;
+type Value = typeof import("./mod").Thing;
+"#;
+
+    let diags = get_diagnostics_with_module(source, ModuleKind::ES2015);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 1323),
+        "Did not expect TS1323 for import(\"./mod\") in type syntax, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_member_access_does_not_emit_ts1323_for_es2015() {
+    let source = r#"
+/** @param {import("./mod").Thing} x
+ *  @param {typeof import("./mod").Thing} y */
+function f(x, y) {
+    return x || y;
+}
+"#;
+
+    let diags = get_js_diagnostics_with_module(source, ModuleKind::ES2015);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 1323),
+        "Did not expect TS1323 for JSDoc import(\"./mod\") type syntax, got: {diags:?}"
     );
 }
