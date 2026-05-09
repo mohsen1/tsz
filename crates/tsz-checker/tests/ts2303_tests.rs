@@ -1,8 +1,10 @@
 //! Tests for TS2303: Circular definition of import alias.
 
+use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -34,6 +36,63 @@ fn get_diagnostics(source: &str, file_name: &str) -> Vec<(u32, String)> {
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+fn get_project_diagnostics(files: &[(&str, &str)]) -> Vec<(String, u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut diagnostics = Vec::new();
+
+    for (file_idx, file_name) in file_names.iter().enumerate() {
+        let mut checker = CheckerState::new(
+            all_arenas[file_idx].as_ref(),
+            all_binders[file_idx].as_ref(),
+            &types,
+            file_name.clone(),
+            CheckerOptions {
+                module: ModuleKind::CommonJS,
+                no_lib: true,
+                ..Default::default()
+            },
+        );
+        checker.enable_source_file_test_pragmas();
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(file_idx);
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths.clone()));
+        checker.ctx.set_resolved_modules(resolved_modules.clone());
+
+        checker.check_source_file(roots[file_idx]);
+
+        diagnostics.extend(
+            checker
+                .ctx
+                .diagnostics
+                .iter()
+                .map(|d| (file_name.clone(), d.code, d.message_text.clone())),
+        );
+    }
+
+    diagnostics
 }
 
 #[test]
@@ -117,5 +176,127 @@ export as namespace N;
     assert!(
         diagnostics.iter().all(|(code, _)| *code != 2686),
         "Did not expect TS2686 for the export= cycle case. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn recursive_export_assignment_self_import_reports_ts2303() {
+    let diagnostics = get_project_diagnostics(&[
+        (
+            "recursiveExportAssignmentAndFindAliasedType4_moduleC.ts",
+            r#"import self = require("./recursiveExportAssignmentAndFindAliasedType4_moduleC");
+export = self;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType4_moduleB.ts",
+            r#"class ClassB { }
+export = ClassB;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType4_moduleA.ts",
+            r#"import moduleC = require("./recursiveExportAssignmentAndFindAliasedType4_moduleC");
+import ClassB = require("./recursiveExportAssignmentAndFindAliasedType4_moduleB");
+export var b: ClassB;"#,
+        ),
+    ]);
+
+    let ts2303: Vec<_> = diagnostics
+        .iter()
+        .filter(|(_, code, _)| *code == 2303)
+        .collect();
+    assert_eq!(
+        ts2303.len(),
+        1,
+        "Expected one TS2303 for recursive export assignment self-import. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2303.iter().any(|(file, _, message)| {
+            file == "recursiveExportAssignmentAndFindAliasedType4_moduleC.ts"
+                && message.contains("'self'")
+        }),
+        "Expected TS2303 on moduleC's `self` alias. Actual TS2303 diagnostics: {ts2303:#?}"
+    );
+}
+
+#[test]
+fn recursive_export_assignment_two_file_cycle_reports_ts2303() {
+    let diagnostics = get_project_diagnostics(&[
+        (
+            "recursiveExportAssignmentAndFindAliasedType5_moduleC.ts",
+            r#"import self = require("./recursiveExportAssignmentAndFindAliasedType5_moduleD");
+export = self;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType5_moduleD.ts",
+            r#"import self = require("./recursiveExportAssignmentAndFindAliasedType5_moduleC");
+export = self;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType5_moduleB.ts",
+            r#"class ClassB { }
+export = ClassB;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType5_moduleA.ts",
+            r#"import moduleC = require("./recursiveExportAssignmentAndFindAliasedType5_moduleC");
+import ClassB = require("./recursiveExportAssignmentAndFindAliasedType5_moduleB");
+export var b: ClassB;"#,
+        ),
+    ]);
+
+    let ts2303: Vec<_> = diagnostics
+        .iter()
+        .filter(|(_, code, _)| *code == 2303)
+        .collect();
+    assert!(
+        ts2303.iter().any(|(file, _, message)| {
+            file == "recursiveExportAssignmentAndFindAliasedType5_moduleD.ts"
+                && message.contains("'self'")
+        }),
+        "Expected TS2303 on moduleD's `self` alias. Actual TS2303 diagnostics: {ts2303:#?}"
+    );
+}
+
+#[test]
+fn recursive_export_assignment_three_file_cycle_reports_ts2303() {
+    let diagnostics = get_project_diagnostics(&[
+        (
+            "recursiveExportAssignmentAndFindAliasedType6_moduleC.ts",
+            r#"import self = require("./recursiveExportAssignmentAndFindAliasedType6_moduleD");
+export = self;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType6_moduleD.ts",
+            r#"import self = require("./recursiveExportAssignmentAndFindAliasedType6_moduleE");
+export = self;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType6_moduleE.ts",
+            r#"import self = require("./recursiveExportAssignmentAndFindAliasedType6_moduleC");
+export = self;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType6_moduleB.ts",
+            r#"class ClassB { }
+export = ClassB;"#,
+        ),
+        (
+            "recursiveExportAssignmentAndFindAliasedType6_moduleA.ts",
+            r#"import moduleC = require("./recursiveExportAssignmentAndFindAliasedType6_moduleC");
+import ClassB = require("./recursiveExportAssignmentAndFindAliasedType6_moduleB");
+export var b: ClassB;"#,
+        ),
+    ]);
+
+    let ts2303: Vec<_> = diagnostics
+        .iter()
+        .filter(|(_, code, _)| *code == 2303)
+        .collect();
+    assert!(
+        ts2303.iter().any(|(file, _, message)| {
+            file == "recursiveExportAssignmentAndFindAliasedType6_moduleE.ts"
+                && message.contains("'self'")
+        }),
+        "Expected TS2303 on moduleE's `self` alias. Actual TS2303 diagnostics: {ts2303:#?}"
     );
 }
