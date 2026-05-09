@@ -1387,6 +1387,20 @@ impl BinderState {
                 .or_else(|| self.file_locals.get(name));
         }
 
+        if let Some(node) = arena.get(expression)
+            && node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            && let Some(class) = arena.get_class(node)
+        {
+            if class.name.is_some()
+                && let Some(sym_id) = self.node_symbols.get(&class.name.0)
+            {
+                return Some(*sym_id);
+            }
+            if let Some(sym_id) = self.node_symbols.get(&expression.0) {
+                return Some(*sym_id);
+            }
+        }
+
         let mut parts = Vec::new();
         if !collect_qualified_parts(arena, expression, &mut parts) || parts.is_empty() {
             return None;
