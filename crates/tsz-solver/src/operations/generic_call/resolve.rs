@@ -9,7 +9,36 @@ use crate::types::{
     TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::{debug, trace};
+
+// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
+// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
+// #4805 / #4807 / #4810 / #4816.
+thread_local! {
+    static RESOLVE_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_resolve_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = RESOLVE_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    RESOLVE_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 use super::{
     constraint_contains_primitive_constrained_type_param,
@@ -665,14 +694,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let return_is_union_with_placeholder = matches!(
                     self.interner.lookup(return_type_with_placeholders),
                     Some(TypeData::Union(_))
-                ) && {
-                    let mut visited = FxHashSet::default();
-                    self.type_contains_placeholder(
-                        return_type_with_placeholders,
-                        &var_map,
-                        &mut visited,
-                    )
-                };
+                ) && with_resolve_visited(|visited| {
+                    self.type_contains_placeholder(return_type_with_placeholders, &var_map, visited)
+                });
                 if return_is_union_with_placeholder {
                     self.constrain_types(
                         &mut infer_ctx,
