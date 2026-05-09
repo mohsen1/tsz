@@ -3,20 +3,18 @@
 use tsz_emitter::emitter::{Printer as EmitterPrinter, PrinterOptions, ScriptTarget};
 use tsz_emitter::output::printer::PrintOptions;
 use tsz_emitter::{context::emit::EmitContext, lowering::LoweringPass};
-use tsz_parser::ParserState;
 
 #[path = "test_support.rs"]
 mod test_support;
 
-use test_support::parse_and_print_with_opts;
+use test_support::{parse_and_print_with_opts, parse_source};
 
 fn print_es2015(source: &str) -> String {
     parse_and_print_with_opts(source, PrintOptions::es6())
 }
 
 fn print_with_printer_options(source: &str, opts: PrinterOptions) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source(source);
     let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
     printer.set_source_text(source);
     printer.emit(root);
@@ -24,8 +22,7 @@ fn print_with_printer_options(source: &str, opts: PrinterOptions) -> String {
 }
 
 fn print_with_cli_style_pipeline(source: &str, opts: PrinterOptions) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source(source);
     let ctx = EmitContext::with_options(opts.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
