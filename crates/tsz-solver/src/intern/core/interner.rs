@@ -1210,6 +1210,9 @@ impl TypeInterner {
     }
 
     pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_object_shape_intern_calls,
+        );
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 
