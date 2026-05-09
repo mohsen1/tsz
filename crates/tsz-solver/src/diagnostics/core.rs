@@ -132,6 +132,12 @@ pub enum SubtypeFailureReason {
         param_index: usize,
         source_param: TypeId,
         target_param: TypeId,
+        /// Why the inner check between `target_param` and `source_param`
+        /// failed (contravariant in strict-function-types mode).
+        /// Carried so callers can elaborate the failure shape — for
+        /// example, distinguishing a callback's inner return-type
+        /// failure from an inner parameter failure.
+        inner_reason: Option<Box<Self>>,
     },
     /// Too many parameters in source.
     TooManyParameters {
@@ -677,6 +683,7 @@ impl SubtypeFailureReason {
                 param_index: _,
                 source_param,
                 target_param,
+                inner_reason: _,
             } => PendingDiagnostic::error(
                 codes::TYPE_NOT_ASSIGNABLE,
                 vec![source.into(), target.into()],

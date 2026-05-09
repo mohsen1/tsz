@@ -21,6 +21,21 @@ impl<'a> CheckerState<'a> {
         query_utils::is_object_intrinsic_type(self.ctx.types, type_id)
     }
 
+    /// Resolve the parameter name at `param_index` in the first call
+    /// signature of `callable_ty` (if any). Used to render TS2328
+    /// "Types of parameters '_' and '_' are incompatible." messages.
+    fn callable_param_name_at(&self, callable_ty: TypeId, param_index: usize) -> Option<String> {
+        let shape = crate::query_boundaries::common::get_callable_shape_for_type(
+            self.ctx.types,
+            callable_ty,
+        )?;
+        let atom = shape
+            .call_signatures
+            .first()
+            .and_then(|sig| sig.params.get(param_index).and_then(|p| p.name))?;
+        Some(self.ctx.types.resolve_atom(atom))
+    }
+
     fn no_union_member_matches_switch_source_display(
         &mut self,
         source: TypeId,
@@ -777,90 +792,77 @@ impl<'a> CheckerState<'a> {
                 param_index,
                 source_param,
                 target_param,
+                inner_reason,
             } => {
-                let source_str = self.format_type_for_diagnostic_role(
-                    source,
-                    DiagnosticTypeDisplayRole::AssignmentSource {
-                        target,
-                        anchor_idx: idx,
-                    },
-                );
-                let target_str = self.format_assignability_type_for_message(target, source);
-                let message = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_str, &target_str],
-                );
-                let primary = Diagnostic::error(
-                    file_name.clone(),
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                );
-
-                // TS2328 is emitted separately only for top-level direct callable
-                // mismatches whose parameter types are callable and non-generic.
+                // For top-level direct-callable mismatches whose param types
+                // are themselves callable and non-generic, tsc treats the
+                // inner contravariant comparison as a callback. When that
+                // inner check fails on the callback's RETURN type, tsc
+                // suppresses the outer "Type X is not assignable to Y"
+                // (TS2322) wrapper and reports the diagnostic directly with
+                // code TS2328 ("Types of parameters '_' and '_' are
+                // incompatible.") — see checker.ts `reportErrorResults`,
+                // which honours `overrideNextErrorInfo` bumped by the
+                // elided `Call_signature_return_types_0_and_1_are_incompatible`
+                // (TS2202) report. When the inner failure is on a
+                // PARAMETER, no elision happens and tsc keeps the TS2322
+                // wrapper.
                 let is_callable =
                     |ty| crate::query_boundaries::common::is_callable_type(self.ctx.types, ty);
                 let contains_type_params = |ty| {
                     crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
                 };
-                let source_is_direct_callable = is_callable(source);
-                let target_is_direct_callable = is_callable(target);
-                let source_param_is_callable = is_callable(*source_param);
-                let target_param_is_callable = is_callable(*target_param);
-                let source_param_is_generic = contains_type_params(*source_param);
-                let target_param_is_generic = contains_type_params(*target_param);
+                let strict_callback_case = depth == 0
+                    && is_callable(source)
+                    && is_callable(target)
+                    && is_callable(*source_param)
+                    && is_callable(*target_param)
+                    && !contains_type_params(*source_param)
+                    && !contains_type_params(*target_param);
+                let inner_failed_on_return = matches!(
+                    inner_reason.as_deref(),
+                    Some(SubtypeFailureReason::ReturnTypeMismatch { .. })
+                );
 
-                if depth == 0
-                    && source_is_direct_callable
-                    && target_is_direct_callable
-                    && source_param_is_callable
-                    && target_param_is_callable
-                    && !source_param_is_generic
-                    && !target_param_is_generic
-                {
-                    let source_name = crate::query_boundaries::common::get_callable_shape_for_type(
-                        self.ctx.types,
-                        source,
-                    )
-                    .and_then(|shape| {
-                        shape
-                            .call_signatures
-                            .first()
-                            .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
-                    })
-                    .map(|a| self.ctx.types.resolve_atom(a))
-                    .unwrap_or_else(|| format!("arg{param_index}"));
-
-                    let target_name = crate::query_boundaries::common::get_callable_shape_for_type(
-                        self.ctx.types,
-                        target,
-                    )
-                    .and_then(|shape| {
-                        shape
-                            .call_signatures
-                            .first()
-                            .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
-                    })
-                    .map(|a| self.ctx.types.resolve_atom(a))
-                    .unwrap_or_else(|| format!("arg{param_index}"));
-
+                if strict_callback_case && inner_failed_on_return {
+                    let source_name = self
+                        .callable_param_name_at(source, *param_index)
+                        .unwrap_or_else(|| format!("arg{param_index}"));
+                    let target_name = self
+                        .callable_param_name_at(target, *param_index)
+                        .unwrap_or_else(|| format!("arg{param_index}"));
                     let ts2328_message = format_message(
                         diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                         &[&source_name, &target_name],
                     );
-                    let ts2328_diag = Diagnostic::error(
+                    Diagnostic::error(
                         file_name,
                         start,
                         length,
                         ts2328_message,
                         diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+                    )
+                } else {
+                    let source_str = self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
                     );
-                    self.ctx.push_diagnostic(ts2328_diag);
+                    let target_str = self.format_assignability_type_for_message(target, source);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    )
                 }
-
-                primary
             }
 
             _ => {

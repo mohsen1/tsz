@@ -319,15 +319,15 @@ fn collect_error_codes(source: &str) -> Vec<u32> {
     codes
 }
 
-/// TS2328: When a callback parameter type is itself a function type and is
-/// incompatible, tsc emits TS2328 ("Types of parameters 'X' and 'Y' are
-/// incompatible") as a separate diagnostic alongside TS2322.
+/// When a callback parameter type is itself a function type and its parameter
+/// type is incompatible, tsc keeps the outer TS2322 wrapper and does not emit
+/// TS2328 as a separate top-level diagnostic.
 #[test]
-fn test_ts2328_emitted_for_callback_parameter_mismatch() {
+fn test_ts2328_not_emitted_for_callback_parameter_mismatch() {
     // fc1 has parameter f: (x: Animal) => Animal
     // fc2 has parameter f: (x: Dog) => Dog
-    // Assigning fc1 to fc2 should emit both TS2322 and TS2328
-    // because the parameter types (f) are themselves callable and incompatible.
+    // Assigning fc1 to fc2 should emit TS2322 only because the nested
+    // contravariant check fails on the callback's parameter type.
     let codes = collect_error_codes(
         r#"
         interface Animal { animal: void }
@@ -339,7 +339,10 @@ fn test_ts2328_emitted_for_callback_parameter_mismatch() {
         "#,
     );
     assert!(codes.contains(&2322), "Expected TS2322 in {codes:?}");
-    assert!(codes.contains(&2328), "Expected TS2328 in {codes:?}");
+    assert!(
+        !codes.contains(&2328),
+        "TS2328 should not appear for inner parameter mismatch, got {codes:?}"
+    );
 }
 
 /// TS2328 should NOT be emitted when the outer types are generic type alias
