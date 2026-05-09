@@ -2646,6 +2646,31 @@ const callbackNumber: number = out.onreadystatechange;
     );
 }
 
+#[test]
+fn recursive_homomorphic_mapped_with_nested_indexed_target_does_not_rewalk_target_param() {
+    let source = r#"
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+interface Payload {
+    label: string;
+    child: Payload;
+}
+interface XLike {
+    response: Payload;
+    responseText: string;
+    readyState: number;
+}
+declare let xhr: XLike;
+const out = foo(xhr);
+const childLabel: string = out.response.child.label;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 18046),
+        "nested Deep<T[K]> reverse inference must not leave chained accesses as unknown. Got: {diags:#?}"
+    );
+}
+
 // ─── Higher-order function inference (HOFI) — tracks compiler/genericFunctionInference1.ts ─
 
 /// Locks in the existing correct behavior: a generic source function with a

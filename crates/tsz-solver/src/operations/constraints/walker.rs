@@ -656,14 +656,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // for the homomorphic parameter; we mirror that here.
                             if has_properties {
                                 let mut other_params_var_map = var_map.clone();
-                                other_params_var_map.remove(&keyof_target);
-                                self.constrain_template_against_properties(
-                                    ctx,
-                                    &other_params_var_map,
-                                    &source_obj.properties,
-                                    &mapped,
-                                    priority,
+                                self.remove_reverse_mapped_target_params(
+                                    &mut other_params_var_map,
+                                    keyof_target,
                                 );
+                                if !other_params_var_map.is_empty() {
+                                    self.constrain_template_against_properties(
+                                        ctx,
+                                        &other_params_var_map,
+                                        &source_obj.properties,
+                                        &mapped,
+                                        priority,
+                                    );
+                                }
                             }
                             return;
                         }
@@ -2186,12 +2191,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         mapped: &MappedType,
         priority: crate::types::InferencePriority,
     ) {
+        if var_map.is_empty() {
+            return;
+        }
         let iter_param_name = mapped.type_param.name;
         for prop in properties {
             let key_literal = self.interner.literal_string_atom(prop.name);
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
             self.constrain_types(ctx, var_map, prop.type_id, instantiated_template, priority);
+        }
+    }
+
+    fn remove_reverse_mapped_target_params(
+        &self,
+        var_map: &mut FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        target: TypeId,
+    ) {
+        let candidates: Vec<TypeId> = var_map.keys().copied().collect();
+        for candidate in candidates {
+            if candidate == target {
+                var_map.remove(&candidate);
+                continue;
+            }
+
+            let Some(var) = var_map.get(&candidate).copied() else {
+                continue;
+            };
+            let mut probe_map = FxHashMap::default();
+            probe_map.insert(candidate, var);
+            let mut visited = FxHashSet::default();
+            if self.type_contains_placeholder(target, &probe_map, &mut visited) {
+                var_map.remove(&candidate);
+            }
         }
     }
 }
