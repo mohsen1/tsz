@@ -234,6 +234,25 @@ impl<'a> CheckerState<'a> {
             {
                 return fallback;
             }
+            // LMA evaluation can produce an intersection whose members are still
+            // unreduced applications when the user-defined helper alias inside
+            // the conditional (e.g. React's distributive `Defaultize<P, D>` built
+            // out of `Pick<P, Exclude<keyof P, keyof D>>` etc.) cannot collapse
+            // its `Pick`/`Exclude`/`Extract`/`Partial` arms to concrete object
+            // shapes. The intersection then fails `object_shape_for_type` even
+            // though the conditional itself succeeded. In that structural case,
+            // when the component still carries `defaultProps` metadata, apply
+            // the same default-props transform used for the `evaluated == ANY`
+            // branch — making the defaulted props optional matches what tsc
+            // emits for these helper-alias shapes.
+            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+                .is_none()
+                && let Some(default_props_type) = default_props_type
+                && let Some(fallback) =
+                    self.try_apply_jsx_default_props_fallback(props_type, default_props_type)
+            {
+                return fallback;
+            }
             // If LMA evaluation produced error types (e.g. due to unresolved qualified
             // type references in complex conditional types like React's
             // LibraryManagedAttributes), fall back to the raw props type rather than
