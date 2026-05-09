@@ -878,3 +878,31 @@ c.chunk;
         "Expected no TS2339 for bare JSDoc import() of CommonJS-exported class expression, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_import_equals_require_uses_export_equals_class_expression_instance_type() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.ts",
+        r#"
+export = class {
+    chunk = 1;
+}
+"#,
+        "use.ts",
+        r#"
+import Chunk = require("./mod1");
+declare var c: Chunk;
+c.chunk;
+"#,
+        "./mod1",
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 for import-equals of CommonJS-exported class expression, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
+    );
+}
