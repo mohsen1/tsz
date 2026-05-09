@@ -14,14 +14,12 @@
 //! emitter).
 
 use tsz_common::common::{ModuleKind, ScriptTarget};
-use tsz_emitter::output::printer::{PrintOptions, lower_and_print};
-use tsz_parser::parser::ParserState;
+use tsz_emitter::output::printer::PrintOptions;
 
-fn parse_lower_print(source: &str, opts: PrintOptions) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    lower_and_print(&parser.arena, root, opts).code
-}
+#[path = "test_support.rs"]
+mod test_support;
+
+use test_support::parse_and_lower_print as parse_lower_print;
 
 /// `var _Foo_field;` for a class private field in CJS module mode must come
 /// BEFORE `Object.defineProperty(exports, "__esModule", ...)`. tsc places
