@@ -801,6 +801,15 @@ impl<'a> CheckerState<'a> {
         let is_async = self.has_async_modifier(&method.modifiers);
         let is_generator = method.asterisk_token;
 
+        // TS1064/TS1055/TS2705: parity with fn declarations (issue #4762).
+        self.check_async_return_type_is_promise(
+            has_type_annotation,
+            is_async,
+            is_generator,
+            return_type,
+            method.type_annotation,
+        );
+
         // Check method body
         if method.body.is_some() {
             if !has_type_annotation {

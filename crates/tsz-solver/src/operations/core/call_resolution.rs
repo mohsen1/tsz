@@ -1484,10 +1484,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // TSC checks assignability of the args-as-tuple against the rest param
             // type, producing TS2345 instead of TS2555. Detect this case and return
             // ArgumentTypeMismatch so the checker emits TS2345.
-            if let Some(result) =
-                self.build_variadic_rest_type_mismatch(&func.params, arg_types, func.return_type)
-            {
-                return result;
+            if let Some(rest_param) = func.params.last().filter(|p| p.rest) {
+                let rest_type = self.unwrap_readonly(rest_param.type_id);
+                // `...args: never` means any call is invalid — TSC builds an empty
+                // tuple and checks it against `never`, producing TS2345.
+                let should_type_check = if rest_type == TypeId::NEVER {
+                    true
+                } else if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
+                    let elems = self.interner.tuple_list(elements);
+                    elems.iter().any(|e| e.rest)
+                } else {
+                    false
+                };
+                if should_type_check {
+                    // Build tuple type from actual args
+                    let args_tuple_elems: Vec<TupleElement> = arg_types
+                        .iter()
+                        .map(|&t| TupleElement {
+                            type_id: t,
+                            name: None,
+                            optional: false,
+                            rest: false,
+                        })
+                        .collect();
+                    let args_tuple = self.interner.tuple(args_tuple_elems);
+                    return CallResult::ArgumentTypeMismatch {
+                        index: 0,
+                        expected: rest_type,
+                        actual: args_tuple,
+                        fallback_return: func.return_type,
+                    };
+                }
             }
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_args,
@@ -1768,64 +1795,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             failures,
             fallback_return,
         }
-    }
-
-    /// Returns true when the trailing rest parameter is one for which tsc
-    /// reports a "rest tuple type" mismatch (TS2345) rather than an arity
-    /// mismatch (TS2554/TS2555) when the call has too few arguments. This is
-    /// the case when the rest parameter type is `never` or a tuple containing
-    /// at least one rest element (a variadic tuple such as `[...T, number]`
-    /// or `[...T]`).
-    pub(crate) fn rest_param_demands_aggregate_check(&self, params: &[ParamInfo]) -> bool {
-        let Some(rest_param) = params.last().filter(|p| p.rest) else {
-            return false;
-        };
-        let rest_type = self.unwrap_readonly(rest_param.type_id);
-        if rest_type == TypeId::NEVER {
-            return true;
-        }
-        if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
-            let elems = self.interner.tuple_list(elements);
-            return elems.iter().any(|e| e.rest);
-        }
-        false
-    }
-
-    /// When a call has fewer arguments than required, build an
-    /// `ArgumentTypeMismatch` `CallResult` that compares the args-as-tuple
-    /// against the trailing rest tuple type. Mirrors tsc's behaviour for
-    /// variadic tuple rest parameters where the natural error code is TS2345
-    /// rather than TS2554/TS2555.
-    ///
-    /// Returns `None` when the rest parameter is not a variadic tuple (or
-    /// `never`) — callers should fall back to emitting an arity error.
-    pub(crate) fn build_variadic_rest_type_mismatch(
-        &mut self,
-        params: &[ParamInfo],
-        arg_types: &[TypeId],
-        fallback_return: TypeId,
-    ) -> Option<CallResult> {
-        if !self.rest_param_demands_aggregate_check(params) {
-            return None;
-        }
-        let rest_param = params.last().filter(|p| p.rest)?;
-        let rest_type = self.unwrap_readonly(rest_param.type_id);
-        let args_tuple_elems: Vec<TupleElement> = arg_types
-            .iter()
-            .map(|&t| TupleElement {
-                type_id: t,
-                name: None,
-                optional: false,
-                rest: false,
-            })
-            .collect();
-        let args_tuple = self.interner.tuple(args_tuple_elems);
-        Some(CallResult::ArgumentTypeMismatch {
-            index: 0,
-            expected: rest_type,
-            actual: args_tuple,
-            fallback_return,
-        })
     }
 }
 

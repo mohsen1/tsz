@@ -11,11 +11,40 @@
 //! - `precompute_type_query_flow_types` — pre-computes `typeof` flow-narrowed types
 
 use crate::state::CheckerState;
+use std::cell::RefCell;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::def::DefId;
+
+// Reusable scratch `FxHashSet<DefId>` for the alias-resolution DFS in this
+// module. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
+thread_local! {
+    static ALIAS_DEFID_VISITED_POOL: RefCell<Option<rustc_hash::FxHashSet<DefId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_alias_defid_visited<R>(f: impl FnOnce(&mut rustc_hash::FxHashSet<DefId>) -> R) -> R {
+    let mut visited = ALIAS_DEFID_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    ALIAS_DEFID_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a> CheckerState<'a> {
     fn type_node_is_nested_in_type_literal(&self, node_idx: NodeIndex) -> bool {
@@ -64,30 +93,30 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut visited = rustc_hash::FxHashSet::default();
-        let mut pending = vec![start_def_id];
-        let mut steps = 0usize;
-        while let Some(def_id) = pending.pop() {
-            if !visited.insert(def_id) {
-                continue;
+        with_alias_defid_visited(|visited| {
+            let mut pending = vec![start_def_id];
+            let mut steps = 0usize;
+            while let Some(def_id) = pending.pop() {
+                if !visited.insert(def_id) {
+                    continue;
+                }
+                if resolving_defs.contains(&def_id) {
+                    return true;
+                }
+                let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+                    continue;
+                };
+                steps += 1;
+                if steps > 64 {
+                    break;
+                }
+                pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
+                    self.ctx.types,
+                    body,
+                ));
             }
-            if resolving_defs.contains(&def_id) {
-                return true;
-            }
-            let Some(body) = self.ctx.definition_store.get_body(def_id) else {
-                continue;
-            };
-            steps += 1;
-            if steps > 64 {
-                break;
-            }
-            pending.extend(crate::query_boundaries::common::collect_lazy_def_ids(
-                self.ctx.types,
-                body,
-            ));
-        }
-
-        false
+            false
+        })
     }
 
     /// Check a type alias declaration.
