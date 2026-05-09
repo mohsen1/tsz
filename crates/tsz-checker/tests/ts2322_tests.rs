@@ -4992,7 +4992,6 @@ function foo(v: From) {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_ts2322_keeps_outer_object_error_for_direct_index_access_target() {
     let source = r#"
 interface TextChannel {
