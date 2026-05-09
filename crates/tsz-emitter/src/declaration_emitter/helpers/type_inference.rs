@@ -5944,19 +5944,86 @@ impl<'a> DeclarationEmitter<'a> {
                 // span pulls those trailing characters into the text we
                 // splice into d.ts emit.  Strip them here, since this
                 // helper is the only call site that observes the overshoot.
-                while text
-                    .as_bytes()
-                    .last()
-                    .is_some_and(|&b| b == b'>' || b == b',' || b.is_ascii_whitespace())
-                {
-                    text.pop();
-                }
+                //
+                // Be careful: a nested type-argument list like
+                // `F5<C.A<C.B>>` produces an outer arg whose slice ends
+                // with the inner list's *own* closing `>`.  Trimming
+                // unconditionally would eat that `>` and corrupt the
+                // emitted text into `C.A<C.B`.  Only trim trailing `>`s
+                // that are unbalanced — i.e. when the slice has more
+                // `>`s than `<`s.  Trailing `,`/whitespace can always be
+                // dropped (they're never part of the type's own syntax).
+                Self::strip_type_argument_overshoot(&mut text);
                 if self.first_type_argument_needs_parentheses(arg, index == 0) {
                     text = format!("({text})");
                 }
                 Some(text)
             })
             .collect()
+    }
+
+    /// Trim trailing `>` (and `,` / whitespace) that the parser's
+    /// `token_end()`-based span captured beyond a type's own syntax,
+    /// while preserving balanced `<…>` pairs that belong to a nested
+    /// type-argument list.  See call site for the parser quirk this
+    /// works around.
+    #[cfg(test)]
+    pub(crate) fn strip_type_argument_overshoot_for_test(text: &mut String) {
+        Self::strip_type_argument_overshoot(text);
+    }
+
+    fn strip_type_argument_overshoot(text: &mut String) {
+        loop {
+            let Some(&last) = text.as_bytes().last() else {
+                return;
+            };
+            if last == b',' || last.is_ascii_whitespace() {
+                text.pop();
+                continue;
+            }
+            if last != b'>' {
+                return;
+            }
+            // Count `<` and `>` not inside string/template literals.
+            // If `>`s outnumber `<`s, the trailing `>` is overshoot.
+            let bytes = text.as_bytes();
+            let mut lt = 0i32;
+            let mut gt = 0i32;
+            let mut i = 0usize;
+            while i < bytes.len() {
+                let b = bytes[i];
+                match b {
+                    b'"' | b'\'' | b'`' => {
+                        let quote = b;
+                        i += 1;
+                        while i < bytes.len() && bytes[i] != quote {
+                            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        if i < bytes.len() {
+                            i += 1;
+                        }
+                    }
+                    b'<' => {
+                        lt += 1;
+                        i += 1;
+                    }
+                    b'>' => {
+                        gt += 1;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+            }
+            if gt > lt {
+                text.pop();
+            } else {
+                return;
+            }
+        }
     }
 
     pub(crate) fn first_type_argument_needs_parentheses(
