@@ -15,9 +15,38 @@ use crate::types::{
 };
 use crate::utils::{self, TupleRestExpansion};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::trace;
 
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
+
+// Reusable scratch `FxHashSet<crate::TypeId>` for the recursive DFS used by
+// `type_evaluates_to_function`. Mirrors the pool pattern from #4722 / #4790
+// / #4801 / #4805.
+thread_local! {
+    static EVALUATES_VISITED_POOL: RefCell<Option<FxHashSet<crate::TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_evaluates_visited<R>(f: impl FnOnce(&mut FxHashSet<crate::TypeId>) -> R) -> R {
+    let mut visited = EVALUATES_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    EVALUATES_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn is_string_like_type(&self, type_id: TypeId) -> bool {
@@ -1480,8 +1509,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// - Union/intersection members that evaluate to functions
     /// - Aliases/applications that only become callable after evaluation
     pub(crate) fn type_evaluates_to_function(&self, type_id: TypeId) -> bool {
-        let mut visited = FxHashSet::default();
-        self.type_evaluates_to_function_inner(type_id, &mut visited)
+        with_evaluates_visited(|visited| self.type_evaluates_to_function_inner(type_id, visited))
     }
 
     pub(crate) fn should_directly_constrain_same_base_application(
