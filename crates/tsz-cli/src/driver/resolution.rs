@@ -31,22 +31,38 @@ type CollectedModuleSpecifier = (
 // `CountingFs` trait (the eventual T2.0 wrapper) a one-place change.
 //
 // All three helpers are zero-cost when `TSZ_PERF_COUNTERS` is unset:
-// `inc()` short-circuits on the cached `enabled_fast()` gate.
+// the `enabled_fast()` gate at the top of each wrapper short-circuits
+// before we deref `counters()` (an `OnceLock` lookup), so the disabled
+// path collapses to one cached-bool load + the underlying syscall.
+// Naively passing `&counters().X` to `inc()` would always evaluate the
+// `OnceLock` lookup as the argument; gating *here* avoids that.
 #[inline]
 fn count_is_file(path: &Path) -> bool {
-    tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().resolver_is_file_calls);
+    if tsz_common::perf_counters::enabled_fast() {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().resolver_is_file_calls,
+        );
+    }
     path.is_file()
 }
 
 #[inline]
 fn count_is_dir(path: &Path) -> bool {
-    tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().resolver_is_dir_calls);
+    if tsz_common::perf_counters::enabled_fast() {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().resolver_is_dir_calls,
+        );
+    }
     path.is_dir()
 }
 
 #[inline]
 fn count_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
-    tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().resolver_read_dir_calls);
+    if tsz_common::perf_counters::enabled_fast() {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().resolver_read_dir_calls,
+        );
+    }
     std::fs::read_dir(path)
 }
 
