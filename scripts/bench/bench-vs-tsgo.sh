@@ -1377,7 +1377,7 @@ ensure_ts_toolbelt_fixture() {
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "ignoreDeprecations": "6.0"
+    "ignoreDeprecations": "5.0"
   },
   "include": ["sources/**/*.ts"],
   "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
@@ -1566,8 +1566,7 @@ ensure_zod_fixture() {
     "skipLibCheck": true,
     "noEmit": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0"
+    "moduleResolution": "bundler"
   },
   "include": ["src/**/*.ts", "packages/zod/src/**/*.ts"],
   "exclude": [
@@ -1622,8 +1621,7 @@ GLOBALSEOF
     "skipLibCheck": true,
     "noEmit": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0"
+    "moduleResolution": "bundler"
   },
   "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
   "exclude": [
