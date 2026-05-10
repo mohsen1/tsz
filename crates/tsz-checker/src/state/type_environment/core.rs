@@ -1822,10 +1822,12 @@ impl<'a> CheckerState<'a> {
                             None
                         };
                         let params = if let Some(p) = cached {
-                            tsz_common::perf_counters::inc(
-                                &tsz_common::perf_counters::counters()
-                                    .cross_file_type_params_cache_hits,
-                            );
+                            if tsz_common::perf_counters::enabled_fast() {
+                                tsz_common::perf_counters::inc(
+                                    &tsz_common::perf_counters::counters()
+                                        .cross_file_type_params_cache_hits,
+                                );
+                            }
                             Some(p)
                         } else if Self::enter_cross_arena_delegation() {
                             // Cache miss: we're entering the slow path and
@@ -1835,10 +1837,12 @@ impl<'a> CheckerState<'a> {
                             // when the slow path runs but extraction fails
                             // (e.g. interface-name mismatch), distorting
                             // attribution for Tier 2 decision-making.
-                            tsz_common::perf_counters::inc(
-                                &tsz_common::perf_counters::counters()
-                                    .cross_file_type_params_cache_misses,
-                            );
+                            if tsz_common::perf_counters::enabled_fast() {
+                                tsz_common::perf_counters::inc(
+                                    &tsz_common::perf_counters::counters()
+                                        .cross_file_type_params_cache_misses,
+                                );
+                            }
                             let decl_binder = self
                                 .ctx
                                 .get_binder_for_arena(arena.as_ref())
@@ -1953,20 +1957,24 @@ impl<'a> CheckerState<'a> {
                                 .map(|e| e.value().clone())
                         });
                     let params = if let Some(p) = cached {
-                        tsz_common::perf_counters::inc(
-                            &tsz_common::perf_counters::counters()
-                                .cross_file_type_params_cache_hits,
-                        );
+                        if tsz_common::perf_counters::enabled_fast() {
+                            tsz_common::perf_counters::inc(
+                                &tsz_common::perf_counters::counters()
+                                    .cross_file_type_params_cache_hits,
+                            );
+                        }
                         Some(p)
                     } else if Self::enter_cross_arena_delegation() {
                         // Cache miss: the slow path entered and built a
                         // child checker, regardless of whether extraction
                         // returns Some(_). See sibling arena-targeted site
                         // above for the same rationale.
-                        tsz_common::perf_counters::inc(
-                            &tsz_common::perf_counters::counters()
-                                .cross_file_type_params_cache_misses,
-                        );
+                        if tsz_common::perf_counters::enabled_fast() {
+                            tsz_common::perf_counters::inc(
+                                &tsz_common::perf_counters::counters()
+                                    .cross_file_type_params_cache_misses,
+                            );
+                        }
                         let decl_binder = self
                             .ctx
                             .get_binder_for_file(file_idx)
