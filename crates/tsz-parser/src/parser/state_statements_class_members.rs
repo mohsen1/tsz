@@ -714,7 +714,7 @@ impl ParserState {
         result
     }
 
-    fn is_constructor_return_type_recovery_class_member_start(&mut self) -> bool {
+    const fn is_constructor_return_type_recovery_class_member_start(&mut self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::PublicKeyword
