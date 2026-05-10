@@ -2159,8 +2159,6 @@ struct TsDirective {
     comment_start: u32,
     /// Byte length of the comment containing the directive.
     comment_length: u32,
-    /// Byte offset of the `@ts-expect-error` text within the comment.
-    directive_text_start: u32,
 }
 
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
@@ -2170,7 +2168,7 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
 
     for comment in tsz_common::comments::get_comment_ranges(text) {
         let comment_text = comment.get_text(text);
-        let Some((kind, rel_offset)) = find_directive_in_text(comment_text) else {
+        let Some((kind, _rel_offset)) = find_directive_in_text(comment_text) else {
             continue;
         };
 
@@ -2187,7 +2185,6 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
             suppressed_line,
             comment_start: comment.pos,
             comment_length: comment.end.saturating_sub(comment.pos),
-            directive_text_start: comment.pos + rel_offset as u32,
         });
     }
 
@@ -2240,18 +2237,20 @@ pub(super) fn apply_ts_directive_suppression(
         true
     });
 
-    // Emit TS2578 for unused @ts-expect-error directives
+    // Emit TS2578 for unused @ts-expect-error directives.
+    //
+    // tsc anchors this diagnostic at the comment range itself — the `/` of
+    // `//` or `/*` — not at the enclosing line start. For an indented
+    // `  // @ts-expect-error` that means the diagnostic starts at the
+    // comment opener (column 3 here), not at column 1. The span covers
+    // the entire comment.
     if !has_ts_nocheck {
         for (idx, directive) in directives.iter().enumerate() {
             if directive.is_expect_error && !directive_used[idx] {
-                let directive_line = line_of_offset(&line_starts, directive.directive_text_start);
-                let line_start_offset = line_starts[directive_line as usize];
-                let comment_end = directive.comment_start + directive.comment_length;
-                let length = comment_end.saturating_sub(line_start_offset);
                 diagnostics.push(Diagnostic::error(
                     file_name.to_string(),
-                    line_start_offset,
-                    length,
+                    directive.comment_start,
+                    directive.comment_length,
                     "Unused '@ts-expect-error' directive.".to_string(),
                     2578,
                 ));
@@ -2803,6 +2802,48 @@ const value = 1;
             diagnostics.is_empty(),
             "Expected CR-only @ts-expect-error to suppress the next-line diagnostic, got: {diagnostics:?}"
         );
+    }
+
+    /// Anchor regression for TS2578.
+    ///
+    /// tsc 6.0.3 emits TS2578 at the comment range — the `/` of the `//`
+    /// or `/*` opener — not at the enclosing line start. For an indented
+    /// `  // @ts-expect-error` that means the diagnostic span starts at
+    /// the comment's first character (here byte 2, column 3), not at
+    /// column 1.
+    ///
+    /// Source: type-challenges 00004-easy-pick (issue #4902).
+    #[test]
+    fn unused_expect_error_anchors_at_indented_comment_start() {
+        let source = "const a = 1;\n  // @ts-expect-error\nconst x = 1;\n";
+        let mut diagnostics = Vec::new();
+        apply_ts_directive_suppression("anchor.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+        // The `//` of the indented comment starts at byte offset
+        // `"const a = 1;\n  ".len() == 15`. tsc anchors at this position
+        // (column 3 on the comment line), not at the line start (column 1).
+        assert_eq!(diagnostics[0].start, 15);
+        // Span covers the entire comment, including the `//` opener.
+        assert_eq!(diagnostics[0].length, "// @ts-expect-error".len() as u32);
+    }
+
+    /// Same rule for block comments: anchor at `/*`, span the whole comment.
+    /// Anti-hardcoding cover: a different comment opener and a different
+    /// indent — the fix must key on the structural comment range, not on
+    /// `//` specifically or on a fixed offset.
+    #[test]
+    fn unused_expect_error_anchors_at_indented_block_comment_start() {
+        let source = "    /* @ts-expect-error */\nconst y = 1;\n";
+        let mut diagnostics = Vec::new();
+        apply_ts_directive_suppression("anchor-block.ts", source, &mut diagnostics, false);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+        // 4 spaces of indent, then `/*` starts at byte 4 (column 5).
+        assert_eq!(diagnostics[0].start, 4);
+        assert_eq!(diagnostics[0].length, "/* @ts-expect-error */".len() as u32);
     }
 
     #[test]
