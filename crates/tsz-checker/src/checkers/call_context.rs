@@ -1262,6 +1262,94 @@ impl<'a> CheckerState<'a> {
         .is_some_and(|shape| !shape.type_params.is_empty())
     }
 
+    fn contextual_callable_has_parameter_return_feedback(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+    ) -> bool {
+        let return_type = shape.return_type;
+        if matches!(return_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || common::contains_infer_types(self.ctx.types, return_type)
+        {
+            return false;
+        }
+
+        let type_param_names = |this: &Self, type_id: TypeId| -> FxHashSet<_> {
+            common::collect_referenced_types(this.ctx.types, type_id)
+                .into_iter()
+                .filter_map(|referenced| {
+                    common::type_param_info(this.ctx.types, referenced).map(|info| info.name)
+                })
+                .collect()
+        };
+
+        let return_params = type_param_names(self, return_type);
+        if return_params.is_empty() {
+            return false;
+        }
+        if shape.params.is_empty() {
+            return true;
+        }
+
+        let param_params: FxHashSet<_> = shape
+            .params
+            .iter()
+            .flat_map(|param| type_param_names(self, param.type_id).into_iter())
+            .collect();
+        return_params.iter().any(|name| param_params.contains(name))
+    }
+
+    pub(crate) fn call_expression_needs_contextual_generic_instantiation(
+        &mut self,
+        idx: NodeIndex,
+        expected_type: Option<TypeId>,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(expected_type) = expected_type else {
+            return false;
+        };
+        if matches!(expected_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || common::contains_infer_types(self.ctx.types, expected_type)
+        {
+            return false;
+        }
+
+        let expected_type = self
+            .contextual_type_option_for_expression(Some(expected_type))
+            .unwrap_or(expected_type);
+        let Some(expected_shape) = self.contextual_signature_after_evaluation(expected_type) else {
+            return false;
+        };
+        if !self.contextual_callable_has_parameter_return_feedback(&expected_shape) {
+            return false;
+        }
+
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let arg_count = call
+            .arguments
+            .as_ref()
+            .map(|args| args.nodes.len())
+            .unwrap_or(0);
+        let callee_type = self.get_type_of_node_with_request(call.expression, &TypingRequest::NONE);
+        let callee_type = self.evaluate_application_type(callee_type);
+        let callee_type = self.resolve_lazy_type(callee_type);
+        let callee_type = self.evaluate_contextual_type(callee_type);
+
+        call_checker::get_contextual_signature_for_arity(self.ctx.types, callee_type, arg_count)
+            .or_else(|| call_checker::get_call_signature(self.ctx.types, callee_type, arg_count))
+            .is_some_and(|shape| !shape.type_params.is_empty())
+    }
+
     pub(crate) fn argument_needs_refresh_for_contextual_call(
         &mut self,
         idx: NodeIndex,
@@ -1269,6 +1357,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         self.argument_needs_contextual_type(idx)
             || self.expression_needs_contextual_signature_instantiation(idx, expected_type)
+            || self.call_expression_needs_contextual_generic_instantiation(idx, expected_type)
     }
 
     pub(crate) fn instantiate_callable_result_from_request(

@@ -1435,11 +1435,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                     // Covariant return: instantiated_source_return <: target_return
                     //
-                    // When both the source return and target return are inference
-                    // placeholders, unify them so they share candidates/bounds.
-                    // This handles chains like: compose(unbox, unlist) where
-                    // unlist's U is related to B through Array<U> = B, and C = U.
-                    // Without unification, U gets no direct candidates.
+                    // Keep source and target placeholders distinct. `constrain_types`
+                    // records the source return as evidence for the target return while
+                    // allowing the source variable to be resolved and substituted later.
+                    // Unifying here collapses source generics into outer placeholders
+                    // too early and loses higher-order generic return parameters.
                     //
                     // Skip the cap for construct signatures (see non-generic branch
                     // above for rationale).
@@ -1448,20 +1448,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else {
                         priority.max(crate::types::InferencePriority::ReturnType)
                     };
-                    if let (Some(&s_var), Some(&t_var)) = (
-                        combined_var_map.get(&instantiated_return),
-                        combined_var_map.get(&t_fn.return_type),
-                    ) {
-                        let _ = ctx.unify_vars(s_var, t_var);
-                    } else {
-                        self.constrain_types(
-                            ctx,
-                            &combined_var_map,
-                            instantiated_return,
-                            t_fn.return_type,
-                            return_priority,
-                        );
-                    }
+                    self.constrain_types(
+                        ctx,
+                        &combined_var_map,
+                        instantiated_return,
+                        t_fn.return_type,
+                        return_priority,
+                    );
 
                     // Constrain type predicates if both functions have them
                     self.constrain_type_predicates(

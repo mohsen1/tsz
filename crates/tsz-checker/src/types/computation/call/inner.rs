@@ -1968,7 +1968,11 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     let single_pass_return_context_substitution =
                         if contextual_type.is_some_and(|ctx| {
-                            !common::contains_type_parameters(self.ctx.types, ctx)
+                            let contextual_generic_callable =
+                                call_checker::get_contextual_signature(self.ctx.types, ctx)
+                                    .is_some_and(|shape| !shape.type_params.is_empty());
+                            (!common::contains_type_parameters(self.ctx.types, ctx)
+                                || contextual_generic_callable)
                                 && !common::contains_infer_types(self.ctx.types, ctx)
                                 && !common::contains_type_by_id(
                                     self.ctx.types,

@@ -80,6 +80,45 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.function(shape)
     }
 
+    pub(super) fn hoist_source_placeholders_into_return_type(&self, return_type: TypeId) -> TypeId {
+        let Some(TypeData::Function(shape_id)) = self.interner.lookup(return_type) else {
+            return return_type;
+        };
+
+        let mut shape = self.interner.function_shape(shape_id).as_ref().clone();
+        if !shape.type_params.is_empty() {
+            return return_type;
+        }
+
+        let mut hoisted = Vec::new();
+        let mut seen = FxHashSet::default();
+        for referenced in
+            crate::visitor::collect_all_types(self.interner.as_type_database(), return_type)
+        {
+            let Some(TypeData::TypeParameter(info)) = self.interner.lookup(referenced) else {
+                continue;
+            };
+            if !self
+                .interner
+                .resolve_atom(info.name)
+                .as_str()
+                .starts_with("__infer_src_")
+            {
+                continue;
+            }
+            if seen.insert(info.name) {
+                hoisted.push(info);
+            }
+        }
+
+        if hoisted.is_empty() {
+            return return_type;
+        }
+
+        shape.type_params = hoisted;
+        self.interner.function(shape)
+    }
+
     pub(super) fn normalize_function_shape_params_for_context(
         &self,
         shape: &FunctionShape,
@@ -99,15 +138,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         db: &dyn crate::TypeDatabase,
         type_id: TypeId,
         arg_count: usize,
+        prefer_construct: bool,
     ) -> Option<FunctionShape> {
-        let (signatures, is_constructor) = crate::type_queries::get_call_signatures(db, type_id)
-            .filter(|signatures| !signatures.is_empty())
-            .map(|signatures| (signatures, false))
-            .or_else(|| {
-                crate::type_queries::get_construct_signatures(db, type_id)
-                    .filter(|signatures| !signatures.is_empty())
-                    .map(|signatures| (signatures, true))
-            })?;
+        let call_signatures = || {
+            crate::type_queries::get_call_signatures(db, type_id)
+                .filter(|signatures| !signatures.is_empty())
+                .map(|signatures| (signatures, false))
+        };
+        let construct_signatures = || {
+            crate::type_queries::get_construct_signatures(db, type_id)
+                .filter(|signatures| !signatures.is_empty())
+                .map(|signatures| (signatures, true))
+        };
+        let (signatures, is_constructor) = if prefer_construct {
+            construct_signatures().or_else(call_signatures)
+        } else {
+            call_signatures().or_else(construct_signatures)
+        }?;
         let signature_accepts_arg_count = |params: &[crate::types::ParamInfo], count: usize| {
             let required_count = params.iter().filter(|p| !p.optional).count();
             let has_rest = params.iter().any(|p| p.rest);
@@ -143,6 +190,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             db,
             source_type,
             target_fn.params.len(),
+            target_fn.is_constructor,
         )
         .or_else(|| Self::get_contextual_signature(db, source_type))?;
         Some((source_fn, target_fn))
@@ -398,17 +446,42 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // legitimate targets. Without this, inference variables (__infer_*)
             // leak into final types because e.g. `U -> Box<A>` gets blocked.
             if !target_fn.type_params.is_empty() {
-                for (source_param, target_param) in
-                    source_fn.params.iter().zip(target_fn.params.iter())
-                {
+                for (i, source_param) in source_fn.params.iter().enumerate() {
                     if let Some(TypeData::TypeParameter(tp)) =
                         self.interner.lookup(source_param.type_id)
                         && tracked_type_params.contains(&tp.name)
                         && substitution.get(tp.name).is_none()
-                        && target_param.type_id != TypeId::UNKNOWN
-                        && target_param.type_id != TypeId::ERROR
+                        && let Some(target_type) = if source_param.rest {
+                            if let Some(target_param) = target_fn.params.get(i)
+                                && target_param.rest
+                                && i + 1 == target_fn.params.len()
+                            {
+                                Some(target_param.type_id)
+                            } else {
+                                let remaining: Vec<TupleElement> = target_fn.params[i..]
+                                    .iter()
+                                    .map(|p| TupleElement {
+                                        type_id: p.type_id,
+                                        name: p.name,
+                                        optional: p.optional,
+                                        rest: p.rest,
+                                    })
+                                    .collect();
+                                (!remaining.is_empty()).then(|| self.interner.tuple(remaining))
+                            }
+                        } else {
+                            target_fn
+                                .params
+                                .get(i)
+                                .map(|target_param| target_param.type_id)
+                        }
+                        && target_type != TypeId::UNKNOWN
+                        && target_type != TypeId::ERROR
                     {
-                        substitution.insert(tp.name, target_param.type_id);
+                        substitution.insert(tp.name, target_type);
+                    }
+                    if source_param.rest {
+                        break;
                     }
                 }
                 if let Some(TypeData::TypeParameter(tp)) =

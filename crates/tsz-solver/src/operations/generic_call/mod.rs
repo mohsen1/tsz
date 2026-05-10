@@ -503,10 +503,12 @@ fn instantiate_call_type(
     }
 }
 
+mod contextual_signature_instantiation;
 mod inference_helpers;
 mod normalization;
 mod resolve;
 mod return_context;
+mod return_context_feedback;
 
 /// Check if a type contains literal types — recursing into unions, intersections,
 /// and object properties. Used to detect discriminated union constraints like

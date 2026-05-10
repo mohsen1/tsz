@@ -316,6 +316,26 @@ pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
 }
 
+/// Check whether a type is itself a bare call-local inference placeholder.
+///
+/// Higher-order generic function inference also creates `__infer_src_*`
+/// placeholders for the generic parameters of a source function argument. Those
+/// are not stale call-local placeholders: when they survive into a returned
+/// function type they represent type parameters that should be hoisted.
+pub fn is_bare_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Infer(_)) => true,
+        Some(TypeData::TypeParameter(tp)) => {
+            let name = db.resolve_atom_ref(tp.name);
+            name.starts_with("__infer_") && !name.starts_with("__infer_src_")
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a spread marker tuple created by the checker.
 pub fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
@@ -378,6 +398,24 @@ pub fn contains_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> 
         TypeData::TypeParameter(tp) => {
             let name = db.resolve_atom_ref(tp.name);
             name.starts_with("__infer_") || name.starts_with("__infer_src_")
+        }
+        TypeData::Infer(_) => true,
+        _ => false,
+    })
+}
+
+/// Check if a type contains a call-local inference placeholder.
+///
+/// This intentionally excludes `__infer_src_*` placeholders because those carry
+/// higher-order source generic parameters and are normalized or hoisted later.
+pub fn contains_current_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if is_bare_current_infer_placeholder_db(db, type_id) {
+        return true;
+    }
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::TypeParameter(tp) => {
+            let name = db.resolve_atom_ref(tp.name);
+            name.starts_with("__infer_") && !name.starts_with("__infer_src_")
         }
         TypeData::Infer(_) => true,
         _ => false,

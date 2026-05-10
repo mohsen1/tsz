@@ -110,6 +110,28 @@ fn instantiate_contextual_target_shape_for_return_context(
 }
 
 impl<'a> CheckerState<'a> {
+    fn substitution_with_source_constraint_fallbacks(
+        &mut self,
+        source_fn: &tsz_solver::FunctionShape,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let mut constrained = substitution.clone();
+        for tp in &source_fn.type_params {
+            let Some(candidate) = constrained.get(tp.name) else {
+                continue;
+            };
+            let Some(raw_constraint) = tp.constraint else {
+                continue;
+            };
+
+            let constraint = common::instantiate_type(self.ctx.types, raw_constraint, &constrained);
+            if !self.is_assignable_to_with_env(candidate, constraint) {
+                constrained.insert(tp.name, constraint);
+            }
+        }
+        constrained
+    }
+
     pub(crate) fn resolve_signature_parameter_type_queries(
         &mut self,
         sig_params: &[tsz_solver::ParamInfo],
@@ -536,9 +558,6 @@ impl<'a> CheckerState<'a> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
-        if target_fn.params.iter().any(|param| param.rest) {
-            return source_ty;
-        }
         let normalize = |shape: tsz_solver::FunctionShape| {
             let unpacked: Vec<_> = shape
                 .params
@@ -549,11 +568,44 @@ impl<'a> CheckerState<'a> {
         };
         let source_fn = normalize(source_fn);
         let target_fn = normalize(target_fn);
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
         if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
             return source_ty;
         }
         if !target_fn.type_params.is_empty() {
             return source_ty;
+        }
+        // When every source type parameter is fixed by parameter positions,
+        // the target return type should not feed inference. A generic like
+        // `<A, B>(a: A, b: B) => A | B` against `(...args: [string, number])
+        // => string | number` must infer A/B from the tuple-rest parameters,
+        // not from the whole contextual function type.
+        let source_type_params_fully_determined_by_params =
+            source_fn.type_params.iter().all(|tp| {
+                source_fn.params.iter().any(|param| {
+                    common::collect_referenced_types(self.ctx.types, param.type_id)
+                        .into_iter()
+                        .any(|ty| {
+                            common::type_param_info(self.ctx.types, ty)
+                                .is_some_and(|info| info.name == tp.name)
+                        })
+                })
+            });
+        let target_params_are_concrete =
+            target_fn
+                .params
+                .iter()
+                .take(source_fn.params.len())
+                .all(|param| {
+                    !matches!(param.type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                        && !common::contains_infer_types(self.ctx.types, param.type_id)
+                        && !common::contains_type_parameters(self.ctx.types, param.type_id)
+                });
+        if source_type_params_fully_determined_by_params && target_params_are_concrete {
+            return self
+                .instantiate_generic_function_argument_against_target_params(source_ty, target_ty);
         }
 
         let target_param_types: Vec<_> = target_fn
@@ -562,15 +614,19 @@ impl<'a> CheckerState<'a> {
             .take(source_fn.params.len())
             .map(|p| p.type_id)
             .collect();
-        let env = self.ctx.type_env.borrow();
-        let substitution = call_checker::compute_contextual_types_with_context(
-            self.ctx.types,
-            &self.ctx,
-            &env,
-            &source_fn,
-            &target_param_types,
-            Some(target_ty),
-        );
+        let substitution = {
+            let env = self.ctx.type_env.borrow();
+            call_checker::compute_contextual_types_with_context(
+                self.ctx.types,
+                &self.ctx,
+                &env,
+                &source_fn,
+                &target_param_types,
+                Some(target_ty),
+            )
+        };
+        let substitution =
+            self.substitution_with_source_constraint_fallbacks(&source_fn, &substitution);
         let instantiated =
             instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
         self.ctx.types.factory().function(instantiated)
@@ -600,9 +656,6 @@ impl<'a> CheckerState<'a> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
-        if target_fn.params.iter().any(|param| param.rest) {
-            return source_ty;
-        }
         let normalize = |shape: tsz_solver::FunctionShape| {
             let unpacked: Vec<_> = shape
                 .params
@@ -613,6 +666,9 @@ impl<'a> CheckerState<'a> {
         };
         let source_fn = normalize(source_fn);
         let target_fn = normalize(target_fn);
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
         if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
             return source_ty;
         }
@@ -634,15 +690,19 @@ impl<'a> CheckerState<'a> {
             return source_ty;
         }
 
-        let env = self.ctx.type_env.borrow();
-        let substitution = call_checker::compute_contextual_types_with_context(
-            self.ctx.types,
-            &self.ctx,
-            &env,
-            &source_fn,
-            &target_param_types,
-            None,
-        );
+        let substitution = {
+            let env = self.ctx.type_env.borrow();
+            call_checker::compute_contextual_types_with_context(
+                self.ctx.types,
+                &self.ctx,
+                &env,
+                &source_fn,
+                &target_param_types,
+                None,
+            )
+        };
+        let substitution =
+            self.substitution_with_source_constraint_fallbacks(&source_fn, &substitution);
         let instantiated =
             instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
         self.ctx.types.factory().function(instantiated)
