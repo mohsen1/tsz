@@ -24,6 +24,10 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn compile_and_get_raw_diagnostics(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
+}
+
 fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_paths = [
@@ -325,6 +329,38 @@ var maxResult = max2(1, 2);
 }
 
 #[test]
+fn self_referential_constraint_fallback_anchors_first_argument_after_contextual_assignment() {
+    let source = r#"
+interface Comparable<T> {
+    compareTo(other: T): number;
+}
+interface Comparer {
+    <T extends Comparable<T>>(x: T, y: T): T;
+}
+var max2: Comparer = (x, y) => { return (x.compareTo(y) > 0) ? x : y };
+var maxResult = max2(1, 2);
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2345)
+        .unwrap_or_else(|| panic!("expected TS2345 for max2(1, 2); got: {diagnostics:#?}"));
+    let first_arg_start = source.find("max2(1, 2)").expect("expected call") + "max2(".len();
+
+    assert_eq!(
+        ts2345.start, first_arg_start as u32,
+        "TS2345 should anchor the first failing argument. Got: {ts2345:#?}"
+    );
+    assert_eq!(ts2345.length, 1, "TS2345 should cover only `1`");
+    assert!(
+        ts2345
+            .message_text
+            .contains("parameter of type 'Comparable<1 | 2>'"),
+        "expected literal candidate display at the conformance anchor. Got: {ts2345:#?}"
+    );
+}
+
+#[test]
 fn self_referential_constraint_fallback_display_scales_beyond_two_candidates() {
     let source = r#"
 interface Wrapped<T> {
@@ -351,6 +387,40 @@ useWrapped("a", "b", "c");
     assert!(
         msg.contains("parameter of type 'Wrapped<\"a\" | \"b\" | \"c\">'"),
         "display provenance should preserve all literal candidates. Got: {msg}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_displays_canonical_boolean_candidate() {
+    let source = r#"
+interface Wrapped<T> {
+    value: T;
+}
+interface UseWrapped {
+    <T extends Wrapped<T>>(a: T, b: T): T;
+}
+declare const useWrapped: UseWrapped;
+useWrapped(true, false);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for boolean literal candidates; got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("Argument of type 'boolean'"),
+        "source should still be widened for primitive boolean candidates. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Wrapped<boolean>'"),
+        "true/false candidate unions should display through the canonical boolean type. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Wrapped<true") && !msg.contains("Wrapped<false"),
+        "boolean constraint fallback should not spell true/false as a literal union. Got: {msg}"
     );
 }
 
