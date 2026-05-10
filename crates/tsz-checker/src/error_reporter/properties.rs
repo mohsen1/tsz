@@ -58,61 +58,6 @@ impl<'a> CheckerState<'a> {
         has_global_this && has_global_value && shape.string_index.is_none()
     }
 
-    fn element_access_receiver_declared_element_display(
-        &mut self,
-        idx: NodeIndex,
-        type_id: TypeId,
-    ) -> Option<String> {
-        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
-        let receiver_node = self.ctx.arena.get(receiver)?;
-        if receiver_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            return None;
-        }
-
-        let access = self.ctx.arena.get_access_expr(receiver_node)?;
-        let base_expr = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(access.expression);
-        let base_node = self.ctx.arena.get(base_expr)?;
-        if base_node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-
-        let sym_id = self.resolve_identifier_symbol(base_expr)?;
-        let declared_type = self.get_type_of_symbol(sym_id);
-        if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
-            return None;
-        }
-
-        let declared_element_type =
-            crate::query_boundaries::common::array_element_type(self.ctx.types, declared_type)
-                .or_else(|| {
-                    crate::query_boundaries::common::tuple_elements(self.ctx.types, declared_type)
-                        .map(|elements| {
-                            let element_types: Vec<TypeId> =
-                                elements.iter().map(|elem| elem.type_id).collect();
-                            match element_types.as_slice() {
-                                [] => TypeId::NEVER,
-                                [element_type] => *element_type,
-                                _ => self.ctx.types.factory().union(element_types),
-                            }
-                        })
-                })?;
-
-        let declared_element_type = self.evaluate_type_with_env(declared_element_type);
-        if matches!(declared_element_type, TypeId::ERROR | TypeId::UNKNOWN) {
-            return None;
-        }
-        if !self.is_assignable_to(type_id, declared_element_type)
-            && !self.is_assignable_to(declared_element_type, type_id)
-        {
-            return None;
-        }
-
-        Some(self.format_type_for_assignability_message(declared_element_type))
-    }
-
     fn fresh_empty_object_member_for_missing_union(
         &mut self,
         object_type: TypeId,
@@ -501,7 +446,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn access_receiver_for_diagnostic_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn access_receiver_for_diagnostic_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.ctx.arena.get(idx)?;
         if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
@@ -999,6 +944,7 @@ impl<'a> CheckerState<'a> {
         {
             return format!("typeof {}", ident.escaped_text);
         }
+        let diagnostic_receiver = self.access_receiver_for_diagnostic_node(idx);
         let is_element_access_receiver = self
             .ctx
             .arena
@@ -1010,15 +956,18 @@ impl<'a> CheckerState<'a> {
                 .node_info(idx)
                 .and_then(|info| self.ctx.arena.get(info.parent))
                 .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            || self
-                .access_receiver_for_diagnostic_node(idx)
-                .is_some_and(|receiver| {
-                    self.ctx
+            || diagnostic_receiver.is_some_and(|receiver| {
+                self.ctx
+                    .arena
+                    .get(receiver)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                    || self
+                        .ctx
                         .arena
                         .node_info(receiver)
                         .and_then(|info| self.ctx.arena.get(info.parent))
                         .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                });
+            });
 
         if is_element_access_receiver {
             if let Some(display) =

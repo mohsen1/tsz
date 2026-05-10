@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "mode": "timing",
+  "tsz": {
+    "version": "0.1.9",
+    "commit": null,
+    "profile": "release"
+  },
+  "fixture": {
+    "name": null,
+    "repo": null,
+    "ref": null,
+    "actual_commit": null,
+    "path": null,
+    "local_override": false
+  },
+  "command_line": [
+    "/Users/mohsen/code/tsz/.target/release/tsz",
+    "--project",
+    "tsconfig.json",
+    "--pretty",
+    "false",
+    "--noEmit",
+    "--diagnostics-json",
+    "/tmp/perf-runs/monorepo-003-diag.json",
+    "--perf-counters-json",
+    "/tmp/perf-runs/monorepo-003-pc.json"
+  ],
+  "phases_ms": {
+    "config_discovery": 0.0,
+    "source_discovery": 0.0,
+    "module_resolution": 0.0,
+    "io_read": 229.038084,
+    "load_libs": 3.7475,
+    "parse_bind": 1389.784792,
+    "check": 9417.872334,
+    "emit": 0.00020800000000000001,
+    "total": 11070.805875
+  },
+  "counts": {
+    "files": 5186,
+    "root_files": 5099,
+    "lib_files": 87,
+    "source_bytes": 0,
+    "diagnostics": 32452
+  },
+  "rss_peak_bytes": 4131536896
+}

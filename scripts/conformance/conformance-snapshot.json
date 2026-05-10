@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-05-10T06:21:50Z",
-  "git_sha": "d42a90b2faeb1ed301ab56acfe019b30ec0b795d",
+  "timestamp": "2026-05-10T07:38:57Z",
+  "git_sha": "7e3ee343b7e6c526d08af7957cc7e71cd5a9bc65",
   "summary": {
     "total_tests": 12582,
-    "passed": 12549,
-    "failed": 33,
-    "pass_rate": 99.7
+    "passed": 12551,
+    "failed": 31,
+    "pass_rate": 99.8
   },
   "areas_by_pass_rate": [
     {
@@ -44,13 +44,6 @@
       "pass_rate": 95.83
     },
     {
-      "area": "types/spread",
-      "total": 25,
-      "passed": 24,
-      "failed": 1,
-      "pass_rate": 96.0
-    },
-    {
       "area": "types/members",
       "total": 34,
       "passed": 33,
@@ -72,13 +65,6 @@
       "pass_rate": 97.83
     },
     {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 262,
-      "failed": 2,
-      "pass_rate": 99.24
-    },
-    {
       "area": "salsa",
       "total": 191,
       "passed": 190,
@@ -93,11 +79,18 @@
       "pass_rate": 99.49
     },
     {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 263,
+      "failed": 1,
+      "pass_rate": 99.62
+    },
+    {
       "area": "compiler",
       "total": 6520,
-      "passed": 6503,
-      "failed": 17,
-      "pass_rate": 99.74
+      "passed": 6504,
+      "failed": 16,
+      "pass_rate": 99.75
     },
     {
       "area": "ambient",
@@ -688,6 +681,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/spread",
+      "total": 25,
+      "passed": 25,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/stringLiteral",
       "total": 33,
       "passed": 33,
@@ -720,15 +720,30 @@
   "not_implemented_codes": [],
   "partial_codes": [],
   "one_missing_zero_extra": [],
-  "one_extra_zero_missing": [],
-  "false_positive_codes": [],
+  "one_extra_zero_missing": [
+    {
+      "code": "TS2589",
+      "count": 1
+    }
+  ],
+  "false_positive_codes": [
+    {
+      "code": "TS2589",
+      "count": 1
+    }
+  ],
   "top_missing_codes": [],
-  "top_extra_codes": [],
+  "top_extra_codes": [
+    {
+      "code": "TS2589",
+      "count": 1
+    }
+  ],
   "categories": {
-    "false_positive": 0,
+    "false_positive": 1,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 33,
+    "fingerprint_only": 30,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }

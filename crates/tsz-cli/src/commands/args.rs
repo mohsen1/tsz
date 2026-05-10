@@ -513,6 +513,23 @@ pub struct CliArgs {
     #[arg(long = "extendedDiagnostics", alias = "extended-diagnostics")]
     pub extended_diagnostics: bool,
 
+    /// Perf-tools-only: write a schema-versioned diagnostics JSON report to
+    /// the given path after compilation. Used by the bench harness for
+    /// machine-readable phase timings (`PERFORMANCE_PLAN.md` §4.T0.2). The
+    /// flag is compiled out of default release builds.
+    #[cfg(feature = "perf-tools")]
+    #[arg(long = "diagnostics-json", value_name = "PATH", hide = true)]
+    pub diagnostics_json: Option<PathBuf>,
+
+    /// Perf-tools-only: write a schema-versioned perf-counter JSON snapshot
+    /// to the given path after compilation. Intended for the bench harness
+    /// (`PERFORMANCE_PLAN.md` §4.T0.3); enabled when the counters are on
+    /// (`TSZ_PERF_COUNTERS=1`). The flag is compiled out of default release
+    /// builds.
+    #[cfg(feature = "perf-tools")]
+    #[arg(long = "perf-counters-json", value_name = "PATH", hide = true)]
+    pub perf_counters_json: Option<PathBuf>,
+
     /// Print files read during the compilation including why it was included.
     #[arg(long = "explainFiles", alias = "explain-files")]
     pub explain_files: bool,
