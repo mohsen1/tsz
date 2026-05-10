@@ -1259,6 +1259,29 @@ takes(class {
 }
 
 #[test]
+fn class_expression_static_field_initializer_checks_own_this() {
+    let diags = check_source_diagnostics(
+        r#"
+class C {
+    static f = 1;
+    static classExprBoundary = class { a = this.f + 3 };
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected one TS2339 for anonymous class `this.f`, got: {diags:?}"
+    );
+    assert!(
+        ts2339[0].message_text.contains("(Anonymous class)"),
+        "Expected anonymous class receiver in diagnostic, got: {:?}",
+        ts2339[0]
+    );
+}
+
+#[test]
 fn jsx_children_contextual_typing_uses_request_path() {
     let diags = check_source(
         r#"

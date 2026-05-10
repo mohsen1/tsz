@@ -1803,7 +1803,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if !is_static {
-            if let Some(cached) = cached_instance_this {
+            if let Some(cached) = cached_instance_this
+                && cached != TypeId::ANY
+                && cached != TypeId::ERROR
+            {
                 return Some(cached);
             }
 

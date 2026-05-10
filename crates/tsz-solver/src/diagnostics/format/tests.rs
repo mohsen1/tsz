@@ -582,6 +582,52 @@ fn format_intersection_preserves_anonymous_objects() {
 }
 
 #[test]
+fn format_intersection_drops_redundant_index_signature_member() {
+    let db = TypeInterner::new();
+
+    let index_sig = crate::types::IndexSignature {
+        key_type: TypeId::NUMBER,
+        value_type: TypeId::STRING,
+        readonly: true,
+        param_name: None,
+    };
+    let with_props = db.object_with_index(crate::types::ObjectShape {
+        properties: vec![
+            PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(db.intern_string("b"), TypeId::NUMBER),
+        ],
+        string_index: None,
+        number_index: Some(index_sig),
+        symbol: None,
+        flags: Default::default(),
+    });
+    let index_only = db.object_with_index(crate::types::ObjectShape {
+        properties: vec![],
+        string_index: None,
+        number_index: Some(index_sig),
+        symbol: None,
+        flags: Default::default(),
+    });
+
+    let intersection = db.intersection2(with_props, index_only);
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(intersection);
+
+    assert!(
+        result.contains("readonly [x: number]: string"),
+        "Expected retained index signature, got: {result}"
+    );
+    assert!(
+        result.contains("a: number") && result.contains("b: number"),
+        "Expected named properties to remain, got: {result}"
+    );
+    assert!(
+        !result.contains(" & "),
+        "Expected redundant index-only member to be removed, got: {result}"
+    );
+}
+
+#[test]
 fn format_intersection_preserves_named_types() {
     // Intersections with named types (type params) should NOT be flattened
     let db = TypeInterner::new();
@@ -1013,6 +1059,50 @@ fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
     assert!(
         !result.contains("flat: number"),
         "Expected later string members to be omitted when a symbol tail is preserved, got: {result}"
+    );
+}
+
+#[test]
+fn format_array_like_object_with_index_expands_to_locale_string_overload_display() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
+    let includes = db.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: Some(db.intern_string("searchElement")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        TypeId::BOOLEAN,
+    ));
+    let mut unscopables =
+        PropertyInfo::new(db.intern_string("[Symbol.unscopables]"), TypeId::OBJECT);
+    unscopables.readonly = true;
+
+    let shape = crate::types::ObjectShape {
+        properties: vec![
+            PropertyInfo::new(db.intern_string("toString"), method),
+            PropertyInfo::new(db.intern_string("toLocaleString"), method),
+            PropertyInfo::new(db.intern_string("includes"), includes),
+            unscopables,
+        ],
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"),
+        "Expected Array toLocaleString overload display, got: {result}"
     );
 }
 

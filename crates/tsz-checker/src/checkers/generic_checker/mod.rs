@@ -1,6 +1,7 @@
 //! Generic type argument validation (TS2344 constraint checking).
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
@@ -196,8 +197,29 @@ impl<'a> CheckerState<'a> {
                                 || self.is_function_constraint(extends_type)
                                 || self.is_function_constraint(extends_resolved)
                                 || self.type_parameter_has_callable_constraint(extends_type)
-                                || self.type_parameter_has_callable_constraint(extends_resolved);
+                                || self.type_parameter_has_callable_constraint(extends_resolved)
+                                || query::callable_shape_for_type(db, extends_type).is_some()
+                                || query::callable_shape_for_type(db, extends_resolved).is_some()
+                                || query::callable_shape_for_type(db, extends_evaluated).is_some();
                             if extends_is_callable {
+                                return true;
+                            }
+                            let check_type_id = self.get_type_from_type_node(cond.check_type);
+                            if let Some(check_name) = query::type_parameter_name(db, check_type_id)
+                                && (query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_resolved,
+                                    check_name,
+                                ) || query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_evaluated,
+                                    check_name,
+                                ) || query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_type,
+                                    check_name,
+                                ))
+                            {
                                 return true;
                             }
                         }

@@ -1908,7 +1908,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if !self.ctx.symbol_is_from_actual_lib(partial_sym) {
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(partial_sym) {
             return false;
         }
         let Some(type_args) = &type_ref.type_arguments else {

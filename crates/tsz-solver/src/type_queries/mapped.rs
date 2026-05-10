@@ -880,6 +880,10 @@ pub fn collect_homomorphic_source_property_infos(
     ) -> Vec<PropertyInfo> {
         let mut ordered = props.to_vec();
         if let Some(display_props) = db.get_display_properties(source) {
+            let mut display_props = display_props.as_ref().clone();
+            if display_props.iter().any(|prop| prop.declaration_order > 0) {
+                display_props.sort_by_key(|prop| prop.declaration_order);
+            }
             let order_map: FxHashMap<Atom, usize> = display_props
                 .iter()
                 .enumerate()
@@ -902,13 +906,14 @@ pub fn collect_homomorphic_source_property_infos(
         else {
             return Vec::new();
         };
-        let base_props = collect_homomorphic_source_property_infos(db, array_base);
+        let mut base_props = collect_homomorphic_source_property_infos(db, array_base);
         let Some(array_param) = db.get_array_base_type_params().first() else {
+            sort_array_homomorphic_source_properties(db, &mut base_props);
             return base_props;
         };
         let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
         subst.insert(array_param.name, element_type);
-        base_props
+        let mut props: Vec<_> = base_props
             .into_iter()
             .map(|mut prop| {
                 prop.type_id = crate::evaluation::evaluate::evaluate_type(
@@ -925,7 +930,33 @@ pub fn collect_homomorphic_source_property_infos(
                 );
                 prop
             })
-            .collect()
+            .collect();
+        sort_array_homomorphic_source_properties(db, &mut props);
+        props
+    }
+
+    fn sort_array_homomorphic_source_properties(db: &dyn TypeDatabase, props: &mut [PropertyInfo]) {
+        fn head_rank(db: &dyn TypeDatabase, prop: &PropertyInfo) -> Option<usize> {
+            match db.resolve_atom_ref(prop.name).as_ref() {
+                "length" => Some(0),
+                "toString" => Some(1),
+                "toLocaleString" => Some(2),
+                _ => None,
+            }
+        }
+
+        props.sort_by(|a, b| match (head_rank(db, a), head_rank(db, b)) {
+            (Some(a_rank), Some(b_rank)) => a_rank.cmp(&b_rank),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => {
+                if a.declaration_order > 0 && b.declaration_order > 0 {
+                    a.declaration_order.cmp(&b.declaration_order)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            }
+        });
     }
 
     if !source.is_intrinsic()
