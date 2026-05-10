@@ -10,7 +10,14 @@
 //! [`CrossFileQueryKind`](crate::state_type_analysis::cross_file::CrossFileQueryKind)
 //! enum. The storage layer keys cache entries by the enum's `as_storage_kind()`
 //! `u8` value, but no call site outside the storage boundary should handle
-//! bare `u8` discriminants — the helpers below are the only typed entry points.
+//! bare `u8` discriminants. The helpers below are the primary typed entry
+//! points; a small number of call sites (such as `resolve_lazy` in
+//! `context/resolver.rs`) intentionally inline `get_resolved_cross_file_query`
+//! to preserve different sentinel-filtering semantics — `resolve_lazy`
+//! forwards `TypeId::UNKNOWN` so callers can distinguish "lazy reference
+//! resolved but symbol type is genuinely unknown" from "lazy reference not
+//! resolved" (`None`), while these helpers collapse `UNKNOWN` to `None` for
+//! the (more common) "treat as cache miss" semantics.
 
 use tsz_binder::SymbolId;
 
