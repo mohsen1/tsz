@@ -2501,8 +2501,329 @@ const g12: <T extends { value: T }>(x: T) => T = pipe(foo, foo);
 "#;
     let diags = relevant_strict_diagnostics(source);
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2322),
-        "pipe(foo) should preserve the self-constrained generic signature. Got: {diags:#?}"
+        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2345),
+        "pipe(foo) should preserve the self-constrained generic signature without stale argument errors. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_preserves_generic_component_hoc_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+
+type Component<P> = (props: P) => {};
+declare const myHoc1: <P>(C: Component<P>) => Component<P>;
+declare const myHoc2: <P>(C: Component<P>) => Component<P>;
+declare const MyComponent1: Component<{ foo: 1 }>;
+
+const enhance = pipe(myHoc1, myHoc2);
+const MyComponent2 = enhance(MyComponent1);
+const Preserved: Component<{ foo: 1 }> = MyComponent2;
+const Wrong: Component<{ foo: 2 }> = MyComponent2;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345),
+        "pipe(myHoc1, myHoc2) should preserve the component props type through the returned HOC. Got: {diags:#?}"
+    );
+    let ts2322_count = diags.iter().filter(|(code, _)| *code == 2322).count();
+    assert_eq!(
+        ts2322_count, 1,
+        "the returned HOC should reject incompatible props exactly once, proving props were not erased to unknown. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_contextual_return_flows_through_generic_function_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+
+const g01: <T>(x: T) => { value: T[] } = pipe(list, box);
+const g02: <T>(x: T) => { value: T }[] = pipe(box, list);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2345),
+        "pipe(list, box) and pipe(box, list) should infer the intermediate generic argument from the contextual return. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_contextual_return_flows_through_lambda_and_generic_function_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+
+const g05: <T>(x: T) => { value: T[] } = pipe(x => list(x), x => box(x));
+const inferred = pipe(x => list(x), x => box(x));
+const keep: { value: 1[] } = inferred(1 as 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2345),
+        "pipe lambdas should inherit contextual return bounds through the generic calls they wrap. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_contextual_return_flows_through_nested_generic_call_chain() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+
+const g06: <T>(x: T) => { value: T[] } = pipe(list, pipe(box));
+const g07: <T>(x: T) => { value: T[] } = pipe(x => list(x), pipe(box));
+const inferred1 = pipe(list, pipe(box));
+const inferred2 = pipe(x => list(x), pipe(box));
+const keep1: { value: 1[] } = inferred1(1 as 1);
+const keep2: { value: 1[] } = inferred2(1 as 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2345),
+        "nested pipe calls should use the outer callable context to specialize the inner generic call. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_function_rest_type_param_target_keeps_return_mismatch() {
+    let source = r#"
+declare function accepts<A extends any[]>(fn: (...args: A) => string): void;
+declare function returnsNumber<T>(x: T): number;
+
+accepts(returnsNumber);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("string")),
+        "generic functions passed to rest type-parameter targets must still reject real return mismatches. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_function_identifier_instantiates_against_fixed_tuple_rest_target() {
+    let source = r#"
+function callr<T extends unknown[], U>(args: T, f: (...args: T) => U) {
+    return f(...args);
+}
+
+declare const sn: [string, number];
+declare function choose<A, B>(a: A, b: B): A | B;
+
+let value = callr(sn, choose);
+let check: string | number = value;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2345),
+        "generic function identifiers should infer from fixed tuple-rest parameters before return-context refinement. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_function_identifier_fixed_tuple_rest_keeps_constraint_mismatch() {
+    let source = r#"
+function callr<T extends unknown[], U>(args: T, f: (...args: T) => U) {
+    return f(...args);
+}
+
+declare const sn: [string, number];
+declare function numberPair<A extends number, B extends number>(a: A, b: B): A | B;
+
+let value = callr(sn, numberPair);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "fixed tuple-rest refinement must still reject constrained generic parameter mismatches. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn pipe_nested_generic_call_keeps_parameter_mismatches() {
+    let source = r#"
+declare function pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B;
+declare function pipe<A extends any[], B, C>(ab: (...args: A) => B, bc: (b: B) => C): (...args: A) => C;
+declare function list<T>(a: T): T[];
+declare function boxNumbers(x: number[]): { value: number[] };
+
+const bad: <T>(x: T) => { value: T[] } = pipe(list, pipe(boxNumbers));
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322 || *code == 2345),
+        "nested generic call contextual typing must not erase real parameter mismatches. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn return_context_refresh_keeps_callback_marker_context() {
+    let source = r#"
+type Values<T> = T[keyof T];
+type EventObject = { type: string };
+
+interface ActorLogic<TEvent extends EventObject> {
+  transition: (ev: TEvent) => unknown;
+}
+
+type UnknownActorLogic = ActorLogic<never>;
+
+interface ProvidedActor {
+  src: string;
+  logic: UnknownActorLogic;
+}
+
+interface ActionFunction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface AssignAction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface MachineConfig<TActor extends ProvidedActor> {
+  entry?: ActionFunction<TActor>;
+}
+
+declare function assign<TActor extends ProvidedActor>(
+  _: (spawn: (actor: TActor["src"]) => void) => {},
+): AssignAction<TActor>;
+
+type ToProvidedActor<TActors extends Record<string, UnknownActorLogic>> =
+  Values<{
+    [K in keyof TActors & string]: {
+      src: K;
+      logic: TActors[K];
+    };
+  }>;
+
+declare function createMachineFactory<
+  TActors extends Record<string, UnknownActorLogic>,
+>(actors: TActors): {
+  createMachine: <
+    const TConfig extends MachineConfig<ToProvidedActor<TActors>>,
+  >(
+    config: TConfig,
+  ) => void;
+};
+
+declare const counterLogic: ActorLogic<{ type: "INCREMENT" }>;
+
+createMachineFactory({
+  counter: counterLogic,
+}).createMachine({
+  entry: assign((spawn) => {
+    spawn("counter");
+    spawn("alarm");
+    return {};
+  }),
+});
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "return-context refresh should preserve the marker-property context for the nested callback. Got: {diags:#?}"
+    );
+    assert!(
+        ts2345[0].1.contains("\"alarm\"") && ts2345[0].1.contains("\"counter\""),
+        "the callback parameter should stay narrowed to the contextual actor source. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_constructor_argument_preserves_inferred_props() {
+    let source = r#"
+declare class Comp<P> {
+    props: P;
+    constructor(props: P);
+}
+
+type CompClass<P> = new (props: P) => Comp<P>;
+declare function myHoc<P>(C: CompClass<P>): CompClass<P>;
+type GenericProps<T> = { foo: number, stuff: T };
+declare class GenericComp<T> extends Comp<GenericProps<T>> {}
+declare class StringComp extends Comp<GenericProps<string>> {}
+
+const GenericComp2 = myHoc(GenericComp);
+const StringComp2 = myHoc(StringComp);
+const madeString = new StringComp2({ foo: 1, stuff: "ok" });
+const keepString: string = madeString.props.stuff;
+const wrongString: number = madeString.props.stuff;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "generic class constructor arguments should preserve their props inference through constructor HOFI. Got: {diags:#?}"
+    );
+    let ts2322_count = diags.iter().filter(|(code, _)| *code == 2322).count();
+    assert_eq!(
+        ts2322_count, 1,
+        "instantiating the returned constructor should preserve `stuff: string` and reject assignment to number exactly once. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conflicting_contextual_instantiation_keeps_enclosing_return_type_param() {
+    let source = r#"
+declare function accept<R>(fn: (a: string, b: number) => R): R;
+
+function outer<X>(source: <T>(a: T, b: T) => X) {
+    const out = accept(source);
+    const keep: X = out;
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(_code, message)| message.contains("unknown")),
+        "contextual conflict handling must not rewrite enclosing return type parameters to unknown. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_callback_parameter_does_not_override_concrete_array_inference() {
+    let source = r#"
+export function keyOf<a>(value: { key: a; }): a {
+    return value.key;
+}
+declare class Date {}
+export interface Data {
+    key: number;
+    value: Date;
+}
+
+var data: Data[] = [];
+declare function toKeys<a>(values: a[], toKey: (value: a) => string): string[];
+
+toKeys(data, keyOf);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("Data[]")),
+        "the concrete array argument should own `a`; the callback should be checked against `(value: Data) => string`. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("(value: Data) => string")),
+        "generic callback return mismatch should be reported at the callback parameter. Got: {diags:#?}"
     );
 }
 

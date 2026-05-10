@@ -2,6 +2,8 @@
 //!
 //! Split from the parent `call_checker` module — pure code motion.
 
+mod contextual_retry;
+
 use crate::context::TypingRequest;
 use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
@@ -116,6 +118,14 @@ impl<'a> CheckerState<'a> {
             sig.type_predicate
                 .map(|predicate| (predicate, sig.params.clone()))
         })
+    }
+
+    pub(super) fn snapshot_overload_retry_state(&mut self) -> FullSnapshot {
+        self.ctx.snapshot_full()
+    }
+
+    pub(super) fn rollback_overload_retry_state(&mut self, snap: &FullSnapshot) {
+        self.ctx.rollback_full(snap);
     }
 
     /// Resolve an overloaded call by trying each signature.
@@ -353,8 +363,25 @@ impl<'a> CheckerState<'a> {
             {
                 result = CallResult::Success(fallback_return);
             }
-            let selected_type_predicate =
+            let mut selected_type_predicate =
                 Self::selected_overload_type_predicate(&sig, instantiated_predicate);
+            if let Some(retry_result) = self.retry_overload_after_contextual_refresh_mismatch(
+                contextual_retry::ContextualRetryInput {
+                    result: &result,
+                    sig: &sig,
+                    instantiated_params: instantiated_params.as_ref(),
+                    resolved_func_type,
+                    args,
+                    force_bivariant_callbacks,
+                    contextual_type,
+                    actual_this_type,
+                    overload_snap: &overload_snap,
+                    has_contextual_refresh_args: !contextual_refresh_args.is_empty(),
+                },
+                &mut selected_type_predicate,
+            ) {
+                result = retry_result;
+            }
 
             match &result {
                 CallResult::ArgumentTypeMismatch {

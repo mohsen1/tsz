@@ -193,6 +193,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             current = next;
         }
 
+        let preserved_source_placeholders: rustc_hash::FxHashSet<_> =
+            if let Some(TypeData::Function(shape_id)) = self.interner.lookup(current) {
+                self.interner
+                    .function_shape(shape_id)
+                    .type_params
+                    .iter()
+                    .filter_map(|tp| {
+                        self.interner
+                            .resolve_atom(tp.name)
+                            .as_str()
+                            .starts_with("__infer_src_")
+                            .then_some(tp.name)
+                    })
+                    .collect()
+            } else {
+                rustc_hash::FxHashSet::default()
+            };
+
         let mut source_placeholder_subst = TypeSubstitution::new();
         for ty in crate::visitor::collect_all_types(self.interner.as_type_database(), current) {
             if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(ty)
@@ -201,6 +219,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .resolve_atom(info.name)
                     .as_str()
                     .starts_with("__infer_src_")
+                && !preserved_source_placeholders.contains(&info.name)
             {
                 source_placeholder_subst.insert(info.name, TypeId::UNKNOWN);
             }
@@ -210,6 +229,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         self.prune_placeholder_union_members(current)
+    }
+
+    pub(super) fn normalize_inferred_placeholder_type_preserving_source_placeholders(
+        &self,
+        ty: TypeId,
+        infer_subst: &TypeSubstitution,
+    ) -> TypeId {
+        if infer_subst.is_empty() {
+            return ty;
+        }
+
+        let mut current = ty;
+        for _ in 0..8 {
+            let next = instantiate_type(self.interner, current, infer_subst);
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+
+        self.prune_placeholder_union_members(current)
+    }
+
+    pub(super) fn remove_unresolved_source_placeholders_from_substitution(
+        &self,
+        subst: &mut TypeSubstitution,
+    ) {
+        let names = subst
+            .map()
+            .iter()
+            .filter_map(|(&name, &ty)| {
+                (ty == TypeId::UNKNOWN
+                    && self
+                        .interner
+                        .resolve_atom(name)
+                        .as_str()
+                        .starts_with("__infer_src_"))
+                .then_some(name)
+            })
+            .collect::<Vec<_>>();
+        for name in names {
+            subst.remove(name);
+        }
     }
 
     fn prune_placeholder_union_members(&self, ty: TypeId) -> TypeId {

@@ -409,26 +409,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 );
             }
             constrained_structurally = true;
-            for (source_param, target_param) in source_fn.params.iter().zip(target_fn.params.iter())
-            {
-                // Function parameters are contravariant in assignability, so the
-                // contextual target parameter constrains the returned function's
-                // source parameter.
-                let nested_structural = self.constrain_return_context_structure(
-                    infer_ctx,
-                    var_map,
-                    target_param.type_id,
-                    source_param.type_id,
-                    priority,
-                );
-                if !nested_structural {
-                    self.constrain_types(
+            if !self.constrain_return_context_params_with_rest(
+                infer_ctx,
+                var_map,
+                &source_fn.params,
+                &target_fn.params,
+                priority,
+            ) {
+                for (source_param, target_param) in
+                    source_fn.params.iter().zip(target_fn.params.iter())
+                {
+                    // Function parameters are contravariant in assignability, so the
+                    // contextual target parameter constrains the returned function's
+                    // source parameter.
+                    let nested_structural = self.constrain_return_context_structure(
                         infer_ctx,
                         var_map,
                         target_param.type_id,
                         source_param.type_id,
                         priority,
                     );
+                    if !nested_structural {
+                        self.constrain_types(
+                            infer_ctx,
+                            var_map,
+                            target_param.type_id,
+                            source_param.type_id,
+                            priority,
+                        );
+                    }
                 }
             }
             let nested_structural = self.constrain_return_context_structure(
@@ -447,6 +456,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     priority,
                 );
             }
+
+            self.propagate_contextual_return_upper_bounds(
+                infer_ctx,
+                var_map,
+                source_fn.return_type,
+                target_fn.return_type,
+            );
         }
 
         constrained_structurally
@@ -1331,15 +1347,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return source_ty;
         }
 
-        // TypeScript does not use generic construct-signature arguments to infer
-        // type parameters for the outer constructor-typed parameter. Leave the
-        // callable intact so the shared constraint walker erases the source
-        // signature's own type parameters instead of contextually instantiating
-        // them into the outer placeholders.
-        if source_fn.is_constructor && !source_fn.type_params.is_empty() {
-            return source_ty;
-        }
-
         if source_fn.type_params.is_empty() {
             let source_has_calls = crate::type_queries::get_call_signatures(
                 self.interner.as_type_database(),
@@ -1425,6 +1432,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::TypeParameter(_))
             )
         });
+        let any_target_param_contains_infer_placeholder =
+            target_param_types.iter().any(|&param_type| {
+                crate::type_queries::contains_infer_types_db(
+                    self.interner.as_type_database(),
+                    param_type,
+                )
+            });
+        let target_params_need_hofi =
+            any_target_param_is_type_param || any_target_param_contains_infer_placeholder;
 
         // Conflicting-candidate substitution applies only when target params
         // are concrete (post-inference) types. When *any* target param is
@@ -1435,7 +1451,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // the same source param look "conflicting" by `is_assignable_to`,
         // which would short-circuit erasure and produce a partially-
         // instantiated function.
-        if !any_target_param_is_type_param
+        if !target_params_need_hofi
             && let Some(substitution) =
                 self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)
         {
@@ -1479,8 +1495,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 )
             })
         });
+        let source_type_params_have_constraints = source_fn
+            .type_params
+            .iter()
+            .any(|tp| tp.constraint.is_some());
+        if source_type_params_are_naked
+            && source_type_params_have_constraints
+            && target_params_need_hofi
+        {
+            return source_ty;
+        }
         if source_type_params_fully_determined_by_params
-            && any_target_param_is_type_param
+            && target_params_need_hofi
             && !source_type_params_are_naked
         {
             let has_generic_contextual_type = self.contextual_type.is_some_and(|ctx| {
@@ -1511,7 +1537,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.interner.lookup(target_fn.return_type),
                     Some(TypeData::TypeParameter(_))
                 );
-            if has_generic_contextual_type || target_is_pure_placeholder {
+            if has_generic_contextual_type
+                || target_is_pure_placeholder
+                || any_target_param_contains_infer_placeholder
+            {
                 // Case 2: let constrain_types handle it with fresh variables
                 return source_ty;
             }
@@ -1645,129 +1674,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         result
-    }
-
-    pub(crate) fn has_conflicting_contextual_signature_instantiation(
-        &mut self,
-        source_ty: TypeId,
-        target_ty: TypeId,
-    ) -> bool {
-        self.conflicting_contextual_signature_instantiation_type(source_ty, target_ty)
-            .is_some()
-    }
-
-    pub(crate) fn conflicting_contextual_signature_instantiation_type(
-        &mut self,
-        source_ty: TypeId,
-        target_ty: TypeId,
-    ) -> Option<TypeId> {
-        let source_fn = Self::get_contextual_signature_cached(self.interner, source_ty)?;
-        let target_fn = Self::get_contextual_signature_cached(self.interner, target_ty)?;
-
-        let substitution =
-            self.conflicting_contextual_param_candidate_substitution(&source_fn, &target_fn)?;
-        let instantiated = FunctionShape {
-            type_params: vec![],
-            params: target_fn.params.clone(),
-            this_type: target_fn.this_type,
-            return_type: instantiate_type(self.interner, source_fn.return_type, &substitution),
-            type_predicate: source_fn.type_predicate.as_ref().map(|pred| TypePredicate {
-                asserts: pred.asserts,
-                target: pred.target,
-                type_id: pred
-                    .type_id
-                    .map(|ty| instantiate_type(self.interner, ty, &substitution)),
-                parameter_index: pred.parameter_index,
-            }),
-            is_constructor: target_fn.is_constructor,
-            is_method: target_fn.is_method,
-        };
-        Some(self.interner.function(instantiated))
-    }
-
-    fn conflicting_contextual_param_candidate_substitution(
-        &mut self,
-        source: &FunctionShape,
-        target: &FunctionShape,
-    ) -> Option<TypeSubstitution> {
-        use crate::type_queries::unpack_tuple_rest_parameter;
-
-        let tracked_type_params: FxHashSet<_> =
-            source.type_params.iter().map(|tp| tp.name).collect();
-        if tracked_type_params.is_empty() {
-            return None;
-        }
-
-        let source_params: Vec<_> = source
-            .params
-            .iter()
-            .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
-            .collect();
-        let target_params: Vec<_> = target
-            .params
-            .iter()
-            .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
-            .collect();
-
-        let mut contextual_candidates: FxHashMap<_, Vec<TypeId>> = FxHashMap::default();
-        for (source_param, target_param) in source_params.iter().zip(target_params.iter()) {
-            let source_effective = if source_param.optional {
-                self.interner
-                    .union2(source_param.type_id, TypeId::UNDEFINED)
-            } else {
-                source_param.type_id
-            };
-            let target_effective = if target_param.optional {
-                self.interner
-                    .union2(target_param.type_id, TypeId::UNDEFINED)
-            } else {
-                target_param.type_id
-            };
-            if target_effective.is_any_unknown_or_error() {
-                continue;
-            }
-
-            if let Some(info) =
-                crate::type_param_info(self.interner.as_type_database(), source_effective)
-                && tracked_type_params.contains(&info.name)
-            {
-                contextual_candidates
-                    .entry(info.name)
-                    .or_default()
-                    .push(target_effective);
-            }
-        }
-
-        let has_conflict = contextual_candidates.values().any(|candidates| {
-            for (idx, &left) in candidates.iter().enumerate() {
-                for &right in candidates.iter().skip(idx + 1) {
-                    if left == right {
-                        continue;
-                    }
-                    if !self.checker.is_assignable_to(left, right)
-                        && !self.checker.is_assignable_to(right, left)
-                    {
-                        return true;
-                    }
-                }
-            }
-            false
-        });
-
-        if !has_conflict {
-            return None;
-        }
-
-        let mut substitution = TypeSubstitution::new();
-        for tp in &source.type_params {
-            let replacement = contextual_candidates
-                .get(&tp.name)
-                .and_then(|candidates| candidates.first().copied())
-                .or(tp.constraint)
-                .unwrap_or(TypeId::UNKNOWN);
-            substitution.insert(tp.name, replacement);
-        }
-        Some(substitution)
     }
 
     pub(super) fn single_concrete_upper_bound(

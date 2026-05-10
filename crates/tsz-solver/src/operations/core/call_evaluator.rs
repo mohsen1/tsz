@@ -823,14 +823,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         type_id: TypeId,
         arg_count: Option<usize>,
     ) -> Option<FunctionShape> {
-        fn from_call_signature(sig: &CallSignature) -> FunctionShape {
+        fn from_call_signature(sig: &CallSignature, is_constructor: bool) -> FunctionShape {
             FunctionShape {
                 type_params: sig.type_params.clone(),
                 params: sig.params.clone(),
                 this_type: sig.this_type,
                 return_type: sig.return_type,
                 type_predicate: sig.type_predicate,
-                is_constructor: false,
+                is_constructor,
                 is_method: sig.is_method,
             }
         }
@@ -839,10 +839,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             db: &dyn TypeDatabase,
             signatures: Vec<&CallSignature>,
             arg_count: Option<usize>,
+            is_constructor: bool,
         ) -> Option<FunctionShape> {
             let first = *signatures.first()?;
             if signatures.len() == 1 {
-                return Some(from_call_signature(first));
+                return Some(from_call_signature(first, is_constructor));
             }
 
             // Mixed-arity overload sets cannot be safely flattened into a single
@@ -948,7 +949,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 this_type,
                 return_type,
                 type_predicate,
-                is_constructor: false,
+                is_constructor,
                 is_method,
             })
         }
@@ -1124,10 +1125,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 // For contextual typing, prefer call signatures. Fall back to construct
                 // signatures when none exist (super()/new calls have construct sigs only).
-                let signatures = if shape.call_signatures.is_empty() {
-                    &shape.construct_signatures
+                let (signatures, is_constructor) = if shape.call_signatures.is_empty() {
+                    (&shape.construct_signatures, true)
                 } else {
-                    &shape.call_signatures
+                    (&shape.call_signatures, false)
                 };
 
                 // If arg_count is provided, prefer fixed-arity overloads over
@@ -1166,7 +1167,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     signatures.iter().collect()
                 };
 
-                combine_contextual_signatures(self.db, matching, self.arg_count)
+                combine_contextual_signatures(self.db, matching, self.arg_count, is_constructor)
             }
 
             fn visit_application(&mut self, app_id: u32) -> Self::Output {

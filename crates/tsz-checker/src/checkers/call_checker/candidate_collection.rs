@@ -620,7 +620,13 @@ impl<'a> CheckerState<'a> {
             let skip_bare_type_param_context_for_generic_function = expected_is_bare_type_param
                 && generic_arg_has_own_type_params
                 && !annotated_generic_arg_can_use_return_context;
-            let apply_contextual = self.argument_needs_contextual_type(arg_idx)
+            let needs_contextual_generic_call_instantiation = self
+                .call_expression_needs_contextual_generic_instantiation(
+                    arg_idx,
+                    expected_context_type,
+                );
+            let apply_contextual = (self.argument_needs_contextual_type(arg_idx)
+                || needs_contextual_generic_call_instantiation)
                 && !skip_bare_type_param_context_for_generic_function
                 && !skip_generic_callable_context_for_annotated_generic_function
                 && (!unresolved_refresh_context || can_apply_contextual_despite_unresolved);

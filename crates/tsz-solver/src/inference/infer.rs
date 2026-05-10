@@ -298,6 +298,11 @@ pub(crate) struct InferenceContext<'a> {
     /// `(a: number) => number` for `f<T,U>(x: T, cb: (a: T) => U, y: U)` called
     /// as `f(1, function(a){return ''}, 1)`).
     pub(crate) top_level_in_return_type_unfixed: FxHashSet<InferenceVar>,
+    /// Inference vars whose candidates were rewritten after resolving
+    /// higher-order source placeholders. The union table can retain the
+    /// pre-rewrite placeholder candidate, so resolution may drop only those
+    /// stale call-local placeholders for these vars.
+    pub(crate) vars_with_substituted_candidates: FxHashSet<InferenceVar>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -329,6 +334,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_with_substituted_candidates: FxHashSet::default(),
         }
     }
 
@@ -352,6 +358,7 @@ impl<'a> InferenceContext<'a> {
             infer_depth: 0,
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
+            vars_with_substituted_candidates: FxHashSet::default(),
         }
     }
 
@@ -1071,6 +1078,7 @@ impl<'a> InferenceContext<'a> {
                         resolved: info.resolved,
                     },
                 );
+                self.vars_with_substituted_candidates.insert(root);
             }
         }
     }
@@ -1272,10 +1280,9 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Check whether an inference variable has any contravariant candidates that are
-    /// usable for resolution. Synthetic inference placeholders like `__infer_*` and
-    /// `__infer_src_*` are excluded, but real outer type parameters (for example `T`
-    /// from `function g<T>(...)`) are preserved because they carry meaningful
-    /// cross-generic evidence.
+    /// usable for resolution. Call-local inference placeholders like `__infer_*`
+    /// are excluded, but higher-order source placeholders (`__infer_src_*`) and real
+    /// outer type parameters are preserved because they carry cross-generic evidence.
     pub fn has_usable_contra_candidates(
         &mut self,
         var: InferenceVar,
@@ -1283,9 +1290,9 @@ impl<'a> InferenceContext<'a> {
     ) -> bool {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
-        info.contra_candidates
-            .iter()
-            .any(|c| !crate::type_queries::data::is_bare_infer_placeholder_db(db, c.type_id))
+        info.contra_candidates.iter().any(|c| {
+            !crate::type_queries::data::is_bare_current_infer_placeholder_db(db, c.type_id)
+        })
     }
 
     /// Check whether a variable's inference came exclusively from contravariant positions.

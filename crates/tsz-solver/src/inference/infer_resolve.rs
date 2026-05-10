@@ -384,27 +384,49 @@ impl<'a> InferenceContext<'a> {
             });
         }
 
+        if self.vars_with_substituted_candidates.contains(&root)
+            && candidates.iter().any(|candidate| {
+                !crate::type_queries::data::contains_current_infer_placeholder_db(
+                    self.interner,
+                    candidate.type_id,
+                )
+            })
+        {
+            // Candidate substitution can leave the pre-substitution placeholder
+            // candidate in the union table. Drop only call-local placeholders when
+            // concrete candidates exist, then let the normal resolver handle
+            // priority, upper bounds, contra candidates, and occurs checks.
+            candidates.retain(|candidate| {
+                !crate::type_queries::data::contains_current_infer_placeholder_db(
+                    self.interner,
+                    candidate.type_id,
+                )
+            });
+        }
+
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
-        // Filter out synthetic inference placeholders from contra-candidates.
+        // Filter out call-local inference placeholders from contra-candidates.
         // Both bare placeholders (`__infer_0`) AND types that contain stale
         // placeholders from previous inference rounds (e.g., unions like
-        // `__infer_0 | PromiseLike<__infer_0>`) are filtered. These arise when
-        // contextually-typed callback parameters carry forward unresolved
-        // placeholder types from Round 1 into Round 2's constraint collection.
+        // `__infer_0 | PromiseLike<__infer_0>`) are filtered. Source placeholders
+        // (`__infer_src_*`) are preserved because HOFI can hoist them into returned
+        // generic function types.
         let mut concrete_contra_candidates: Vec<_> = contra_candidates
             .iter()
             .filter(|c| {
                 // Check bare placeholder first (fast path)
-                if crate::type_queries::data::is_bare_infer_placeholder_db(self.interner, c.type_id)
-                {
+                if crate::type_queries::data::is_bare_current_infer_placeholder_db(
+                    self.interner,
+                    c.type_id,
+                ) {
                     return false;
                 }
                 // Check if the type contains any non-infer type parameters.
                 // If it ONLY contains `__infer_*` placeholders (no real type params),
                 // it's a stale inference artifact and should be filtered.
-                if crate::type_queries::data::contains_infer_placeholder_db(
+                if crate::type_queries::data::contains_current_infer_placeholder_db(
                     self.interner,
                     c.type_id,
                 ) && !crate::type_queries::data::contains_non_infer_type_parameters_db(
@@ -1732,13 +1754,14 @@ impl<'a> InferenceContext<'a> {
                     _ => true,
                 });
             }
-            // Filter out only synthetic inference placeholders from contra-candidates.
-            // Real outer type parameters remain meaningful inference evidence.
+            // Filter out only call-local inference placeholders from contra-candidates.
+            // Higher-order source placeholders and real outer type parameters remain
+            // meaningful inference evidence.
             let mut concrete_contra_candidates: Vec<_> = info
                 .contra_candidates
                 .iter()
                 .filter(|c| {
-                    !crate::type_queries::data::is_bare_infer_placeholder_db(
+                    !crate::type_queries::data::is_bare_current_infer_placeholder_db(
                         self.interner,
                         c.type_id,
                     )
@@ -1802,7 +1825,6 @@ impl<'a> InferenceContext<'a> {
                     TypeId::UNKNOWN
                 }
             };
-
             // Check for occurs (recursive type)
             if self.occurs_in(root, result) {
                 // Don't fix variables with occurs - let them be resolved later
