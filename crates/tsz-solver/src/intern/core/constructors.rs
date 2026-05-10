@@ -1128,10 +1128,9 @@ impl TypeInterner {
 
     /// Intern a tuple type.
     ///
-    /// Normalizes optional element types: for `optional=true` elements, strips
-    /// explicit `undefined` from union types since the optionality already implies
-    /// `| undefined`. This ensures `[1, 2?]` and `[1, (2 | undefined)?]` produce
-    /// the same interned TypeId, matching tsc's behavior.
+    /// Normalizes optional element types: when exact optional properties are
+    /// disabled, strips explicit `undefined` from `optional=true` union types
+    /// since optionality already implies `| undefined`.
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let elements = self.normalize_optional_tuple_elements(elements);
         let list_id = self.intern_tuple_list(elements);
@@ -1139,11 +1138,14 @@ impl TypeInterner {
     }
 
     /// For optional tuple elements, strip `undefined` from the element type
-    /// since the `optional` flag already implies `| undefined`.
+    /// unless exact optional properties require preserving a present undefined.
     fn normalize_optional_tuple_elements(
         &self,
         mut elements: Vec<TupleElement>,
     ) -> Vec<TupleElement> {
+        if self.exact_optional_property_types() {
+            return elements;
+        }
         for elem in &mut elements {
             if elem.optional && !elem.rest {
                 elem.type_id = self.strip_undefined_from_type(elem.type_id);

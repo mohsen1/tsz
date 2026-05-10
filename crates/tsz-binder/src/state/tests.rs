@@ -4,7 +4,7 @@ use crate::scopes::ContainerKind;
 use crate::{SymbolTable, symbol_flags};
 use std::sync::Arc;
 use tsz_common::common::ScriptTarget;
-use tsz_parser::parser::ParserState;
+use tsz_parser::parser::{ParserState, node_flags, syntax_kind_ext};
 
 #[test]
 fn test_namespace_exports_exclude_non_exported_members() {
@@ -1173,6 +1173,74 @@ var x = 2;
         x_symbol.declarations.len() >= 2,
         "duplicate var should have at least 2 declarations, got {}",
         x_symbol.declarations.len()
+    );
+}
+
+#[test]
+fn duplicate_const_then_var_keeps_earliest_syntactic_value_declaration() {
+    let (binder, parser) = parse_and_bind(
+        r"
+declare const e: string | boolean | undefined;
+declare var e: { a: number };
+",
+    );
+    let arena = parser.get_arena();
+    let e_sym_id = binder.file_locals.get("e").expect("expected e");
+    let e_symbol = binder.symbols.get(e_sym_id).expect("expected e symbol");
+    let value_decl = e_symbol.value_declaration;
+    let parent = arena
+        .get_extended(value_decl)
+        .expect("expected value declaration metadata")
+        .parent;
+    let parent_node = arena
+        .get(parent)
+        .expect("expected variable declaration list");
+
+    assert_eq!(
+        arena
+            .get(value_decl)
+            .expect("expected value declaration")
+            .kind,
+        syntax_kind_ext::VARIABLE_DECLARATION
+    );
+    assert_eq!(parent_node.kind, syntax_kind_ext::VARIABLE_DECLARATION_LIST);
+    assert!(
+        node_flags::is_block_scoped(parent_node.flags as u32),
+        "value declaration should be the source-earlier const, not the hoisted var"
+    );
+}
+
+#[test]
+fn duplicate_var_then_const_keeps_var_as_earliest_syntactic_value_declaration() {
+    let (binder, parser) = parse_and_bind(
+        r"
+declare var e: { a: number };
+declare const e: string | boolean | undefined;
+",
+    );
+    let arena = parser.get_arena();
+    let e_sym_id = binder.file_locals.get("e").expect("expected e");
+    let e_symbol = binder.symbols.get(e_sym_id).expect("expected e symbol");
+    let value_decl = e_symbol.value_declaration;
+    let parent = arena
+        .get_extended(value_decl)
+        .expect("expected value declaration metadata")
+        .parent;
+    let parent_node = arena
+        .get(parent)
+        .expect("expected variable declaration list");
+
+    assert_eq!(
+        arena
+            .get(value_decl)
+            .expect("expected value declaration")
+            .kind,
+        syntax_kind_ext::VARIABLE_DECLARATION
+    );
+    assert_eq!(parent_node.kind, syntax_kind_ext::VARIABLE_DECLARATION_LIST);
+    assert!(
+        !node_flags::is_block_scoped(parent_node.flags as u32),
+        "value declaration should remain the source-earlier var"
     );
 }
 

@@ -5461,6 +5461,233 @@ const x: { foo?: number } = { foo: undefined };
 }
 
 #[test]
+fn exact_optional_tuple_elements_reject_present_undefined() {
+    let source = r#"
+declare let t: [number, string?, boolean?];
+t[1] = undefined;
+t = [1, undefined];
+t = [1, "ok", undefined];
+t = [1, undefined, undefined];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        4,
+        "Expected exact optional tuple writes/literals with present undefined to emit TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type 'undefined' is not assignable to type 'string'")),
+        "Expected direct tuple slot write to reject undefined against string, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_source_display_preserves_boolean_literal_elements() {
+    let source = r#"
+declare let t: [number, string?, boolean?];
+declare let u: [number, string?, false?];
+declare let p: [number, string?, boolean?];
+declare let c: [number, string?, boolean?];
+declare let s: [number, string?, boolean?];
+declare let a: [number, string?, boolean?];
+t = [42, undefined, true];
+u = [42, undefined, false];
+p = [42, undefined, (true)];
+c = [42, undefined, true as const];
+s = [42, undefined, true satisfies boolean];
+a = [42, undefined, true as boolean];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, true]'")),
+        "Expected tuple source display to preserve true literal, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, false]'")),
+        "Expected tuple source display to preserve false literal, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .filter(|message| message.contains("Type '[number, undefined, true]'"))
+            .count()
+            >= 4,
+        "Expected direct, parenthesized, const-asserted, and satisfies true literals to display as true, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, boolean]'")),
+        "Expected explicit boolean assertion to display as boolean, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .filter(|message| message.contains("[number, undefined, boolean]"))
+            .count()
+            == 1,
+        "Only explicit boolean assertions should widen boolean literal elements, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_source_display_uses_contextual_literal_policy_per_element() {
+    let source = r#"
+declare let primitiveString: [number, boolean?, string?];
+declare let literalString: [number, boolean?, "x"?];
+declare let literalNumber: [number, boolean?, 1?];
+primitiveString = [42, undefined, "x"];
+literalString = [42, undefined, "x"];
+literalNumber = [42, undefined, 1];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, string]'")),
+        "Expected primitive contextual string to display as string, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, \"x\"]'")),
+        "Expected literal contextual string to stay literal, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, undefined, 1]'")),
+        "Expected literal contextual number to stay literal, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn non_exact_optional_tuple_elements_still_accept_present_undefined() {
+    let source = r#"
+declare let t: [number, string?, boolean?];
+t[1] = undefined;
+t = [1, undefined];
+t = [1, "ok", undefined];
+t = [1, undefined, undefined];
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: false,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _)| *code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected non-exact optional tuple slots to accept present undefined, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn duplicate_block_scoped_and_var_reference_uses_first_value_declaration_type() {
+    let source = r#"
+declare const duplicateValue: string | boolean | undefined;
+declare var duplicateValue: { a: number; b?: string | undefined };
+declare var stringNumberMap: { [x: string]: number | string };
+stringNumberMap = duplicateValue;
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, _)| { *code == diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE }),
+        "Expected duplicate declarations to still emit TS2451, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("Type 'string | boolean | undefined'")
+                && message.contains("'{ [x: string]: string | number; }'")
+        }),
+        "Expected assignment to use the first value declaration's union type, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_tuple_inference_preserves_explicit_undefined_element() {
+    let source = r#"
+declare let tx2: [string | undefined];
+declare let tx4: [(string | undefined)?];
+declare function f12<T>(x: [T?]): T;
+declare function f13<T>(x: Partial<T>): T;
+f12(tx2);
+f12(tx4);
+f13(tx2);
+f13(tx4);
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code
+            != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE),
+        "Expected generic optional tuple inference to preserve explicit undefined, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn jsdoc_typedef_body_display_alias_does_not_expand_ts2322_target() {
     let source = r#"
 /**

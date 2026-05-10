@@ -1812,12 +1812,20 @@ impl<'a> CheckerState<'a> {
                                 | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
                             != 0
                 });
+                let is_canonical_value_declaration = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.value_declaration == decl_idx);
                 // For var redeclarations, do NOT overwrite the symbol type.
                 // The first declaration's type is canonical. Overwriting with a
                 // subsequent declaration's inferred type can corrupt recursive
                 // type resolution chains (e.g., `typeof k` indexers resolve to
                 // `any` after the symbol type is overwritten by a redeclaration).
-                if !is_merged_interface && (!is_redeclaration || is_js_require_binding) {
+                if !is_merged_interface
+                    && (is_canonical_value_declaration || is_js_require_binding)
+                    && (!is_redeclaration || is_js_require_binding)
+                {
                     // Augment callable types with expando properties before caching.
                     if let Some(ref name) = var_name {
                         final_type =
