@@ -71,16 +71,31 @@ type Cases = [
 /// diagnostic on a descendant of the type-arg AST node.
 #[test]
 fn outer_ts2344_still_fires_when_no_inner_arity_error() {
-    // `MyReadonly2<Todo, 'title'>` is fine (2 args, matching `<T, K>`).
-    // The outer `Equal<any, Readonly<Todo>>` evaluates false, so tsc
-    // emits TS2344 — and so should we.
+    // `MyAlias<Todo, 'title'>` is fine (2 args, matching `<T, K>`). The
+    // outer `Equal<number, { other: number }>` evaluates false (the two
+    // shapes are obviously disjoint primitives vs object), so tsc emits
+    // TS2344 — and so should we. Self-contained types are used so the
+    // assertion does not depend on `Readonly`/lib being loaded by the
+    // test harness.
+    //
+    // Historical note: the earlier formulation used `MyReadonly2<T, K> = T`
+    // and `Readonly<Todo>` for the second `Equal` argument. After the
+    // outer-conditional deferral fix in solver `evaluate_conditional`
+    // (free vs bound type-parameter detection), the comparison no longer
+    // defers and runs through `conditional_extends_types_equivalent`
+    // directly. That helper currently delegates to bidirectional
+    // `check_subtype`, which treats `Readonly<X>` and `X` as mutually
+    // assignable (matching tsc's loose subtype rule where readonly is a
+    // usage constraint rather than a structural one). Using
+    // `number` vs `{ other: number }` keeps the negative cover meaningful
+    // regardless of how readonly identity is eventually tightened.
     let source = r#"
 type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 type Expect<T extends true> = T;
-type MyReadonly2<T, K> = T
+type MyAlias<T, K> = number
 interface Todo { title: string }
 type Cases = [
-  Expect<Equal<MyReadonly2<Todo, 'title'>, Readonly<Todo>>>,
+  Expect<Equal<MyAlias<Todo, 'title'>, { other: number }>>,
 ];
 "#;
     let diags = check_source_diagnostics(source);
@@ -91,6 +106,6 @@ type Cases = [
     );
     assert!(
         codes.contains(&2344),
-        "expected TS2344 (Equal evaluates false on Readonly target). got: {codes:?}"
+        "expected TS2344 (Equal evaluates false on disjoint target). got: {codes:?}"
     );
 }

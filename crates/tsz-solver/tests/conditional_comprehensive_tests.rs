@@ -1886,3 +1886,272 @@ fn test_non_distributive_conditional_no_constraint_eval() {
         "Non-distributive conditional should still succeed via branch checking"
     );
 }
+
+// =============================================================================
+// `T extends any` Simplification (issue #4912 family — Equal<any, X> trick)
+// =============================================================================
+//
+// tsc treats `any` as the top type when it appears as a conditional's
+// `extends_type`. After substitution, `T extends any ? X : Y` provably
+// takes the true branch (every concrete type is a subtype of `any`).
+// However, while T is still a naked type parameter, the conditional must
+// stay deferred so it can participate in the structural compatibility check
+// behind the `Equal<X, Y>` trick used throughout type-challenges:
+//
+//   type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends
+//                      (<T>() => T extends Y ? 1 : 2) ? true : false
+//
+// The contravariant trick relies on tsc's bidirectional `any` ≅ Y rule
+// across the deferred extends positions. Eagerly simplifying the inner
+// conditional to its true branch breaks that compare. The tests below
+// pin the structural rule, not specific identifier names.
+
+fn make_unconstrained_param(interner: &TypeInterner, name: &str) -> TypeId {
+    interner.type_param(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    })
+}
+
+#[test]
+fn test_t_extends_any_simplifies_after_concrete_substitution() {
+    // After substituting the naked type parameter with a concrete type,
+    // the `extends any` clause is provably satisfied and the conditional
+    // resolves to the true branch. This is what users see for `Foo<string>`
+    // when `type Foo<T> = T extends any ? 1 : 2`.
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+    let interner = TypeInterner::new();
+
+    for (param_name, sub_type) in [
+        ("T", TypeId::STRING),
+        ("P", TypeId::NUMBER),
+        ("Item", TypeId::BOOLEAN),
+    ] {
+        let check = make_unconstrained_param(&interner, param_name);
+        let one = interner.literal_number(1.0);
+        let two = interner.literal_number(2.0);
+
+        let cond_id = interner.conditional(ConditionalType {
+            check_type: check,
+            extends_type: TypeId::ANY,
+            true_type: one,
+            false_type: two,
+            is_distributive: true,
+        });
+
+        let param_atom = interner.intern_string(param_name);
+        let substitution = TypeSubstitution::single(param_atom, sub_type);
+        let instantiated = instantiate_type(&interner, cond_id, &substitution);
+        let result = evaluate_type(&interner, instantiated);
+
+        assert_eq!(
+            result,
+            one,
+            "`{param_name} extends any ? 1 : 2` with {param_name} = {:?} must evaluate to 1, got {:?}",
+            interner.lookup(sub_type),
+            interner.lookup(result)
+        );
+    }
+}
+
+#[test]
+fn test_t_extends_any_distribution_over_never_preserved() {
+    // Critical invariant: a distributive conditional `T extends any ? X : Y`
+    // applied to `never` must distribute to the empty union (never), NOT
+    // collapse to the true branch. tsc's distributive rule fires before the
+    // top-constraint simplification.
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+    let interner = TypeInterner::new();
+
+    let t = make_unconstrained_param(&interner, "T");
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_number(2.0);
+
+    let cond_id = interner.conditional(ConditionalType {
+        check_type: t,
+        extends_type: TypeId::ANY,
+        true_type: one,
+        false_type: two,
+        is_distributive: true,
+    });
+
+    let t_atom = interner.intern_string("T");
+    let substitution = TypeSubstitution::single(t_atom, TypeId::NEVER);
+    let instantiated = instantiate_type(&interner, cond_id, &substitution);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "Distributive `T extends any ? 1 : 2` applied to never must give never, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_equal_any_x_returns_true_branch_via_function_subtype() {
+    // Structural simulation of the type-challenges `Equal<X, Y>` trick:
+    //   type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends
+    //                      (<T>() => T extends Y ? 1 : 2) ? true : false
+    //
+    // For X = any, the naked inner conditional stays deferred while the
+    // generic function type is compared. The function-subtype path must then
+    // treat the deferred `any` and Y extends positions as mutually compatible,
+    // mirroring tsc's behavior. The bug was that the outer conditional was
+    // deferred before reaching that function-subtype comparison because it
+    // counted the function's own bound T as a free type parameter.
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+
+    // Run the test under several distinct identifier names to ensure the
+    // rule is keyed on `TypeId::ANY`, not on a hardcoded spelling. Each
+    // function gets its OWN fresh type parameter (mirroring the parser's
+    // behaviour where each `<T>` introduces a new scope) so the alpha-rename
+    // path in the function-subtype check is exercised.
+    for (lhs_name, rhs_name, y_name) in
+        [("T", "T", "U"), ("P", "P", "Q"), ("Alpha", "Beta", "Gamma")]
+    {
+        let lhs_t = make_unconstrained_param(&interner, lhs_name);
+        let rhs_t = make_unconstrained_param(&interner, rhs_name);
+        let y = make_unconstrained_param(&interner, y_name);
+
+        let one = interner.literal_number(1.0);
+        let two = interner.literal_number(2.0);
+
+        let cond_lhs = interner.conditional(ConditionalType {
+            check_type: lhs_t,
+            extends_type: TypeId::ANY,
+            true_type: one,
+            false_type: two,
+            is_distributive: true,
+        });
+        let cond_rhs = interner.conditional(ConditionalType {
+            check_type: rhs_t,
+            extends_type: y,
+            true_type: one,
+            false_type: two,
+            is_distributive: true,
+        });
+
+        let lhs_info = match interner.lookup(lhs_t) {
+            Some(TypeData::TypeParameter(info)) => info,
+            other => panic!("expected TypeParameter, got {other:?}"),
+        };
+        let rhs_info = match interner.lookup(rhs_t) {
+            Some(TypeData::TypeParameter(info)) => info,
+            other => panic!("expected TypeParameter, got {other:?}"),
+        };
+
+        let lhs_fn = interner.function(FunctionShape {
+            type_params: vec![lhs_info],
+            params: Vec::<ParamInfo>::new(),
+            this_type: None,
+            return_type: cond_lhs,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let rhs_fn = interner.function(FunctionShape {
+            type_params: vec![rhs_info],
+            params: Vec::<ParamInfo>::new(),
+            this_type: None,
+            return_type: cond_rhs,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let mut checker = SubtypeChecker::new(&interner);
+        let lhs_to_rhs = checker.is_subtype_of(lhs_fn, rhs_fn);
+        let mut checker = SubtypeChecker::new(&interner);
+        let rhs_to_lhs = checker.is_subtype_of(rhs_fn, lhs_fn);
+
+        assert!(
+            lhs_to_rhs && rhs_to_lhs,
+            "<{lhs_name}>() => {lhs_name} extends any ? 1 : 2 must be mutually assignable \
+             with <{rhs_name}>() => {rhs_name} extends {y_name} ? 1 : 2 (got lhs_to_rhs={lhs_to_rhs}, \
+             rhs_to_lhs={rhs_to_lhs})"
+        );
+    }
+}
+
+#[test]
+fn test_outer_equal_conditional_evaluates_to_true_for_any_lhs() {
+    // Top-level reproduction of the type-challenges scenario:
+    //
+    //   ((<T>() => T extends any ? 1 : 2) extends
+    //    (<T>() => T extends true ? 1 : 2)) ? true : false
+    //
+    // Should evaluate to `true`, not `false`. This drives the OUTER
+    // conditional through `evaluate_conditional` → function subtype, which
+    // is the path the actual Equal<any, X> use sites take after substitution.
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+
+    let lhs_t = make_unconstrained_param(&interner, "T");
+    let rhs_t = make_unconstrained_param(&interner, "T");
+
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_number(2.0);
+
+    let cond_lhs = interner.conditional(ConditionalType {
+        check_type: lhs_t,
+        extends_type: TypeId::ANY,
+        true_type: one,
+        false_type: two,
+        is_distributive: true,
+    });
+    let cond_rhs = interner.conditional(ConditionalType {
+        check_type: rhs_t,
+        extends_type: TypeId::BOOLEAN_TRUE,
+        true_type: one,
+        false_type: two,
+        is_distributive: true,
+    });
+
+    let lhs_info = match interner.lookup(lhs_t) {
+        Some(TypeData::TypeParameter(info)) => info,
+        other => panic!("expected TypeParameter, got {other:?}"),
+    };
+    let rhs_info = match interner.lookup(rhs_t) {
+        Some(TypeData::TypeParameter(info)) => info,
+        other => panic!("expected TypeParameter, got {other:?}"),
+    };
+
+    let lhs_fn = interner.function(FunctionShape {
+        type_params: vec![lhs_info],
+        params: Vec::<ParamInfo>::new(),
+        this_type: None,
+        return_type: cond_lhs,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let rhs_fn = interner.function(FunctionShape {
+        type_params: vec![rhs_info],
+        params: Vec::<ParamInfo>::new(),
+        this_type: None,
+        return_type: cond_rhs,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let outer = interner.conditional(ConditionalType {
+        check_type: lhs_fn,
+        extends_type: rhs_fn,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    });
+
+    let result = evaluate_type(&interner, outer);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_TRUE,
+        "Equal<any, true>-shaped outer conditional must evaluate to `true`, got {:?}",
+        interner.lookup(result)
+    );
+}
