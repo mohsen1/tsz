@@ -96,6 +96,7 @@ impl ParserState {
         let mut pending_for_binding_name_colon = false;
         let mut pending_for_of_comma = false;
         let mut pending_for_expression_comma = false;
+        let mut reported_for_expression_start_comma = false;
         let mut pending_member_tail_comma = false;
         let mut pending_statement_semicolon_comma = false;
         let mut last_close_brace_pos = None;
@@ -185,11 +186,14 @@ impl ParserState {
                         pending_for_of_comma = false;
                         pending_for_expression_comma = true;
                     }
-                    SyntaxKind::Identifier if pending_for_expression_comma => {
+                    SyntaxKind::Identifier
+                        if pending_for_expression_comma && !reported_for_expression_start_comma =>
+                    {
                         self.parse_error_at_current_token(
                             "',' expected.",
                             diagnostic_codes::EXPECTED,
                         );
+                        reported_for_expression_start_comma = true;
                     }
                     _ => {}
                 }
@@ -223,6 +227,9 @@ impl ParserState {
                     self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
                     pending_const_binding_name_colon = false;
                     pending_const_binding_semicolon_comma = true;
+                }
+                _ if pending_const_binding_name_colon => {
+                    pending_const_binding_name_colon = false;
                 }
                 SyntaxKind::SemicolonToken if pending_const_binding_semicolon_comma => {
                     self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);

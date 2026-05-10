@@ -725,6 +725,53 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
 }
 
 #[test]
+fn definite_assignment_recovery_does_not_leak_const_binding_name_state() {
+    let source = "export async function f<T>(x!: AsyncIterable<T>): Promise<T[]> {\n    const { a } = source;\n    later;\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let later_pos = source.find("later").expect("source contains later") as u32;
+
+    assert!(
+        !diags.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED
+                && d.start == later_pos
+                && d.message == "':' expected."
+        }),
+        "const binding-pattern recovery should not report a leaked colon at `later`; got {diags:?}"
+    );
+}
+
+#[test]
+fn definite_assignment_recovery_reports_for_expression_comma_once_before_close_paren() {
+    let source = "export async function f<T>(x!: AsyncIterable<T>): Promise<T[]> {\n    for await (const v of foo + bar) {\n    }\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let foo_pos = source.find("foo").expect("source contains foo") as u32;
+    let bar_pos = source.find("bar").expect("source contains bar") as u32;
+    let close_paren = source
+        .find(") {\n")
+        .expect("source contains for close paren") as u32;
+    let comma_expected_at = |start| {
+        diags.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED && d.start == start && d.message == "',' expected."
+        })
+    };
+
+    assert!(
+        comma_expected_at(foo_pos),
+        "expected one expression-start comma diagnostic at `foo`; got {diags:?}"
+    );
+    assert!(
+        !comma_expected_at(bar_pos),
+        "for-expression recovery should not repeat the comma diagnostic at `bar`; got {diags:?}"
+    );
+    assert!(
+        comma_expected_at(close_paren),
+        "expected the separate close-paren comma diagnostic to remain; got {diags:?}"
+    );
+}
+
+#[test]
 fn astral_identifier_debris_uses_scanner_shaped_recovery() {
     let source = r#"declare var \u{102A7}: string;
 export var _\u{102A7} = new Foo().\u{102A7};"#;
