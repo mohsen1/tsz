@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/maxconstraints-display-review-cleanup-2026-05-10`
-- **PR**: TBD
+- **PR**: #4978
 - **Status**: ready
 - **Workstream**: diagnostic-conformance
 
