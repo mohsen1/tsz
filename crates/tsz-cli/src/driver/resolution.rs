@@ -66,11 +66,12 @@ fn count_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
     std::fs::read_dir(path)
 }
 
-/// Bump `resolver_candidate_paths_total` exactly once, gating on
-/// `enabled_fast()` so disabled builds skip the `counters()` `OnceLock`
-/// deref entirely. Same shape as the fs-probe wrappers above; lifted into
-/// a helper so the two emit sites in this file (path-mapping virtual
-/// roots and suffix-extension expansion) don't re-pay the deref.
+/// Bump `resolver_candidate_paths_total` once per invocation, gating on
+/// `enabled_fast()` so runs with perf counters disabled skip the
+/// `counters()` `OnceLock` deref entirely. Same shape as the fs-probe
+/// wrappers above; lifted into a helper so the two emit sites in this file
+/// (path-mapping virtual roots and suffix-extension expansion) don't re-pay
+/// the deref.
 #[inline]
 fn count_candidate_path() {
     if tsz_common::perf_counters::enabled_fast() {
