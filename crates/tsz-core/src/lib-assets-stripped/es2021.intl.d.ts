@@ -2,6 +2,7 @@ declare namespace Intl {
     interface DateTimeFormatPartTypesRegistry {
         fractionalSecond: any;
     }
+    type DateTimeFormatPartTypes = keyof DateTimeFormatPartTypesRegistry;
     interface DateTimeFormatOptions {
         formatMatcher?: "basic" | "best fit" | "best fit" | undefined;
         dateStyle?: "full" | "long" | "medium" | "short" | undefined;

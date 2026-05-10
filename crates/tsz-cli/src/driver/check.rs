@@ -110,7 +110,7 @@ fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
 /// Build a fresh checker-facing lib set from the already-loaded lib sources so program
 /// binding and checker lib resolution stay isolated without requiring disk reloads.
 pub(super) fn load_checker_libs(lib_files: &[Arc<LibFile>]) -> CheckerLibSet {
-    let files = parallel::clone_lib_files_for_checker(lib_files);
+    let files = parallel::clone_lib_files_for_checker(lib_files, false);
     let contexts = files
         .iter()
         .map(|lib| LibContext {

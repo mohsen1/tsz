@@ -1,6 +1,7 @@
 //! Generic type argument validation (TS2344 constraint checking).
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
@@ -180,29 +181,53 @@ impl<'a> CheckerState<'a> {
                 if self.type_nodes_structurally_equal(arg_idx, cond.check_type) {
                     let extends_type = self.get_type_from_type_node(cond.extends_type);
                     if extends_type != TypeId::ERROR {
-                        // Check if this single extends type satisfies the constraint
-                        // (bidirectional assignability for exact match)
+                        // Check if this single extends type satisfies the constraint.
+                        // For callable-like constraints, prefer conservative structural/
+                        // constraint-shape checks that avoid expensive shape expansion.
                         let db = self.ctx.types.as_type_database();
                         let constraint_is_callable = query::is_callable_type(db, constraint)
                             || self.is_function_constraint(constraint);
                         let extends_resolved = self.resolve_lazy_type(extends_type);
                         let extends_evaluated =
                             self.evaluate_type_for_assignability(extends_resolved);
-                        let extends_is_callable = query::is_callable_type(db, extends_type)
-                            || query::is_callable_type(db, extends_resolved)
-                            || query::is_callable_type(db, extends_evaluated)
-                            || self.is_function_constraint(extends_type)
-                            || self.is_function_constraint(extends_resolved);
-                        if constraint_is_callable
-                            && (extends_is_callable
-                                || self.is_assignable_to(extends_resolved, constraint)
-                                || self.is_assignable_to(extends_evaluated, constraint))
-                        {
-                            return true;
+                        if constraint_is_callable {
+                            let extends_is_callable = query::is_callable_type(db, extends_type)
+                                || query::is_callable_type(db, extends_resolved)
+                                || query::is_callable_type(db, extends_evaluated)
+                                || self.is_function_constraint(extends_type)
+                                || self.is_function_constraint(extends_resolved)
+                                || self.type_parameter_has_callable_constraint(extends_type)
+                                || self.type_parameter_has_callable_constraint(extends_resolved)
+                                || query::callable_shape_for_type(db, extends_type).is_some()
+                                || query::callable_shape_for_type(db, extends_resolved).is_some()
+                                || query::callable_shape_for_type(db, extends_evaluated).is_some();
+                            if extends_is_callable {
+                                return true;
+                            }
+                            let check_type_id = self.get_type_from_type_node(cond.check_type);
+                            if let Some(check_name) = query::type_parameter_name(db, check_type_id)
+                                && (query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_resolved,
+                                    check_name,
+                                ) || query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_evaluated,
+                                    check_name,
+                                ) || query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_type,
+                                    check_name,
+                                ))
+                            {
+                                return true;
+                            }
                         }
                         if extends_type == constraint
                             || (self.is_assignable_to(extends_type, constraint)
                                 && self.is_assignable_to(constraint, extends_type))
+                            || self.is_assignable_to(extends_resolved, constraint)
+                            || self.is_assignable_to(extends_evaluated, constraint)
                         {
                             return true;
                         }
