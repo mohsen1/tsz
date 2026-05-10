@@ -5126,6 +5126,48 @@ function f<Arr, D extends number>(x: FlatArray<Arr, any>, y: FlatArray<Arr, D>) 
 }
 
 #[test]
+fn test_ts2322_recursive_indexed_alias_assignment_keeps_declared_alias_display() {
+    let source = r#"
+type Step<Arr, Depth extends number> = {
+    done: Arr;
+    recur: Arr extends { item: infer InnerArr } ? Step<InnerArr, [-1, 0, 1, 2][Depth]> : Arr;
+}[Depth extends -1 ? "done" : "recur"];
+
+function f<Arr, D extends number>(x: Step<Arr, any>, y: Step<Arr, D>) {
+    x = y;
+    y = x;
+}
+"#;
+    let diagnostics = with_lib_contexts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one recursive alias assignment TS2322. Got: {diagnostics:?}"
+    );
+    let message = &ts2322[0].1;
+    assert!(
+        message.contains("Type 'Step<Arr, any>' is not assignable to type 'Step<Arr, D>'."),
+        "Expected source display to preserve the declared Step alias. Got: {message}"
+    );
+    assert!(
+        !message.contains("Arr extends") && !message.contains("infer InnerArr"),
+        "Did not expect Step source to expand to its conditional body. Got: {message}"
+    );
+}
+
+#[test]
 fn test_ts2322_infinite_constraints_duplicate_value_fingerprints() {
     let source = r#"
 type AProp<T extends { a: string }> = T
