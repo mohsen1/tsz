@@ -97,9 +97,14 @@ pub fn build_report(result: &CompilationResult, raw_args: &[OsString]) -> PerfDi
             .map(|os| os.to_string_lossy().into_owned())
             .collect(),
         phases_ms: PhasesMs {
-            config_discovery: 0.0,
-            source_discovery: 0.0,
-            module_resolution: 0.0,
+            // T0.2 follow-up: these fine-grained sub-phases are
+            // structurally wired through `PhaseTimings` so the JSON
+            // schema can carry them. Driver attribution lands in a
+            // separate PR; for now these stay 0.0 and the leftover
+            // sits in `io_read` / `parse_bind` parent buckets.
+            config_discovery: result.phase_timings.config_discovery_ms,
+            source_discovery: result.phase_timings.source_discovery_ms,
+            module_resolution: result.phase_timings.module_resolution_ms,
             io_read: result.phase_timings.io_read_ms,
             load_libs: result.phase_timings.load_libs_ms,
             parse_bind: result.phase_timings.parse_bind_ms,
