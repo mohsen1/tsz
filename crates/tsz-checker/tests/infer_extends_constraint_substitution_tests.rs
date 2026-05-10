@@ -202,6 +202,43 @@ getIndex(2);
 }
 
 #[test]
+fn test_extract_keyof_string_preserves_unique_symbol_inference_candidate() {
+    let source = r#"
+type Extract<T, U> = T extends U ? T : never;
+
+declare function getProperty2<T, K extends keyof T>(obj: T, key: Extract<K, string>): T[K];
+
+declare const s: unique symbol;
+interface StrNum {
+    first: string;
+    second: number;
+    [s]: string;
+}
+declare const obj: StrNum;
+let prop: string;
+
+prop = getProperty2(obj, "first");
+prop = getProperty2(obj, s);
+"#;
+    let diags = check_strict(source);
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected only the unique-symbol Extract<K, string> argument to emit TS2345. Got: {diags:#?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains("parameter of type 'never'"),
+        "The invalid argument should instantiate Extract<typeof s, string> to never, got: {}",
+        ts2345[0].message_text
+    );
+    assert!(
+        diags.iter().all(|d| d.code != 2322),
+        "T[typeof s] should remain string, so the call result must not cascade into TS2322. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn test_path_keys_accepts_readonly_tuple_numeric_string_index() {
     let source = r#"
 type PropType<T, Path extends string> =

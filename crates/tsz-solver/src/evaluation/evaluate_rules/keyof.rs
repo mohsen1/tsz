@@ -8,8 +8,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, PropertyInfo, TupleElement, TypeData,
-    TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, PropertyInfo, SymbolRef, TupleElement,
+    TypeData, TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -25,6 +25,7 @@ pub(crate) struct KeyofKeySet {
     pub has_number: bool,
     pub has_symbol: bool,
     pub string_literals: FxHashSet<Atom>,
+    pub unique_symbols: FxHashSet<SymbolRef>,
 }
 
 impl KeyofKeySet {
@@ -34,6 +35,7 @@ impl KeyofKeySet {
             has_number: false,
             has_symbol: false,
             string_literals: FxHashSet::default(),
+            unique_symbols: FxHashSet::default(),
         }
     }
 
@@ -69,30 +71,34 @@ impl KeyofKeySet {
                 self.string_literals.insert(atom);
                 true
             }
+            TypeData::UniqueSymbol(symbol) => {
+                self.unique_symbols.insert(symbol);
+                true
+            }
             _ => false,
         }
     }
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
-    fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
-        let name = prop.name;
+    fn unique_symbol_ref_from_synthetic_atom(&self, name: Atom) -> Option<SymbolRef> {
         let name_text = self.interner().resolve_atom_ref(name);
+        let symbol_ref = name_text.strip_prefix("__unique_")?.parse::<u32>().ok()?;
+        Some(SymbolRef(symbol_ref))
+    }
+
+    fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
         if prop.is_symbol_named
-            && let Some(symbol_ref) = name_text.strip_prefix("__unique_")
-            && let Ok(id) = symbol_ref.parse::<u32>()
+            && let Some(symbol_ref) = self.unique_symbol_ref_from_synthetic_atom(prop.name)
         {
-            return self.interner().unique_symbol(crate::types::SymbolRef(id));
+            return self.interner().unique_symbol(symbol_ref);
         }
-        self.interner().literal_string_atom(name)
+        self.interner().literal_string_atom(prop.name)
     }
 
     fn synthetic_property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
-        let name_text = self.interner().resolve_atom_ref(name);
-        if let Some(symbol_ref) = name_text.strip_prefix("__unique_")
-            && let Ok(id) = symbol_ref.parse::<u32>()
-        {
-            return self.interner().unique_symbol(crate::types::SymbolRef(id));
+        if let Some(symbol_ref) = self.unique_symbol_ref_from_synthetic_atom(name) {
+            return self.interner().unique_symbol(symbol_ref);
         }
         self.interner().literal_string_atom(name)
     }
@@ -696,6 +702,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut common_literals: Option<FxHashSet<Atom>> = None;
         let mut all_number = true;
         let mut all_symbol = true;
+        let mut common_unique_symbols: Option<FxHashSet<SymbolRef>> = None;
 
         for set in &parsed_sets {
             if set.has_string {
@@ -721,6 +728,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if !set.has_symbol {
                 all_symbol = false;
             }
+            if set.has_symbol {
+                // A broad `symbol` key includes every unique symbol.
+            } else if set.unique_symbols.is_empty() {
+                common_unique_symbols = Some(FxHashSet::default());
+            } else {
+                common_unique_symbols = Some(match common_unique_symbols {
+                    Some(mut existing) => {
+                        existing.retain(|symbol| set.unique_symbols.contains(symbol));
+                        existing
+                    }
+                    None => set.unique_symbols.clone(),
+                });
+            }
         }
 
         let mut result_keys = Vec::new();
@@ -738,6 +758,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         if all_symbol {
             result_keys.push(TypeId::SYMBOL);
+        } else if let Some(common) = common_unique_symbols {
+            for symbol in common {
+                result_keys.push(self.interner().unique_symbol(symbol));
+            }
         }
 
         if result_keys.is_empty() {

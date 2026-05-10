@@ -140,6 +140,7 @@ impl<'a> CheckerState<'a> {
             getter: Option<TypeId>,
             setter: Option<TypeId>,
             declaration_order: u32,
+            is_symbol_named: bool,
         }
 
         let mut call_signatures: Vec<SolverCallSignature> = Vec::new();
@@ -159,6 +160,7 @@ impl<'a> CheckerState<'a> {
             optional: bool,
             readonly: bool,
             declaration_order: u32,
+            is_symbol_named: bool,
         }
         let mut method_overloads: Vec<(Atom, MethodOverloadEntry)> = Vec::new();
 
@@ -260,6 +262,7 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
                         let type_id = if sig.type_annotation.is_some() {
                             self.get_type_from_type_node_in_type_literal(sig.type_annotation)
                         } else {
@@ -279,7 +282,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                             declaration_order: member_order,
                             is_string_named: false,
-                            is_symbol_named: false,
+                            is_symbol_named,
                             single_quoted_name: false,
                         });
                     }
@@ -295,6 +298,7 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&sig.type_parameters);
                         let (params, this_type) =
@@ -351,6 +355,7 @@ impl<'a> CheckerState<'a> {
                                     optional,
                                     readonly,
                                     declaration_order: member_order,
+                                    is_symbol_named,
                                 },
                             ));
                         }
@@ -365,12 +370,14 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(accessor.name);
                         member_order += 1;
                         let current_order = member_order;
                         let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                             getter: None,
                             setter: None,
                             declaration_order: current_order,
+                            is_symbol_named,
                         });
 
                         if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
@@ -537,7 +544,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: entry.declaration_order,
                 is_string_named: false,
-                is_symbol_named: false,
+                is_symbol_named: entry.is_symbol_named,
                 single_quoted_name: false,
             });
         }
@@ -568,7 +575,7 @@ impl<'a> CheckerState<'a> {
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
                 is_string_named: false,
-                is_symbol_named: false,
+                is_symbol_named: accessor.is_symbol_named,
                 single_quoted_name: false,
             });
         }

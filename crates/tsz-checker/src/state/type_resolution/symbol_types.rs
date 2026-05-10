@@ -933,6 +933,8 @@ impl<'a> CheckerState<'a> {
         // Pre-compute computed property names that the lowering can't resolve from AST alone.
         // This handles cases like `[k]` where k is a `const` unique symbol variable.
         let computed_names = self.precompute_computed_property_names(&declarations);
+        let computed_symbol_names =
+            self.precompute_symbol_named_computed_property_names(&declarations);
         let prewarmed_type_params = self.prewarm_member_type_reference_params(&declarations);
 
         // Get type parameters from the first interface declaration
@@ -970,6 +972,8 @@ impl<'a> CheckerState<'a> {
         let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
             computed_names.get(&expr_idx).copied()
         };
+        let computed_symbol_name_resolver =
+            |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
         let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
             prewarmed_type_params
                 .get(&def_id)
@@ -985,6 +989,7 @@ impl<'a> CheckerState<'a> {
         )
         .with_type_param_bindings(type_param_bindings)
         .with_computed_name_resolver(&computed_name_resolver)
+        .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
         let lowering = if self.ctx.is_declaration_file() && !self.ctx.lib_contexts.is_empty() {
@@ -1122,10 +1127,68 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     map.insert(computed.expression, name);
+                } else if let Some(sym_ref) =
+                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
+                {
+                    let name = self
+                        .ctx
+                        .types
+                        .intern_string(&format!("__unique_{}", sym_ref.0));
+                    map.insert(computed.expression, name);
                 }
             }
         }
         map
+    }
+
+    pub(crate) fn precompute_symbol_named_computed_property_names(
+        &mut self,
+        declarations: &[NodeIndex],
+    ) -> rustc_hash::FxHashSet<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut set = rustc_hash::FxHashSet::default();
+        for &decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+            for &member_idx in &interface.members.nodes {
+                let Some(member) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member) {
+                    sig.name
+                } else if let Some(acc) = self.ctx.arena.get_accessor(member) {
+                    acc.name
+                } else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(name_idx) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                let prev = self.ctx.checking_computed_property_name;
+                self.ctx.checking_computed_property_name = Some(name_idx);
+                let prev_preserve = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let expr_type = self.get_type_of_node(computed.expression);
+                self.ctx.preserve_literal_types = prev_preserve;
+                self.ctx.checking_computed_property_name = prev;
+                if crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
+                    .is_some()
+                {
+                    set.insert(computed.expression);
+                }
+            }
+        }
+        set
     }
 
     /// Resolve a symbol to its structural type and return a `Lazy(DefId)` reference.
@@ -1363,6 +1426,8 @@ impl<'a> CheckerState<'a> {
                 // inside `declare global { interface Promise<T> { ... } }`, where
                 // TypeLowering alone can't resolve the computed expression.
                 let computed_names = self.precompute_computed_property_names(&symbol.declarations);
+                let computed_symbol_names =
+                    self.precompute_symbol_named_computed_property_names(&symbol.declarations);
 
                 // Push type params, lower interface, pop type params.
                 // push_type_parameters uses self.ctx.arena (user arena) to read
@@ -1536,6 +1601,8 @@ impl<'a> CheckerState<'a> {
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
                     computed_names.get(&expr_idx).copied()
                 };
+                let computed_symbol_name_resolver =
+                    |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_lazy_type_params
                         .get(&def_id)
@@ -1553,6 +1620,7 @@ impl<'a> CheckerState<'a> {
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_computed_name_resolver(&computed_name_resolver)
+                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
                 .with_preferred_self_reference(
                     symbol.escaped_name.clone(),
                     self.ctx.get_or_create_def_id(sym_id),

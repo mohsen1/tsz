@@ -1178,6 +1178,7 @@ impl<'a> CheckerState<'a> {
                             return Some(format!("[Symbol.{sym_name}]"));
                         }
                     }
+                    return Some(format!("__unique_{}", sym_ref.0));
                 }
             }
 
