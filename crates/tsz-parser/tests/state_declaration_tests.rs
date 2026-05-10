@@ -1344,6 +1344,59 @@ fn orphan_case_assignment_recovers_before_following_if_header() {
 }
 
 #[test]
+fn orphan_case_assignment_asi_recovery_preserves_following_if_header() {
+    let source = "function f() {\n  case = g()\n  if (retValue != 0) {\n  }\n}\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            2,
+            3,
+            "Declaration or statement expected.".to_string()
+        )),
+        "expected TS1128 at orphan case, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::EXPECTED,
+            3,
+            16,
+            "',' expected.".to_string()
+        )),
+        "ASI recovery should leave the following if header visible, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn orphan_case_assignment_asi_recovery_preserves_block_close_and_next_statement() {
+    let source = "function f() {\n  case = g()\n}\nconst after = 1;\n";
+    let (parser, root) = parse_source(source);
+    let fingerprints = diagnostic_fingerprints(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+
+    assert!(
+        fingerprints.iter().any(|(code, line, col, message)| {
+            *code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && *line == 2
+                && *col == 3
+                && message == "Declaration or statement expected."
+        }),
+        "expected TS1128 at orphan case, got {fingerprints:?}"
+    );
+    assert_eq!(
+        sf.statements.nodes.len(),
+        2,
+        "orphan case ASI recovery should not consume the block close or following const"
+    );
+    assert_eq!(
+        arena.get(sf.statements.nodes[1]).unwrap().kind,
+        syntax_kind_ext::VARIABLE_STATEMENT
+    );
+}
+
+#[test]
 fn while_missing_open_paren_before_colon_recovers_rest_tail() {
     let source = "public Overloads( while : string, ...rest: string[]) {  &\npublic DefaultValue(value?: string = \"Hello\") { }\n";
     let fingerprints = diagnostic_fingerprints(source);

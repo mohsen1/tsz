@@ -684,9 +684,13 @@ impl ParserState {
             diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
         );
         while !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
             self.next_token();
+            if self.scanner.has_preceding_line_break() {
+                break;
+            }
         }
         if self.is_token(SyntaxKind::SemicolonToken) {
             self.next_token();

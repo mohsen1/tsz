@@ -843,9 +843,9 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
 
         assert!(
             output.contains(
-                "function f1() { }\nfunction f2() { }\nfunction f2() { }\nfunction f3() { }"
+                "function f1() { }\n(function f1() { });\nfunction f2() { }\n(function f2() { });\nfunction f3() { }"
             ),
-            "Recovered comma-separated function declarations should emit empty bodies before comma separators.\nOutput:\n{output}"
+            "Recovered comma-separated function declarations should emit empty bodies in both declaration and expression recovery positions.\nOutput:\n{output}"
         );
         assert!(
             output.contains("    m1() { }\n    m2() { }\n    m2() { }\n    m3() { }"),
