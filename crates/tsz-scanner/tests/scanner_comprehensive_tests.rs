@@ -1,3 +1,4 @@
+use tsz_common::ScriptTarget;
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 
@@ -907,8 +908,18 @@ mod identifier_scanning {
     }
 
     #[test]
-    fn unicode_escape_braced_astral_identifier_start_recovers_as_debris() {
+    fn unicode_escape_braced_astral_identifier_start_is_identifier_in_es2015() {
         let mut scanner = ScannerState::new("\\u{102A7}".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES2015);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_value_ref(), "𐊧");
+    }
+
+    #[test]
+    fn unicode_escape_braced_astral_identifier_start_recovers_as_debris_in_es5() {
+        let mut scanner = ScannerState::new("\\u{102A7}".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES5);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Unknown);
         assert_eq!(scanner.get_token_text(), "\\");

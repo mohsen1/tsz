@@ -228,6 +228,29 @@ impl ParserState {
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 self.next_token();
+
+                if self.is_token(SyntaxKind::EqualsToken) {
+                    self.parse_error_at_current_token(
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+
+                if self.is_identifier_or_keyword()
+                    && self.look_ahead_next_is_open_brace_on_same_line()
+                {
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+
                 previous_statement_was_block = false;
                 continue;
             }
@@ -511,6 +534,30 @@ impl ParserState {
                     tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                     diagnostic_codes::INVALID_CHARACTER,
                 );
+                self.next_token();
+
+                if self.is_token(SyntaxKind::EqualsToken) {
+                    self.parse_error_at_current_token(
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+
+                if self.is_identifier_or_keyword()
+                    && self.look_ahead_next_is_open_brace_on_same_line()
+                {
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+
                 self.resync_after_error_with_statement_starts(false);
                 previous_statement_was_block = false;
                 continue;
@@ -1876,6 +1923,36 @@ impl ParserState {
                 || self.is_token(SyntaxKind::OpenBracketToken);
 
             if !can_start_decl {
+                if self.is_token(SyntaxKind::Unknown) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                        diagnostic_codes::INVALID_CHARACTER,
+                    );
+                    self.next_token();
+
+                    if self.is_identifier_or_keyword() && !self.is_reserved_word() {
+                        continue;
+                    }
+
+                    if self.is_token(SyntaxKind::ColonToken) {
+                        self.parse_error_at_current_token(
+                            "Variable declaration expected.",
+                            diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
+                        );
+                        while !matches!(
+                            self.token(),
+                            SyntaxKind::SemicolonToken
+                                | SyntaxKind::CloseBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.next_token();
+                        }
+                        had_decl_expected_error = true;
+                    }
+                    break;
+                }
+
                 // Invalid token for variable declaration - emit error and recover
                 if !self.is_token(SyntaxKind::SemicolonToken)
                     && !self.is_token(SyntaxKind::CloseBraceToken)
