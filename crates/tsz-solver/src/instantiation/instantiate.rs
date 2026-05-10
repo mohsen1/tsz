@@ -182,6 +182,11 @@ impl TypeSubstitution {
         self.map.insert(name, type_id);
     }
 
+    /// Remove a single substitution.
+    pub fn remove(&mut self, name: Atom) -> Option<TypeId> {
+        self.map.remove(&name)
+    }
+
     /// Look up a substitution.
     pub fn get(&self, name: Atom) -> Option<TypeId> {
         self.map.get(&name).copied()
