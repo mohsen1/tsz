@@ -632,6 +632,9 @@ impl<'a> InferenceContext<'a> {
         let has_index_signature_candidates = filtered_no_never
             .iter()
             .any(|candidate| candidate.from_index_signature);
+        let has_type_annotation_candidate = filtered_no_never
+            .iter()
+            .any(|candidate| candidate.source_is_type_annotation);
         let resolved = if priority_implies_combination || all_from_index_signatures {
             // Union: used for return type inference, low-priority contexts,
             // index signature inference, and nullable parameter inference
@@ -661,6 +664,21 @@ impl<'a> InferenceContext<'a> {
                     }
                 })
                 .collect();
+            let has_non_fresh_object_candidate = widened_candidates
+                .iter()
+                .any(|&ty| self.is_non_fresh_object_candidate(ty));
+            let has_fresh_object_candidate = widened_candidates
+                .iter()
+                .any(|&ty| self.is_fresh_object_literal_candidate(ty));
+            let widened_candidates = if has_non_fresh_object_candidate && has_fresh_object_candidate
+            {
+                widened_candidates
+                    .into_iter()
+                    .filter(|&ty| !self.is_fresh_object_literal_candidate(ty))
+                    .collect()
+            } else {
+                widened_candidates
+            };
             // Match tsc's unionObjectAndArrayLiteralCandidates: before running the
             // common-supertype tournament, union all object and array literal
             // candidates into a single union candidate. This ensures that for
@@ -733,7 +751,9 @@ impl<'a> InferenceContext<'a> {
                     // should preserve their literal property types, matching tsc's
                     // RequiresWidening check in getWidenedType().
                     let shape = self.interner.object_shape(shape_id);
-                    if shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                    if shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+                        && !has_type_annotation_candidate
+                    {
                         widening::widen_type_for_inference(self.interner, resolved)
                     } else {
                         resolved
@@ -1037,6 +1057,32 @@ impl<'a> InferenceContext<'a> {
                 shape.symbol.is_none()
             }
             Some(TypeData::Tuple(_)) => true,
+            _ => false,
+        }
+    }
+
+    fn is_fresh_object_literal_candidate(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_non_fresh_object_candidate(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                !shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+            }
             _ => false,
         }
     }

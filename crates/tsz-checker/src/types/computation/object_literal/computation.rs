@@ -1023,16 +1023,13 @@ impl<'a> CheckerState<'a> {
                         };
 
                         // Freshness model: record the literal property value from
-                        // the AST for display in error messages. Skip the override
-                        // when widening was actually performed: in that case the
-                        // computed property type already matches what tsc would
-                        // display (e.g. `{ a: number }` for `{ a: 1 } satisfies
-                        // unknown`). Storing the literal `1` here would override
-                        // the elaborated `Type 'number' is not assignable to
-                        // 'true'` diagnostic with `Type '1' ...`.
-                        let widened_value = widening_eligible && final_type != value_type;
-                        if !widened_value
-                            && prop.initializer != prop.name
+                        // the AST for display in error messages. The canonical
+                        // property type may widen for checking, but assignment
+                        // diagnostics into literal-sensitive targets still need the
+                        // original object-literal surface (`{ c: true }`, not
+                        // `{ c: boolean }`). Non-literal-sensitive diagnostic paths
+                        // already widen these display properties back to primitives.
+                        if prop.initializer != prop.name
                             && let Some(lit_type) =
                                 self.literal_type_from_initializer(prop.initializer)
                         {
