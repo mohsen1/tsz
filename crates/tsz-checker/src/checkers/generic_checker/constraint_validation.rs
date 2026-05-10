@@ -6,6 +6,25 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Returns `true` when an arity diagnostic (TS2314 generic type requires
+    /// N args, TS2315 type is not generic, or TS2707 generic type requires
+    /// between M and N args) was emitted at any byte offset inside the AST
+    /// range of `type_arg_idx`. Used to suppress cascading TS2344 on an
+    /// outer type reference whose argument carries an inner arity error.
+    fn type_arg_subtree_has_arity_error(&self, type_arg_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_arg_idx) else {
+            return false;
+        };
+        let (start, end) = (node.pos, node.end);
+        if end <= start {
+            return false;
+        }
+        self.ctx
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.code, 2314 | 2315 | 2707) && d.start >= start && d.start < end)
+    }
+
     /// Validate each type argument against its corresponding type parameter
     /// constraint. Reports TS2344 when a type argument doesn't satisfy its
     /// constraint. Shared by call expressions, new expressions, and type refs.
@@ -34,6 +53,26 @@ impl<'a> CheckerState<'a> {
                 // Skip constraint checking when the type argument is an error type
                 // (avoids cascading errors from unresolved references)
                 if type_arg == TypeId::ERROR {
+                    continue;
+                }
+
+                // Skip constraint checking when an inner generic type ref
+                // already emitted TS2314 / TS2315 / TS2707 (wrong type-arg
+                // count). tsc propagates `errorType` through the surrounding
+                // type expression so the outer constraint check silently
+                // passes, suppressing what would otherwise be a cascading
+                // TS2344 like
+                //   Type 'Outer<Inner<bad-count>>' does not satisfy 'X'.
+                // The lowering pipeline preserves the as-written Application
+                // shape, so a `contains_error_type` check on the type_id
+                // never fires here — instead, look at whether any of those
+                // arity diagnostics point into the type-arg AST node range.
+                //
+                // Test fixture: type-challenges 00008-medium-readonly-2 (#4904)
+                // and the broader `extra-2344-with-2314` cluster.
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.type_arg_subtree_has_arity_error(arg_idx)
+                {
                     continue;
                 }
 
