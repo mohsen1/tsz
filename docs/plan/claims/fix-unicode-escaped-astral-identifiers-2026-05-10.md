@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/unicode-escaped-astral-identifiers-2026-05-10`
-- **PR**: TBD
+- **PR**: #4956
 - **Status**: ready
 - **Workstream**: conformance parser/scanner recovery
 
