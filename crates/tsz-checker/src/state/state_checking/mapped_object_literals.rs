@@ -501,6 +501,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut emitted = false;
+        let target_display_properties =
+            self.ctx.types.get_display_properties(target).or_else(|| {
+                let evaluated = self.evaluate_type_for_assignability(target);
+                self.ctx.types.get_display_properties(evaluated)
+            });
         for &elem_idx in &obj_lit.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -519,14 +524,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let prop_name_atom = self.ctx.types.intern_string(&prop_name);
-            let target_prop_type = self
-                .ctx
-                .types
-                .get_display_properties(target)
-                .or_else(|| {
-                    let evaluated = self.evaluate_type_for_assignability(target);
-                    self.ctx.types.get_display_properties(evaluated)
-                })
+            let target_prop_type = target_display_properties
+                .as_ref()
                 .and_then(|props| {
                     props
                         .iter()

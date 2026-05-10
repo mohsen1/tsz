@@ -555,26 +555,29 @@ impl<'a> CheckerState<'a> {
         }
 
         let sym_id = self.resolve_identifier_symbol(idx)?;
-        let declaration_idxs = {
+        let stable_declarations = {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             symbol
-                .declarations
+                .stable_declarations
                 .iter()
                 .copied()
-                .chain(std::iter::once(symbol.value_declaration))
-                .filter(|decl_idx| decl_idx.is_some())
+                .chain(std::iter::once(symbol.stable_value_declaration))
+                .filter(|loc| loc.is_known())
                 .collect::<Vec<_>>()
         };
 
-        for decl_idx in declaration_idxs {
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+        for stable_location in stable_declarations {
+            let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_location) else {
                 continue;
             };
-            let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            let Some(decl_node) = arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = arena.get_variable_declaration(decl_node) else {
                 continue;
             };
             if decl.type_annotation.is_some() {
-                return Some(self.get_type_from_type_node(decl.type_annotation));
+                return Some(self.type_of_value_declaration_for_symbol(sym_id, decl_idx));
             }
         }
 
