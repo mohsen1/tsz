@@ -57,6 +57,20 @@ type b = Wrapper<number, boolean, void>
     );
 }
 
+#[test]
+fn ts2315_fires_on_parenthesized_explicit_any_alias_body() {
+    let source = r#"
+type Wrapped = ((any))
+type x = Wrapped<1>
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2315),
+        "expected TS2315 through parenthesized explicit-any alias body. got: {codes:?}"
+    );
+}
+
 /// Negative cover: a generic alias whose body is `any` is still a
 /// generic type and must NOT produce TS2315 when called with the
 /// declared number of type arguments.
