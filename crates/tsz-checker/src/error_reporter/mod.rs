@@ -15,6 +15,7 @@ mod assignability_anchor_helpers;
 mod assignability_callable_suppression;
 mod assignability_exact_optional;
 mod assignability_helpers;
+mod assignability_literal_display;
 mod assignability_normalized_union;
 mod assignability_type_helpers;
 mod call_errors;
