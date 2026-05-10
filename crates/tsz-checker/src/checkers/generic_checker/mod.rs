@@ -218,9 +218,10 @@ impl<'a> CheckerState<'a> {
                                     db,
                                     extends_type,
                                     check_name,
-                                )) {
-                                    return true;
-                                }
+                                ))
+                            {
+                                return true;
+                            }
                         }
                         if extends_type == constraint
                             || (self.is_assignable_to(extends_type, constraint)
