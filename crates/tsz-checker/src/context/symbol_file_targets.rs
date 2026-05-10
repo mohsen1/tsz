@@ -26,15 +26,12 @@ pub(super) struct SymbolFileTargetsNode {
 }
 
 impl SymbolFileTargetsNode {
-    /// Total entries *stored* across this node and its transitive parent
-    /// chain (`parent_total + own_entries.len()`). This is a multi-set
-    /// count, not a set count: a delta entry that shadows a parent key is
-    /// counted in both layers. We feed it to the overlay perf counter
-    /// (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up) to attribute "entries
-    /// inherited at copy time" — the goal is to size the parent chain a
-    /// child can observe, so multi-set semantics match the cost model
-    /// (each layer is its own `FxHashMap` allocation and walk) better
-    /// than de-duplicated visibility would.
+    /// Entries represented by this immutable snapshot. Layered snapshots
+    /// store `parent.total_entries + entries.len()`, so shadowed keys are
+    /// counted once per layer. Flattened snapshots first merge the parent
+    /// layers and delta into this node's `entries`, so shadowed keys are
+    /// counted once there. The overlay perf counter uses this value to size
+    /// the parent snapshot handed to a child checker.
     #[must_use]
     pub(super) const fn total_entries(&self) -> usize {
         self.total_entries

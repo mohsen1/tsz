@@ -1,8 +1,12 @@
-# perf(common,checker): clean up T0.3 follow-up doc imprecisions
+# docs(common,checker): tighten T0.3 follow-up doc imprecisions
 
-**2026-05-10 13:30:00**
+- **Date**: 2026-05-10
+- **Branch**: `perf/t0-doc-cleanups-2026-05-10`
+- **PR**: #4996
+- **Status**: ready
+- **Workstream**: 4.T0.3 (perf counter follow-up documentation)
 
-## Scope
+## Intent
 
 Three docs-only fixes addressing unaddressed Copilot review comments on
 already-merged T0.3 follow-up PRs (#4984, #4987). All three flag the
@@ -25,25 +29,18 @@ out / what is "visible".
    serializes as `null`".
 
 3. `SymbolFileTargetsNode::total_entries` doc (PR #4984): says "Total
-   entries visible through this node" but the implementation is
-   `parent_total + own_entries.len()`, which over-counts when a delta
-   entry shadows a parent key. New wording explicitly calls out
-   multi-set semantics and explains the counter use case (sizing the
-   parent chain) where multi-set matches the cost model better than
-   de-duplicated visibility.
+   entries visible through this node" but the implementation reports the
+   represented snapshot size. Layered snapshots can count shadowed keys
+   once per layer, while flattened snapshots merge layers and count each
+   visible key once. New wording distinguishes both paths.
 
-## Behavior
+## Files Touched
 
-No runtime change. All edits are inside doc comments.
+- `crates/tsz-common/src/perf_counters.rs` (doc comments only)
+- `crates/tsz-checker/src/context/symbol_file_targets.rs` (doc comment only)
+- `docs/plan/claims/perf-t0-doc-cleanups-2026-05-10.md` (claim metadata)
 
 ## Verification
 
-- `cargo check -p tsz-common -p tsz-checker` clean
-- Pre-commit hooks (fmt, clippy, arch guard, full test suite) pass
-- No new clippy warnings (doc-comment text wraps within `clippy::doc_markdown`
-  conventions — backtick-quote identifiers like `PerfCounters`,
-  `time_shard_write`, `enabled_fast`, etc.)
-
-## Conformance
-
-Docs-only. Snapshots unchanged.
+- `cargo fmt --all --check`
+- `cargo clippy --profile ci-lint -p tsz-common -p tsz-checker --all-targets -- -D warnings`
