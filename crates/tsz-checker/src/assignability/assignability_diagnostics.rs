@@ -297,13 +297,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // For array literal sources, drill into element-level errors, matching
-        // tsc's `elaborateElementwise` behavior. Without this, `[10, "20"]
-        // satisfies number[]` reports a generic TS1360 on the whole expression
-        // instead of TS2322 at the offending element ("20"). The existing
-        // assignment-source elaboration helper already dispatches to
-        // `try_elaborate_array_literal_elements` for ARRAY_LITERAL_EXPRESSION
-        // sources, emitting TS2322 at each mismatched element span.
-        if let Some(node) = self.ctx.arena.get(source_idx)
+        // tsc's `elaborateElementwise` behavior. Check the unwrapped source so
+        // equivalent forms like `([10, "20"]) satisfies number[]` and
+        // `([10, "20"] as (number | string)[]) satisfies number[]` use the same
+        // element elaboration path.
+        let unwrapped_source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        if let Some(node) = self.ctx.arena.get(unwrapped_source_idx)
             && node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {

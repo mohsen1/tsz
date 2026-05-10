@@ -2917,12 +2917,16 @@ fn satisfies_array_literal_elaborates_per_element() {
 declare function take(...args: unknown[]): void;
 take(10, ...([10, "20"] satisfies number[]));
 take(10, ...([1, 2, "x", 4] satisfies number[]));
+take(10, ...(([1, "wrapped"]) satisfies number[]));
+take(10, ...(([1, "asserted"] as (number | string)[]) satisfies number[]));
 "#,
     );
 
     // First satisfies has one bad element: "20" (string).
     // Second satisfies has one bad element: "x" (string).
-    // Both should emit TS2322 at the bad element, NOT TS1360 on the whole satisfies.
+    // The wrapped cases prove source unwrapping reaches the same array-literal
+    // element path for parenthesized and asserted array sources.
+    // Each source should emit TS2322 at the bad element, NOT TS1360 on the whole satisfies.
     let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
     let ts1360: Vec<_> = diags.iter().filter(|d| d.code == 1360).collect();
 
@@ -2934,8 +2938,8 @@ take(10, ...([1, 2, "x", 4] satisfies number[]));
     );
     assert_eq!(
         ts2322.len(),
-        2,
-        "Expected exactly 2 TS2322 elaborations (one per bad element), got: {:?}",
+        4,
+        "Expected exactly 4 TS2322 elaborations (one per bad element), got: {:?}",
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
     for diag in &ts2322 {
@@ -2958,15 +2962,11 @@ declare function take(...args: unknown[]): void;
 take(10, ...([1, 2, 3] satisfies number[]));
 "#,
     );
-    let related: Vec<_> = diags
-        .iter()
-        .filter(|d| matches!(d.code, 1360 | 2322 | 2345))
-        .collect();
     assert_eq!(
-        related.len(),
+        diags.len(),
         0,
-        "Expected no satisfies-related diagnostics for fully-compatible array literal, got: {:?}",
-        related
+        "Expected no diagnostics for fully-compatible array literal, got: {:?}",
+        diags
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()

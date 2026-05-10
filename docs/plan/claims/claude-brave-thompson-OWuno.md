@@ -1,4 +1,4 @@
-# fix(checker): drill into array-literal elements for satisfies elaboration
+# fix(checker): elaborate satisfies array-literal sources per element
 
 - **Date**: 2026-05-10
 - **Time**: 2026-05-10 07:30:00
