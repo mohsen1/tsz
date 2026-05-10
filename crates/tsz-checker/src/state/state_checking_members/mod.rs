@@ -1,6 +1,8 @@
 //! Declaration and statement checking (member submodules).
 
 mod ambient_signature_checks;
+mod class_expression_initializers;
+mod class_member_context;
 mod class_type_param_checks;
 mod function_declaration_checks;
 mod implicit_any_checks;
