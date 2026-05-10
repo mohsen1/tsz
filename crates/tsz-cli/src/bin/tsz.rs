@@ -281,6 +281,18 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         }
     }
 
+    // Perf-tools-only: write the perf-counter JSON snapshot. The flag and
+    // the call both compile out of default release builds.
+    #[cfg(feature = "perf-tools")]
+    if let Some(path) = args.perf_counters_json.as_deref()
+        && let Err(err) = tsz_common::perf_counters::PerfCounters::write_json_to(path)
+    {
+        tracing::warn!(
+            "failed to write perf-counter JSON to {}: {err}",
+            path.display()
+        );
+    }
+
     if !result.diagnostics.is_empty() {
         let pretty = args
             .pretty
