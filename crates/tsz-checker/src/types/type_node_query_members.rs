@@ -6,7 +6,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
-    pub(crate) fn value_property_type_query(&mut self, expr_name: NodeIndex) -> Option<TypeId> {
+    pub(crate) fn value_property_type_query(&self, expr_name: NodeIndex) -> Option<TypeId> {
         let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
         let node = self.ctx.arena.get(expr_name)?;
         let (base, property_name_node) = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -40,7 +40,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     pub(crate) fn value_type_for_type_query_member_base(
-        &mut self,
+        &self,
         expr_name: NodeIndex,
     ) -> Option<TypeId> {
         let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
@@ -59,7 +59,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if symbol.flags & tsz_binder::symbol_flags::VALUE == 0 {
                 return None;
             }
-            let type_id = self.ctx.symbol_types.get(&sym_id).copied()?;
+            let type_id = {
+                let env = self.ctx.type_environment.borrow();
+                tsz_solver::TypeResolver::resolve_type_query(
+                    &*env,
+                    tsz_solver::SymbolRef(sym_id.0),
+                    self.ctx.types,
+                )
+            }
+            .or_else(|| self.ctx.symbol_types.get(&sym_id).copied())?;
             return (type_id != TypeId::ANY && type_id != TypeId::ERROR).then_some(type_id);
         }
 

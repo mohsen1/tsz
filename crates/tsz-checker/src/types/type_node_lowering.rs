@@ -115,6 +115,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return Some(param_type);
             }
 
+            if let Some(property_type) = self.value_property_type_query(expr_name_idx) {
+                return Some(property_type);
+            }
+
             let type_query_idx = self.ctx.arena.get_extended(expr_name_idx)?.parent;
             let type_query_node = self.ctx.arena.get(type_query_idx)?;
             if type_query_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY

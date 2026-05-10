@@ -476,7 +476,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// method-flavored. Callback mode still applies for ordinary higher-order
     /// function parameters when the callback type itself came from a bivariant
     /// method signature, such as `{ foo(x: I): O }["foo"]`.
-    fn callable_first_signature_is_method(&self, type_id: TypeId) -> bool {
+    fn callable_first_signature_is_method(&mut self, type_id: TypeId) -> bool {
+        if self.callable_first_signature_is_method_direct(type_id) {
+            return true;
+        }
+        let evaluated = self.evaluate_type(type_id);
+        evaluated != type_id && self.callable_first_signature_is_method_direct(evaluated)
+    }
+
+    fn callable_first_signature_is_method_direct(&self, type_id: TypeId) -> bool {
         if let Some(shape_id) = crate::visitor::function_shape_id(self.interner, type_id) {
             return self.interner.function_shape(shape_id).is_method;
         }

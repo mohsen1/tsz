@@ -1790,7 +1790,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_function_subtype(&s_erased, &t_erased)
     }
 
-    pub(crate) fn callable_modality_flags_for_type(&self, type_id: TypeId) -> (bool, bool) {
+    pub(crate) fn callable_modality_flags_for_type(&mut self, type_id: TypeId) -> (bool, bool) {
+        let direct = self.callable_modality_flags_for_type_direct(type_id);
+        if direct.0 || direct.1 {
+            return direct;
+        }
+        let evaluated = self.evaluate_type(type_id);
+        if evaluated == type_id {
+            direct
+        } else {
+            self.callable_modality_flags_for_type_direct(evaluated)
+        }
+    }
+
+    fn callable_modality_flags_for_type_direct(&self, type_id: TypeId) -> (bool, bool) {
         if let Some(shape_id) = callable_shape_id(self.interner, type_id) {
             let shape = self.interner.callable_shape(shape_id);
             return (
