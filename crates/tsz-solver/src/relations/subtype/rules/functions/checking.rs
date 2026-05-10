@@ -928,6 +928,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 param_index: i,
                                 source_param: s_effective,
                                 target_param: t_effective,
+                                // Tracer emission is the fast-path; the
+                                // inner reason isn't computed here to
+                                // avoid recursive explain on every
+                                // failed subtype check. Callers that
+                                // need it use the explain path.
+                                inner_reason: None,
                             },
                         )
                     {

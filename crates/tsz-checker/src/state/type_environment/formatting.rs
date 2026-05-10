@@ -125,6 +125,29 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type-parameter constraint for TS2344 messages. tsc strips the
+    /// `aliasSymbol` from the constraint type before formatting, so the
+    /// canonical primitive key union (`string | number | symbol`) is rendered
+    /// structurally even though `PropertyKey` is its registered alias. Other
+    /// diagnostic surfaces keep the alias (notably TS2322 against
+    /// `Object.groupBy<K extends PropertyKey, T>`), so this is a narrow opt-in
+    /// for the constraint-not-satisfied emitter only.
+    pub fn format_type_diagnostic_constraint(&self, type_id: TypeId) -> String {
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+            && let Some(parent) = self.ctx.binder.get_symbol(symbol.parent)
+        {
+            return format!("{}.{}", parent.escaped_name, symbol.escaped_name);
+        }
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_expanded_primitive_key_union();
+        formatter.format(type_id).into_owned()
+    }
+
     fn evaluate_call_signature_for_instantiation_display(
         &mut self,
         sig: &tsz_solver::CallSignature,

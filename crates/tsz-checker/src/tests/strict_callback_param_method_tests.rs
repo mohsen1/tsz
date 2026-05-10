@@ -103,6 +103,68 @@ fc2 = fc1;  // Error
     );
 }
 
+/// `fc2 = fc1` fails because the *callback's parameter* (`x: Animal` vs
+/// `x: Dog`) is contravariantly incompatible. tsc keeps the outer
+/// "Type X is not assignable to type Y" wrapper (TS2322) and does NOT
+/// emit a separate TS2328 diagnostic at this site. tsz must do the same.
+#[test]
+fn callback_param_inner_param_failure_emits_ts2322_only() {
+    let diags = check_source_diagnostics(
+        r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+declare let fc1: (f: (x: Animal) => Animal) => void;
+declare let fc2: (f: (x: Dog) => Dog) => void;
+fc2 = fc1;  // inner failure on parameter (Animal not <: Dog)
+"#,
+    );
+
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&2322), "Expected TS2322 in {codes:?}");
+    assert!(
+        !codes.contains(&2328),
+        "TS2328 should NOT be emitted as a separate diagnostic when the \
+         inner callback failure is on a parameter; tsc emits TS2322 only \
+         and chains the inner messages. Got {codes:?}"
+    );
+}
+
+/// `fc1 = fc2` fails because the *callback's return* type (`Animal` vs
+/// `Dog`) is covariantly incompatible. tsc bumps `overrideNextErrorInfo`
+/// when reporting the inner-callback return mismatch (via the elided
+/// TS2202 message). That suppresses the outer "Type X is not assignable
+/// to type Y" wrapper, so the diagnostic is reported with code TS2328
+/// directly. tsz must do the same — emit TS2328 alone, not TS2322 +
+/// TS2328 as two separate diagnostics.
+#[test]
+fn callback_param_inner_return_failure_emits_ts2328_only() {
+    let diags = check_source_diagnostics(
+        r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+declare let fc1: (f: (x: Animal) => Animal) => void;
+declare let fc2: (f: (x: Dog) => Dog) => void;
+fc1 = fc2;  // inner failure on return (Animal not <: Dog)
+"#,
+    );
+
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2328),
+        "Expected TS2328 for the inner-return-failure direction, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "TS2322 should NOT be emitted when the inner callback failure is \
+         on the return type; tsc suppresses the outer wrapper and reports \
+         TS2328 directly. Got {codes:?}"
+    );
+}
+
 #[test]
 fn callback_param_strict_does_not_propagate_to_level_three() {
     // Method bivariance must be restored once we exit the immediate callback

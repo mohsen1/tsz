@@ -98,6 +98,11 @@ pub(crate) enum RelationFailure {
         param_index: usize,
         source_param: TypeId,
         target_param: TypeId,
+        /// Why the inner contravariant check between `target_param` and
+        /// `source_param` failed. Carried so renderers can elaborate the
+        /// failure shape (e.g. distinguish a callback's inner-return
+        /// failure from an inner-parameter failure).
+        inner: Option<Box<RelationFailure>>,
     },
     /// Function parameter count mismatch.
     ParameterCountMismatch {
@@ -179,10 +184,12 @@ impl RelationFailure {
                 param_index,
                 source_param,
                 target_param,
+                inner_reason,
             } => Self::ParameterTypeMismatch {
                 param_index,
                 source_param,
                 target_param,
+                inner: inner_reason.map(|r| Box::new(Self::from_solver_reason(*r))),
             },
             SubtypeFailureReason::NoCommonProperties {
                 source_type,

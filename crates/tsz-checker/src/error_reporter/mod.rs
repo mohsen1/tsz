@@ -10,6 +10,8 @@ pub(crate) enum TypeOnlyKind {
 
 // Submodules
 pub(crate) mod assignability;
+mod assignability_alias_display;
+mod assignability_anchor_helpers;
 mod assignability_callable_suppression;
 mod assignability_exact_optional;
 mod assignability_helpers;
