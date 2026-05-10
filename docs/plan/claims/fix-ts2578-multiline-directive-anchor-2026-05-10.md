@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/ts2578-multiline-directive-anchor-2026-05-10`
-- **PR**: TBD
+- **PR**: #4965
 - **Status**: ready
 - **Workstream**: diagnostic-conformance
 
