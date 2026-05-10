@@ -57,6 +57,9 @@ pub struct TypeLowering<'a> {
     /// expressions (e.g., `[k]` where k is a unique symbol) to property name atoms.
     /// Used when the lowering can't determine the name from AST alone.
     pub(super) computed_name_resolver: Option<&'a NodeIndexResolver<'a, Atom>>,
+    /// Optional metadata resolver for computed property expressions whose resolved
+    /// property name came from a symbol-valued computed name.
+    pub(super) computed_symbol_name_resolver: Option<&'a dyn Fn(NodeIndex) -> bool>,
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
@@ -115,6 +118,7 @@ pub(super) struct MethodOverloads {
     pub(super) signatures: Vec<CallSignature>,
     pub(super) optional: bool,
     pub(super) readonly: bool,
+    pub(super) is_symbol_named: bool,
     /// Declaration order of the first occurrence of this method, for diagnostic ordering.
     pub(super) declaration_order: u32,
 }
@@ -223,6 +227,7 @@ impl InterfaceParts {
         signature: CallSignature,
         optional: bool,
         readonly: bool,
+        is_symbol_named: bool,
     ) {
         use indexmap::map::Entry;
 
@@ -234,6 +239,7 @@ impl InterfaceParts {
                     signatures: vec![signature],
                     optional,
                     readonly,
+                    is_symbol_named,
                     declaration_order: next_order,
                 }));
             }
@@ -242,6 +248,7 @@ impl InterfaceParts {
                     methods.signatures.push(signature);
                     methods.optional |= optional;
                     methods.readonly &= readonly;
+                    methods.is_symbol_named |= is_symbol_named;
                 }
                 PropertyMerge::Property(prop) => {
                     let order = prop.declaration_order;
@@ -318,6 +325,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: resolvers.def_id_resolver,
             value_resolver: resolvers.value_resolver,
             computed_name_resolver: None,
+            computed_symbol_name_resolver: None,
             lazy_type_params_resolver: None,
             prefer_name_def_id_resolution: false,
             preferred_self_name: None,
@@ -429,6 +437,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: self.def_id_resolver,
             value_resolver: self.value_resolver,
             computed_name_resolver: self.computed_name_resolver,
+            computed_symbol_name_resolver: self.computed_symbol_name_resolver,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
             prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
             preferred_self_name: self.preferred_self_name.clone(),
@@ -685,6 +694,15 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(NodeIndex) -> Option<Atom>,
     ) -> Self {
         self.computed_name_resolver = Some(resolver);
+        self
+    }
+
+    /// Set metadata for computed property names that are symbol-valued.
+    pub fn with_computed_symbol_name_resolver(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex) -> bool,
+    ) -> Self {
+        self.computed_symbol_name_resolver = Some(resolver);
         self
     }
 
@@ -1490,6 +1508,8 @@ impl<'a> TypeLowering<'a> {
                         }
                         k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                             if let Some(name) = self.lower_signature_name(sig.name) {
+                                let is_symbol_named =
+                                    self.lower_signature_name_is_symbol_named(sig.name);
                                 let type_id = self.lower_method_signature(sig);
                                 properties.push(PropertyInfo {
                                     name,
@@ -1506,7 +1526,7 @@ impl<'a> TypeLowering<'a> {
                                     parent_id: None,
                                     declaration_order: 0,
                                     is_string_named: false,
-                                    is_symbol_named: false,
+                                    is_symbol_named,
                                     single_quoted_name: false,
                                 });
                             }
@@ -1537,6 +1557,7 @@ impl<'a> TypeLowering<'a> {
                     && let Some(accessor) = self.arena.get_accessor(member)
                     && let Some(name) = self.lower_signature_name(accessor.name)
                 {
+                    let is_symbol_named = self.lower_signature_name_is_symbol_named(accessor.name);
                     let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                     if is_getter {
                         let getter_type = self.lower_type(accessor.type_annotation);
@@ -1555,7 +1576,7 @@ impl<'a> TypeLowering<'a> {
                                 parent_id: None,
                                 declaration_order: 0,
                                 is_string_named: false,
-                                is_symbol_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             });
                         }
@@ -1585,7 +1606,7 @@ impl<'a> TypeLowering<'a> {
                                 parent_id: None,
                                 declaration_order: 0,
                                 is_string_named: false,
-                                is_symbol_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             });
                         }
@@ -1869,13 +1890,21 @@ impl<'a> TypeLowering<'a> {
                     }
                     k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                         if let Some(name) = self.lower_signature_name(sig.name) {
+                            let is_symbol_named =
+                                self.lower_signature_name_is_symbol_named(sig.name);
                             let mut signature = self.lower_call_signature(sig);
                             signature.is_method = true;
                             let readonly = self.arena.has_modifier(
                                 &sig.modifiers,
                                 tsz_scanner::SyntaxKind::ReadonlyKeyword,
                             );
-                            parts.merge_method(name, signature, sig.question_token, readonly);
+                            parts.merge_method(
+                                name,
+                                signature,
+                                sig.question_token,
+                                readonly,
+                                is_symbol_named,
+                            );
                         }
                     }
                     _ => {
@@ -1900,6 +1929,7 @@ impl<'a> TypeLowering<'a> {
                 && let Some(accessor) = self.arena.get_accessor(member)
                 && let Some(name) = self.lower_signature_name(accessor.name)
             {
+                let is_symbol_named = self.lower_signature_name_is_symbol_named(accessor.name);
                 let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
                     let getter_type = self.lower_type(accessor.type_annotation);
@@ -1928,7 +1958,7 @@ impl<'a> TypeLowering<'a> {
                                 parent_id: None,
                                 declaration_order: order,
                                 is_string_named: false,
-                                is_symbol_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             }));
                         }
@@ -1966,7 +1996,7 @@ impl<'a> TypeLowering<'a> {
                                 parent_id: None,
                                 declaration_order: order,
                                 is_string_named: false,
-                                is_symbol_named: false,
+                                is_symbol_named,
                                 single_quoted_name: false,
                             }));
                         }
@@ -2072,7 +2102,7 @@ impl<'a> TypeLowering<'a> {
                     parent_id: None,
                     declaration_order: forward_order.unwrap_or(methods.declaration_order),
                     is_string_named: false,
-                    is_symbol_named: false,
+                    is_symbol_named: methods.is_symbol_named,
                     single_quoted_name: false,
                 });
             } else if let PropertyMerge::Property(mut prop) = entry {
@@ -2202,6 +2232,26 @@ impl<'a> TypeLowering<'a> {
         None
     }
 
+    fn lower_signature_name_is_symbol_named(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.arena.get_computed_property(node) else {
+            return false;
+        };
+        if self
+            .get_well_known_symbol_name(computed.expression)
+            .is_some()
+        {
+            return true;
+        }
+        self.computed_symbol_name_resolver
+            .is_some_and(|resolver| resolver(computed.expression))
+    }
+
     /// Try to resolve a computed property expression to a well-known symbol name.
     /// Returns names like "[Symbol.iterator]", "[Symbol.asyncIterator]", etc.
     fn get_well_known_symbol_name(&self, expr_idx: NodeIndex) -> Option<String> {
@@ -2268,6 +2318,7 @@ impl<'a> TypeLowering<'a> {
         if let Some(sig) = self.arena.get_signature(node) {
             // Get property name as Arc<str>
             let name = self.lower_signature_name(sig.name)?;
+            let is_symbol_named = self.lower_signature_name_is_symbol_named(sig.name);
 
             // Check for readonly modifier
             let readonly = self
@@ -2291,7 +2342,7 @@ impl<'a> TypeLowering<'a> {
                 parent_id: None, // Type literals don't have parent_id
                 declaration_order: 0,
                 is_string_named: false,
-                is_symbol_named: false,
+                is_symbol_named,
                 single_quoted_name: false,
             })
         } else {
