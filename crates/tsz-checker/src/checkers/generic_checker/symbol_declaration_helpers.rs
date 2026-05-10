@@ -121,71 +121,38 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         for decl_idx in symbol.all_declarations() {
-            let decl_node = self
-                .ctx
-                .arena
-                .get(decl_idx)
-                .or_else(|| {
-                    self.ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .and_then(|a| a.get(decl_idx))
-                })
-                .or_else(|| {
-                    self.ctx
-                        .binder
-                        .declaration_arenas
-                        .get(&(sym_id, decl_idx))
-                        .and_then(|v| v.first())
-                        .and_then(|a| a.get(decl_idx))
-                });
+            let decl_arena =
+                self.ctx
+                    .binder
+                    .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+            let decl_node = decl_arena.get(decl_idx);
             let Some(decl_node) = decl_node else { continue };
-            let alias = self
-                .ctx
-                .arena
-                .get_type_alias(decl_node)
-                .or_else(|| {
-                    self.ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .and_then(|a| a.get_type_alias(decl_node))
-                })
-                .or_else(|| {
-                    self.ctx
-                        .binder
-                        .declaration_arenas
-                        .get(&(sym_id, decl_idx))
-                        .and_then(|v| v.first())
-                        .and_then(|a| a.get_type_alias(decl_node))
-                });
+            let alias = decl_arena.get_type_alias(decl_node);
             let Some(alias) = alias else { continue };
             if alias.type_parameters.is_some() {
                 return false;
             }
-            // Resolve the arena that holds `alias.type_node`. The body may
-            // live in the current arena (most common), in `symbol_arenas`
-            // for cross-arena lib symbols, or in `declaration_arenas` for
-            // multi-file declaration merges. Borrow as `&NodeArena` so the
-            // lookup methods below see the same concrete type regardless
-            // of which container the arena was stored in.
-            let arena_ref: &tsz_parser::parser::NodeArena =
-                if self.ctx.arena.get(alias.type_node).is_some() {
-                    self.ctx.arena
-                } else if let Some(a) = self.ctx.binder.symbol_arenas.get(&sym_id) {
-                    a
-                } else if let Some(v) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                    && let Some(a) = v.first()
-                {
-                    a
-                } else {
-                    continue;
-                };
-            let Some(body_node) = arena_ref.get(alias.type_node) else {
-                continue;
+            if Self::type_node_is_explicit_any(decl_arena, alias.type_node) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn type_node_is_explicit_any(
+        arena: &tsz_parser::parser::NodeArena,
+        mut type_node: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        for _ in 0..10 {
+            let Some(body_node) = arena.get(type_node) else {
+                return false;
             };
-            // Direct `any` keyword.
+            if body_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = arena.get_wrapped_type(body_node)
+            {
+                type_node = wrapped.type_node;
+                continue;
+            }
             if body_node.kind == SyntaxKind::AnyKeyword as u16 {
                 return true;
             }
@@ -193,14 +160,15 @@ impl<'a> CheckerState<'a> {
             // parser models `type X = any` as a TypeReference rather than
             // a plain AnyKeyword token, so this is the actual surface form.
             if body_node.kind == syntax_kind_ext::TYPE_REFERENCE
-                && let Some(type_ref) = arena_ref.get_type_ref(body_node)
+                && let Some(type_ref) = arena.get_type_ref(body_node)
                 && type_ref.type_arguments.is_none()
-                && let Some(name_node) = arena_ref.get(type_ref.type_name)
-                && let Some(ident) = arena_ref.get_identifier(name_node)
+                && let Some(name_node) = arena.get(type_ref.type_name)
+                && let Some(ident) = arena.get_identifier(name_node)
                 && ident.escaped_text == "any"
             {
                 return true;
             }
+            return false;
         }
         false
     }
