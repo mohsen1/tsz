@@ -139,9 +139,30 @@ pub struct ModuleDependencyStats {
 
 /// Phase timing breakdown for `--diagnostics` / `--extendedDiagnostics`.
 ///
-/// Matches tsc's output categories: I/O read, parse+bind, check, emit.
+/// Matches the T0.2 diagnostics-JSON schema documented in
+/// `docs/plan/PERFORMANCE_PLAN.md` §3 — fine-grained sub-phases
+/// (`config_discovery`, `source_discovery`, `module_resolution`,
+/// `load_libs`) split out of the legacy `io_read`/`parse_bind` totals
+/// so attribution-mode runs can answer "where in the pre-check work is
+/// time going?". Buckets that are not yet attributed by the driver
+/// stay at 0.0 and the leftover lands in the parent bucket
+/// (`io_read_ms` or `parse_bind_ms`), so existing PR text that quotes
+/// `io_read` totals is still meaningful.
 #[derive(Debug, Clone, Default)]
 pub struct PhaseTimings {
+    /// Time spent finding and parsing the active `tsconfig.json`
+    /// (and any extended configs) before source discovery starts.
+    /// Currently 0.0 unless the driver attributes config-load work
+    /// here; the leftover stays in `io_read_ms`.
+    pub config_discovery_ms: f64,
+    /// Time spent enumerating root files and walking the include
+    /// pattern set into a stable list of source files. Currently 0.0
+    /// unless attributed here; the leftover stays in `io_read_ms`.
+    pub source_discovery_ms: f64,
+    /// Time spent in `tsc`-style module resolution (specifier ->
+    /// resolved file). Currently 0.0 unless attributed here; the
+    /// leftover stays in `io_read_ms` or `parse_bind_ms`.
+    pub module_resolution_ms: f64,
     /// Time spent reading source files from disk.
     pub io_read_ms: f64,
     /// Time spent loading and binding lib files.
@@ -1933,6 +1954,11 @@ fn compile_inner(
             check_ms: check_duration.as_secs_f64() * 1000.0,
             emit_ms: emit_duration.as_secs_f64() * 1000.0,
             total_ms: compile_start.elapsed().as_secs_f64() * 1000.0,
+            // T0.2 follow-up: sub-phase buckets reserved by the
+            // diagnostics-JSON schema. Driver attribution lands in a
+            // future PR; for now these stay 0.0 and the leftover sits
+            // in the parent bucket (`io_read_ms` / `parse_bind_ms`).
+            ..PhaseTimings::default()
         },
         // PERF: residency_stats walks every unique arena (estimated_size_bytes
         // per arena), every bound file, the skeleton index, and the dep graph

@@ -20011,8 +20011,27 @@ fn phase_timings_are_populated_after_compilation() {
     assert!(pt.check_ms >= 0.0, "check_ms should be non-negative");
     assert!(pt.emit_ms >= 0.0, "emit_ms should be non-negative");
     assert!(pt.total_ms > 0.0, "total_ms should be positive");
+    // T0.2 sub-phase buckets: structurally present, default 0.0 until
+    // the driver attributes work to them. Non-negative is the only
+    // invariant they must satisfy today.
+    assert!(
+        pt.config_discovery_ms >= 0.0,
+        "config_discovery_ms should be non-negative"
+    );
+    assert!(
+        pt.source_discovery_ms >= 0.0,
+        "source_discovery_ms should be non-negative"
+    );
+    assert!(
+        pt.module_resolution_ms >= 0.0,
+        "module_resolution_ms should be non-negative"
+    );
 
-    // Total should be >= sum of individual phases (wall-clock includes overhead)
+    // Total should be >= sum of individual phases (wall-clock includes overhead).
+    // Sub-phase buckets are subsets of the existing top-level buckets they
+    // came out of (config/source/module-resolution land inside io_read; the
+    // driver moves them up rather than creating new wall time), so we don't
+    // double-count them here.
     let sum = pt.io_read_ms + pt.load_libs_ms + pt.parse_bind_ms + pt.check_ms + pt.emit_ms;
     assert!(
         pt.total_ms >= sum * 0.9, // allow small floating-point margin
