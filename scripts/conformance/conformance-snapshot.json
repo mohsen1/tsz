@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-05-09T23:50:38Z",
-  "git_sha": "2133fc6e952ed4b044e2d0ff4c8814961d3944e0",
+  "timestamp": "2026-05-10T06:21:50Z",
+  "git_sha": "d42a90b2faeb1ed301ab56acfe019b30ec0b795d",
   "summary": {
     "total_tests": 12582,
-    "passed": 12542,
-    "failed": 40,
+    "passed": 12549,
+    "failed": 33,
     "pass_rate": 99.7
   },
   "areas_by_pass_rate": [
@@ -51,13 +51,6 @@
       "pass_rate": 96.0
     },
     {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 25,
-      "failed": 1,
-      "pass_rate": 96.15
-    },
-    {
       "area": "types/members",
       "total": 34,
       "passed": 33,
@@ -100,18 +93,11 @@
       "pass_rate": 99.49
     },
     {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 197,
-      "failed": 1,
-      "pass_rate": 99.49
-    },
-    {
       "area": "compiler",
       "total": 6520,
-      "passed": 6499,
-      "failed": 21,
-      "pass_rate": 99.68
+      "passed": 6503,
+      "failed": 17,
+      "pass_rate": 99.74
     },
     {
       "area": "ambient",
@@ -166,6 +152,13 @@
       "area": "classes/constructorDeclarations",
       "total": 39,
       "passed": 39,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "classes/members",
+      "total": 198,
+      "passed": 198,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -653,6 +646,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 26,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/nonPrimitive",
       "total": 16,
       "passed": 16,
@@ -728,7 +728,7 @@
     "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 40,
+    "fingerprint_only": 33,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }
