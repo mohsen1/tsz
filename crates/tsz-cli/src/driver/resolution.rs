@@ -18,6 +18,38 @@ type CollectedModuleSpecifier = (
     Option<tsz::module_resolver::ImportingModuleKind>,
 );
 
+// ─────────────────────────────────────────────────────────────────────────
+// Counting filesystem probes (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up)
+//
+// The plan calls for `resolver.is_file/is_dir/read_dir` counters so the
+// 2026-05-10 attribution decision matrix can prove (or refute) that the
+// resolver is on the hot path. Rather than sprinkle inline `inc()` calls
+// before every `Path::is_file()`, we wrap the three probe primitives in
+// thin counting helpers and route resolver code through them. Call sites
+// in this file now use `count_is_file(p)` instead of `p.is_file()`, which
+// keeps the diff one token per call and makes future swaps to a real
+// `CountingFs` trait (the eventual T2.0 wrapper) a one-place change.
+//
+// All three helpers are zero-cost when `TSZ_PERF_COUNTERS` is unset:
+// `inc()` short-circuits on the cached `enabled_fast()` gate.
+#[inline]
+fn count_is_file(path: &Path) -> bool {
+    tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().resolver_is_file_calls);
+    path.is_file()
+}
+
+#[inline]
+fn count_is_dir(path: &Path) -> bool {
+    tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().resolver_is_dir_calls);
+    path.is_dir()
+}
+
+#[inline]
+fn count_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
+    tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().resolver_read_dir_calls);
+    std::fs::read_dir(path)
+}
+
 #[derive(Default)]
 pub(crate) struct ModuleResolutionCache {
     package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
@@ -59,7 +91,7 @@ impl ModuleResolutionCache {
             return exists;
         }
 
-        let exists = path.is_dir();
+        let exists = count_is_dir(path);
         self.node_modules_dir_by_path
             .insert(path.to_path_buf(), exists);
         exists
@@ -70,7 +102,7 @@ impl ModuleResolutionCache {
             return exists;
         }
 
-        let exists = path.is_dir();
+        let exists = count_is_dir(path);
         self.package_root_dir_by_path
             .insert(path.to_path_buf(), exists);
         exists
@@ -408,14 +440,14 @@ fn type_package_candidates(name: &str) -> Vec<String> {
 
 pub(crate) fn collect_type_packages_from_root(root: &Path) -> Vec<PathBuf> {
     let mut packages = Vec::new();
-    let entries = match std::fs::read_dir(root) {
+    let entries = match count_read_dir(root) {
         Ok(entries) => entries,
         Err(_) => return packages,
     };
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        if !count_is_dir(&path) {
             continue;
         }
         let name = entry.file_name();
@@ -424,7 +456,7 @@ pub(crate) fn collect_type_packages_from_root(root: &Path) -> Vec<PathBuf> {
             continue;
         }
         if name.starts_with('@') {
-            if let Ok(scope_entries) = std::fs::read_dir(&path) {
+            if let Ok(scope_entries) = count_read_dir(&path) {
                 for scope_entry in scope_entries.flatten() {
                     let scope_path = scope_entry.path();
                     let scope_name = scope_entry.file_name();
@@ -433,7 +465,7 @@ pub(crate) fn collect_type_packages_from_root(root: &Path) -> Vec<PathBuf> {
                     if scope_name.to_str().is_some_and(|n| n.starts_with('.')) {
                         continue;
                     }
-                    if scope_path.is_dir() {
+                    if count_is_dir(&scope_path) {
                         let scope_name = scope_entry.file_name();
                         let scope_name = scope_name.to_string_lossy();
                         if !scope_name.starts_with('.') {
@@ -493,7 +525,7 @@ pub(crate) fn resolve_type_package_entry_with_cache(
             let path = package_root.join(entry_name);
             for ext in restricted_extensions {
                 let candidate = path.with_extension(ext);
-                if candidate.is_file() && is_declaration_file(&candidate) {
+                if count_is_file(&candidate) && is_declaration_file(&candidate) {
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
@@ -561,12 +593,12 @@ pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
         // Try to find a declaration file at the target
         let package_type = package_type_from_json(Some(package_json));
         for candidate in expand_module_path_candidates(&target_path, options, package_type) {
-            if candidate.is_file() && is_declaration_file(&candidate) {
+            if count_is_file(&candidate) && is_declaration_file(&candidate) {
                 return Some(normalize_resolved_path(&candidate, options));
             }
         }
         // Try exact path
-        if target_path.is_file() && is_declaration_file(&target_path) {
+        if count_is_file(&target_path) && is_declaration_file(&target_path) {
             return Some(normalize_resolved_path(&target_path, options));
         }
     }
@@ -581,7 +613,7 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
 
     while let Some(dir) = current {
         let candidate = dir.join("node_modules").join("@types");
-        if candidate.is_dir() {
+        if count_is_dir(&candidate) {
             let canonical = canonicalize_or_owned(&candidate);
             if seen.insert(canonical.clone()) {
                 roots.push(canonical);
@@ -593,7 +625,7 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
         // not be silently discovered. Without this, tests that declare
         // `declare module "xyz"` in a higher-level `node_modules/@types`
         // resolve the module when tsc correctly reports TS2307.
-        if dir.join("tsconfig.json").is_file() {
+        if count_is_file(&dir.join("tsconfig.json")) {
             break;
         }
         current = dir.parent().map(Path::to_path_buf);
@@ -1680,7 +1712,7 @@ pub(crate) fn resolve_module_specifier(
     for candidate in candidates {
         // Check if candidate exists in known files (for virtual test files) or on filesystem
         let exists = known_files.contains(&candidate)
-            || (candidate.is_file() && is_valid_module_or_js_file(&candidate));
+            || (count_is_file(&candidate) && is_valid_module_or_js_file(&candidate));
         if debug {
             tracing::debug!("candidate={candidate:?} exists={exists}");
         }
@@ -1700,7 +1732,7 @@ pub(crate) fn resolve_module_specifier(
                 expand_module_path_candidates(&current.join(&specifier), options, package_type)
             {
                 let exists = known_files.contains(&candidate)
-                    || (candidate.is_file() && is_valid_module_or_js_file(&candidate));
+                    || (count_is_file(&candidate) && is_valid_module_or_js_file(&candidate));
                 if debug {
                     tracing::debug!("classic-fallback candidate={candidate:?} exists={exists}");
                 }
@@ -2453,7 +2485,7 @@ fn resolve_node_module_specifier(
             {
                 let candidates = expand_module_path_candidates(&package_root, options, None);
                 for candidate in candidates {
-                    if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
+                    if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
                         return Some(normalize_resolved_path(&candidate, options));
                     }
                 }
@@ -2771,16 +2803,16 @@ fn resolve_declaration_package_entry(
     };
 
     for candidate in expand_module_path_candidates(&path, options, package_type) {
-        if candidate.is_file() && is_declaration_file(&candidate) {
+        if count_is_file(&candidate) && is_declaration_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
-    if path.is_file() && is_declaration_file(&path) {
+    if count_is_file(&path) && is_declaration_file(&path) {
         return Some(normalize_resolved_path(&path, options));
     }
 
-    if path.is_dir()
+    if count_is_dir(&path)
         && let Some(pj) = resolution_cache.read_package_json(&path.join("package.json"))
     {
         let sub_type = package_type_from_json(Some(&pj));
@@ -2838,14 +2870,14 @@ fn resolve_package_entry(
         {
             continue;
         }
-        if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
+        if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
 
     // Check subpath's package.json for types/main fields
     if !is_esm_no_index
-        && path.is_dir()
+        && count_is_dir(&path)
         && let Some(pj) = resolution_cache.read_package_json(&path.join("package.json"))
     {
         let sub_type = package_type_from_json(Some(&pj));
@@ -2864,7 +2896,7 @@ fn resolve_package_entry(
         if let Some(main) = &pj.main {
             let main_path = path.join(main);
             for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
-                if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
+                if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
                     return Some(normalize_resolved_path(&candidate, options));
                 }
             }
@@ -2891,7 +2923,7 @@ fn resolve_export_entry(
     let path = package_relative_target_path(package_root, entry)?;
 
     for candidate in expand_export_path_candidates(&path, options, package_type) {
-        if candidate.is_file() && is_valid_module_file(&candidate) {
+        if count_is_file(&candidate) && is_valid_module_file(&candidate) {
             return Some(normalize_resolved_path(&candidate, options));
         }
     }
@@ -3030,7 +3062,7 @@ fn try_remap_output_to_source(
                 if let Some(base) = source_str.strip_suffix(out_ext) {
                     for src_ext in *src_exts {
                         let candidate = PathBuf::from(format!("{base}{src_ext}"));
-                        if candidate.is_file() {
+                        if count_is_file(&candidate) {
                             return Some(normalize_resolved_path(&candidate, options));
                         }
                     }
@@ -3038,7 +3070,7 @@ fn try_remap_output_to_source(
             }
 
             // Also try the path as-is (it might be a .ts file already)
-            if source_base.is_file() {
+            if count_is_file(&source_base) {
                 return Some(normalize_resolved_path(&source_base, options));
             }
         }
