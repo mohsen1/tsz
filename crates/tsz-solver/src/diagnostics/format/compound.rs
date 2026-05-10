@@ -624,6 +624,14 @@ impl<'a> TypeFormatter<'a> {
             ordered = reordered;
         }
 
+        self.format_ordered_union_members(ordered)
+    }
+
+    pub(super) fn format_union_preserving_member_order(&mut self, members: &[TypeId]) -> String {
+        self.format_ordered_union_members(members.to_vec())
+    }
+
+    fn format_ordered_union_members(&mut self, mut ordered: Vec<TypeId>) -> String {
         if let Some(collapsed) = self.collapse_same_enum_members_for_display(&ordered) {
             return collapsed;
         }

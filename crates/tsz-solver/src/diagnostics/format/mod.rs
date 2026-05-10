@@ -1389,6 +1389,13 @@ impl<'a> TypeFormatter<'a> {
         result
     }
 
+    pub fn format_union_members_in_order(&mut self, members: &[TypeId]) -> Cow<'static, str> {
+        self.current_depth += 1;
+        let result = self.format_union_preserving_member_order(members).into();
+        self.current_depth -= 1;
+        result
+    }
+
     fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
         match key {
             TypeData::Intrinsic(kind) => Cow::Borrowed(intrinsic::format_intrinsic(*kind)),

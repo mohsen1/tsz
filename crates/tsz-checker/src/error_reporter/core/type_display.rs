@@ -1156,48 +1156,6 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
-    /// For TS2353 diagnostics on union targets, strip non-object members (primitives,
-    /// undefined, null, void, never, etc.) so the displayed type matches tsc.
-    /// For example, `IProps | number` becomes `IProps`, and
-    /// `{ testBool?: boolean | undefined; } | undefined` becomes `{ testBool?: boolean | undefined; }`.
-    pub(in crate::error_reporter) fn strip_non_object_union_members_for_excess_display(
-        &self,
-        ty: TypeId,
-    ) -> TypeId {
-        // Evaluate for structural analysis but preserve original members for display.
-        // NoInfer<T> wrappers and type aliases are stripped by evaluation, but the
-        // display should preserve them (tsc shows `NoInfer<{x: string}>` not `{x: string}`).
-        let evaluated = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
-        let original_members = query::union_members(self.ctx.types, ty);
-        if let Some(members) = query::union_members(self.ctx.types, evaluated) {
-            let object_like: Vec<_> = members
-                .iter()
-                .enumerate()
-                .filter(|(_, member)| {
-                    let evaluated =
-                        crate::query_boundaries::common::evaluate_type(self.ctx.types, **member);
-                    !crate::query_boundaries::common::is_primitive_type(self.ctx.types, evaluated)
-                        && !self.is_generic_excess_union_member(**member, evaluated)
-                })
-                .map(|(i, member)| {
-                    // Use original (pre-evaluation) member if available for display
-                    original_members
-                        .as_ref()
-                        .and_then(|orig| orig.get(i).copied())
-                        .unwrap_or(*member)
-                })
-                .collect();
-            // Only strip if we actually removed something and have at least one member left
-            if !object_like.is_empty() && object_like.len() < members.len() {
-                if object_like.len() == 1 {
-                    return object_like[0];
-                }
-                return tsz_solver::utils::union_or_single(self.ctx.types, object_like);
-            }
-        }
-        ty
-    }
-
     fn split_wildcard_object_for_excess_display(&mut self, ty: TypeId) -> Option<String> {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
@@ -1320,6 +1278,10 @@ impl<'a> CheckerState<'a> {
         // object properties. Do this before union/intersection formatting so a
         // single remaining intersection can use the specialized object display path.
         let ty = self.strip_non_object_union_members_for_excess_display(ty);
+
+        if let Some(display) = self.format_object_before_callable_union_for_excess_display(ty) {
+            return display;
+        }
 
         if let Some(display) = self.format_intersection_union_for_excess_display(ty) {
             return display;
