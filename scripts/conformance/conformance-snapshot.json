@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-05-10T07:38:57Z",
-  "git_sha": "7e3ee343b7e6c526d08af7957cc7e71cd5a9bc65",
+  "timestamp": "2026-05-10T12:09:59Z",
+  "git_sha": "f3dd58a0814a0d2b6b98d2d8256fb82638410146",
   "summary": {
     "total_tests": 12582,
     "passed": 12551,
@@ -14,6 +14,13 @@
       "passed": 8,
       "failed": 2,
       "pass_rate": 80.0
+    },
+    {
+      "area": "types/tuple",
+      "total": 34,
+      "passed": 31,
+      "failed": 3,
+      "pass_rate": 91.18
     },
     {
       "area": "classes",
@@ -37,21 +44,7 @@
       "pass_rate": 95.83
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 23,
-      "failed": 1,
-      "pass_rate": 95.83
-    },
-    {
       "area": "types/members",
-      "total": 34,
-      "passed": 33,
-      "failed": 1,
-      "pass_rate": 97.06
-    },
-    {
-      "area": "types/tuple",
       "total": 34,
       "passed": 33,
       "failed": 1,
@@ -63,6 +56,13 @@
       "passed": 45,
       "failed": 1,
       "pass_rate": 97.83
+    },
+    {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 262,
+      "failed": 2,
+      "pass_rate": 99.24
     },
     {
       "area": "salsa",
@@ -79,18 +79,11 @@
       "pass_rate": 99.49
     },
     {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 263,
-      "failed": 1,
-      "pass_rate": 99.62
-    },
-    {
       "area": "compiler",
       "total": 6520,
-      "passed": 6504,
-      "failed": 16,
-      "pass_rate": 99.75
+      "passed": 6506,
+      "failed": 14,
+      "pass_rate": 99.79
     },
     {
       "area": "ambient",
@@ -628,6 +621,13 @@
       "area": "types/import",
       "total": 12,
       "passed": 12,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 24,
       "failed": 0,
       "pass_rate": 100.0
     },

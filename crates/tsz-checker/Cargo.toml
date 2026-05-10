@@ -538,6 +538,10 @@ name = "ts2344_extra_with_2314_suppression_tests"
 path = "tests/ts2344_extra_with_2314_suppression_tests.rs"
 
 [[test]]
+name = "ts2315_explicit_any_type_alias_tests"
+path = "tests/ts2315_explicit_any_type_alias_tests.rs"
+
+[[test]]
 name = "ts2344_widen_literal_arg_display_tests"
 path = "tests/ts2344_widen_literal_arg_display_tests.rs"
 

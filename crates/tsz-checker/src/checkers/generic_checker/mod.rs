@@ -803,12 +803,17 @@ impl<'a> CheckerState<'a> {
                             self.module_augmentation_has_type_params(module_spec, &import_name)
                         })
                 });
-            // Suppress TS2315 for symbols from unresolved modules (type is ERROR)
+            // Suppress TS2315 for symbols from unresolved modules (type is ERROR).
+            // The historical `symbol_type != TypeId::ANY` guard catches
+            // cross-arena symbols that defaulted to `any` because their
+            // declaration couldn't be located. It must NOT silence explicit
+            // `type X = any` declarations — tsc 6.0.3 emits TS2315 there.
             let symbol_type = self.get_type_of_symbol(sym_id);
+            let body_is_explicit_any = self.symbol_declaration_body_is_explicit_any(sym_id);
             if !has_type_params_in_decl
                 && !has_augmented_type_params
                 && symbol_type != TypeId::ERROR
-                && symbol_type != TypeId::ANY
+                && (symbol_type != TypeId::ANY || body_is_explicit_any)
                 && !type_args_list.nodes.is_empty()
             {
                 // TSC points the TS2315 error at the type name (e.g. `C` in
