@@ -1038,16 +1038,37 @@ impl TypeInterner {
         if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
             return TypeId::ERROR;
         }
-        // T2.4 instrumentation: every public intern() call increments calls;
-        // hits/misses are credited at the actual outcome site so they sum to
-        // calls minus the early `ERROR` returns above.
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_intern_calls,
-        );
+        // T2.4 instrumentation. Semantics:
+        //   intern_calls   = number of non-poisoned `intern()` entries
+        //   intern_hits    = returned an existing `TypeId` (intrinsic, TL
+        //                    hit, shard read hit, or race-loss occupied
+        //                    insert)
+        //   intern_misses  = stored a new `TypeData` (vacant insert)
+        // Invariant:
+        //   intern_calls = intern_hits + intern_misses + slow_path_errors
+        // where `slow_path_errors` is the count of calls that hit the
+        // `intern_slow` circuit breakers (max-types, u32-overflow). It is
+        // observable as the residual `intern_calls - intern_hits -
+        // intern_misses` and is not separately bucketed today.
+        //
+        // We gate once with `enabled_fast()` and cache the counter pointer
+        // so an enabled run pays one `OnceLock` deref per `intern()` call
+        // instead of one per increment, and a disabled run pays only the
+        // single fast-gate load (each increment compiles to a no-op).
+        let pc = if tsz_common::perf_counters::enabled_fast() {
+            Some(tsz_common::perf_counters::counters())
+        } else {
+            None
+        };
+        if let Some(c) = pc {
+            c.interner_intern_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if let Some(id) = self.get_intrinsic_id(&key) {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_intern_hits,
-            );
+            if let Some(c) = pc {
+                c.interner_intern_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return id;
         }
 
@@ -1058,13 +1079,14 @@ impl TypeInterner {
         // Fast path: thread-local cache hit scoped by this interner's
         // instance_id.
         if let Some(id) = TL_CACHE.with(|c| c.intern_probe(hash, self.instance_id, &key)) {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_intern_hits,
-            );
+            if let Some(c) = pc {
+                c.interner_intern_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return id;
         }
 
-        let result = self.intern_slow(key, hash);
+        let result = self.intern_slow(key, hash, pc);
         if result != TypeId::ERROR {
             TL_CACHE.with(|c| c.intern_insert(hash, self.instance_id, key, result));
         }
@@ -1072,9 +1094,22 @@ impl TypeInterner {
     }
 
     /// Slow path for `intern`: goes through `DashMap` and RwLock-protected storage.
+    ///
+    /// `pc` is the cached counter pointer from the public `intern()` entry,
+    /// `Some` only when `enabled_fast()` was true at the call site. Threading
+    /// it through avoids re-deref'ing the `OnceLock` and re-checking the gate
+    /// in this slow path, and lets the caller make the lifetime of the cache
+    /// pointer explicit.
     #[inline(never)]
-    fn intern_slow(&self, key: TypeData, hash: u64) -> TypeId {
-        // Circuit breaker 1: type count limit.
+    fn intern_slow(
+        &self,
+        key: TypeData,
+        hash: u64,
+        pc: Option<&'static tsz_common::perf_counters::PerfCounters>,
+    ) -> TypeId {
+        // Circuit breaker 1: type count limit. Returning `TypeId::ERROR` here
+        // intentionally does not credit a hit or miss — the residual
+        // `calls - hits - misses` exposes circuit-breaker activations.
         if self.approximate_count() > MAX_INTERNED_TYPES {
             self.poisoned
                 .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1088,16 +1123,18 @@ impl TypeInterner {
         // Try to get existing ID (lock-free read)
         if let Some(entry) = inner.key_to_index.get(&key) {
             let local_index = *entry.value();
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_intern_hits,
-            );
+            if let Some(c) = pc {
+                c.interner_intern_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return self.make_id(local_index, shard_idx as u32);
         }
 
         // Allocate new index
         let local_index = shard.next_index.fetch_add(1, Ordering::Relaxed);
         if local_index > (u32::MAX >> SHARD_BITS) {
-            // Return error type instead of panicking
+            // Circuit breaker 2: u32 overflow. Same rationale as #1: not
+            // credited as hit or miss; observable via the residual.
             return TypeId::ERROR;
         }
 
@@ -1124,9 +1161,10 @@ impl TypeInterner {
                     vec[local_index as usize] = key;
                     ord[local_index as usize] = order;
                 }
-                tsz_common::perf_counters::inc(
-                    &tsz_common::perf_counters::counters().interner_intern_misses,
-                );
+                if let Some(c) = pc {
+                    c.interner_intern_misses
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.make_id(local_index, shard_idx as u32)
             }
             Entry::Occupied(e) => {
@@ -1134,9 +1172,10 @@ impl TypeInterner {
                 // `next_index` above and won't recycle it, so this is a hit
                 // from the caller's POV (no new TypeData was stored).
                 let existing_index = *e.get();
-                tsz_common::perf_counters::inc(
-                    &tsz_common::perf_counters::counters().interner_intern_hits,
-                );
+                if let Some(c) = pc {
+                    c.interner_intern_hits
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.make_id(existing_index, shard_idx as u32)
             }
         }
