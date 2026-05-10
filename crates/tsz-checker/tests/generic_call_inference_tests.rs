@@ -252,6 +252,74 @@ acceptsComparable(1, 2, 3);
     );
 }
 
+#[test]
+fn self_referential_constraint_fallback_displays_literal_union_candidates() {
+    // The call is invalid because number primitives do not satisfy
+    // Comparable<T>. Inference still observes both literal candidates before
+    // widening them for assignability, and tsc uses that candidate union in the
+    // constraint display.
+    let source = r#"
+interface Comparable<T> {
+    compareTo(other: T): number;
+}
+interface Comparer {
+    <T extends Comparable<T>>(x: T, y: T): T;
+}
+declare const max2: Comparer;
+max2(1, 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for max2(1, 2); got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("Argument of type 'number'"),
+        "source should still be the widened primitive. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Comparable<1 | 2>'"),
+        "constraint fallback should display the literal candidate union. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Comparable<number>"),
+        "constraint fallback must not lose literal candidate provenance. Got: {msg}"
+    );
+}
+
+#[test]
+fn self_referential_constraint_fallback_display_scales_beyond_two_candidates() {
+    let source = r#"
+interface Wrapped<T> {
+    value: T;
+}
+interface UseWrapped {
+    <T extends Wrapped<T>>(a: T, b: T, c: T): T;
+}
+declare const useWrapped: UseWrapped;
+useWrapped("a", "b", "c");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected one TS2345 for useWrapped literals; got: {diags:#?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("Argument of type 'string'"),
+        "source should still be widened for primitive literal candidates. Got: {msg}"
+    );
+    assert!(
+        msg.contains("parameter of type 'Wrapped<\"a\" | \"b\" | \"c\">'"),
+        "display provenance should preserve all literal candidates. Got: {msg}"
+    );
+}
+
 // ─── Overloaded function arguments ───────────────────────────────────
 
 #[test]
