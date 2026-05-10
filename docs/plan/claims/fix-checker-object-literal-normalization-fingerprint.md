@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/object-literal-normalization-2026-05-10`
-- **PR**: TBD
+- **PR**: #4973
 - **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
