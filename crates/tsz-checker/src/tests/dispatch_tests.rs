@@ -2613,6 +2613,42 @@ class Foo<A> {
 }
 
 #[test]
+fn no_false_ts2339_on_self_cast_in_generic_class_property_initializer() {
+    let diags = check_source_diagnostics(
+        r#"
+class Bar<T> {
+    num!: number;
+    Field: number = (this as Bar<any>).num;
+    Value = (this as Bar<any>).num;
+}
+"#,
+    );
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for self-cast property initializer, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+
+    let missing_diags = check_source_diagnostics(
+        r#"
+class Bar<T> {
+    Value = (this as Bar<any>).missing;
+}
+"#,
+    );
+    assert!(
+        missing_diags.iter().any(|d| d.code == 2339),
+        "Expected TS2339 for genuinely missing self-cast member, got: {:?}",
+        missing_diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn getter_returning_this_no_false_ts2339() {
     // When a class getter returns `this` without an explicit type annotation,
     // the inferred return type must be the polymorphic `ThisType` — not the
