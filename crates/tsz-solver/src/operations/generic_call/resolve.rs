@@ -2206,6 +2206,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // This handles cases like `<T extends U, U>` where T's constraint references
         // U, which may not be in final_subst until later iterations.
         let mut constraint_fallback_tp_names: FxHashSet<tsz_common::Atom> = FxHashSet::default();
+        let mut constraint_fallback_display_types: FxHashMap<tsz_common::Atom, TypeId> =
+            FxHashMap::default();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             if let Some(constraint) = tp.constraint {
                 let ty = final_subst.get(tp.name).unwrap_or(TypeId::ERROR);
@@ -2310,12 +2312,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Try to recover using un-widened literal candidates when widening
                     // caused the violation (e.g., "b" widened to string violates keyof O).
                     let un_widened = infer_ctx.get_literal_candidates(var);
-                    let recovered = if !un_widened.is_empty() {
-                        let candidate_type = if un_widened.len() == 1 {
+                    let candidate_type = if !un_widened.is_empty() {
+                        Some(if un_widened.len() == 1 {
                             un_widened[0]
                         } else {
-                            self.interner.union(un_widened.clone())
-                        };
+                            self.interner.union_from_slice(&un_widened)
+                        })
+                    } else {
+                        None
+                    };
+                    let recovered = if let Some(candidate_type) = candidate_type {
                         let candidate_satisfies_raw = constraint_ty_raw != constraint_ty
                             && self.satisfies_raw_instantiated_constraint(
                                 candidate_type,
@@ -2335,22 +2341,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let Some(recovered_ty) = recovered {
                         final_subst.insert(tp.name, recovered_ty);
                     } else {
-                        if !un_widened.is_empty() {
-                            let candidate_type = if un_widened.len() == 1 {
-                                un_widened[0]
-                            } else {
-                                self.interner.union(un_widened)
-                            };
-                            let mut display_subst = final_subst.clone();
-                            display_subst.insert(tp.name, candidate_type);
+                        if let Some(candidate_type) = candidate_type {
+                            let previous = final_subst.get(tp.name);
+                            final_subst.insert(tp.name, candidate_type);
                             let display_constraint = instantiate_call_type(
                                 self.interner,
                                 constraint,
-                                &display_subst,
+                                &final_subst,
                                 actual_this_type,
                             );
-                            self.interner
-                                .store_display_alias(constraint_ty, display_constraint);
+                            if let Some(previous) = previous {
+                                final_subst.insert(tp.name, previous);
+                            } else {
+                                final_subst.remove(tp.name);
+                            }
+                            constraint_fallback_display_types.insert(tp.name, display_constraint);
                         }
                         // Fall back to constraint type so argument checking emits TS2345
                         final_subst.insert(tp.name, constraint_ty);
@@ -2771,6 +2776,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         );
                         return CallResult::Success(return_type);
                     }
+
+                    let expected = self
+                        .param_type_for_arg_index(&func.params, index, final_args.len())
+                        .and_then(|raw| match self.interner.lookup(raw) {
+                            Some(TypeData::TypeParameter(tp)) => {
+                                constraint_fallback_display_types.get(&tp.name).copied()
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(expected);
 
                     CallResult::ArgumentTypeMismatch {
                         index,
