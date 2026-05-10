@@ -1425,14 +1425,21 @@ pub(super) fn collect_diagnostics(
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<CheckFileResult> = {
             use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-            // Use sequential checking for small projects (<=8 files) to avoid
+            // Use sequential checking for small projects to avoid
             // non-deterministic false positives from concurrent type interning.
             // The TypeInterner uses DashMap for thread-safe access, but concurrent
             // type evaluation can produce different results depending on thread
             // scheduling when multiple files resolve the same lib or package
             // declaration types. Sequential checking is also faster for small
             // projects due to avoiding rayon thread pool overhead.
-            if work_items.len() <= 8 {
+            //
+            // A slightly wider small-project lane also covers cross-file JSX
+            // namespace/global declaration discovery and checked-JS
+            // CommonJS/JSDoc constructor evidence. Importer files can otherwise
+            // observe incomplete dependency shapes and emit flaky TS2339
+            // diagnostics.
+            let use_sequential_checking = work_items.len() <= 32;
+            if use_sequential_checking {
                 work_items
                     .iter()
                     .map(|&file_idx| {
