@@ -69,17 +69,23 @@ fn no_constraint_no_default_generic_takes_arena_only_fast_path() {
     // cache — guarding against accidentally widening the cache to
     // swallow fast-path traffic, which would be a double-counting
     // bug.
+    //
+    // The fixture below declares cross-file generics (`Inner<T>`,
+    // `Outer<U>`) with no constraints and no defaults. Both `T` and
+    // `U` are exactly the arena-only fast-path shape; if cache
+    // entries appear here, something widened to swallow the fast
+    // path.
     let file1 = r#"
-        export interface Inner {
-            bar(x: string): void;
+        export interface Inner<T> {
+            bar(x: T): void;
         }
-        export interface Outer {
-            inner: Inner;
+        export interface Outer<U> {
+            inner: Inner<U>;
         }
     "#;
     let file2 = r#"
         import { Outer } from "./file1";
-        declare const o: Outer;
+        declare const o: Outer<string>;
         o.inner.bar("ok");
     "#;
     let (_diags, cache) = crate::test_utils::check_multi_file_with_type_params_cache(
