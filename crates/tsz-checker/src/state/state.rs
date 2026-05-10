@@ -143,12 +143,12 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 impl<'a> CheckerState<'a> {
     #[inline]
     fn record_root_checker_construction() {
-        // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Count every
-        // standalone/per-file checker constructor. Child checkers created via
-        // `with_parent_cache` are counted separately with call-site attribution.
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().checker_state_constructed,
-        );
+        // PERF: per-file checker construction; gated to skip `counters()` deref in disabled builds.
+        if tsz_common::perf_counters::enabled_fast() {
+            tsz_common::perf_counters::inc(
+                &tsz_common::perf_counters::counters().checker_state_constructed,
+            );
+        }
     }
 
     /// Create a new `CheckerState`.
