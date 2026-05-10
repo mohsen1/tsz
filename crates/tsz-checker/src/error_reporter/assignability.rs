@@ -187,64 +187,6 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn callback_initializer_for_assignability_anchor(
-        &self,
-        anchor_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let callback_argument_in_call_like = |expr_idx: NodeIndex| {
-            let expr_node = self.ctx.arena.get(expr_idx)?;
-            let args = if matches!(
-                expr_node.kind,
-                syntax_kind_ext::CALL_EXPRESSION | syntax_kind_ext::NEW_EXPRESSION
-            ) {
-                self.ctx
-                    .arena
-                    .get_call_expr(expr_node)?
-                    .arguments
-                    .as_ref()?
-            } else {
-                return None;
-            };
-            args.nodes.iter().find_map(|&arg_idx| {
-                let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
-                let arg_node = self.ctx.arena.get(arg_idx)?;
-                (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then_some(arg_idx)
-            })
-        };
-
-        let mut current = anchor_idx;
-        for _ in 0..8 {
-            let anchor_node = self.ctx.arena.get(current)?;
-            if anchor_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || anchor_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            {
-                return Some(current);
-            }
-            if anchor_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                let property = self.ctx.arena.get_property_assignment(anchor_node)?;
-                let initializer = self
-                    .ctx
-                    .arena
-                    .skip_parenthesized_and_assertions(property.initializer);
-                let initializer_node = self.ctx.arena.get(initializer)?;
-                return (initializer_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || initializer_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then_some(initializer)
-                    .or_else(|| callback_argument_in_call_like(initializer));
-            }
-
-            let parent = self.ctx.arena.get_extended(current)?.parent;
-            if parent.is_none() {
-                return None;
-            }
-            current = parent;
-        }
-
-        None
-    }
-
     fn should_suppress_outer_callback_return_assignability(
         &mut self,
         target: TypeId,
@@ -892,8 +834,15 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                let diag =
+                let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                    diag.message_text = self
+                        .rewrite_declared_generic_alias_source_in_ts2322_message(
+                            anchor_idx,
+                            diag.message_text,
+                        );
+                }
                 self.ctx.push_diagnostic(diag);
             }
             None => {
@@ -1376,10 +1325,22 @@ impl<'a> CheckerState<'a> {
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
         );
+        if !source_from_annotation
+            && let Some(display) = self.declared_generic_alias_source_display_for_target_display(
+                anchor_idx,
+                &source_str,
+                &target_str,
+            )
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
         let mut source_str = source_str;
-        source_str = self.apply_ts2739_nonliteral(source, source_str);
+        if !source_from_annotation {
+            source_str = self.apply_ts2739_nonliteral(source, source_str);
+        }
         if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
             target_str = self.format_type_diagnostic(unfolded);
         }
@@ -1897,6 +1858,11 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str) {
                 tgt_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(display) = self.declared_generic_alias_source_display_for_target_display(
+                anchor_idx, &src_str, &tgt_str,
+            ) {
+                src_str = display;
             }
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
                 src_str = display;
