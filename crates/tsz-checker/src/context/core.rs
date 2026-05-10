@@ -466,6 +466,7 @@ impl<'a> CheckerContext<'a> {
         self.lib_binders_cached = parent.lib_binders_cached.clone();
         self.set_actual_lib_file_count(parent.actual_lib_file_count);
         self.shared_lib_type_cache = parent.shared_lib_type_cache.clone();
+        self.cross_file_type_params_cache = parent.cross_file_type_params_cache.clone();
         self.program_reexports = parent.program_reexports.clone();
         self.program_wildcard_reexports = parent.program_wildcard_reexports.clone();
         self.program_wildcard_reexports_type_only =

@@ -50,6 +50,7 @@ fn empty_project_env() -> ProjectEnv {
         has_deprecation_diagnostics: false,
         last_skeleton_fingerprint: None,
         shared_definition_store: None,
+        cross_file_type_params_cache: None,
     }
 }
 

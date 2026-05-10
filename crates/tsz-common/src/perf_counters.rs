@@ -323,6 +323,12 @@ pub struct PerfCounters {
     pub delegate_cross_arena_cache_hits_lib: AtomicU64,
     pub delegate_cross_arena_cache_hits_cross_file: AtomicU64,
     pub delegate_cross_arena_misses: AtomicU64,
+    /// T2.2 cross-file type-parameter memo: hits and misses on the
+    /// `extract_type_params_from_decl` slow-path memoization. A hit means
+    /// the slow-path's `with_parent_cache_attributed(..., TypeEnvironmentCore)`
+    /// was elided.
+    pub cross_file_type_params_cache_hits: AtomicU64,
+    pub cross_file_type_params_cache_misses: AtomicU64,
     pub delegate_max_recursion_depth: AtomicU64,
     /// `DelegateCrossArenaSymbol` misses classified by how the target arena
     /// was found. This is a subset of `delegate_cross_arena_misses`.
@@ -409,6 +415,8 @@ impl PerfCounters {
             delegate_cross_arena_cache_hits_lib: AtomicU64::new(0),
             delegate_cross_arena_cache_hits_cross_file: AtomicU64::new(0),
             delegate_cross_arena_misses: AtomicU64::new(0),
+            cross_file_type_params_cache_hits: AtomicU64::new(0),
+            cross_file_type_params_cache_misses: AtomicU64::new(0),
             delegate_max_recursion_depth: AtomicU64::new(0),
             delegate_cross_arena_symbol_miss_by_source: [const { AtomicU64::new(0) };
                 CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT],
@@ -908,6 +916,10 @@ pub struct DelegateCounters {
     pub cache_hits_cross_file: u64,
     pub misses: u64,
     pub max_recursion_depth: u64,
+    /// T2.2 typed-query memo: hits on the cross-file type-parameter cache.
+    pub cross_file_type_params_cache_hits: u64,
+    /// T2.2 typed-query memo: misses (where the slow path constructed a child checker).
+    pub cross_file_type_params_cache_misses: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -989,6 +1001,8 @@ impl PerfCounters {
                 cache_hits_cross_file: load(&c.delegate_cross_arena_cache_hits_cross_file),
                 misses: load(&c.delegate_cross_arena_misses),
                 max_recursion_depth: load(&c.delegate_max_recursion_depth),
+                cross_file_type_params_cache_hits: load(&c.cross_file_type_params_cache_hits),
+                cross_file_type_params_cache_misses: load(&c.cross_file_type_params_cache_misses),
             },
             checker: CheckerCounters {
                 state_constructed: load(&c.checker_state_constructed),

@@ -60,14 +60,14 @@ measurement once available.
 | Work item | Status | Next action |
 | --- | --- | --- |
 | Gate local `large-ts-repo` fallback | Done, verify | Audit for other implicit local fallbacks and record fixture provenance in JSON. |
-| Perf-only diagnostics JSON | Not implemented | Add a perf-build/harness-only output and stable schema for phase timings and run metadata. |
-| Perf-only counter JSON | Not implemented | Add snapshot API, JSON writer, `wired` metadata, and attribution/timing separation behind a perf-specific build gate. |
-| Fresh phase split | Missing | Run `large-ts-repo` and monorepo-001..006 after JSON support lands. |
-| Resolver/source-discovery fast path | Conditional | Start only if fresh data shows discovery/resolution dominates. |
-| Checker lifetime split | Conditional | Start only if checking/child-checker construction dominates. |
-| Typed cross-file query migration | Partial | Continue by top measured `CheckerCreationReason`; keep fallback. |
+| Perf-only diagnostics JSON | Done (#4945) | T0.2 shipped. Follow-up: split `config_discovery`/`source_discovery`/`module_resolution`/`load_libs` in `PhaseTimings` (currently 0.0 in output). |
+| Perf-only counter JSON | Done (#4948) | T0.3 shipped. Follow-up: wire `interner.intern_calls`/`hits`/`misses`/`lock_wait_histogram_ns` and `resolver.is_file/is_dir/read_dir`. |
+| Fresh phase split | Done (2026-05-10) | See `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`. monorepo-003..006 cliff: check ≈ 85 %, parse_bind ≈ 12.5 %. `large-ts-repo` deferred (OOM / stack overflow on current `main`); re-measure after first T2.2 PR. |
+| Resolver/source-discovery fast path | **Deferred** | Resolver lookups ~1/file, package.json reads ~1/package on cliff. Not on the hot path. Revisit only after T2.2 lands. |
+| Checker lifetime split | **Promoted** | T0.4 shows `with_parent_cache_constructed = 1.28 × files`. Start T2.1 lifetime split before any generic pooling. |
+| Typed cross-file query migration | **Promoted** | T0.4 shows `delegate.cache_hits_cross_file = 0` on cliff fixtures (~1100 calls, 0 % hit). Highest-priority Tier 2 work. Migrate one `CheckerCreationReason` per PR. |
 | Lib snapshot Phase 2/3 | Demoted | Revive only if lib construction/merge is measured as non-trivial. |
-| Interner redesign | Demoted | Instrument first; redesign only with measured contention. |
+| Interner redesign | **Blocked on instrumentation** | T0.4 shows interner volume is high (7 M string interns), but contention counters are unwired (`null`). Wire `intern_calls`/`hits`/`misses`/`lock_wait_histogram_ns` first; only then decide whether T2.4 is needed. |
 
 ---
 
