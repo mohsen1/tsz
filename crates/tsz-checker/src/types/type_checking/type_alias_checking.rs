@@ -309,9 +309,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 Vec::new()
             };
-            if body_refs.contains(&def_id)
-                && self
-                    .conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid)
+            let has_definite_recursive_ref =
+                self.conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid);
+            let has_unresolved_computed_recursive_ref = if has_definite_recursive_ref {
+                self.conditional_body_has_unresolved_computed_recursive_alias_ref(
+                    alias.type_node,
+                    alias_sid,
+                )
+            } else {
+                false
+            };
+            if has_definite_recursive_ref
+                && (body_refs.contains(&def_id) || has_unresolved_computed_recursive_ref)
             {
                 // Collect type params that were pushed into scope above
                 let type_params: Vec<tsz_solver::TypeParamInfo> = alias
@@ -343,7 +352,7 @@ impl<'a> CheckerState<'a> {
 
                 // Evaluate with TS2589 detection flag
                 let depth_exceeded = self.evaluate_type_for_ts2589_check(body_type, def_id);
-                if depth_exceeded {
+                if depth_exceeded || has_unresolved_computed_recursive_ref {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     // tsc anchors TS2589 at `currentNode` (the inner self-reference
                     // being instantiated when `instantiationDepth === 100` fires).
@@ -618,7 +627,7 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 return !self
-                    .type_arg_nodes_all_contain_deferred_type_parameter_for_depth_check(type_args);
+                    .type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args);
             }
         }
 
@@ -631,23 +640,23 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn type_arg_nodes_all_contain_deferred_type_parameter_for_depth_check(
+    fn type_arg_nodes_all_are_deferred_passthrough_for_depth_check(
         &mut self,
         type_args: &tsz_parser::parser::NodeList,
     ) -> bool {
         !type_args.nodes.is_empty()
-            && type_args.nodes.iter().copied().all(|node_idx| {
-                self.type_node_contains_deferred_type_parameter_for_depth_check(node_idx)
-            })
+            && type_args
+                .nodes
+                .iter()
+                .copied()
+                .all(|node_idx| self.type_node_is_deferred_passthrough_for_depth_check(node_idx))
     }
 
-    fn type_node_contains_deferred_type_parameter_for_depth_check(
-        &mut self,
-        node_idx: NodeIndex,
-    ) -> bool {
+    fn type_node_is_deferred_passthrough_for_depth_check(&mut self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
+
         if let Some(identifier) = self.ctx.arena.get_identifier(node)
             && self
                 .ctx
@@ -663,13 +672,107 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            if type_ref
+                .type_arguments
+                .as_ref()
+                .is_some_and(|type_args| !type_args.nodes.is_empty())
+            {
+                return false;
+            }
+
+            return self.type_name_is_deferred_passthrough_for_depth_check(type_ref.type_name);
+        }
+
+        false
+    }
+
+    fn conditional_body_has_unresolved_computed_recursive_alias_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let resolved = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId);
+            if resolved == Some(alias_sid)
+                && let Some(type_args) = &type_ref.type_arguments
+                && !self.type_args_match_alias_params(alias_sid, type_args)
+                && type_args.nodes.iter().copied().any(|arg_idx| {
+                    !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
+                        && self
+                            .type_node_contains_unresolved_type_reference_for_depth_check(arg_idx)
+                })
+            {
+                return true;
+            }
+        }
+
         self.ctx
             .arena
             .get_children(node_idx)
             .into_iter()
             .any(|child_idx| {
-                self.type_node_contains_deferred_type_parameter_for_depth_check(child_idx)
+                self.conditional_body_has_unresolved_computed_recursive_alias_ref(
+                    child_idx, alias_sid,
+                )
             })
+    }
+
+    fn type_node_contains_unresolved_type_reference_for_depth_check(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .is_none()
+            && self
+                .ctx
+                .arena
+                .kind_at(type_ref.type_name)
+                .is_some_and(|kind| kind == syntax_kind_ext::QUALIFIED_NAME)
+            && !self.type_name_is_deferred_passthrough_for_depth_check(type_ref.type_name)
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_contains_unresolved_type_reference_for_depth_check(child_idx)
+            })
+    }
+
+    fn type_name_is_deferred_passthrough_for_depth_check(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(identifier) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        self.ctx
+            .type_parameter_scope
+            .contains_key(&identifier.escaped_text)
+            || self
+                .identifier_references_enclosing_infer_binding(name_idx, &identifier.escaped_text)
     }
 
     fn identifier_references_enclosing_infer_binding(
