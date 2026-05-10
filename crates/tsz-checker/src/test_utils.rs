@@ -437,6 +437,67 @@ pub fn check_multi_file(
     checker.ctx.diagnostics.clone()
 }
 
+/// T2.2 test helper: parse, bind, type-check a multi-file project AND return
+/// the populated `cross_file_type_params_cache` for assertion. The cache is
+/// installed before the check runs and is the same `Arc<DashMap>` returned
+/// to the caller, so assertions can inspect what the checker memoized
+/// during the run.
+///
+/// Used by tests that need to prove the cross-file type-parameter
+/// memoization (`PERFORMANCE_PLAN.md` §7) actually populated.
+pub fn check_multi_file_with_type_params_cache(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> (Vec<Diagnostic>, crate::context::CrossFileTypeParamsCache) {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .unwrap_or_else(|| panic!("entry_file {entry_file:?} not found in files"));
+    let (resolved_module_paths, resolved_modules) =
+        crate::module_resolution::build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    let cache = Arc::new(dashmap::DashMap::new());
+    checker.ctx.cross_file_type_params_cache = Some(Arc::clone(&cache));
+
+    checker.check_source_file(roots[entry_idx]);
+    (checker.ctx.diagnostics.clone(), cache)
+}
+
 #[cfg(test)]
 mod tests {
     //! Self-tests for the `test_utils` helpers themselves.
