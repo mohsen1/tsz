@@ -11,20 +11,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn contextual_class_member_type_from_request(
-        &mut self,
-        request: &TypingRequest,
-        member_name: NodeIndex,
-    ) -> Option<TypeId> {
-        let ctx_type = request.contextual_type?;
-        let prop_name = self.get_property_name(member_name)?;
-        let resolved_ctx = self.evaluate_type_for_assignability(ctx_type);
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, resolved_ctx);
-        ctx_helper
-            .get_property_type(&prop_name)
-            .filter(|&ty| ty != TypeId::ANY && !self.type_contains_error(ty))
-    }
-
     #[allow(dead_code)]
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
         self.check_property_declaration_with_request(member_idx, &TypingRequest::NONE);
@@ -399,6 +385,7 @@ impl<'a> CheckerState<'a> {
             };
             let initializer_snap = self.ctx.snapshot_diagnostics();
             let init_type = self.get_type_of_node_with_request(prop.initializer, &request);
+            self.check_direct_class_expression_initializer(prop.initializer, &request);
             inferred_initializer_type = Some(init_type);
 
             if self.ctx.no_implicit_any()
