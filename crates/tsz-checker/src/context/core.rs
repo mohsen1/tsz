@@ -150,9 +150,9 @@ impl<'a> CheckerContext<'a> {
         );
     }
 
-    /// Attributed overlay inheritance. The counter call remains so the perf
-    /// dump tracks how often this handoff occurs, but entries-copied is zero
-    /// because the child now inherits an `Arc` parent snapshot.
+    /// Attributed overlay inheritance. Records the child's *visible* entry
+    /// count (own + transitive parents) — meaningful under the Arc-snapshot
+    /// model where nothing is physically copied. See `PERFORMANCE_PLAN.md` §4.T0.3.
     pub fn copy_symbol_file_targets_to_attributed(
         &self,
         child: &mut CheckerContext<'_>,
@@ -162,8 +162,8 @@ impl<'a> CheckerContext<'a> {
             .cross_file_symbol_targets
             .borrow_mut()
             .snapshot_for_child();
-        if parent_snapshot.is_some() {
-            tsz_common::perf_counters::record_overlay_copy(reason, 0);
+        if let Some(snap) = parent_snapshot.as_ref() {
+            tsz_common::perf_counters::record_overlay_copy(reason, snap.total_entries() as u64);
         }
         child
             .cross_file_symbol_targets
