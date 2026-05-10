@@ -39,22 +39,74 @@ impl<'a> CheckerState<'a> {
         matches!(name, "Promise" | "PromiseLike")
     }
 
-    /// True when `type_id` is an `Application` whose base resolves (through any
-    /// number of `Lazy` wrappers) to the lib `Awaited` type alias.
+    /// True when `type_id` is an `Application` whose base resolves to the
+    /// standard-library `Awaited` type alias. No-lib tests may provide a local
+    /// conditional alias named `Awaited`; we accept that shape too because it
+    /// has the same deferred conditional surface that Promise helpers expose.
     ///
     /// Used to gate alias-evaluation after Promise unwrap so we only fold
     /// Awaited applications (which tsc resolves eagerly via `getAwaitedType`)
     /// without disturbing the printer's preferred alias-form display for other
     /// generic applications like `Box<T>` or `Partial<T>`.
     fn is_awaited_application(&self, type_id: TypeId) -> bool {
-        let Some((base, _)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-        else {
-            return false;
-        };
+        self.awaited_application_arg(type_id).is_some()
+    }
+
+    pub(crate) fn awaited_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
+        self.awaited_application_arg_from_type(type_id).or_else(|| {
+            let alias = self.ctx.types.get_display_alias(type_id)?;
+            (alias != type_id).then(|| self.awaited_application_arg_from_type(alias))?
+        })
+    }
+
+    pub(crate) fn awaited_application_args_in_type(&self, type_id: TypeId) -> Vec<TypeId> {
+        let mut args = Vec::new();
+        self.collect_awaited_application_args(type_id, &mut args, 0);
+        args
+    }
+
+    fn collect_awaited_application_args(&self, type_id: TypeId, args: &mut Vec<TypeId>, depth: u8) {
+        if depth > 8 {
+            return;
+        }
+        if let Some(arg) = self.awaited_application_arg(type_id) {
+            args.push(arg);
+            return;
+        }
+        if let Some(elem) =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
+        {
+            self.collect_awaited_application_args(elem, args, depth + 1);
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            for member in members {
+                self.collect_awaited_application_args(member, args, depth + 1);
+            }
+        }
+        if let Some(elems) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
+        {
+            for elem in elems {
+                self.collect_awaited_application_args(elem.type_id, args, depth + 1);
+            }
+        }
+    }
+
+    fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let (base, args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
+        self.is_awaited_application_base(base)
+            .then(|| args.first().copied())
+            .flatten()
+    }
+
+    fn is_awaited_application_base(&self, base: TypeId) -> bool {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.escaped_name.as_str() == "Awaited"
+            && self.is_standard_or_conditional_awaited_alias(sym_id, symbol)
         {
             return true;
         }
@@ -63,12 +115,39 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
-                    return symbol.escaped_name.as_str() == "Awaited";
+                    return symbol.escaped_name.as_str() == "Awaited"
+                        && self.is_standard_or_conditional_awaited_alias(sym_id, symbol);
                 }
                 false
             }
             _ => false,
         }
+    }
+
+    fn is_standard_or_conditional_awaited_alias(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+        if self.symbol_has_standard_lib_origin(sym_id) {
+            return true;
+        }
+
+        let decl_arena = if symbol.decl_file_idx != u32::MAX {
+            self.ctx.get_arena_for_file(symbol.decl_file_idx)
+        } else {
+            self.ctx.arena
+        };
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(type_alias) = decl_arena.get_type_alias_at(decl_idx) else {
+                return false;
+            };
+            let has_single_type_param = type_alias
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| params.nodes.len() == 1);
+            has_single_type_param
+                && decl_arena.get(type_alias.type_node).is_some_and(|node| {
+                    node.kind == tsz_parser::parser::syntax_kind_ext::CONDITIONAL_TYPE
+                })
+        })
     }
 
     /// Check if a name refers to exactly the global Promise type (not subclasses).
@@ -1684,23 +1763,88 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
-        if !self.is_awaited_application(type_id) {
+        self.evaluate_awaited_application_for_assignability_inner(type_id, 0)
+    }
+
+    fn evaluate_awaited_application_for_assignability_inner(
+        &mut self,
+        type_id: TypeId,
+        depth: u8,
+    ) -> TypeId {
+        if depth > 8 {
+            return type_id;
+        }
+        if self.awaited_application_arg(type_id).is_none() {
+            if let Some(elem) =
+                crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
+            {
+                let evaluated_elem =
+                    self.evaluate_awaited_application_for_assignability_inner(elem, depth + 1);
+                if evaluated_elem != elem {
+                    return self.ctx.types.factory().array(evaluated_elem);
+                }
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+            {
+                let mut changed = false;
+                let evaluated_members: Vec<_> = members
+                    .into_iter()
+                    .map(|member| {
+                        let evaluated = self.evaluate_awaited_application_for_assignability_inner(
+                            member,
+                            depth + 1,
+                        );
+                        changed |= evaluated != member;
+                        evaluated
+                    })
+                    .collect();
+                if changed {
+                    return self.ctx.types.factory().union(evaluated_members);
+                }
+            }
+            if let Some(elems) =
+                crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
+            {
+                let mut changed = false;
+                let evaluated_elems: Vec<_> = elems
+                    .into_iter()
+                    .map(|mut elem| {
+                        let evaluated = self.evaluate_awaited_application_for_assignability_inner(
+                            elem.type_id,
+                            depth + 1,
+                        );
+                        changed |= evaluated != elem.type_id;
+                        elem.type_id = evaluated;
+                        elem
+                    })
+                    .collect();
+                if changed {
+                    return self.ctx.types.factory().tuple(evaluated_elems);
+                }
+            }
             return type_id;
         }
 
-        let evaluated = self.evaluate_application_type(type_id);
-        if evaluated != type_id {
-            return evaluated;
+        if self.awaited_application_arg_from_type(type_id).is_some() {
+            let evaluated = self.evaluate_application_type(type_id);
+            if evaluated != type_id {
+                return self
+                    .evaluate_awaited_application_for_assignability_inner(evaluated, depth + 1);
+            }
         }
 
-        let Some((_base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
-        else {
+        let Some(arg) = self.awaited_application_arg(type_id) else {
             return type_id;
         };
-        let Some(&arg) = args.first() else {
-            return type_id;
-        };
+        let arg = self.evaluate_type_for_assignability(arg);
+
+        if let Some(awaited) = self
+            .unwrap_promise_type(arg)
+            .or_else(|| self.extract_awaited_type_from_thenable(arg))
+        {
+            return self.evaluate_awaited_application_for_assignability_inner(awaited, depth + 1);
+        }
 
         // Awaited<T> is transparent for non-thenables. If the conditional
         // evaluator preserved the raw alias application, keep assignability in

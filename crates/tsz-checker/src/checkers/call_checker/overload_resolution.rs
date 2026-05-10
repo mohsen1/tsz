@@ -7,13 +7,15 @@ mod contextual_retry;
 use crate::context::TypingRequest;
 use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
-use crate::query_boundaries::common::{ContextualTypeContext, PendingDiagnosticBuilder};
+use crate::query_boundaries::common::{
+    ContextualTypeContext, FunctionShape, PendingDiagnosticBuilder,
+};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use std::fmt::Write;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{CallSignature, TypeId, TypeParamInfo};
+use tsz_solver::{CallSignature, ParamInfo, TypeId, TypeParamInfo};
 
 use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
 
@@ -25,6 +27,183 @@ type BestTypeMismatch = (
 );
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn return_context_refinement_for_arg_inference(
+        &mut self,
+        existing: TypeId,
+        contextual: TypeId,
+    ) -> Option<TypeId> {
+        self.return_context_refinement_for_arg_inference_inner(existing, contextual, 0)
+    }
+
+    fn return_context_refinement_for_arg_inference_inner(
+        &mut self,
+        existing: TypeId,
+        contextual: TypeId,
+        depth: u8,
+    ) -> Option<TypeId> {
+        if depth > 8 {
+            return None;
+        }
+
+        let contextual = self.evaluate_awaited_application_for_assignability(contextual);
+        let readonly_stripped_contextual =
+            crate::query_boundaries::common::unwrap_readonly(self.ctx.types, contextual);
+
+        if existing.is_any_unknown_or_error()
+            || self.inference_type_is_anyish(existing)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, existing)
+            || crate::query_boundaries::common::contains_infer_types(self.ctx.types, existing)
+        {
+            return Some(contextual);
+        }
+
+        if let Some(refined) =
+            self.return_context_preserve_awaited_wrapper_refinement(existing, contextual, depth + 1)
+        {
+            return Some(refined);
+        }
+
+        if crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            contextual,
+            existing,
+        ) {
+            return Some(contextual);
+        }
+
+        if readonly_stripped_contextual != contextual
+            && crate::query_boundaries::assignability::is_fresh_subtype_of(
+                self.ctx.types,
+                readonly_stripped_contextual,
+                existing,
+            )
+        {
+            return Some(readonly_stripped_contextual);
+        }
+
+        self.return_context_readonly_container_refines_arg_inference(existing, contextual, 0)
+            .then_some(contextual)
+    }
+
+    fn return_context_preserve_awaited_wrapper_refinement(
+        &mut self,
+        existing: TypeId,
+        contextual: TypeId,
+        depth: u8,
+    ) -> Option<TypeId> {
+        if depth > 8 {
+            return None;
+        }
+
+        if let (Some(existing_elem), Some(contextual_elem)) = (
+            crate::query_boundaries::common::array_element_type(self.ctx.types, existing),
+            crate::query_boundaries::common::array_element_type(self.ctx.types, contextual),
+        ) && let Some(refined_elem) = self.return_context_refinement_for_arg_inference_inner(
+            existing_elem,
+            contextual_elem,
+            depth + 1,
+        ) && refined_elem != existing_elem
+        {
+            return Some(self.ctx.types.factory().array(refined_elem));
+        }
+
+        if let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, existing)
+            && args.len() == 1
+            && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+            && let Some(refined_arg) = self.return_context_refinement_for_arg_inference_inner(
+                args[0],
+                contextual,
+                depth + 1,
+            )
+            && refined_arg != args[0]
+        {
+            return Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .application(base, vec![refined_arg]),
+            );
+        }
+
+        None
+    }
+
+    fn return_context_readonly_container_refines_arg_inference(
+        &mut self,
+        existing: TypeId,
+        contextual: TypeId,
+        depth: u8,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+
+        let existing = crate::query_boundaries::common::unwrap_readonly(self.ctx.types, existing);
+        let contextual =
+            crate::query_boundaries::common::unwrap_readonly(self.ctx.types, contextual);
+        if crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            contextual,
+            existing,
+        ) {
+            return true;
+        }
+
+        let existing_elem =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, existing);
+        let contextual_elem =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, contextual);
+        if let (Some(existing_elem), Some(contextual_elem)) = (existing_elem, contextual_elem) {
+            return self.return_context_readonly_container_refines_arg_inference(
+                existing_elem,
+                contextual_elem,
+                depth + 1,
+            );
+        }
+
+        if let (Some(existing_elems), Some(contextual_elems)) = (
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, existing),
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, contextual),
+        ) && existing_elems.len() == contextual_elems.len()
+        {
+            return existing_elems.iter().zip(contextual_elems.iter()).all(
+                |(existing_elem, contextual_elem)| {
+                    self.return_context_readonly_container_refines_arg_inference(
+                        existing_elem.type_id,
+                        contextual_elem.type_id,
+                        depth + 1,
+                    )
+                },
+            );
+        }
+
+        false
+    }
+
+    fn merge_return_context_substitution(
+        &mut self,
+        combined_substitution: &mut TypeSubstitution,
+        type_params: &[TypeParamInfo],
+        return_substitution: &TypeSubstitution,
+    ) {
+        for tp in type_params {
+            let Some(contextual) = return_substitution.get(tp.name) else {
+                continue;
+            };
+            let refined = match combined_substitution.get(tp.name) {
+                None => Some(contextual),
+                Some(existing) if existing == contextual => None,
+                Some(existing) => {
+                    self.return_context_refinement_for_arg_inference(existing, contextual)
+                }
+            };
+            if let Some(refined) = refined {
+                combined_substitution.insert(tp.name, refined);
+            }
+        }
+    }
+
     fn overload_signature_for_inference(
         &mut self,
         sig: &CallSignature,
@@ -126,6 +305,50 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn rollback_overload_retry_state(&mut self, snap: &FullSnapshot) {
         self.ctx.rollback_full(snap);
+    }
+
+    fn instantiate_overload_return_with_context(
+        &mut self,
+        sig: &CallSignature,
+        instantiated_params: Option<&[ParamInfo]>,
+        contextual_type: Option<TypeId>,
+        fallback_return_type: TypeId,
+    ) -> TypeId {
+        if sig.type_params.is_empty() || contextual_type.is_none() {
+            return fallback_return_type;
+        }
+
+        let sig_shape = FunctionShape {
+            params: sig.params.clone(),
+            return_type: sig.return_type,
+            this_type: sig.this_type,
+            type_params: sig.type_params.clone(),
+            type_predicate: sig.type_predicate,
+            is_constructor: false,
+            is_method: sig.is_method,
+        };
+        let return_substitution =
+            self.compute_return_context_substitution_from_shape(&sig_shape, contextual_type);
+        if return_substitution.is_empty() {
+            return fallback_return_type;
+        }
+
+        let mut combined_substitution = if let Some(instantiated_params) = instantiated_params {
+            self.extract_arg_inference_substitution(
+                &sig.params,
+                instantiated_params,
+                &sig.type_params,
+            )
+        } else {
+            TypeSubstitution::new()
+        };
+        self.merge_return_context_substitution(
+            &mut combined_substitution,
+            &sig.type_params,
+            &return_substitution,
+        );
+
+        instantiate_type(self.ctx.types, sig.return_type, &combined_substitution)
     }
 
     /// Resolve an overloaded call by trying each signature.
@@ -319,7 +542,7 @@ impl<'a> CheckerState<'a> {
                 &arg_types,
                 contextual_type,
             );
-            let func_type = factory.function(FunctionShape {
+            let sig_shape = FunctionShape {
                 params: sig.params.clone(),
                 this_type: sig.this_type,
                 return_type: sig.return_type,
@@ -327,7 +550,18 @@ impl<'a> CheckerState<'a> {
                 type_predicate: sig.type_predicate,
                 is_constructor: false,
                 is_method: sig.is_method,
-            });
+            };
+            let sig_contextual_type = if self
+                .suppress_generic_return_context_for_direct_arg_overlap(
+                    &sig_shape,
+                    args,
+                    contextual_type,
+                ) {
+                None
+            } else {
+                contextual_type
+            };
+            let func_type = factory.function(sig_shape.clone());
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_relation_input_ready(func_type);
             let resolved_func_type =
@@ -345,7 +579,7 @@ impl<'a> CheckerState<'a> {
                     resolved_func_type,
                     &arg_types,
                     force_bivariant_callbacks,
-                    contextual_type,
+                    sig_contextual_type,
                     None,
                 );
             if let CallResult::ArgumentTypeMismatch {
@@ -373,7 +607,7 @@ impl<'a> CheckerState<'a> {
                     resolved_func_type,
                     args,
                     force_bivariant_callbacks,
-                    contextual_type,
+                    contextual_type: sig_contextual_type,
                     actual_this_type,
                     overload_snap: &overload_snap,
                     has_contextual_refresh_args: !contextual_refresh_args.is_empty(),
@@ -453,19 +687,10 @@ impl<'a> CheckerState<'a> {
                     // when `this` has type `TContext` instead of the inferred `{b: string}`).
                     let mut did_instantiated_retry = false;
                     let mut used_return_context_sub_outer = false;
-                    let sig_shape = FunctionShape {
-                        params: sig.params.clone(),
-                        return_type: sig.return_type,
-                        this_type: sig.this_type,
-                        type_params: sig.type_params.clone(),
-                        type_predicate: sig.type_predicate,
-                        is_constructor: false,
-                        is_method: sig.is_method,
-                    };
-                    let return_sub_for_retry = if contextual_type.is_some() {
+                    let return_sub_for_retry = if sig_contextual_type.is_some() {
                         self.compute_return_context_substitution_from_shape(
                             &sig_shape,
-                            contextual_type,
+                            sig_contextual_type,
                         )
                     } else {
                         crate::query_boundaries::common::TypeSubstitution::new()
@@ -479,11 +704,12 @@ impl<'a> CheckerState<'a> {
                         // the return-context substitution covers type params bound by
                         // the contextual return type (e.g. `U` from `A[]`). Both must
                         // contribute to the contextual types used to evaluate callback
-                        // bodies. Return-context wins on overlap so that, for
+                        // bodies. Return-context may refine overlap so that, for
                         // `Object.freeze<T>(o:T):Readonly<T>` with contextual
                         // `readonly [string,number][]`, the call uses the return-bound
                         // `T = [string,number][]` instead of round-1's widened
-                        // `T = (string|number)[][]`.
+                        // `T = (string|number)[][]`, while incompatible argument
+                        // inference still wins.
                         let mut combined_sub = if let Some(inst) = instantiated_params.as_ref() {
                             self.extract_arg_inference_substitution(
                                 &sig.params,
@@ -493,11 +719,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             crate::query_boundaries::common::TypeSubstitution::new()
                         };
-                        for tp in &sig.type_params {
-                            if let Some(ty) = return_sub_for_retry.get(tp.name) {
-                                combined_sub.insert(tp.name, ty);
-                            }
-                        }
+                        self.merge_return_context_substitution(
+                            &mut combined_sub,
+                            &sig.type_params,
+                            &return_sub_for_retry,
+                        );
                         retry_substitution = Some(combined_sub.clone());
                         Some(
                             sig.params
@@ -749,11 +975,11 @@ impl<'a> CheckerState<'a> {
                                 instantiated_params,
                                 &sig.type_params,
                             );
-                            for tp in &sig.type_params {
-                                if let Some(ty) = return_sub_for_retry.get(tp.name) {
-                                    combined_sub.insert(tp.name, ty);
-                                }
-                            }
+                            self.merge_return_context_substitution(
+                                &mut combined_sub,
+                                &sig.type_params,
+                                &return_sub_for_retry,
+                            );
                             let from_sub = crate::query_boundaries::common::instantiate_type(
                                 self.ctx.types,
                                 sig.return_type,
@@ -767,7 +993,7 @@ impl<'a> CheckerState<'a> {
                                 resolved_func_type,
                                 &refreshed_arg_types,
                                 force_bivariant_callbacks,
-                                contextual_type,
+                                sig_contextual_type,
                                 actual_this_type,
                             );
                             from_sub
@@ -779,6 +1005,19 @@ impl<'a> CheckerState<'a> {
                         (refreshed_arg_types, final_return_type)
                     } else {
                         (arg_types.clone(), return_type)
+                    };
+                    let final_return_type = if args
+                        .iter()
+                        .any(|&arg_idx| self.is_callback_like_argument(arg_idx))
+                    {
+                        final_return_type
+                    } else {
+                        self.instantiate_overload_return_with_context(
+                            &sig,
+                            instantiated_params.as_deref(),
+                            sig_contextual_type,
+                            final_return_type,
+                        )
                     };
 
                     if has_multiple_arity_compatible_signatures
@@ -813,7 +1052,7 @@ impl<'a> CheckerState<'a> {
                     if !used_return_context_sub_outer
                         && did_instantiated_retry
                         && idx + 1 < signatures.len()
-                        && contextual_type.is_some()
+                        && sig_contextual_type.is_some()
                         && no_rcs_fallback.is_none()
                     {
                         no_rcs_fallback = Some((
@@ -950,7 +1189,7 @@ impl<'a> CheckerState<'a> {
                 &arg_types,
                 contextual_type,
             );
-            let func_type = factory.function(FunctionShape {
+            let sig_shape = FunctionShape {
                 params: sig.params.clone(),
                 this_type: sig.this_type,
                 return_type: sig.return_type,
@@ -958,7 +1197,18 @@ impl<'a> CheckerState<'a> {
                 type_predicate: sig.type_predicate,
                 is_constructor: false,
                 is_method: sig.is_method,
-            });
+            };
+            let sig_contextual_type = if self
+                .suppress_generic_return_context_for_direct_arg_overlap(
+                    &sig_shape,
+                    args,
+                    contextual_type,
+                ) {
+                None
+            } else {
+                contextual_type
+            };
+            let func_type = factory.function(sig_shape.clone());
             self.ctx.rollback_full(&overload_snap);
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -1048,21 +1298,15 @@ impl<'a> CheckerState<'a> {
                         resolved_func_type,
                         &round1_arg_types,
                         force_bivariant_callbacks,
-                        contextual_type,
+                        sig_contextual_type,
                         actual_this_type,
                     )
                     .2;
-                let sig_shape = FunctionShape {
-                    params: sig.params.clone(),
-                    return_type: sig.return_type,
-                    this_type: sig.this_type,
-                    type_params: sig.type_params.clone(),
-                    type_predicate: sig.type_predicate,
-                    is_constructor: false,
-                    is_method: sig.is_method,
-                };
-                let return_sub_for_preinfer = if contextual_type.is_some() {
-                    self.compute_return_context_substitution_from_shape(&sig_shape, contextual_type)
+                let return_sub_for_preinfer = if sig_contextual_type.is_some() {
+                    self.compute_return_context_substitution_from_shape(
+                        &sig_shape,
+                        sig_contextual_type,
+                    )
                 } else {
                     crate::query_boundaries::common::TypeSubstitution::new()
                 };
@@ -1077,11 +1321,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         crate::query_boundaries::common::TypeSubstitution::new()
                     };
-                    for tp in &sig.type_params {
-                        if let Some(ty) = return_sub_for_preinfer.get(tp.name) {
-                            combined_sub.insert(tp.name, ty);
-                        }
-                    }
+                    self.merge_return_context_substitution(
+                        &mut combined_sub,
+                        &sig.type_params,
+                        &return_sub_for_preinfer,
+                    );
                     Some(
                         sig.params
                             .iter()
@@ -1162,11 +1406,11 @@ impl<'a> CheckerState<'a> {
                                 instantiated_params,
                                 &sig.type_params,
                             );
-                            for tp in &sig.type_params {
-                                if let Some(ty) = return_sub_for_preinfer.get(tp.name) {
-                                    sub.insert(tp.name, ty);
-                                }
-                            }
+                            self.merge_return_context_substitution(
+                                &mut sub,
+                                &sig.type_params,
+                                &return_sub_for_preinfer,
+                            );
                             sub
                         };
                         let mut progressive_args = Vec::with_capacity(args.len());
@@ -1311,7 +1555,7 @@ impl<'a> CheckerState<'a> {
                     resolved_func_type,
                     &sig_arg_types,
                     force_bivariant_callbacks,
-                    contextual_type,
+                    sig_contextual_type,
                     actual_this_type,
                 );
             if let CallResult::ArgumentTypeMismatch {
@@ -1331,34 +1575,25 @@ impl<'a> CheckerState<'a> {
             }
             let mut selected_type_predicate =
                 Self::selected_overload_type_predicate(&sig, instantiated_predicate);
-            let sig_shape = FunctionShape {
-                params: sig.params.clone(),
-                return_type: sig.return_type,
-                this_type: sig.this_type,
-                type_params: sig.type_params.clone(),
-                type_predicate: sig.type_predicate,
-                is_constructor: false,
-                is_method: sig.is_method,
-            };
-            let return_sub_for_retry = if contextual_type.is_some() {
-                self.compute_return_context_substitution_from_shape(&sig_shape, contextual_type)
+            let return_sub_for_retry = if sig_contextual_type.is_some() {
+                self.compute_return_context_substitution_from_shape(&sig_shape, sig_contextual_type)
             } else {
                 crate::query_boundaries::common::TypeSubstitution::new()
             };
             let retry_params = if !return_sub_for_retry.is_empty() {
                 // Compose argument-driven inference with the return-context
-                // substitution; return-context wins on overlap. See
-                // `extract_arg_inference_substitution` for the rationale.
+                // substitution, allowing return context to refine but not replace
+                // incompatible argument inference.
                 let mut combined_sub = if let Some(inst) = instantiated_params.as_ref() {
                     self.extract_arg_inference_substitution(&sig.params, inst, &sig.type_params)
                 } else {
                     crate::query_boundaries::common::TypeSubstitution::new()
                 };
-                for tp in &sig.type_params {
-                    if let Some(ty) = return_sub_for_retry.get(tp.name) {
-                        combined_sub.insert(tp.name, ty);
-                    }
-                }
+                self.merge_return_context_substitution(
+                    &mut combined_sub,
+                    &sig.type_params,
+                    &return_sub_for_retry,
+                );
                 Some(
                     sig.params
                         .iter()
@@ -1457,7 +1692,7 @@ impl<'a> CheckerState<'a> {
                         resolved_func_type,
                         &refreshed_arg_types,
                         force_bivariant_callbacks,
-                        contextual_type,
+                        sig_contextual_type,
                         actual_this_type,
                     );
                 if retry_predicate.is_some() {
@@ -1476,6 +1711,19 @@ impl<'a> CheckerState<'a> {
 
             match result {
                 CallResult::Success(return_type) => {
+                    let return_type = if args
+                        .iter()
+                        .any(|&arg_idx| self.is_callback_like_argument(arg_idx))
+                    {
+                        return_type
+                    } else {
+                        self.instantiate_overload_return_with_context(
+                            &sig,
+                            retry_params.as_deref().or(instantiated_params.as_deref()),
+                            sig_contextual_type,
+                            return_type,
+                        )
+                    };
                     if let Some((index, actual, expected)) = self
                         .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
                             sig_helper

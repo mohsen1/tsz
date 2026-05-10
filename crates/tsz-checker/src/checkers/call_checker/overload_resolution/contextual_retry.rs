@@ -69,11 +69,11 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypeSubstitution::new()
             };
-            for tp in &sig.type_params {
-                if let Some(ty) = return_sub_for_retry.get(tp.name) {
-                    combined_sub.insert(tp.name, ty);
-                }
-            }
+            self.merge_return_context_substitution(
+                &mut combined_sub,
+                &sig.type_params,
+                &return_sub_for_retry,
+            );
             retry_substitution = Some(combined_sub.clone());
             Some(
                 sig.params
@@ -272,11 +272,11 @@ impl<'a> CheckerState<'a> {
                     instantiated_params,
                     &sig.type_params,
                 );
-                for tp in &sig.type_params {
-                    if let Some(ty) = return_sub_for_retry.get(tp.name) {
-                        combined_sub.insert(tp.name, ty);
-                    }
-                }
+                self.merge_return_context_substitution(
+                    &mut combined_sub,
+                    &sig.type_params,
+                    &return_sub_for_retry,
+                );
                 instantiate_type(self.ctx.types, sig.return_type, &combined_sub)
             } else {
                 retry_return_type
