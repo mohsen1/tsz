@@ -1866,7 +1866,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             declaration_arenas,
             sym_to_decl_indices,
             // Per-binder cross_file_node_symbols left empty intentionally.
-            // The program-wide outer map is stored once on ProjectEnv and
+            // The program-wide outer map is stored once on ProgramContext and
             // read via `ctx.cross_file_node_symbols_for_arena`. Cloning
             // it into every per-file binder scales outer-map allocation
             // with N² — several hundred MB on large-ts-repo.
@@ -1891,7 +1891,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             // Per-binder alias_partners left empty: every checker consumer
             // routes through `ctx.alias_partner_for` /
             // `alias_partners_contains`, which prefers the project-wide
-            // `program_alias_partners` Arc installed by ProjectEnv::apply_to.
+            // `program_alias_partners` Arc installed by ProgramContext::apply_to.
             alias_partners: Default::default(),
         },
     );
@@ -1906,7 +1906,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
     // Only the file-local semantic_defs are stored on the reconstructed
     // binder. The cross-file / program-wide entries live in the shared
-    // `DefinitionStore` installed by `ProjectEnv::apply_to`, which gates
+    // `DefinitionStore` installed by `ProgramContext::apply_to`, which gates
     // every consumer of `binder.semantic_defs` (`pre_populate_def_ids_*`,
     // `resolve_cross_batch_heritage`) behind
     // `!ctx.definition_store.is_fully_populated()`. In the parallel CLI
@@ -1979,7 +1979,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
             // Per-binder `module_exports` is left empty intentionally.
             // The program-wide merged `module_exports` lives once on
-            // `ProjectEnv` as `program_module_exports` and is read via
+            // `ProgramContext` as `program_module_exports` and is read via
             // `ctx.module_exports_for_module`. Cross-file lookup binders
             // used to deep-clone the entire merged map (thousands of
             // entries on large repos) into every one of N per-file
@@ -1988,7 +1988,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             // Per-binder re-export maps left empty intentionally. The
             // program-wide merged re-export maps are stored once on
-            // `ProjectEnv` and read via `ctx.reexports_for_file` /
+            // `ProgramContext` and read via `ctx.reexports_for_file` /
             // `wildcard_reexports_for_file`. Cloning them into every one
             // of N cross-file lookup binders scales the per-file setup
             // cost with total re-exports across the whole project —
@@ -2003,7 +2003,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             declaration_arenas: Default::default(),
             sym_to_decl_indices: Default::default(),
             // See `create_binder_from_bound_file_with_augmentations` for
-            // the rationale: the program-wide map lives on ProjectEnv.
+            // the rationale: the program-wide map lives on ProgramContext.
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             // Per-binder `flow_nodes` is an Arc clone; see

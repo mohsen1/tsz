@@ -38,14 +38,14 @@ below as the starting point.
 | Large fixture fallback | `scripts/bench/bench-vs-tsgo.sh` already gates the local `~/code/large-ts-repo` fallback behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1`. | T0.1 is verify/audit work, not a fresh implementation task. |
 | Diagnostics timing | `PhaseTimings` exists in `crates/tsz-cli/src/driver/core.rs`, but machine-readable diagnostics JSON is not wired. | T0.2 remains mandatory. |
 | Perf counters | `TSZ_PERF_COUNTERS` exists in `crates/tsz-common/src/perf_counters.rs`, with partial checker/delegate/overlay/resolver/interner coverage. | Move usable counter output behind perf-specific builds; do not expose or execute it in default release artifacts. |
-| Program sharing | `ProjectEnv` exists in `crates/tsz-checker/src/context/mod.rs` and is built by `crates/tsz-cli/src/driver/check.rs`. It shares arenas, binders, lib contexts, resolved-module maps, skeleton-derived indices, and the shared `DefinitionStore`. | `ProgramContext` should absorb/rename/refine `ProjectEnv`; do not build a parallel program-level abstraction. |
+| Program sharing | `ProgramContext` (renamed from `ProjectEnv` in PR 5B) exists in `crates/tsz-checker/src/context/mod.rs` and is built by `crates/tsz-cli/src/driver/check.rs`. It shares arenas, binders, lib contexts, resolved-module maps, skeleton-derived indices, and the shared `DefinitionStore`. | Continue refining `ProgramContext` rather than building a parallel program-level abstraction. |
 | Overlay inheritance | `CheckerContext::copy_symbol_file_targets_to_attributed` uses parent snapshots rather than deep overlay copies. | Rewrite the old "overlay duplication" root cause as child-checker construction and local cache cold starts. |
 | Cross-file queries | `crates/tsz-checker/src/state/type_analysis/cross_file.rs` already has direct/typed fast paths and per-reason counters while retaining child-checker fallback. | Continue this migration one reason per PR. |
 
 ### Historical Large-Project Number
 
 The 890 s `large-ts-repo` source-discovery figure is historical evidence, not a
-current baseline. It predates substantial sharing work, including `ProjectEnv`,
+current baseline. It predates substantial sharing work, including `ProgramContext` (formerly `ProjectEnv`),
 skeleton-derived program indices, shared `DefinitionStore` installation, and
 Arc-based overlay snapshots.
 
@@ -443,10 +443,11 @@ filesystem pressure can make the problem worse if repeated work remains.
 This tier is conditional. Start it only if Tier 0 shows checking and
 child-checker construction dominate.
 
-The migration should refine existing `ProjectEnv`, not bypass it:
+The migration should refine existing `ProgramContext` (formerly `ProjectEnv`),
+not bypass it:
 
 ```text
-ProjectEnv -> ProgramContext
+ProgramContext (formerly ProjectEnv) — already exists; refine it, do not duplicate.
 CheckerContext mixed fields -> ProgramContext + WorkerContext + FileSession + SpeculationScope + LspPersistentCache
 CheckerState -> thin owner/borrower of FileSession and query APIs
 ```
@@ -512,7 +513,7 @@ Fields expected to be safe across files, assuming stable symbol identity:
 - symbol type caches keyed by `SymbolId`
 - lib delegation caches keyed by `SymbolId`
 - shared lib type caches keyed by stable strings
-- global/module indices installed by `ProjectEnv`
+- global/module indices installed by `ProgramContext`
 - current file index, if assigned explicitly for every session
 
 Reset helper shape:
@@ -575,7 +576,7 @@ Audit before moving query caches:
 ### Migration Order
 
 1. Field-lifetime inventory and CI guard.
-2. `ProjectEnv` -> `ProgramContext` no-behavior refactor.
+2. ~~`ProjectEnv` -> `ProgramContext` no-behavior refactor.~~ Done in PR 5B.
 3. Add accessors so call sites can move gradually from direct field reads to
    lifetime-owned state.
 4. Introduce `WorkerContext`, initially with only obvious reusable scratch.
@@ -994,15 +995,11 @@ Done when:
 - CI fails on unclassified fields.
 - Reviewers get a generated markdown inventory.
 
-### PR 5B: `ProjectEnv` -> `ProgramContext`
+### PR 5B: ~~`ProjectEnv` -> `ProgramContext`~~ — done
 
-Goal: no-behavior refactor that names the program-stable layer.
-
-Done when:
-
-- Conformance is unchanged.
-- No perf regression beyond noise.
-- No new unsafe thread-safety implementations are introduced.
+No-behavior rename shipped: the program-stable layer is now spelled
+`ProgramContext` everywhere. Conformance unchanged; no new unsafe
+thread-safety implementations introduced.
 
 ### PR 6B+: Typed Cross-File Query PRs
 
@@ -1079,7 +1076,7 @@ Use these as defaults unless a PR explains a different threshold:
 | Resolver cache returns wrong NodeNext/package-exports answers | High | Resolution snapshot tests and complete request keys. |
 | Lib global sharing breaks augmentations | High | Gate on measurement and add augmentation/lib replacement tests. |
 | Interner redesign destabilizes `TypeId` identity | High | Instrument first and prefer low-risk mitigations. |
-| `ProjectEnv` and new `ProgramContext` diverge | Medium | Rename/wrap existing structure instead of duplicating it. |
+| Future `ProgramContext` refinements diverge from current shape | Medium | Refine the existing `ProgramContext` (renamed in PR 5B) rather than building a parallel abstraction. |
 | Plan drifts again | Medium | Require checked-in decision records for changed measured claims. |
 
 ---
@@ -1111,14 +1108,14 @@ numbers move frequently; prefer symbol search over stale line references.
 ### CLI And Driver
 
 - `crates/tsz-cli/src/driver/core.rs` - `PhaseTimings` and `CompilationResult`.
-- `crates/tsz-cli/src/driver/check.rs` - active project checking path, `ProjectEnv` construction, shared program indices.
+- `crates/tsz-cli/src/driver/check.rs` - active project checking path, `ProgramContext` construction, shared program indices.
 - `crates/tsz-cli/src/driver/check_utils.rs` - project-wide maps and helper paths used by checking.
 - `crates/tsz-cli/src/bin/tsz.rs` - normal CLI parsing; perf JSON output must be build-gated or moved to a perf harness.
 
 ### Program And Checker Context
 
-- `crates/tsz-checker/src/context/mod.rs` - `CheckerContext` and `ProjectEnv`.
-- `crates/tsz-checker/src/context/core.rs` - `ProjectEnv` application helpers, overlay snapshot inheritance, file-index state.
+- `crates/tsz-checker/src/context/mod.rs` - `CheckerContext` and `ProgramContext`.
+- `crates/tsz-checker/src/context/core.rs` - `ProgramContext` application helpers, overlay snapshot inheritance, file-index state.
 - `crates/tsz-checker/src/context/constructors.rs` - checker/context constructors.
 - `crates/tsz-checker/src/state/state.rs` - `CheckerState` construction and parent-cache constructors.
 

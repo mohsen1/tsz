@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz::binder::BinderState;
-use tsz::checker::context::{CheckerOptions, LibContext, ProjectEnv};
+use tsz::checker::context::{CheckerOptions, LibContext, ProgramContext};
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::checker::module_resolution::build_module_resolution_maps;
 use tsz::checker::state::CheckerState;
@@ -199,7 +199,7 @@ impl Server {
             (None, None, None, None, None, None)
         };
 
-        let mut project_env = ProjectEnv {
+        let mut program_context = ProgramContext {
             lib_contexts: std::sync::Arc::new(lib_contexts),
             all_arenas,
             all_binders,
@@ -212,7 +212,7 @@ impl Server {
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
-        project_env.build_global_indices();
+        program_context.build_global_indices();
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -230,13 +230,13 @@ impl Server {
 
             let mut checker = CheckerState::new(
                 &file.arena,
-                &project_env.all_binders[file_idx],
+                &program_context.all_binders[file_idx],
                 &query_cache,
                 file.file_name.clone(),
                 checker_options.clone(),
             );
 
-            project_env.apply_to(&mut checker.ctx);
+            program_context.apply_to(&mut checker.ctx);
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));
@@ -466,7 +466,7 @@ impl Server {
             (None, None, None, None, None, None)
         };
 
-        let mut project_env = ProjectEnv {
+        let mut program_context = ProgramContext {
             lib_contexts: std::sync::Arc::new(lib_contexts),
             all_arenas,
             all_binders,
@@ -479,7 +479,7 @@ impl Server {
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
-        project_env.build_global_indices();
+        program_context.build_global_indices();
 
         // Type check all files
         let query_cache = QueryCache::new(&program.type_interner);
@@ -496,13 +496,13 @@ impl Server {
 
             let mut checker = CheckerState::new(
                 &file.arena,
-                &project_env.all_binders[file_idx],
+                &program_context.all_binders[file_idx],
                 &query_cache,
                 file.file_name.clone(),
                 checker_options.clone(),
             );
 
-            project_env.apply_to(&mut checker.ctx);
+            program_context.apply_to(&mut checker.ctx);
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));

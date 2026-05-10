@@ -102,12 +102,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     pub(crate) fn matches_ambient_module_pattern(&self, module_name: &str) -> bool {
         let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
 
-        // Prefer the project-wide pattern list built once on `ProjectEnv`. The
+        // Prefer the project-wide pattern list built once on `ProgramContext`. The
         // per-binder `declared_modules` / `shorthand_ambient_modules` sets are
         // intentionally empty after the per-binder map empty-out; their
         // contents now live in `global_declared_modules.patterns`. The local
         // sets are still scanned as a fallback for tests/standalone callers
-        // without a `ProjectEnv`.
+        // without a `ProgramContext`.
         if let Some(ref dm) = self.ctx.global_declared_modules {
             if dm.matches_wildcard(module_name) {
                 return true;

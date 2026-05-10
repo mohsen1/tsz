@@ -410,7 +410,7 @@ impl<'a> CheckerContext<'a> {
     /// `DefinitionStore` and the local-cache warm-up.
     ///
     /// **Invariant**: the caller MUST install a populated store before use,
-    /// typically via `ProjectEnv::apply_to` (which assigns
+    /// typically via `ProgramContext::apply_to` (which assigns
     /// `ctx.definition_store` from a project-wide shared store and then
     /// runs `warm_local_caches_from_shared_store`). Using the returned
     /// context without that follow-up yields an empty store and mysterious

@@ -1004,7 +1004,7 @@ pub struct CheckerContext<'a> {
     /// Whether per-run type results should be mirrored into the shared
     /// `DefinitionStore` result caches.
     ///
-    /// Batch project checking enables this through `ProjectEnv`; interactive/LSP
+    /// Batch project checking enables this through `ProgramContext`; interactive/LSP
     /// callers keep it disabled so persistent shared stores do not accumulate
     /// speculative request-local results across editor operations.
     pub share_owner_symbol_type_results: bool,
@@ -1058,7 +1058,7 @@ pub struct CheckerContext<'a> {
     /// the full overlay map on every cross-arena delegation.
     pub cross_file_symbol_targets: RefCell<SymbolFileTargetsOverlay>,
 
-    /// Shared base map: `SymbolId` → owning file index (pre-built from `ProjectEnv`).
+    /// Shared base map: `SymbolId` → owning file index (pre-built from `ProgramContext`).
     ///
     /// Cloned as `Arc` (O(1)) when creating child checkers, avoiding the O(N) clone
     /// of `cross_file_symbol_targets`. Read sites use `resolve_symbol_file_index()`
@@ -1379,13 +1379,13 @@ pub struct LibContext {
 /// Project-wide shared environment for multi-file type checking.
 ///
 /// Captures all the state that is identical across every per-file `CheckerContext`
-/// in a project check run. Drivers (CLI, LSP) build one `ProjectEnv` after merge
-/// and call [`ProjectEnv::apply_to`] on each checker instead of repeating 10+
+/// in a project check run. Drivers (CLI, LSP) build one `ProgramContext` after merge
+/// and call [`ProgramContext::apply_to`] on each checker instead of repeating 10+
 /// setter calls per file.
 ///
 /// This struct is `Clone`-cheap because every field is either `Arc`-wrapped or `Copy`.
 #[derive(Clone)]
-pub struct ProjectEnv {
+pub struct ProgramContext {
     /// Lib file contexts for global type resolution.
     pub lib_contexts: Arc<Vec<LibContext>>,
     /// All AST arenas for cross-file resolution (indexed by `file_idx`).
@@ -1528,7 +1528,7 @@ pub struct ProjectEnv {
     pub cross_file_type_params_cache: Option<CrossFileTypeParamsCache>,
 }
 
-impl Default for ProjectEnv {
+impl Default for ProgramContext {
     fn default() -> Self {
         Self {
             lib_contexts: Arc::new(vec![]),
@@ -1571,7 +1571,7 @@ impl Default for ProjectEnv {
     }
 }
 
-impl ProjectEnv {
+impl ProgramContext {
     /// Apply all project-level shared state to a checker context.
     ///
     /// This replaces the 10+ individual setter calls that drivers previously
