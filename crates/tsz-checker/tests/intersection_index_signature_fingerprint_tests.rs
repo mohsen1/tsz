@@ -99,6 +99,49 @@ q["x"].b;
 }
 
 #[test]
+fn assignment_to_index_signature_preserves_declared_intersection_and_alias_surfaces() {
+    let source = r#"
+type NamedLeft = { left: string };
+type NamedRight = { right: string };
+
+declare let sourceValue: { keep: NamedLeft } & { drift: NamedRight };
+declare let targetValue: { [slot: string]: NamedLeft };
+
+targetValue = sourceValue;
+"#;
+    let messages = diagnostic_messages(source);
+
+    assert!(
+        messages.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    == "Type '{ keep: NamedLeft; } & { drift: NamedRight; }' is not assignable to type '{ [slot: string]: NamedLeft; }'."
+        }),
+        "index-signature assignment should preserve explicit aliases and intersection source display, got {messages:#?}"
+    );
+}
+
+#[test]
+fn assignment_to_primitive_index_signature_preserves_anonymous_intersection_surface() {
+    let source = r#"
+declare let sourceValue: { alpha: string } & { beta: number };
+declare let targetValue: { [slot: string]: string };
+
+targetValue = sourceValue;
+"#;
+    let messages = diagnostic_messages(source);
+
+    assert!(
+        messages.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    == "Type '{ alpha: string; } & { beta: number; }' is not assignable to type '{ [slot: string]: string; }'."
+        }),
+        "index-signature assignment should keep the declared anonymous intersection source display, got {messages:#?}"
+    );
+}
+
+#[test]
 fn direct_alias_property_receiver_display_still_preserves_alias() {
     let source = r#"
 type Alias = { a: string };
