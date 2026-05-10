@@ -91,10 +91,19 @@ impl ParserState {
         let mut for_header_paren_depth = 0u32;
         let mut reported_for_await_expression = false;
         let mut reported_for_body_property = false;
+        let mut pending_const_binding_name_colon = false;
+        let mut pending_const_binding_semicolon_comma = false;
+        let mut pending_for_binding_name_colon = false;
+        let mut pending_for_of_comma = false;
+        let mut pending_for_expression_comma = false;
+        let mut pending_member_tail_comma = false;
+        let mut pending_statement_semicolon_comma = false;
+        let mut last_close_brace_pos = None;
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             if saw_for_keyword {
                 if self.is_token(SyntaxKind::AwaitKeyword) {
+                    self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
                     saw_for_keyword = false;
                     saw_for_await = true;
                     self.next_token();
@@ -129,6 +138,13 @@ impl ParserState {
                         for_header_paren_depth += 1;
                     }
                     SyntaxKind::CloseParenToken => {
+                        if for_header_paren_depth == 1 && pending_for_expression_comma {
+                            self.parse_error_at_current_token(
+                                "',' expected.",
+                                diagnostic_codes::EXPECTED,
+                            );
+                            pending_for_expression_comma = false;
+                        }
                         for_header_paren_depth = for_header_paren_depth.saturating_sub(1);
                     }
                     SyntaxKind::OpenBraceToken
@@ -140,6 +156,40 @@ impl ParserState {
                         );
                         reported_for_body_property = true;
                         pending_for_await_header = false;
+                    }
+                    token
+                        if token == SyntaxKind::ConstKeyword
+                            || (token == SyntaxKind::Identifier
+                                && self.scanner.get_token_value_ref() == "const") =>
+                    {
+                        pending_for_binding_name_colon = true;
+                    }
+                    token
+                        if pending_for_binding_name_colon
+                            && (token == SyntaxKind::Identifier
+                                || token == SyntaxKind::InKeyword
+                                || token == SyntaxKind::OutKeyword) =>
+                    {
+                        self.parse_error_at_current_token(
+                            "':' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        pending_for_binding_name_colon = false;
+                        pending_for_of_comma = true;
+                    }
+                    SyntaxKind::OfKeyword if pending_for_of_comma => {
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        pending_for_of_comma = false;
+                        pending_for_expression_comma = true;
+                    }
+                    SyntaxKind::Identifier if pending_for_expression_comma => {
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
                     }
                     _ => {}
                 }
@@ -156,11 +206,56 @@ impl ParserState {
                 SyntaxKind::ForKeyword => {
                     saw_for_keyword = true;
                 }
+                token
+                    if !pending_for_await_header
+                        && (token == SyntaxKind::ConstKeyword
+                            || (token == SyntaxKind::Identifier
+                                && self.scanner.get_token_value_ref() == "const")) =>
+                {
+                    pending_const_binding_name_colon = true;
+                }
+                token
+                    if pending_const_binding_name_colon
+                        && (token == SyntaxKind::Identifier
+                            || token == SyntaxKind::InKeyword
+                            || token == SyntaxKind::OutKeyword) =>
+                {
+                    self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+                    pending_const_binding_name_colon = false;
+                    pending_const_binding_semicolon_comma = true;
+                }
+                SyntaxKind::SemicolonToken if pending_const_binding_semicolon_comma => {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    pending_const_binding_semicolon_comma = false;
+                }
+                SyntaxKind::DotToken => {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    pending_member_tail_comma = true;
+                }
+                SyntaxKind::OpenParenToken if pending_member_tail_comma => {
+                    pending_statement_semicolon_comma = true;
+                    pending_member_tail_comma = false;
+                }
+                SyntaxKind::SemicolonToken if pending_statement_semicolon_comma => {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    pending_statement_semicolon_comma = false;
+                }
+                SyntaxKind::CloseBraceToken => {
+                    last_close_brace_pos = Some(self.token_pos());
+                }
                 _ => {}
             }
 
             self.next_token();
         }
+
+        let expression_recovery_pos = last_close_brace_pos.unwrap_or_else(|| self.token_pos());
+        self.parse_error_at(
+            expression_recovery_pos,
+            0,
+            diagnostic_messages::EXPRESSION_EXPECTED,
+            diagnostic_codes::EXPRESSION_EXPECTED,
+        );
 
         self.scanner.restore_state(snapshot);
         self.current_token = saved_token;
