@@ -28,9 +28,9 @@ thread_local! {
 /// >     InterfaceMemberSimpleType,
 /// > }
 ///
-/// The discriminant values are the historical `u8` numbers that already
-/// exist in serialized `DefinitionStore` cache keys, so the enum is
-/// `#[repr(u8)]`-compatible at the storage layer via `as u8`.
+/// The discriminant values are the historical `u8` numbers already stored in
+/// `DefinitionStore` cache keys, so the enum remains `#[repr(u8)]`-compatible
+/// with the cache key layout via `as u8`.
 ///
 /// Adding a new bucket: add the variant, give it a fresh `u8` discriminant,
 /// and ensure it doesn't collide with existing ones (the storage layer keys
