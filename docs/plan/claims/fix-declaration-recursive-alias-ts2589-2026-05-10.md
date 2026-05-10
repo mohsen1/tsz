@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/declaration-recursive-alias-ts2589-2026-05-10`
-- **PR**: TBD
+- **PR**: #4977
 - **Status**: in progress
 - **Workstream**: diagnostic-conformance
 
