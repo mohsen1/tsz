@@ -173,66 +173,66 @@ impl<'a> CheckerState<'a> {
                 break;
             };
             if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
-                && self.is_descendant_type_node(arg_idx, cond.true_type) {
-                    // Case 1: The type arg IS the check type (e.g., `T extends U ? X<T> : never`).
-                    // Collect the extends type for intersection-based constraint checking.
-                    if self.type_nodes_structurally_equal(arg_idx, cond.check_type) {
-                        let extends_type = self.get_type_from_type_node(cond.extends_type);
-                        if extends_type != TypeId::ERROR {
-                            // Check if this single extends type satisfies the constraint.
-                            // For callable-like constraints, prefer conservative structural/
-                            // constraint-shape checks that avoid expensive shape expansion.
-                            let db = self.ctx.types.as_type_database();
-                            let constraint_is_callable = query::is_callable_type(db, constraint)
-                                || self.is_function_constraint(constraint);
-                            let extends_resolved = self.resolve_lazy_type(extends_type);
-                            let extends_evaluated =
-                                self.evaluate_type_for_assignability(extends_resolved);
-                            if constraint_is_callable {
-                                let extends_is_callable = query::is_callable_type(db, extends_type)
-                                    || query::is_callable_type(db, extends_resolved)
-                                    || query::is_callable_type(db, extends_evaluated)
-                                    || self.is_function_constraint(extends_type)
-                                    || self.is_function_constraint(extends_resolved)
-                                    || self.type_parameter_has_callable_constraint(extends_type)
-                                    || self
-                                        .type_parameter_has_callable_constraint(extends_resolved);
-                                if extends_is_callable {
-                                    return true;
-                                }
-                            }
-                            if extends_type == constraint
-                                || (self.is_assignable_to(extends_type, constraint)
-                                    && self.is_assignable_to(constraint, extends_type))
-                                || self.is_assignable_to(extends_resolved, constraint)
-                                || self.is_assignable_to(extends_evaluated, constraint)
-                            {
+                && self.is_descendant_type_node(arg_idx, cond.true_type)
+            {
+                // Case 1: The type arg IS the check type (e.g., `T extends U ? X<T> : never`).
+                // Collect the extends type for intersection-based constraint checking.
+                if self.type_nodes_structurally_equal(arg_idx, cond.check_type) {
+                    let extends_type = self.get_type_from_type_node(cond.extends_type);
+                    if extends_type != TypeId::ERROR {
+                        // Check if this single extends type satisfies the constraint.
+                        // For callable-like constraints, prefer conservative structural/
+                        // constraint-shape checks that avoid expensive shape expansion.
+                        let db = self.ctx.types.as_type_database();
+                        let constraint_is_callable = query::is_callable_type(db, constraint)
+                            || self.is_function_constraint(constraint);
+                        let extends_resolved = self.resolve_lazy_type(extends_type);
+                        let extends_evaluated =
+                            self.evaluate_type_for_assignability(extends_resolved);
+                        if constraint_is_callable {
+                            let extends_is_callable = query::is_callable_type(db, extends_type)
+                                || query::is_callable_type(db, extends_resolved)
+                                || query::is_callable_type(db, extends_evaluated)
+                                || self.is_function_constraint(extends_type)
+                                || self.is_function_constraint(extends_resolved)
+                                || self.type_parameter_has_callable_constraint(extends_type)
+                                || self.type_parameter_has_callable_constraint(extends_resolved);
+                            if extends_is_callable {
                                 return true;
                             }
-                            accumulated_extends.push(extends_type);
                         }
-                    }
-
-                    // Case 2: The type arg is derived from (but not identical to) the
-                    // check type (e.g., `T extends O ? X<ReturnType<T['m']>> : never`).
-                    // Only suppress when the arg is DERIVED from the check type — if the
-                    // arg IS the check type, Case 1 already handled it and correctly
-                    // didn't suppress when extends doesn't satisfy the constraint.
-                    if !self.type_nodes_structurally_equal(arg_idx, cond.check_type)
-                        && self.type_node_contains_reference(arg_idx, cond.check_type)
-                    {
-                        return true;
-                    }
-
-                    // Case 3: The check type wraps the type argument (e.g.,
-                    // `[T] extends [{ a: string }] ? ... : ...`). Only trigger when
-                    // the check type WRAPS the arg (not when they're identical).
-                    if !self.type_nodes_structurally_equal(cond.check_type, arg_idx)
-                        && self.type_node_contains_reference(cond.check_type, arg_idx)
-                    {
-                        return true;
+                        if extends_type == constraint
+                            || (self.is_assignable_to(extends_type, constraint)
+                                && self.is_assignable_to(constraint, extends_type))
+                            || self.is_assignable_to(extends_resolved, constraint)
+                            || self.is_assignable_to(extends_evaluated, constraint)
+                        {
+                            return true;
+                        }
+                        accumulated_extends.push(extends_type);
                     }
                 }
+
+                // Case 2: The type arg is derived from (but not identical to) the
+                // check type (e.g., `T extends O ? X<ReturnType<T['m']>> : never`).
+                // Only suppress when the arg is DERIVED from the check type — if the
+                // arg IS the check type, Case 1 already handled it and correctly
+                // didn't suppress when extends doesn't satisfy the constraint.
+                if !self.type_nodes_structurally_equal(arg_idx, cond.check_type)
+                    && self.type_node_contains_reference(arg_idx, cond.check_type)
+                {
+                    return true;
+                }
+
+                // Case 3: The check type wraps the type argument (e.g.,
+                // `[T] extends [{ a: string }] ? ... : ...`). Only trigger when
+                // the check type WRAPS the arg (not when they're identical).
+                if !self.type_nodes_structurally_equal(cond.check_type, arg_idx)
+                    && self.type_node_contains_reference(cond.check_type, arg_idx)
+                {
+                    return true;
+                }
+            }
             current = self
                 .ctx
                 .arena
