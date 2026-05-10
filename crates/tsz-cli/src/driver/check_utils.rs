@@ -2122,7 +2122,7 @@ const fn is_directive_leading_trivia_byte(b: u8) -> bool {
 }
 
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
-fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
+fn find_directive_in_text(comment: &str) -> Option<DirectiveKind> {
     let bytes = comment.as_bytes();
     let mut pos = if comment.starts_with("//") || comment.starts_with("/*") {
         2
@@ -2143,7 +2143,7 @@ fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
         }
         let after = pos + text.len();
         if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
-            return Some((kind, pos));
+            return Some(kind);
         }
     }
     None
@@ -2168,7 +2168,7 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
 
     for comment in tsz_common::comments::get_comment_ranges(text) {
         let comment_text = comment.get_text(text);
-        let Some((kind, _rel_offset)) = find_directive_in_text(comment_text) else {
+        let Some(kind) = find_directive_in_text(comment_text) else {
             continue;
         };
 
