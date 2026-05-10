@@ -2069,7 +2069,7 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                     if class_chain_summary.is_none()
-                        && self.property_access_is_current_class_construction_recovery(
+                        && self.property_access_is_current_class_member_initializer_receiver(
                             access.expression,
                             object_type_for_access,
                         )

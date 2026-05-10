@@ -12,6 +12,25 @@ impl<'a> CheckerState<'a> {
         expression: NodeIndex,
         receiver_type: TypeId,
     ) -> bool {
+        if !self
+            .property_access_is_current_class_member_initializer_receiver(expression, receiver_type)
+        {
+            return false;
+        }
+        let Some(class_idx) = self.nearest_enclosing_class(expression) else {
+            return false;
+        };
+        let Some(class_sym) = self.ctx.binder.get_node_symbol(class_idx) else {
+            return false;
+        };
+        self.ctx.class_instance_resolution_set.contains(&class_sym)
+    }
+
+    pub(crate) fn property_access_is_current_class_member_initializer_receiver(
+        &self,
+        expression: NodeIndex,
+        receiver_type: TypeId,
+    ) -> bool {
         let Some(class_idx) = self.nearest_enclosing_class(expression) else {
             return false;
         };
@@ -45,7 +64,9 @@ impl<'a> CheckerState<'a> {
         summary: Option<&ClassChainSummary>,
         property_name: &str,
     ) -> Option<TypeId> {
-        if !self.property_access_is_current_class_construction_recovery(expression, receiver_type) {
+        if !self
+            .property_access_is_current_class_member_initializer_receiver(expression, receiver_type)
+        {
             return None;
         }
         let (_, is_static_access) = resolved_class_access?;

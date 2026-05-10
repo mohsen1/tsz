@@ -973,6 +973,41 @@ var fn2 = B.Point;
             "TS2403 message should not expand the merged callable namespace object, got: {msg}"
         );
     }
+
+    #[test]
+    fn enum_var_redecl_drops_duplicate_index_signature_intersection_in_message() {
+        let source = r#"
+enum E {
+    a
+}
+enum E {
+    b = 1
+}
+var y = E;
+var y: { readonly a: E; readonly b: E; readonly [x: number]: string; readonly [x: number]: string };
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected exactly 1 TS2403 for enum/object redecl: {ts2403:?}\nAll diags: {all_diags:?}"
+        );
+        let msg = &ts2403[0].message_text;
+        assert!(
+            msg.contains(
+                "here has type '{ readonly [x: number]: string; readonly a: E; readonly b: E; }'"
+            ),
+            "TS2403 should collapse duplicate index-signature intersection in current type display, got: {msg}"
+        );
+        assert!(
+            !msg.contains(" & "),
+            "TS2403 current type display should not keep redundant index-only intersection member, got: {msg}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1074,6 +1109,32 @@ type CreateTypeOptions<
             ts2322.len(),
             0,
             "Expected no TS2322 for a mapped keyof constraint after evaluation: {ts2322:?}"
+        );
+    }
+
+    #[test]
+    fn mapped_type_concrete_object_constraint_reports_ts2322() {
+        let source = r#"
+interface DateLike {
+    value: number;
+}
+type T = { [P in DateLike]: number };
+"#;
+
+        let ts2322 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2322.len(),
+            1,
+            "Expected one TS2322 for concrete object mapped key constraint: {ts2322:?}"
+        );
+        assert!(
+            ts2322[0]
+                .message_text
+                .contains("Type 'DateLike' is not assignable to type 'string | number | symbol'."),
+            "TS2322 message mismatch: {ts2322:?}"
         );
     }
 

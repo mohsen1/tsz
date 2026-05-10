@@ -474,6 +474,7 @@ impl<'a> TypeFormatter<'a> {
 
     pub(super) fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {
         let mut parts = Vec::new();
+        let use_array_to_locale_display = self.should_expand_array_to_locale_string_display(shape);
 
         if let Some(ref idx) = shape.string_index {
             let key_name = idx
@@ -504,10 +505,37 @@ impl<'a> TypeFormatter<'a> {
             display_props.sort_by_key(|p| p.declaration_order);
         }
         for prop in display_props {
-            parts.push(self.format_property(prop));
+            if use_array_to_locale_display && self.atom(prop.name).as_ref() == "toLocaleString" {
+                parts.push(
+                    "toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"
+                        .to_string(),
+                );
+            } else {
+                parts.push(self.format_property(prop));
+            }
         }
 
         self.format_object_parts(parts)
+    }
+
+    fn should_expand_array_to_locale_string_display(&mut self, shape: &ObjectShape) -> bool {
+        shape.number_index.is_some()
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "toString")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "toLocaleString")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "includes")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "[Symbol.unscopables]")
     }
 
     fn format_index_signature_value(&mut self, value_type: TypeId) -> String {
@@ -1405,7 +1433,75 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|&m| self.format_intersection_member(m))
             .collect();
+        let formatted = Self::remove_redundant_index_signature_intersection_displays(formatted);
         formatted.join(" & ")
+    }
+
+    fn remove_redundant_index_signature_intersection_displays(
+        formatted: Vec<String>,
+    ) -> Vec<String> {
+        if formatted.len() <= 1 {
+            return formatted;
+        }
+
+        let sole_index_members: Vec<Option<String>> = formatted
+            .iter()
+            .map(|display| Self::sole_index_signature_object_member(display).map(str::to_string))
+            .collect();
+
+        let keep: Vec<bool> = formatted
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                !sole_index_members[idx].as_deref().is_some_and(|index_sig| {
+                    formatted
+                        .iter()
+                        .enumerate()
+                        .any(|(other_idx, other_display)| {
+                            other_idx != idx
+                                && sole_index_members[other_idx].as_deref() != Some(index_sig)
+                                && Self::object_display_contains_member(other_display, index_sig)
+                        })
+                })
+            })
+            .collect();
+
+        formatted
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(display, keep)| keep.then_some(display))
+            .collect()
+    }
+
+    fn sole_index_signature_object_member(display: &str) -> Option<&str> {
+        let inner = Self::object_display_inner(display)?;
+        let mut members = inner
+            .split(';')
+            .map(str::trim)
+            .filter(|member| !member.is_empty());
+        let member = members.next()?;
+        if members.next().is_some() {
+            return None;
+        }
+        Self::is_index_signature_display(member).then_some(member)
+    }
+
+    fn object_display_contains_member(display: &str, expected: &str) -> bool {
+        Self::object_display_inner(display)
+            .into_iter()
+            .flat_map(|inner| inner.split(';'))
+            .map(str::trim)
+            .any(|member| member == expected)
+    }
+
+    fn object_display_inner(display: &str) -> Option<&str> {
+        display
+            .strip_prefix("{ ")
+            .and_then(|inner| inner.strip_suffix(" }"))
+    }
+
+    fn is_index_signature_display(member: &str) -> bool {
+        member.contains('[') && member.contains("]:")
     }
 
     fn format_non_nullable_type_parameter_intersection(

@@ -1014,7 +1014,9 @@ impl<'a> CheckerState<'a> {
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
 
         source_str = self.apply_ts2739_nonliteral(source, source_str);
-        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+        if target_str.trim() != "{}"
+            && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
+        {
             target_str = self.format_type_diagnostic(unfolded);
         }
 
@@ -1341,7 +1343,9 @@ impl<'a> CheckerState<'a> {
         if !source_from_annotation {
             source_str = self.apply_ts2739_nonliteral(source, source_str);
         }
-        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+        if target_str.trim() != "{}"
+            && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
+        {
             target_str = self.format_type_diagnostic(unfolded);
         }
         if let Some(display) = self.static_schema_array_structural_display(source, target) {
@@ -1856,7 +1860,9 @@ impl<'a> CheckerState<'a> {
             if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
                 src_str = self.format_type_diagnostic(unfolded);
             }
-            if let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str) {
+            if tgt_str.trim() != "{}"
+                && let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str)
+            {
                 tgt_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(display) = self.declared_generic_alias_source_display_for_target_display(

@@ -638,6 +638,12 @@ impl<'a> CheckerState<'a> {
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
         if display_target == target
+            && let Some(display) = self.direct_assignment_target_annotation_text(anchor_idx)
+            && display.trim() == "{}"
+        {
+            return self.format_annotation_like_type(&display);
+        }
+        if display_target == target
             && let Some(display) =
                 self.declared_intersection_annotation_display_for_expression(target_expr)
         {
@@ -687,6 +693,9 @@ impl<'a> CheckerState<'a> {
         if display_target == target
             && let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
         {
+            if display.trim() == "{}" {
+                return self.format_annotation_like_type(&display);
+            }
             if let Some(intersection_display) =
                 self.declared_intersection_annotation_display_for_expression(target_expr)
             {
@@ -907,6 +916,107 @@ impl<'a> CheckerState<'a> {
                 fallback
             }
         }
+    }
+
+    fn direct_assignment_target_annotation_text(&self, anchor_idx: NodeIndex) -> Option<String> {
+        let mut current = anchor_idx;
+        let mut guard = 0;
+        let source_is_return = self.assignment_source_is_return_expression(anchor_idx);
+
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+                && var_decl.type_annotation.is_some()
+            {
+                return self.node_text(var_decl.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                });
+            }
+            if let Some(param) = self.ctx.arena.get_parameter(node)
+                && param.type_annotation.is_some()
+            {
+                return self.node_text(param.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                });
+            }
+            if source_is_return
+                && let Some(function) = self.ctx.arena.get_function(node)
+                && function.type_annotation.is_some()
+            {
+                return self.node_text(function.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                });
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        self.source_assignment_target_annotation_text(anchor_idx)
+    }
+
+    fn source_assignment_target_annotation_text(&self, anchor_idx: NodeIndex) -> Option<String> {
+        let (start, end) = self.get_node_span(anchor_idx)?;
+        let source = self.ctx.arena.source_files.first()?.text.as_ref();
+        let start = start as usize;
+        let end = end as usize;
+        if start >= end || end > source.len() {
+            return None;
+        }
+        let line_end = source[end..]
+            .find('\n')
+            .map_or(source.len(), |offset| end + offset);
+        if let Some(text) = self.annotation_text_from_colon_fragment(&source[end..line_end]) {
+            return Some(text);
+        }
+
+        let anchor_text = source[start..end].trim_start();
+        if !anchor_text.starts_with("return") {
+            return None;
+        }
+        let body_start = source[..start].rfind('{')?;
+        let close_paren = source[..body_start].rfind(')')?;
+        self.annotation_text_from_colon_fragment(&source[close_paren + 1..body_start])
+    }
+
+    fn annotation_text_from_colon_fragment(&self, fragment: &str) -> Option<String> {
+        let colon = fragment.find(':')?;
+        if !fragment[..colon].trim().is_empty() {
+            return None;
+        }
+        let type_fragment = &fragment[colon + 1..];
+        let type_start = type_fragment
+            .char_indices()
+            .find_map(|(idx, ch)| (!ch.is_whitespace()).then_some(idx))?;
+        let mut depth = 0u32;
+        let mut end = type_fragment.len();
+        for (idx, ch) in type_fragment[type_start..].char_indices() {
+            let absolute_idx = type_start + idx;
+            if depth == 0 && absolute_idx > type_start && matches!(ch, '=' | ';' | ',' | ')' | '{')
+            {
+                end = absolute_idx;
+                break;
+            }
+            match ch {
+                '<' | '(' | '[' | '{' => depth = depth.saturating_add(1),
+                '>' | ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        let text = type_fragment[type_start..end].trim().to_string();
+        self.sanitize_type_annotation_text_for_diagnostic(text, true)
     }
 
     fn tuple_target_has_application_display_alias(&self, target: TypeId) -> bool {

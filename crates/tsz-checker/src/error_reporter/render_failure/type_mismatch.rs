@@ -366,7 +366,9 @@ impl<'a> CheckerState<'a> {
             {
                 source_str = self.format_type_diagnostic(unfolded);
             }
-            if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+            if target_str.trim() != "{}"
+                && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
+            {
                 target_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
