@@ -1,5 +1,6 @@
 //! Excess property diagnostic display helpers.
 
+use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
 use tsz_common::Atom;
 use tsz_solver::TypeId;
@@ -37,6 +38,141 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             },
+        )
+    }
+
+    /// TS2353 displays only object-like union members (stripping primitives,
+    /// undefined, null, void, never, etc.) so the displayed type matches tsc.
+    /// For example, `IProps | number` becomes `IProps`, and
+    /// `{ testBool?: boolean | undefined; } | undefined` becomes `{ testBool?: boolean | undefined; }`.
+    pub(in crate::error_reporter) fn strip_non_object_union_members_for_excess_display(
+        &self,
+        ty: TypeId,
+    ) -> TypeId {
+        // Evaluate for structural analysis but preserve original members for display.
+        // NoInfer<T> wrappers and type aliases are stripped by evaluation, but the
+        // display should preserve them (tsc shows `NoInfer<{x: string}>` not `{x: string}`).
+        let evaluated = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
+        let original_members = query::union_members(self.ctx.types, ty);
+        if let Some(members) = query::union_members(self.ctx.types, evaluated) {
+            let object_like: Vec<_> = members
+                .iter()
+                .enumerate()
+                .filter(|(_, member)| {
+                    let evaluated =
+                        crate::query_boundaries::common::evaluate_type(self.ctx.types, **member);
+                    !crate::query_boundaries::common::is_primitive_type(self.ctx.types, evaluated)
+                        && !self.is_generic_excess_union_member(**member, evaluated)
+                })
+                .map(|(i, member)| {
+                    // Use original (pre-evaluation) member if available for display
+                    original_members
+                        .as_ref()
+                        .and_then(|orig| orig.get(i).copied())
+                        .unwrap_or(*member)
+                })
+                .collect();
+            // Only strip if we actually removed something and have at least one member left
+            if !object_like.is_empty() && object_like.len() < members.len() {
+                if object_like.len() == 1 {
+                    return object_like[0];
+                }
+                return tsz_solver::utils::union_or_single(self.ctx.types, object_like);
+            }
+        }
+        ty
+    }
+
+    fn union_member_rank_for_excess_display(&self, member: TypeId) -> u8 {
+        let mut effective = member;
+        while let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, effective)
+        {
+            effective = inner;
+        }
+        let evaluated = crate::query_boundaries::common::evaluate_type(self.ctx.types, effective);
+        if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, evaluated)
+            .is_some()
+            || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, evaluated)
+                .is_some()
+            || crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
+        {
+            return 1;
+        }
+
+        let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        let display = formatter.format(member);
+        if !display.trim_start().starts_with('{') && display.contains("=>") {
+            return 1;
+        }
+
+        0
+    }
+
+    fn plain_alias_display_for_excess_union(&mut self, ty: TypeId) -> bool {
+        let display = self.format_type_diagnostic_widened(ty);
+        let mut chars = display.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    }
+
+    pub(in crate::error_reporter::core) fn format_object_before_callable_union_for_excess_display(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<String> {
+        let top_level_noinfer_union_members =
+            crate::query_boundaries::common::get_noinfer_inner(self.ctx.types, ty)
+                .and_then(|inner| query::union_members(self.ctx.types, inner));
+        let members = query::union_members(self.ctx.types, ty)
+            .or_else(|| top_level_noinfer_union_members.clone())?;
+        if members.len() < 2 {
+            return None;
+        }
+
+        let has_noinfer_surface = top_level_noinfer_union_members.is_some()
+            || members.iter().any(|member| {
+                crate::query_boundaries::common::get_noinfer_inner(self.ctx.types, *member)
+                    .is_some()
+            });
+        if !has_noinfer_surface {
+            // If the union still has a user-facing alias name, tsc reports that
+            // alias for TS2353 instead of expanding the object/function arms.
+            if self.plain_alias_display_for_excess_union(ty) {
+                return None;
+            }
+        }
+
+        let mut has_callable = false;
+        let mut has_non_callable = false;
+        let mut ranked = Vec::with_capacity(members.len());
+        for (index, member) in members.iter().copied().enumerate() {
+            let rank = self.union_member_rank_for_excess_display(member);
+            has_callable |= rank == 1;
+            has_non_callable |= rank == 0;
+            ranked.push((rank, index, member));
+        }
+        if !has_callable || !has_non_callable {
+            return None;
+        }
+
+        ranked.sort_by_key(|(rank, index, _)| (*rank, *index));
+        let ordered = ranked
+            .into_iter()
+            .map(|(_, _, member)| member)
+            .collect::<Vec<_>>();
+
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_expand_scalar_mapped_alias_applications()
+            .with_preserve_optional_parameter_surface_syntax(true);
+        Some(
+            formatter
+                .format_union_members_in_order(&ordered)
+                .into_owned(),
         )
     }
 

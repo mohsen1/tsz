@@ -17,6 +17,43 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+#[test]
+fn noinfer_union_excess_property_display_orders_object_before_function() {
+    let source = r#"
+declare function test1<T extends { x: string }>(
+  a: T,
+  b: NoInfer<T> | (() => NoInfer<T>),
+): void;
+test1({ x: "foo" }, { x: "bar", y: 42 });
+
+declare function test3<T extends { x: string }>(
+  a: T,
+  b: NoInfer<T | (() => T)>,
+): void;
+test3({ x: "foo" }, { x: "bar", y: 42 });
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected two TS2353 diagnostics, got: {diags:?}",
+    );
+    assert!(
+        ts2353
+            .iter()
+            .any(|(_, msg)| msg
+                .contains("'NoInfer<{ x: string; }> | (() => NoInfer<{ x: string; }>)'")),
+        "Expected NoInfer object branch before function branch, got: {ts2353:?}",
+    );
+    assert!(
+        ts2353
+            .iter()
+            .any(|(_, msg)| msg.contains("'{ x: string; } | (() => { x: string; })'")),
+        "Expected outer NoInfer union display to put object branch first, got: {ts2353:?}",
+    );
+}
+
 // --- Discriminated union excess property checking ---
 
 #[test]
