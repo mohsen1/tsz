@@ -1,0 +1,947 @@
+# CheckerContext field-lifetime manifest.
+#
+# Source of truth for `scripts/arch/checker_field_inventory.py`. Every field
+# in `pub struct CheckerContext<'a>` MUST appear here with one of the lifetime
+# classes documented in `docs/plan/PERFORMANCE_PLAN.md` §6:
+#
+#   ProgramStable     — immutable for one compilation/program version
+#   WorkerReusable    — owned by one worker, reusable across file sessions
+#   FileLocalReset    — initialized for one file, reset/dropped between files
+#   SpeculationScoped — must roll back when speculation aborts
+#   DiagnosticsOnly   — affects reporting/suppression, not type answers
+#   LspPersistent     — survives requests, invalidated by document/version
+#
+# `Unknown` is intentionally unused: the inventory script fails CI on it.
+#
+# Classification policy for this initial pass (T2.1.A.1):
+#
+# 1. Borrowed `&'a` references and `Arc<...>`-wrapped shared structures
+#    consumed by ProjectEnv are `ProgramStable`.
+# 2. Caches keyed by `NodeIndex` or `(u32, ...)` source positions are
+#    `FileLocalReset` because raw indices collide across files (per
+#    PERFORMANCE_PLAN.md §6 "Detailed Reset Hazards").
+# 3. Diagnostic accumulators (`Vec<Diagnostic>`, position dedupe sets, error
+#    tracking) are `DiagnosticsOnly` so the FileSession reset boundary owns
+#    drainage.
+# 4. Resolution stacks/sets that exist only to detect cycles within one file
+#    check are `FileLocalReset`; the plan's §6 hazard table calls this out.
+# 5. Depth counters (`Cell<u32>`, `RefCell<DepthCounter>`) are
+#    `SpeculationScoped` because speculative overload/generic typing must
+#    roll them back, otherwise TS2589-like behaviour can suppress real work.
+# 6. Caches keyed by `SymbolId` could be safe across files (per §6: "symbol
+#    type caches keyed by SymbolId are safe assuming stable symbol identity")
+#    but we keep them `FileLocalReset` in this initial pass; promotion to
+#    `ProgramStable` requires the audit listed in QueryCache Lifetime Audit.
+#
+# When a future PR reclassifies a field, update both the `lifetime` and the
+# `reason` so the audit trail stays in the manifest. Don't reclassify without
+# a clear justification — getting this wrong encodes correctness bugs into
+# the architecture spec.
+
+[arena]
+lifetime = "ProgramStable"
+reason = "borrowed reference to the program-wide AST node arena"
+
+[binder]
+lifetime = "ProgramStable"
+reason = "borrowed reference to the program-wide binder state"
+
+[types]
+lifetime = "ProgramStable"
+reason = "borrowed reference to the shared QueryDatabase / type interner"
+
+[file_name]
+lifetime = "FileLocalReset"
+reason = "name of the file currently being checked"
+
+[compiler_options]
+lifetime = "ProgramStable"
+reason = "compiler options snapshot for the compilation"
+
+[capabilities]
+lifetime = "ProgramStable"
+reason = "precomputed environment capabilities matrix per compilation"
+
+[no_implicit_override]
+lifetime = "ProgramStable"
+reason = "derived flag from compiler options, fixed for the compilation"
+
+[report_unresolved_imports]
+lifetime = "ProgramStable"
+reason = "driver-supplied flag indicating who owns module resolution"
+
+[allow_source_file_test_pragmas]
+lifetime = "ProgramStable"
+reason = "conformance-test pragma toggle, fixed at startup"
+
+[file_is_esm]
+lifetime = "FileLocalReset"
+reason = "ESM determination for the current file"
+
+[file_is_esm_map]
+lifetime = "ProgramStable"
+reason = "Arc-shared per-file ESM/CJS map covering the whole project"
+
+[checking_computed_property_name]
+lifetime = "FileLocalReset"
+reason = "tracks the current computed-property NodeIndex during a single check"
+
+[name_resolution_diagnostics]
+lifetime = "DiagnosticsOnly"
+reason = "name-resolution diagnostic counters and dedupe state"
+
+[types_extending_array]
+lifetime = "FileLocalReset"
+reason = "TS2559 weak-type suppression set for the current file"
+
+[symbol_types]
+lifetime = "FileLocalReset"
+reason = "symbol-type cache keyed by SymbolId; promotable after QueryCache audit"
+
+[symbol_instance_types]
+lifetime = "FileLocalReset"
+reason = "symbol-instance-type cache; same provenance as symbol_types"
+
+[enum_namespace_types]
+lifetime = "FileLocalReset"
+reason = "enum-namespace type cache keyed by SymbolId; conservative until audit"
+
+[var_decl_types]
+lifetime = "FileLocalReset"
+reason = "variable-declaration type cache; conservative until audit"
+
+[lib_type_resolution_cache]
+lifetime = "FileLocalReset"
+reason = "per-file fallback cache keyed by string; shared map lives in shared_lib_type_cache"
+
+[lib_delegation_cache]
+lifetime = "FileLocalReset"
+reason = "per-file lib-symbol delegation cache; conservative until audit"
+
+[namespace_member_resolution_cache]
+lifetime = "FileLocalReset"
+reason = "namespace-member resolution memo for the current file"
+
+[export_equals_named_cache]
+lifetime = "FileLocalReset"
+reason = "export-equals named-export cache for the current file"
+
+[nested_namespace_candidates_cache]
+lifetime = "FileLocalReset"
+reason = "nested namespace candidate cache; rebuilt per check"
+
+[symbol_name_candidates_cache]
+lifetime = "FileLocalReset"
+reason = "string-keyed candidate map; conservative until audit"
+
+[nested_namespace_candidates_cache_complete]
+lifetime = "FileLocalReset"
+reason = "completion flag paired with nested_namespace_candidates_cache"
+
+[lowering_entity_name_resolution_cache]
+lifetime = "FileLocalReset"
+reason = "entity-name lowering memo for the current file"
+
+[namespace_exports_cache]
+lifetime = "FileLocalReset"
+reason = "namespace exports memo for the current file"
+
+[shared_lib_type_cache]
+lifetime = "ProgramStable"
+reason = "Arc<DashMap> shared across the project for lib type lookups"
+
+[cross_file_type_params_cache]
+lifetime = "ProgramStable"
+reason = "shared cross-file type-params cache with DashMap layer"
+
+[skip_lib_type_resolution]
+lifetime = "FileLocalReset"
+reason = "per-check guard for lib type resolution"
+
+[lib_heritage_in_progress]
+lifetime = "FileLocalReset"
+reason = "lib-heritage cycle guard set; reset between files"
+
+[node_types]
+lifetime = "FileLocalReset"
+reason = "per-file node-type cache keyed by NodeIndex (collides across files)"
+
+[request_node_types]
+lifetime = "FileLocalReset"
+reason = "(u32, RequestCacheKey) keyed cache; raw u32 collides across files (§6)"
+
+[object_literal_tracking]
+lifetime = "FileLocalReset"
+reason = "object-literal contextual tracking for the current file"
+
+[request_cache_counters]
+lifetime = "FileLocalReset"
+reason = "per-check counter snapshot, reset between files"
+
+[type_environment]
+lifetime = "FileLocalReset"
+reason = "per-checker type environment (RefCell)"
+
+[application_eval_set]
+lifetime = "FileLocalReset"
+reason = "type-application evaluation guard; cleared between checks"
+
+[mapped_eval_set]
+lifetime = "FileLocalReset"
+reason = "mapped-type evaluation guard; cleared between checks"
+
+[type_resolution_visiting]
+lifetime = "FileLocalReset"
+reason = "type-resolution cycle guard; reset between files"
+
+[pruning_union_members]
+lifetime = "FileLocalReset"
+reason = "transient flag for union-member pruning"
+
+[jsdoc_typedef_resolving]
+lifetime = "FileLocalReset"
+reason = "JSDoc typedef cycle guard for the current file"
+
+[flow_analysis_cache]
+lifetime = "FileLocalReset"
+reason = "flow analysis memo keyed by FlowNodeId (per-file, see §6)"
+
+[flow_worklist]
+lifetime = "FileLocalReset"
+reason = "flow worklist for the current file"
+
+[flow_in_worklist]
+lifetime = "FileLocalReset"
+reason = "flow worklist membership set for the current file"
+
+[flow_visited]
+lifetime = "FileLocalReset"
+reason = "flow visited set for the current file"
+
+[flow_results]
+lifetime = "FileLocalReset"
+reason = "flow analysis result cache for the current file"
+
+[narrowing_cache]
+lifetime = "FileLocalReset"
+reason = "type-narrowing cache; per-file FlowNode keys"
+
+[narrowable_identifier_cache]
+lifetime = "FileLocalReset"
+reason = "narrowable identifier cache; per-file"
+
+[flow_switch_reference_cache]
+lifetime = "FileLocalReset"
+reason = "(u32, u32) keyed; per-file source positions"
+
+[flow_numeric_atom_cache]
+lifetime = "FileLocalReset"
+reason = "transient atom cache during flow analysis"
+
+[flow_reference_match_cache]
+lifetime = "FileLocalReset"
+reason = "(u32, u32) keyed reference-match cache; per-file positions"
+
+[symbol_last_assignment_pos]
+lifetime = "FileLocalReset"
+reason = "symbol last-assignment position; u32 collides across files"
+
+[symbol_flow_confirmed]
+lifetime = "FileLocalReset"
+reason = "(SymbolId, TypeId) -> FlowNodeId; FlowNodeId is per-file"
+
+[call_type_predicates]
+lifetime = "FileLocalReset"
+reason = "call-predicate map for the current file"
+
+[daa_error_nodes]
+lifetime = "FileLocalReset"
+reason = "definite-assignment-analysis error nodes (NodeIndex)"
+
+[deferred_ts2454_errors]
+lifetime = "DiagnosticsOnly"
+reason = "deferred TS2454 diagnostic accumulator"
+
+[flow_narrowed_nodes]
+lifetime = "FileLocalReset"
+reason = "set of narrowed NodeIndex positions for the current file"
+
+[refs_resolved]
+lifetime = "FileLocalReset"
+reason = "per-file reference-resolution memo"
+
+[application_symbols_resolved]
+lifetime = "FileLocalReset"
+reason = "per-file application-symbol resolution memo"
+
+[application_symbols_resolution_set]
+lifetime = "FileLocalReset"
+reason = "per-file application-symbol cycle guard"
+
+[namespace_module_names]
+lifetime = "FileLocalReset"
+reason = "TypeId -> namespace name; per-file (TypeIds for namespace shapes)"
+
+[js_export_surface_cache]
+lifetime = "FileLocalReset"
+reason = "JS export surface cache keyed by file index"
+
+[js_export_surface_resolution_set]
+lifetime = "FileLocalReset"
+reason = "JS export surface cycle guard"
+
+[expando_property_resolution_set]
+lifetime = "FileLocalReset"
+reason = "expando-property cycle guard for the current file"
+
+[module_specifiers]
+lifetime = "ProgramStable"
+reason = "Arc-shared file-idx -> module specifier map for the program"
+
+[module_path_specifiers]
+lifetime = "ProgramStable"
+reason = "Arc-shared file-idx -> module path map for the program"
+
+[class_instance_type_to_decl]
+lifetime = "FileLocalReset"
+reason = "TypeId -> NodeIndex; NodeIndex is per-file (§6 class caches)"
+
+[class_instance_type_cache]
+lifetime = "FileLocalReset"
+reason = "class instance cache keyed by NodeIndex (§6 class caches)"
+
+[class_constructor_type_cache]
+lifetime = "FileLocalReset"
+reason = "class constructor cache keyed by NodeIndex (§6 class caches)"
+
+[class_symbol_to_decl_cache]
+lifetime = "FileLocalReset"
+reason = "SymbolId -> NodeIndex; NodeIndex is per-file"
+
+[heritage_symbol_cache]
+lifetime = "FileLocalReset"
+reason = "heritage symbol cache keyed by NodeIndex"
+
+[base_constructor_expr_cache]
+lifetime = "FileLocalReset"
+reason = "NodeIndex-keyed base-constructor expression cache"
+
+[base_instance_expr_cache]
+lifetime = "FileLocalReset"
+reason = "NodeIndex-keyed base-instance expression cache"
+
+[class_decl_miss_cache]
+lifetime = "FileLocalReset"
+reason = "TypeId-keyed class-decl miss cache; conservative pending audit"
+
+[jsx_intrinsic_props_cache]
+lifetime = "FileLocalReset"
+reason = "(TypeId, Atom) keyed JSX intrinsic-props cache; per-file"
+
+[jsx_namespace_symbol_cache]
+lifetime = "FileLocalReset"
+reason = "JSX namespace symbol memo for the current file"
+
+[jsx_intrinsic_elements_symbol_cache]
+lifetime = "FileLocalReset"
+reason = "JSX intrinsic-elements symbol memo for the current file"
+
+[jsx_intrinsic_elements_type_cache]
+lifetime = "FileLocalReset"
+reason = "JSX intrinsic-elements type memo for the current file"
+
+[jsx_import_source_checked]
+lifetime = "FileLocalReset"
+reason = "per-file flag for jsx-import-source diagnostic emission"
+
+[deferred_jsx_import_source_error]
+lifetime = "DiagnosticsOnly"
+reason = "deferred JSX import-source diagnostic"
+
+[symbol_dependencies]
+lifetime = "FileLocalReset"
+reason = "per-file symbol dependency graph"
+
+[symbol_dependency_stack]
+lifetime = "FileLocalReset"
+reason = "per-file symbol dependency walk stack"
+
+[referenced_symbols]
+lifetime = "FileLocalReset"
+reason = "per-file unused-symbol tracking set"
+
+[written_symbols]
+lifetime = "FileLocalReset"
+reason = "per-file write-tracking set for unused checks"
+
+[referenced_as_property]
+lifetime = "FileLocalReset"
+reason = "per-file property-reference tracking"
+
+[destructured_binding_sources]
+lifetime = "FileLocalReset"
+reason = "per-file destructuring-binding source map (NodeIndex inside)"
+
+[has_parse_errors]
+lifetime = "DiagnosticsOnly"
+reason = "per-file parse-error flag; affects diagnostic emission"
+
+[has_syntax_parse_errors]
+lifetime = "DiagnosticsOnly"
+reason = "per-file syntax-parse-error flag"
+
+[syntax_parse_error_positions]
+lifetime = "DiagnosticsOnly"
+reason = "per-file syntax-error position list"
+
+[has_real_syntax_errors]
+lifetime = "DiagnosticsOnly"
+reason = "per-file real-syntax-error flag"
+
+[has_structural_parse_errors]
+lifetime = "DiagnosticsOnly"
+reason = "per-file structural-parse-error flag"
+
+[real_syntax_error_positions]
+lifetime = "DiagnosticsOnly"
+reason = "per-file real-syntax-error position list"
+
+[all_parse_error_positions]
+lifetime = "DiagnosticsOnly"
+reason = "per-file all-parse-error position list"
+
+[nullable_type_parse_error_positions]
+lifetime = "DiagnosticsOnly"
+reason = "per-file nullable-type-parse-error positions"
+
+[diagnostics]
+lifetime = "DiagnosticsOnly"
+reason = "main diagnostic accumulator (§6: drain at FileSession boundary)"
+
+[emitted_diagnostics]
+lifetime = "DiagnosticsOnly"
+reason = "(u32, u32) position dedupe set; clears per file (§6)"
+
+[no_overload_call_nodes]
+lifetime = "FileLocalReset"
+reason = "no-overload suppression set keyed by NodeIndex (§6)"
+
+[callback_return_type_errors]
+lifetime = "DiagnosticsOnly"
+reason = "deferred callback return-type diagnostics (§6)"
+
+[modules_with_ts2307_emitted]
+lifetime = "DiagnosticsOnly"
+reason = "TS2307 dedupe set; per-file"
+
+[deferred_truthiness_diagnostics]
+lifetime = "DiagnosticsOnly"
+reason = "deferred truthiness diagnostics (§6)"
+
+[deferred_excess_property_implicit_any_diagnostics]
+lifetime = "DiagnosticsOnly"
+reason = "deferred excess-property implicit-any diagnostics (§6)"
+
+[symbol_resolution_stack]
+lifetime = "FileLocalReset"
+reason = "symbol resolution recursion stack (§6 resolution stacks)"
+
+[symbol_resolution_set]
+lifetime = "FileLocalReset"
+reason = "symbol resolution recursion guard set (§6)"
+
+[circular_type_aliases]
+lifetime = "FileLocalReset"
+reason = "circular type-alias detection set"
+
+[import_conflict_names]
+lifetime = "FileLocalReset"
+reason = "per-file import-conflict tracking"
+
+[module_namespace_resolution_set]
+lifetime = "FileLocalReset"
+reason = "module-namespace resolution cycle guard"
+
+[import_type_alias_types]
+lifetime = "FileLocalReset"
+reason = "import-type-alias resolution cache"
+
+[class_instance_resolution_set]
+lifetime = "FileLocalReset"
+reason = "class-instance resolution cycle guard (§6 class checking sets)"
+
+[class_constructor_resolution_set]
+lifetime = "FileLocalReset"
+reason = "class-constructor resolution cycle guard"
+
+[jsdoc_enum_resolution_set]
+lifetime = "FileLocalReset"
+reason = "JSDoc enum resolution cycle guard"
+
+[circular_class_symbols]
+lifetime = "FileLocalReset"
+reason = "circular class detection set"
+
+[pending_implicit_any_vars]
+lifetime = "FileLocalReset"
+reason = "implicit-any pending vars (§6 implicit-any tracking)"
+
+[pending_circular_return_sites]
+lifetime = "FileLocalReset"
+reason = "circular return-site map; payload contains NodeIndex (§6)"
+
+[non_closure_circular_return_tracking_depth]
+lifetime = "SpeculationScoped"
+reason = "depth counter that gates pending_circular_return_sites bookkeeping"
+
+[reported_implicit_any_vars]
+lifetime = "DiagnosticsOnly"
+reason = "implicit-any reported-symbol dedupe map"
+
+[inheritance_graph]
+lifetime = "FileLocalReset"
+reason = "class inheritance graph for the current file"
+
+[node_resolution_stack]
+lifetime = "FileLocalReset"
+reason = "node-resolution recursion stack (§6 resolution stacks)"
+
+[implicit_any_checked_closures]
+lifetime = "FileLocalReset"
+reason = "implicit-any closure tracking (§6 implicit-any tracking)"
+
+[implicit_any_contextual_closures]
+lifetime = "FileLocalReset"
+reason = "implicit-any contextual closure tracking (§6)"
+
+[deferred_implicit_any_closures]
+lifetime = "FileLocalReset"
+reason = "deferred implicit-any closure list (§6)"
+
+[speculative_implicit_any_closures]
+lifetime = "SpeculationScoped"
+reason = "speculative implicit-any closures; must roll back on speculation abort (§6)"
+
+[closures_with_contextual_this_type]
+lifetime = "FileLocalReset"
+reason = "closures with contextual `this`; per-file NodeIndex set"
+
+[checking_classes]
+lifetime = "FileLocalReset"
+reason = "currently-checking class set (§6 class checking sets)"
+
+[checked_classes]
+lifetime = "FileLocalReset"
+reason = "completed class checks set (§6)"
+
+[type_parameter_scope]
+lifetime = "FileLocalReset"
+reason = "type-parameter name -> TypeId scope, transient per check"
+
+[in_conditional_extends_depth]
+lifetime = "SpeculationScoped"
+reason = "depth counter; speculation must restore"
+
+[typeof_param_scope]
+lifetime = "FileLocalReset"
+reason = "typeof type-parameter scope, transient per check"
+
+[type_param_constraint_excluded_params]
+lifetime = "FileLocalReset"
+reason = "transient set during type-param constraint resolution"
+
+[contextual_type]
+lifetime = "SpeculationScoped"
+reason = "current contextual type; speculation pushes/pops"
+
+[contextual_type_is_assertion]
+lifetime = "SpeculationScoped"
+reason = "paired flag with contextual_type"
+
+[is_checking_statements]
+lifetime = "SpeculationScoped"
+reason = "statement-checking nesting flag; saved/restored across calls"
+
+[is_in_ambient_declaration_file]
+lifetime = "FileLocalReset"
+reason = "per-file ambient flag; set on file entry"
+
+[in_destructuring_target]
+lifetime = "SpeculationScoped"
+reason = "destructuring-target nesting flag; saved/restored"
+
+[preserve_destructuring_initializer_overload_diagnostics]
+lifetime = "SpeculationScoped"
+reason = "transient diagnostic-preservation flag; saved/restored"
+
+[skip_flow_narrowing]
+lifetime = "SpeculationScoped"
+reason = "transient skip flag; saved/restored across speculative calls"
+
+[instantiation_depth]
+lifetime = "SpeculationScoped"
+reason = "instantiation depth counter (§6 depth counters)"
+
+[depth_exceeded]
+lifetime = "SpeculationScoped"
+reason = "depth-exceeded sticky flag; rollback required (§6)"
+
+[relation_depth_exceeded]
+lifetime = "SpeculationScoped"
+reason = "relation depth-exceeded sticky flag; rollback required"
+
+[skip_callable_type_param_suppression]
+lifetime = "SpeculationScoped"
+reason = "transient suppression flag during callable-type checks"
+
+[eval_session]
+lifetime = "FileLocalReset"
+reason = "Rc<EvaluationSession>; per-file solver session"
+
+[recursion_depth]
+lifetime = "SpeculationScoped"
+reason = "recursion depth counter (§6)"
+
+[heritage_merge_depth]
+lifetime = "SpeculationScoped"
+reason = "heritage-merge depth counter (§6)"
+
+[call_depth]
+lifetime = "SpeculationScoped"
+reason = "call depth counter (§6)"
+
+[circ_ref_depth]
+lifetime = "SpeculationScoped"
+reason = "circular-reference depth counter (§6)"
+
+[overlap_depth]
+lifetime = "SpeculationScoped"
+reason = "overlap depth counter (§6)"
+
+[resolving_jsdoc_typedefs]
+lifetime = "FileLocalReset"
+reason = "JSDoc typedef resolution stack for the current file"
+
+[jsdoc_typedef_anchor_pos]
+lifetime = "FileLocalReset"
+reason = "JSDoc typedef anchor position (u32 collides across files)"
+
+[return_type_stack]
+lifetime = "SpeculationScoped"
+reason = "return-type stack; speculation must save/restore"
+
+[yield_type_stack]
+lifetime = "SpeculationScoped"
+reason = "yield-type stack; speculation must save/restore"
+
+[generator_next_type_stack]
+lifetime = "SpeculationScoped"
+reason = "generator next-type stack; speculation must save/restore"
+
+[generator_yield_operand_types]
+lifetime = "SpeculationScoped"
+reason = "generator yield operand-type stack"
+
+[generator_had_ts7057]
+lifetime = "DiagnosticsOnly"
+reason = "TS7057 emission flag; affects diagnostic output"
+
+[this_type_stack]
+lifetime = "SpeculationScoped"
+reason = "this-type stack; speculation must save/restore"
+
+[function_owned_this_stack]
+lifetime = "SpeculationScoped"
+reason = "function-owned this stack; speculation must save/restore"
+
+[enclosing_class]
+lifetime = "SpeculationScoped"
+reason = "enclosing-class info; saved/restored across nested checks"
+
+[enclosing_class_chain]
+lifetime = "SpeculationScoped"
+reason = "enclosing-class chain stack; saved/restored"
+
+[type_env]
+lifetime = "FileLocalReset"
+reason = "RefCell<TypeEnvironment>; per-checker"
+
+[definition_store]
+lifetime = "ProgramStable"
+reason = "Arc<DefinitionStore>; shared across all checkers in the program"
+
+[share_owner_symbol_type_results]
+lifetime = "FileLocalReset"
+reason = "transient flag controlling symbol-type cache sharing"
+
+[symbol_to_def]
+lifetime = "FileLocalReset"
+reason = "per-checker SymbolId -> DefId map; falls back to shared DefinitionStore"
+
+[def_to_symbol]
+lifetime = "FileLocalReset"
+reason = "per-checker DefId -> SymbolId reverse map"
+
+[def_type_params]
+lifetime = "FileLocalReset"
+reason = "DefId -> Vec<TypeParamInfo>; per-checker view (§6 QueryCache audit)"
+
+[def_no_type_params]
+lifetime = "FileLocalReset"
+reason = "DefId set with no type params; per-checker"
+
+[def_fallback_count]
+lifetime = "FileLocalReset"
+reason = "per-checker fallback metric counter"
+
+[local_caches_warmed]
+lifetime = "FileLocalReset"
+reason = "per-checker cache-warmup flag"
+
+[abstract_constructor_types]
+lifetime = "FileLocalReset"
+reason = "abstract-constructor TypeId set; per-file"
+
+[protected_constructor_types]
+lifetime = "FileLocalReset"
+reason = "protected-constructor TypeId set; per-file"
+
+[private_constructor_types]
+lifetime = "FileLocalReset"
+reason = "private-constructor TypeId set; per-file"
+
+[cross_file_symbol_targets]
+lifetime = "FileLocalReset"
+reason = "Arc-snapshot overlay seeded from parent; child writes own delta"
+
+[global_symbol_file_index]
+lifetime = "ProgramStable"
+reason = "Arc-shared SymbolId -> file-idx map (ProjectEnv-installed)"
+
+[all_arenas]
+lifetime = "ProgramStable"
+reason = "Arc<Vec<Arc<NodeArena>>>; ProjectEnv-installed"
+
+[all_binders]
+lifetime = "ProgramStable"
+reason = "Arc<Vec<Arc<BinderState>>>; ProjectEnv-installed"
+
+[global_file_locals_index]
+lifetime = "ProgramStable"
+reason = "ProjectEnv-installed global file-locals index"
+
+[global_module_exports_index]
+lifetime = "ProgramStable"
+reason = "ProjectEnv-installed global module-exports index"
+
+[global_declared_modules]
+lifetime = "ProgramStable"
+reason = "Arc-shared global declared-modules registry"
+
+[global_expando_index]
+lifetime = "ProgramStable"
+reason = "Arc-shared expando-property index"
+
+[global_module_augmentations_index]
+lifetime = "ProgramStable"
+reason = "ProjectEnv-installed module-augmentations index"
+
+[global_augmentation_targets_index]
+lifetime = "ProgramStable"
+reason = "ProjectEnv-installed augmentation-targets index"
+
+[global_module_binder_index]
+lifetime = "ProgramStable"
+reason = "Arc-shared module-name -> binder-idx map"
+
+[global_arena_index]
+lifetime = "ProgramStable"
+reason = "Arc-shared arena-id -> binder-idx map"
+
+[global_file_name_index]
+lifetime = "ProgramStable"
+reason = "Arc-shared file-name -> file-idx map"
+
+[program_reexports]
+lifetime = "ProgramStable"
+reason = "Arc-shared program-wide reexports map"
+
+[program_wildcard_reexports]
+lifetime = "ProgramStable"
+reason = "Arc-shared wildcard reexport map"
+
+[program_wildcard_reexports_type_only]
+lifetime = "ProgramStable"
+reason = "Arc-shared type-only wildcard reexports"
+
+[program_module_exports]
+lifetime = "ProgramStable"
+reason = "Arc-shared module-exports symbol tables"
+
+[program_cross_file_node_symbols]
+lifetime = "ProgramStable"
+reason = "Arc-shared cross-file node-symbol index"
+
+[program_alias_partners]
+lifetime = "ProgramStable"
+reason = "Arc-shared alias-partner map"
+
+[resolved_module_paths]
+lifetime = "ProgramStable"
+reason = "Arc-shared resolved module-path map (driver-installed)"
+
+[resolved_module_request_paths]
+lifetime = "ProgramStable"
+reason = "Arc-shared resolved request-path map"
+
+[resolved_module_ts_extension_flags]
+lifetime = "ProgramStable"
+reason = "Arc-shared TS-extension flag map"
+
+[current_file_idx]
+lifetime = "FileLocalReset"
+reason = "current file index; reassigned per FileSession (§6)"
+
+[resolved_modules]
+lifetime = "ProgramStable"
+reason = "Arc-shared resolved-modules set"
+
+[module_augmentation_value_decls]
+lifetime = "FileLocalReset"
+reason = "per-file module-augmentation value declarations"
+
+[module_augmentation_application_set]
+lifetime = "FileLocalReset"
+reason = "(String, String, TypeId) augmentation-application guard"
+
+[is_external_module_by_file]
+lifetime = "ProgramStable"
+reason = "Arc-shared file -> external-module flag map"
+
+[resolved_module_errors]
+lifetime = "ProgramStable"
+reason = "Arc-shared resolved-module error map"
+
+[resolved_module_request_errors]
+lifetime = "ProgramStable"
+reason = "Arc-shared resolved-module request-error map"
+
+[import_resolution_stack]
+lifetime = "FileLocalReset"
+reason = "import resolution recursion stack (§6 resolution stacks)"
+
+[type_only_nodes]
+lifetime = "FileLocalReset"
+reason = "per-file type-only NodeIndex set"
+
+[symbol_resolution_depth]
+lifetime = "SpeculationScoped"
+reason = "depth counter for symbol resolution"
+
+[max_symbol_resolution_depth]
+lifetime = "ProgramStable"
+reason = "configured maximum depth (limit, not counter)"
+
+[lib_contexts]
+lifetime = "ProgramStable"
+reason = "Arc<Vec<LibContext>>; shared across the program"
+
+[lib_binders_cached]
+lifetime = "ProgramStable"
+reason = "Arc<Vec<Arc<BinderState>>>; shared lib binders"
+
+[actual_lib_file_count]
+lifetime = "ProgramStable"
+reason = "lib file count; fixed at compilation startup"
+
+[typescript_dom_replacement_loaded]
+lifetime = "ProgramStable"
+reason = "DOM-replacement load flag; fixed at startup"
+
+[typescript_dom_replacement_has_window]
+lifetime = "ProgramStable"
+reason = "DOM-replacement Window flag; fixed at startup"
+
+[typescript_dom_replacement_has_self]
+lifetime = "ProgramStable"
+reason = "DOM-replacement Self flag; fixed at startup"
+
+[flow_graph]
+lifetime = "FileLocalReset"
+reason = "FlowGraph<'a> for the current file"
+
+[async_depth]
+lifetime = "SpeculationScoped"
+reason = "async-context depth counter; saved/restored"
+
+[typeof_resolution_stack]
+lifetime = "FileLocalReset"
+reason = "typeof resolution stack (u32 NodeIndex; per-file)"
+
+[inside_closure_depth]
+lifetime = "SpeculationScoped"
+reason = "closure-nesting depth counter; saved/restored"
+
+[in_const_assertion]
+lifetime = "SpeculationScoped"
+reason = "const-assertion contextual flag; saved/restored"
+
+[preserve_literal_types]
+lifetime = "SpeculationScoped"
+reason = "literal-type preservation flag; saved/restored"
+
+[use_declared_type_for_identifier]
+lifetime = "SpeculationScoped"
+reason = "declared-type override flag; saved/restored"
+
+[skip_array_contextual_supertype_collapse]
+lifetime = "SpeculationScoped"
+reason = "array-contextual collapse skip flag; saved/restored"
+
+[generic_excess_skip]
+lifetime = "SpeculationScoped"
+reason = "generic excess-property skip stack; saved/restored"
+
+[iteration_depth]
+lifetime = "SpeculationScoped"
+reason = "iteration nesting depth; saved/restored"
+
+[switch_depth]
+lifetime = "SpeculationScoped"
+reason = "switch nesting depth; saved/restored"
+
+[function_depth]
+lifetime = "SpeculationScoped"
+reason = "function nesting depth; saved/restored"
+
+[is_unreachable]
+lifetime = "SpeculationScoped"
+reason = "control-flow unreachability flag; saved/restored"
+
+[has_reported_unreachable]
+lifetime = "FileLocalReset"
+reason = "per-file unreachable-reporting dedupe flag"
+
+[had_outer_loop]
+lifetime = "SpeculationScoped"
+reason = "outer-loop tracking flag; saved/restored"
+
+[suppress_definite_assignment_errors]
+lifetime = "SpeculationScoped"
+reason = "definite-assignment suppression flag; saved/restored"
+
+[js_body_uses_arguments]
+lifetime = "SpeculationScoped"
+reason = "JS body `arguments` usage flag; saved/restored across nested fns"
+
+[emitted_ts2454_errors]
+lifetime = "DiagnosticsOnly"
+reason = "TS2454 emission dedupe set"
+
+[emitted_ts2411_for_iface_prop]
+lifetime = "DiagnosticsOnly"
+reason = "TS2411 emission dedupe set"
+
+[type_resolution_fuel]
+lifetime = "FileLocalReset"
+reason = "per-file type-resolution fuel counter"
