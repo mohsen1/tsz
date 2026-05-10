@@ -143,7 +143,7 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 impl<'a> CheckerState<'a> {
     #[inline]
     fn record_root_checker_construction() {
-        // PERF: per-file checker construction; gated to skip `counters()` deref in disabled builds.
+        // PERF: per-file checker construction; gated to skip `counters()` deref when disabled at runtime.
         if tsz_common::perf_counters::enabled_fast() {
             tsz_common::perf_counters::inc(
                 &tsz_common::perf_counters::counters().checker_state_constructed,
