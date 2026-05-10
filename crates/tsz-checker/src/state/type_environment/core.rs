@@ -1828,6 +1828,17 @@ impl<'a> CheckerState<'a> {
                             );
                             Some(p)
                         } else if Self::enter_cross_arena_delegation() {
+                            // Cache miss: we're entering the slow path and
+                            // building a child checker, regardless of
+                            // whether extraction ultimately yields params.
+                            // Counting only on `Some(_)` undercounts misses
+                            // when the slow path runs but extraction fails
+                            // (e.g. interface-name mismatch), distorting
+                            // attribution for Tier 2 decision-making.
+                            tsz_common::perf_counters::inc(
+                                &tsz_common::perf_counters::counters()
+                                    .cross_file_type_params_cache_misses,
+                            );
                             let decl_binder = self
                                 .ctx
                                 .get_binder_for_arena(arena.as_ref())
@@ -1856,19 +1867,15 @@ impl<'a> CheckerState<'a> {
                                 &sym_escaped_name,
                             );
                             Self::leave_cross_arena_delegation();
-                            if let Some(ref params) = result {
-                                tsz_common::perf_counters::inc(
-                                    &tsz_common::perf_counters::counters()
-                                        .cross_file_type_params_cache_misses,
-                                );
-                                if let (Some(file_idx), Some(cache)) = (
+                            if let Some(ref params) = result
+                                && let (Some(file_idx), Some(cache)) = (
                                     cache_file_idx,
                                     self.ctx.cross_file_type_params_cache.as_ref(),
-                                ) {
-                                    cache
-                                        .entry((file_idx, decl_idx))
-                                        .or_insert_with(|| params.clone());
-                                }
+                                )
+                            {
+                                cache
+                                    .entry((file_idx, decl_idx))
+                                    .or_insert_with(|| params.clone());
                             }
                             result
                         } else {
@@ -1952,6 +1959,14 @@ impl<'a> CheckerState<'a> {
                         );
                         Some(p)
                     } else if Self::enter_cross_arena_delegation() {
+                        // Cache miss: the slow path entered and built a
+                        // child checker, regardless of whether extraction
+                        // returns Some(_). See sibling arena-targeted site
+                        // above for the same rationale.
+                        tsz_common::perf_counters::inc(
+                            &tsz_common::perf_counters::counters()
+                                .cross_file_type_params_cache_misses,
+                        );
                         let decl_binder = self
                             .ctx
                             .get_binder_for_file(file_idx)
@@ -1978,16 +1993,12 @@ impl<'a> CheckerState<'a> {
                             &sym_escaped_name,
                         );
                         Self::leave_cross_arena_delegation();
-                        if let Some(ref params) = result {
-                            tsz_common::perf_counters::inc(
-                                &tsz_common::perf_counters::counters()
-                                    .cross_file_type_params_cache_misses,
-                            );
-                            if let Some(ref cache) = self.ctx.cross_file_type_params_cache {
-                                cache
-                                    .entry((file_idx as u32, decl_idx))
-                                    .or_insert_with(|| params.clone());
-                            }
+                        if let Some(ref params) = result
+                            && let Some(ref cache) = self.ctx.cross_file_type_params_cache
+                        {
+                            cache
+                                .entry((file_idx as u32, decl_idx))
+                                .or_insert_with(|| params.clone());
                         }
                         result
                     } else {
