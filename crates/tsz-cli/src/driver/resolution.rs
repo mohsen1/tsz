@@ -66,6 +66,36 @@ fn count_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
     std::fs::read_dir(path)
 }
 
+/// Bump `resolver_candidate_paths_total` once per invocation, gating on
+/// `enabled_fast()` so runs with perf counters disabled skip the
+/// `counters()` `OnceLock` deref entirely. Same shape as the fs-probe
+/// wrappers above; lifted into a helper so the two emit sites in this file
+/// (path-mapping virtual roots and suffix-extension expansion) don't re-pay
+/// the deref.
+#[inline]
+fn count_candidate_path() {
+    if tsz_common::perf_counters::enabled_fast() {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().resolver_candidate_paths_total,
+        );
+    }
+}
+
+/// Bump `resolver_read_package_json_calls` once per uncached read with
+/// the same gate-then-deref pattern. This counter sits inside
+/// `read_package_json_uncached`, which `large-ts-repo` profiles flag as
+/// the dominant resolver work — keeping it gate-cheap matters even
+/// though the surrounding `read_to_string` is several orders of
+/// magnitude more expensive.
+#[inline]
+fn count_read_package_json() {
+    if tsz_common::perf_counters::enabled_fast() {
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().resolver_read_package_json_calls,
+        );
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct ModuleResolutionCache {
     package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
@@ -1804,9 +1834,7 @@ fn root_dirs_relative_candidates(
             if candidate == direct_candidate || candidates.iter().any(|seen| seen == &candidate) {
                 continue;
             }
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().resolver_candidate_paths_total,
-            );
+            count_candidate_path();
             candidates.push(candidate);
         }
     }
@@ -1961,9 +1989,7 @@ fn candidates_with_suffixes_and_extension(
     let mut candidates = Vec::new();
     for suffix in suffixes {
         if let Some(candidate) = path_with_suffix_and_extension(base, suffix, extension) {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().resolver_candidate_paths_total,
-            );
+            count_candidate_path();
             candidates.push(candidate);
         }
     }
@@ -3108,9 +3134,7 @@ fn package_type_from_json(package_json: Option<&PackageJson>) -> Option<PackageT
 fn read_package_json_uncached(path: &Path) -> Option<PackageJson> {
     // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Resolver hot path
     // — package.json reads dominate sample profiles on full large-ts-repo.
-    tsz_common::perf_counters::inc(
-        &tsz_common::perf_counters::counters().resolver_read_package_json_calls,
-    );
+    count_read_package_json();
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
 }
