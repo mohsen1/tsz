@@ -1807,36 +1807,74 @@ impl<'a> CheckerState<'a> {
                             }
                             continue;
                         }
-                        if !Self::enter_cross_arena_delegation() {
-                            continue;
-                        }
-                        let decl_binder = self
+                        let cache_file_idx = self
                             .ctx
-                            .get_binder_for_arena(arena.as_ref())
-                            .unwrap_or(self.ctx.binder);
-                        let decl_file_name = arena
-                            .source_files
-                            .first()
-                            .map(|sf| sf.file_name.clone())
-                            .unwrap_or_else(|| self.ctx.file_name.clone());
-                        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-                            arena.as_ref(),
-                            decl_binder,
-                            self.ctx.types,
-                            decl_file_name,
-                            self.ctx.compiler_options.clone(),
-                            self,
-                            tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
-                        ));
-                        if let Some(file_idx) = self.ctx.get_file_idx_for_arena(arena.as_ref()) {
-                            checker.ctx.current_file_idx = file_idx;
-                        }
-                        if let Some(params) = Self::extract_type_params_from_decl(
-                            &mut checker,
-                            flags,
-                            decl_idx,
-                            &sym_escaped_name,
-                        ) {
+                            .get_file_idx_for_arena(arena.as_ref())
+                            .map(|i| i as u32);
+                        let cached = if let Some(file_idx) = cache_file_idx {
+                            self.ctx
+                                .cross_file_type_params_cache
+                                .as_ref()
+                                .and_then(|cache| {
+                                    cache.get(&(file_idx, decl_idx)).map(|e| e.value().clone())
+                                })
+                        } else {
+                            None
+                        };
+                        let params = if let Some(p) = cached {
+                            tsz_common::perf_counters::inc(
+                                &tsz_common::perf_counters::counters()
+                                    .cross_file_type_params_cache_hits,
+                            );
+                            Some(p)
+                        } else if Self::enter_cross_arena_delegation() {
+                            let decl_binder = self
+                                .ctx
+                                .get_binder_for_arena(arena.as_ref())
+                                .unwrap_or(self.ctx.binder);
+                            let decl_file_name = arena
+                                .source_files
+                                .first()
+                                .map(|sf| sf.file_name.clone())
+                                .unwrap_or_else(|| self.ctx.file_name.clone());
+                            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+                                arena.as_ref(),
+                                decl_binder,
+                                self.ctx.types,
+                                decl_file_name,
+                                self.ctx.compiler_options.clone(),
+                                self,
+                                tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
+                            ));
+                            if let Some(file_idx) = cache_file_idx {
+                                checker.ctx.current_file_idx = file_idx as usize;
+                            }
+                            let result = Self::extract_type_params_from_decl(
+                                &mut checker,
+                                flags,
+                                decl_idx,
+                                &sym_escaped_name,
+                            );
+                            Self::leave_cross_arena_delegation();
+                            if let Some(ref params) = result {
+                                tsz_common::perf_counters::inc(
+                                    &tsz_common::perf_counters::counters()
+                                        .cross_file_type_params_cache_misses,
+                                );
+                                if let (Some(file_idx), Some(cache)) = (
+                                    cache_file_idx,
+                                    self.ctx.cross_file_type_params_cache.as_ref(),
+                                ) {
+                                    cache
+                                        .entry((file_idx, decl_idx))
+                                        .or_insert_with(|| params.clone());
+                                }
+                            }
+                            result
+                        } else {
+                            None
+                        };
+                        if let Some(params) = params {
                             if !params.is_empty() {
                                 if let Some(ref mut merged) = merged_params {
                                     for (i, p) in params.into_iter().enumerate() {
@@ -1860,7 +1898,6 @@ impl<'a> CheckerState<'a> {
                                 fallback_params = Some(params);
                             }
                         }
-                        Self::leave_cross_arena_delegation();
                     }
                 }
             }
@@ -1899,7 +1936,22 @@ impl<'a> CheckerState<'a> {
                         }
                         continue;
                     }
-                    if Self::enter_cross_arena_delegation() {
+                    let cached = self
+                        .ctx
+                        .cross_file_type_params_cache
+                        .as_ref()
+                        .and_then(|cache| {
+                            cache
+                                .get(&(file_idx as u32, decl_idx))
+                                .map(|e| e.value().clone())
+                        });
+                    let params = if let Some(p) = cached {
+                        tsz_common::perf_counters::inc(
+                            &tsz_common::perf_counters::counters()
+                                .cross_file_type_params_cache_hits,
+                        );
+                        Some(p)
+                    } else if Self::enter_cross_arena_delegation() {
                         let decl_binder = self
                             .ctx
                             .get_binder_for_file(file_idx)
@@ -1919,36 +1971,51 @@ impl<'a> CheckerState<'a> {
                             tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
                         ));
                         checker.ctx.current_file_idx = file_idx;
-                        if let Some(params) = Self::extract_type_params_from_decl(
+                        let result = Self::extract_type_params_from_decl(
                             &mut checker,
                             flags,
                             decl_idx,
                             &sym_escaped_name,
-                        ) {
-                            if !params.is_empty() {
-                                if let Some(ref mut merged) = merged_params {
-                                    for (i, p) in params.into_iter().enumerate() {
-                                        if i < merged.len()
-                                            && merged[i].default.is_none()
-                                            && p.default.is_some()
-                                        {
-                                            merged[i].default = p.default;
-                                        }
-                                        if i < merged.len()
-                                            && merged[i].constraint.is_none()
-                                            && p.constraint.is_some()
-                                        {
-                                            merged[i].constraint = p.constraint;
-                                        }
-                                    }
-                                } else {
-                                    merged_params = Some(params);
-                                }
-                            } else if fallback_params.is_none() {
-                                fallback_params = Some(params);
+                        );
+                        Self::leave_cross_arena_delegation();
+                        if let Some(ref params) = result {
+                            tsz_common::perf_counters::inc(
+                                &tsz_common::perf_counters::counters()
+                                    .cross_file_type_params_cache_misses,
+                            );
+                            if let Some(ref cache) = self.ctx.cross_file_type_params_cache {
+                                cache
+                                    .entry((file_idx as u32, decl_idx))
+                                    .or_insert_with(|| params.clone());
                             }
                         }
-                        Self::leave_cross_arena_delegation();
+                        result
+                    } else {
+                        None
+                    };
+                    if let Some(params) = params {
+                        if !params.is_empty() {
+                            if let Some(ref mut merged) = merged_params {
+                                for (i, p) in params.into_iter().enumerate() {
+                                    if i < merged.len()
+                                        && merged[i].default.is_none()
+                                        && p.default.is_some()
+                                    {
+                                        merged[i].default = p.default;
+                                    }
+                                    if i < merged.len()
+                                        && merged[i].constraint.is_none()
+                                        && p.constraint.is_some()
+                                    {
+                                        merged[i].constraint = p.constraint;
+                                    }
+                                }
+                            } else {
+                                merged_params = Some(params);
+                            }
+                        } else if fallback_params.is_none() {
+                            fallback_params = Some(params);
+                        }
                     }
                 }
             }
