@@ -2122,7 +2122,9 @@ const fn is_directive_leading_trivia_byte(b: u8) -> bool {
 }
 
 /// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
-fn find_directive_in_text(comment: &str) -> Option<DirectiveKind> {
+/// Returns the directive kind and the byte offset of the directive marker
+/// within the comment text.
+fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, u32)> {
     let bytes = comment.as_bytes();
     let mut pos = if comment.starts_with("//") || comment.starts_with("/*") {
         2
@@ -2143,7 +2145,7 @@ fn find_directive_in_text(comment: &str) -> Option<DirectiveKind> {
         }
         let after = pos + text.len();
         if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
-            return Some(kind);
+            return Some((kind, pos as u32));
         }
     }
     None
@@ -2155,10 +2157,10 @@ struct TsDirective {
     is_expect_error: bool,
     /// The 0-based line number that this directive suppresses (the line after the comment).
     suppressed_line: u32,
-    /// Byte offset of the start of the comment containing the directive.
-    comment_start: u32,
-    /// Byte length of the comment containing the directive.
-    comment_length: u32,
+    /// Byte offset where an unused `@ts-expect-error` diagnostic should start.
+    unused_diagnostic_start: u32,
+    /// Byte length for an unused `@ts-expect-error` diagnostic.
+    unused_diagnostic_length: u32,
 }
 
 /// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
@@ -2168,7 +2170,7 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
 
     for comment in tsz_common::comments::get_comment_ranges(text) {
         let comment_text = comment.get_text(text);
-        let Some(kind) = find_directive_in_text(comment_text) else {
+        let Some((kind, directive_offset)) = find_directive_in_text(comment_text) else {
             continue;
         };
 
@@ -2179,12 +2181,24 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
             let comment_line = line_of_offset(&line_starts, comment.pos);
             comment_line + 1
         };
+        let directive_start = comment.pos.saturating_add(directive_offset);
+        let directive_line = line_of_offset(&line_starts, directive_start) as usize;
+        let directive_line_start = line_starts
+            .get(directive_line)
+            .copied()
+            .unwrap_or(comment.pos);
+        let unused_diagnostic_start = if comment.is_multi_line && directive_line_start > comment.pos
+        {
+            directive_line_start
+        } else {
+            comment.pos
+        };
 
         directives.push(TsDirective {
             is_expect_error: kind == DirectiveKind::ExpectError,
             suppressed_line,
-            comment_start: comment.pos,
-            comment_length: comment.end.saturating_sub(comment.pos),
+            unused_diagnostic_start,
+            unused_diagnostic_length: comment.end.saturating_sub(unused_diagnostic_start),
         });
     }
 
@@ -2239,18 +2253,17 @@ pub(super) fn apply_ts_directive_suppression(
 
     // Emit TS2578 for unused @ts-expect-error directives.
     //
-    // tsc anchors this diagnostic at the comment range itself — the `/` of
-    // `//` or `/*` — not at the enclosing line start. For an indented
-    // `  // @ts-expect-error` that means the diagnostic starts at the
-    // comment opener (column 3 here), not at column 1. The span covers
-    // the entire comment.
+    // tsc anchors this diagnostic at the directive comment text, not at the
+    // enclosing line start. Same-line directives start at the `//` or `/*`
+    // opener, while directives inside multiline block comments start at the
+    // line containing the directive text.
     if !has_ts_nocheck {
         for (idx, directive) in directives.iter().enumerate() {
             if directive.is_expect_error && !directive_used[idx] {
                 diagnostics.push(Diagnostic::error(
                     file_name.to_string(),
-                    directive.comment_start,
-                    directive.comment_length,
+                    directive.unused_diagnostic_start,
+                    directive.unused_diagnostic_length,
                     "Unused '@ts-expect-error' directive.".to_string(),
                     2578,
                 ));
@@ -2847,6 +2860,23 @@ const value = 1;
     }
 
     #[test]
+    fn unused_expect_error_in_multiline_block_anchors_at_directive_line_start() {
+        let source = "    /*\n   @ts-expect-error */\nconst y = 1;\n";
+        let mut diagnostics = Vec::new();
+        apply_ts_directive_suppression(
+            "anchor-multiline-block.ts",
+            source,
+            &mut diagnostics,
+            false,
+        );
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, 2578);
+        assert_eq!(diagnostics[0].start, "    /*\n".len() as u32);
+        assert_eq!(diagnostics[0].length, "   @ts-expect-error */".len() as u32);
+    }
+
+    #[test]
     fn raw_ts_nocheck_text_does_not_suppress_unused_expect_error() {
         let source = r#"const marker = "@ts-nocheck";
 
@@ -2937,7 +2967,10 @@ unchecked;
         assert!(!directives[0].is_expect_error);
         assert_eq!(directives[0].suppressed_line, 1);
         // Comment span must stop at the CR, not run to end-of-file.
-        assert_eq!(directives[0].comment_length, "// @ts-ignore".len() as u32);
+        assert_eq!(
+            directives[0].unused_diagnostic_length,
+            "// @ts-ignore".len() as u32
+        );
     }
 
     #[test]
@@ -2949,7 +2982,7 @@ unchecked;
         // The CR must be excluded from the comment span (matches the
         // existing behaviour of the LF-only path).
         assert_eq!(
-            directives[0].comment_length,
+            directives[0].unused_diagnostic_length,
             "// @ts-expect-error".len() as u32
         );
     }
