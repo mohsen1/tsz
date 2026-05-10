@@ -1305,6 +1305,10 @@ bitflags::bitflags! {
         /// Generic-call inference must defer these literals to Round 2; otherwise
         /// already-contextualized callback properties can feed back into Round 1.
         const ALL_PROPERTIES_CONTEXT_SENSITIVE = 1 << 6;
+        /// Anonymous object whose declaration order is semantically irrelevant
+        /// for assignability, but must remain distinct in the interner so
+        /// diagnostics can print source/display order after widening.
+        const PRESERVE_DECLARATION_ORDER = 1 << 7;
     }
 }
 
@@ -1333,6 +1337,12 @@ impl PartialEq for ObjectShape {
         // The Solver does structural subtyping explicitly, not via PartialEq
         self.flags == other.flags
             && self.properties == other.properties
+            && (!self.flags.contains(ObjectFlags::PRESERVE_DECLARATION_ORDER)
+                || self
+                    .properties
+                    .iter()
+                    .zip(&other.properties)
+                    .all(|(left, right)| left.declaration_order == right.declaration_order))
             && index_signature_display_eq(&self.string_index, &other.string_index)
             && index_signature_display_eq(&self.number_index, &other.number_index)
             && self.symbol == other.symbol
@@ -1347,6 +1357,11 @@ impl std::hash::Hash for ObjectShape {
         // This ensures different classes get different TypeIds
         self.flags.hash(state);
         self.properties.hash(state);
+        if self.flags.contains(ObjectFlags::PRESERVE_DECLARATION_ORDER) {
+            for prop in &self.properties {
+                prop.declaration_order.hash(state);
+            }
+        }
         hash_index_signature_display(&self.string_index, state);
         hash_index_signature_display(&self.number_index, state);
         self.symbol.hash(state);
@@ -1379,6 +1394,11 @@ impl ObjectShape {
     pub const fn all_properties_context_sensitive(&self) -> bool {
         self.flags
             .contains(ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE)
+    }
+
+    /// Mark this anonymous object as requiring display-order-sensitive interning.
+    pub fn mark_preserve_declaration_order(&mut self) {
+        self.flags |= ObjectFlags::PRESERVE_DECLARATION_ORDER;
     }
 
     /// Mark this shape as having late-bound (computed) members.

@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-09
 - **Branch**: `fix/spread-union-property-order-2026-05-09`
-- **PR**: TBD (will draft as WIP)
-- **Status**: claim
+- **PR**: #4891
+- **Status**: ready for review
 - **Workstream**: type-display-parity (Tier 1 fingerprint campaign)
 
 ## Intent
@@ -31,10 +31,10 @@ order.
 
 - `conformance/types/spread/spreadUnion2.ts` (TS2403, single fingerprint diff)
 
-## Files Touched (planned)
+## Files Touched
 
 - `crates/tsz-checker/src/types/computation/object_literal/...` (spread eval)
-- New unit test asserting property order matches spread order
+- `crates/tsz-solver/src/types.rs` (display-order-sensitive interning for spread objects)
 
 ## Investigation notes (2026-05-09)
 
@@ -88,6 +88,5 @@ loop too.
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker --lib` clean
-- `./scripts/conformance/conformance.sh run --filter spreadUnion2 --verbose` flips
-- Snapshot regen net-positive
+- `cargo fmt --all --check`
+- `./scripts/conformance/conformance.sh run --filter spreadUnion2 --test-dir /Users/mohsen/.codex/worktrees/parser-scanner-conformance-low-risk-20260508/TypeScript/tests/cases --verbose`
