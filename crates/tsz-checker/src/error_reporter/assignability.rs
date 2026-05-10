@@ -156,38 +156,6 @@ impl<'a> CheckerState<'a> {
         read_ok && write_ok
     }
 
-    fn direct_type_param_alias_application_pair_display(
-        &self,
-        source: TypeId,
-        target: TypeId,
-    ) -> Option<(String, String)> {
-        let (source_base, source_args) = self.application_info_or_display_alias(source)?;
-        let (target_base, target_args) = self.application_info_or_display_alias(target)?;
-        if source_base != target_base || source_args.len() != target_args.len() {
-            return None;
-        }
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base)?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        if def.kind != tsz_solver::def::DefKind::TypeAlias {
-            return None;
-        }
-        let param = crate::query_boundaries::common::type_param_info(self.ctx.types, def.body?)?;
-        let arg_idx = def
-            .type_params
-            .iter()
-            .position(|type_param| type_param.name == param.name)?;
-        let source_arg = *source_args.get(arg_idx)?;
-        let target_arg = *target_args.get(arg_idx)?;
-        Some((
-            self.canonicalize_assignment_numeric_literal_union_display(
-                self.format_type_diagnostic(source_arg),
-            ),
-            self.canonicalize_assignment_numeric_literal_union_display(
-                self.format_type_diagnostic(target_arg),
-            ),
-        ))
-    }
-
     fn should_suppress_outer_callback_return_assignability(
         &mut self,
         target: TypeId,
@@ -1106,6 +1074,8 @@ impl<'a> CheckerState<'a> {
         {
             target_str = display;
         }
+        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
+        target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
         (source_str, target_str)
     }
 
@@ -1368,6 +1338,8 @@ impl<'a> CheckerState<'a> {
         {
             target_str = display;
         }
+        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
+        target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
         (source_str, target_str)
     }
 
@@ -1901,6 +1873,8 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.type_query_static_array_structural_display(&src_str) {
                 src_str = display;
             }
+            src_str = self.canonicalize_assignment_numeric_literal_union_display(src_str);
+            tgt_str = self.canonicalize_assignment_numeric_literal_union_display(tgt_str);
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);

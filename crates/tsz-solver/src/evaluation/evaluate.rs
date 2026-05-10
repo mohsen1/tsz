@@ -911,6 +911,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner,
                         evaluated,
                     );
+                    if prefer_application_display_alias {
+                        self.store_intermediate_application_display_alias(
+                            instantiated,
+                            original_type_id,
+                            evaluated,
+                            &app.args,
+                        );
+                    }
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,
@@ -966,6 +974,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         self.evaluate(instantiated)
                     };
+                    if prefer_application_display_alias {
+                        self.store_intermediate_application_display_alias(
+                            instantiated,
+                            original_type_id,
+                            evaluated,
+                            &app.args,
+                        );
+                    }
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
                             def_id,
@@ -1105,6 +1121,54 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // If we can't expand, return the original application
             original_type_id
         }
+    }
+
+    fn store_intermediate_application_display_alias(
+        &self,
+        instantiated: TypeId,
+        original_type_id: TypeId,
+        evaluated: TypeId,
+        original_args: &[TypeId],
+    ) {
+        if instantiated == original_type_id || evaluated == TypeId::ERROR {
+            return;
+        }
+        if original_args.iter().any(|&arg| {
+            crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
+        }) {
+            return;
+        }
+        if !matches!(
+            self.interner.lookup(instantiated),
+            Some(TypeData::Application(_))
+        ) || !matches!(
+            self.interner.lookup(original_type_id),
+            Some(TypeData::Application(_))
+        ) {
+            return;
+        }
+        if !Self::is_structural_display_alias_result(self.interner, evaluated) {
+            return;
+        }
+
+        self.interner
+            .store_display_alias_preferring_application(instantiated, original_type_id);
+    }
+
+    fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        matches!(
+            interner.lookup(type_id),
+            Some(
+                TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Mapped(_)
+            )
+        )
     }
 
     /// Check if a type is a Conditional whose `extends_type` is an Application containing infer.
