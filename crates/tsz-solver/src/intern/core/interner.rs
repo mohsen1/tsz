@@ -1051,10 +1051,13 @@ impl TypeInterner {
         // observable as the residual `intern_calls - intern_hits -
         // intern_misses` and is not separately bucketed today.
         //
-        // We gate once with `enabled_fast()` and cache the counter pointer
-        // so an enabled run pays one `OnceLock` deref per `intern()` call
-        // instead of one per increment, and a disabled run pays only the
-        // single fast-gate load (each increment compiles to a no-op).
+        // We gate once with `enabled_fast()` (one `OnceLock<bool>` read)
+        // and cache the resulting `&'static PerfCounters` pointer in `pc`.
+        // An enabled run pays the gate read plus one `counters()`
+        // `OnceLock<PerfCounters>` deref per `intern()` call (vs. one per
+        // increment). A disabled run pays only the gate read: subsequent
+        // `if let Some(c) = pc` checks are predictable branches on a
+        // local `None` that the optimizer folds into the no-op path.
         let pc = if tsz_common::perf_counters::enabled_fast() {
             Some(tsz_common::perf_counters::counters())
         } else {
