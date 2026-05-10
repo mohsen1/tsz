@@ -2641,6 +2641,36 @@ fn preferred_application_display_alias_can_name_preexisting_structural_type() {
     );
 }
 
+#[test]
+fn application_display_alias_can_name_intermediate_application() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: db.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = db.literal_number(1.0);
+    let inner_app = db.application(db.lazy(inner_def), vec![one]);
+    let outer_app = db.application(db.lazy(outer_def), vec![one]);
+
+    db.store_display_alias_preferring_application(inner_app, outer_app);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(inner_app), "Outer<1>");
+}
+
 /// The empty object shape `{}` is a universally-shared interning target, but
 /// some named generic interfaces/classes have empty bodies and still need a
 /// display alias so their type arguments survive diagnostic rendering.

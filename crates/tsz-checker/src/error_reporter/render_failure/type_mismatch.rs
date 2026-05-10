@@ -380,6 +380,14 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.type_query_static_array_structural_display(&source_str) {
                 source_str = display;
             }
+            if let Some((direct_source, direct_target)) =
+                self.direct_type_param_alias_application_pair_display(source, target)
+            {
+                source_str = direct_source;
+                target_str = direct_target;
+            }
+            source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
+            target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
         }
 
         let base = format_message(

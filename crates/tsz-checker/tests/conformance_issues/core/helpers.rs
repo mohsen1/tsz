@@ -1263,7 +1263,7 @@ type VarianceFunction<in out Value> = (value: Value) => Value;
 }
 
 #[test]
-fn test_variance_reference_assignability_preserves_literal_alias_display() {
+fn test_variance_reference_assignability_uses_tsc_alias_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 type NumericConstraint<Value extends number> = Value;
@@ -1281,6 +1281,19 @@ type VarianceShape<in out Value> = Shape<Value>;
 declare let vs1: VarianceShape<1>;
 declare let vs12: VarianceShape<1 | 2>;
 vs1 = vs12;
+
+type Level2<Value> = Shape<Value>;
+type Level1<Value> = Level2<Value>;
+type VarianceDeepShape<in out Value> = Level1<Value>;
+
+declare let vds1: VarianceDeepShape<1>;
+declare let vds12: VarianceDeepShape<1 | 2>;
+vds1 = vds12;
+
+type PlainShapeAlias<Value> = Shape<Value>;
+declare let ps1: PlainShapeAlias<1>;
+declare let ps12: PlainShapeAlias<1 | 2>;
+ps1 = ps12;
 "#,
         CheckerOptions {
             target: ScriptTarget::ES2015,
@@ -1296,17 +1309,27 @@ vs1 = vs12;
         .collect();
 
     assert!(
-        ts2322.iter().any(|message| message.contains(
-            "Type 'NumericConstraint<1 | 2>' is not assignable to type 'NumericConstraint<1>'."
-        )),
-        "Expected direct alias assignment to preserve the alias surface, got: {diagnostics:?}"
-    );
-    assert!(
         ts2322
             .iter()
-            .any(|message| message
-                .contains("Type 'Shape<1 | 2>' is not assignable to type 'Shape<1>'.")),
-        "Expected object alias assignment to preserve the object alias surface, got: {diagnostics:?}"
+            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
+        "Expected scalar alias assignment to expand to the literal union, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message
+            .contains("Type 'VarianceShape<2 | 1>' is not assignable to type 'VarianceShape<1>'.")),
+        "Expected shallow object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message.contains(
+            "Type 'VarianceDeepShape<2 | 1>' is not assignable to type 'VarianceDeepShape<1>'."
+        )),
+        "Expected deep object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message.contains(
+            "Type 'PlainShapeAlias<2 | 1>' is not assignable to type 'PlainShapeAlias<1>'."
+        )),
+        "Expected non-variance object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
     );
 }
 

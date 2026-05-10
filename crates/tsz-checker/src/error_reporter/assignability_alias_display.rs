@@ -3,6 +3,7 @@
 use crate::diagnostics::{diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn generic_alias_name_from_display(display: &str) -> Option<&str> {
@@ -74,6 +75,105 @@ impl<'a> CheckerState<'a> {
         format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_display, target_display],
+        )
+    }
+
+    pub(in crate::error_reporter) fn direct_type_param_alias_application_pair_display(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<(String, String)> {
+        let (source_base, source_args) = self.application_info_or_display_alias(source)?;
+        let (target_base, target_args) = self.application_info_or_display_alias(target)?;
+        if source_base != target_base || source_args.len() != target_args.len() {
+            return None;
+        }
+        let (source_arg, target_arg) = self.direct_type_param_alias_application_pair_args(
+            source_base,
+            &source_args,
+            &target_args,
+            0,
+        )?;
+        Some((
+            self.format_type_diagnostic(source_arg),
+            self.format_type_diagnostic(target_arg),
+        ))
+    }
+
+    fn direct_type_param_alias_application_pair_args(
+        &self,
+        base: TypeId,
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+        depth: usize,
+    ) -> Option<(TypeId, TypeId)> {
+        if depth > 8 || source_args.len() != target_args.len() {
+            return None;
+        }
+
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = def.body?;
+        if let Some(param) = crate::query_boundaries::common::type_param_info(self.ctx.types, body)
+        {
+            let arg_idx = def
+                .type_params
+                .iter()
+                .position(|type_param| type_param.name == param.name)?;
+            return Some((*source_args.get(arg_idx)?, *target_args.get(arg_idx)?));
+        }
+
+        let (next_base, body_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, body)?;
+        if next_base == base {
+            return None;
+        }
+        let source_args = self.instantiate_alias_application_display_args(
+            &def.type_params,
+            source_args,
+            &body_args,
+        )?;
+        let target_args = self.instantiate_alias_application_display_args(
+            &def.type_params,
+            target_args,
+            &body_args,
+        )?;
+        self.direct_type_param_alias_application_pair_args(
+            next_base,
+            &source_args,
+            &target_args,
+            depth + 1,
+        )
+    }
+
+    fn instantiate_alias_application_display_args(
+        &self,
+        type_params: &[tsz_solver::TypeParamInfo],
+        alias_args: &[TypeId],
+        body_args: &[TypeId],
+    ) -> Option<Vec<TypeId>> {
+        if alias_args.len() < type_params.len() {
+            return None;
+        }
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            type_params,
+            &alias_args[..type_params.len()],
+        );
+        Some(
+            body_args
+                .iter()
+                .map(|&arg| {
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        arg,
+                        &substitution,
+                    )
+                })
+                .collect(),
         )
     }
 }
