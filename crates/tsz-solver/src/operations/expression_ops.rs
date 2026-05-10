@@ -169,10 +169,10 @@ pub fn normalize_object_union_members_for_write_target(
 
         if changed {
             shape.flags.remove(ObjectFlags::FRESH_LITERAL);
+            let display_props =
+                normalized_display_properties(interner, original_type, &shape.properties);
             let widened = interner.object_with_flags(shape.properties, shape.flags);
-            if let Some(display_props) = interner.get_display_properties(original_type) {
-                interner.store_display_properties(widened, display_props.as_ref().clone());
-            }
+            interner.store_display_properties(widened, display_props);
             normalized.push(widened);
         } else {
             normalized.push(original_type);
@@ -264,9 +264,10 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
             // dedupe to a previously-interned twin whose `declaration_order` is
             // zero, and the diagnostic printer falls back to Atom order — which
             // is non-deterministic across compilations and rarely matches the
-            // source-written property order tsc preserves.
-            let mut display_props = completed.clone();
-            crate::types::normalize_display_property_order(&mut display_props);
+            // source-written property order tsc preserves. Existing properties
+            // keep their display-only literal types so normalized unions don't
+            // repaint `{ c: true }` as `{ c: boolean }`.
+            let display_props = normalized_display_properties(interner, original_type, &completed);
             let new_type_id = interner.object_with_flags(completed, shape.flags);
             interner.store_display_properties(new_type_id, display_props);
             normalized.push(new_type_id);
@@ -297,6 +298,33 @@ fn add_missing_optional_properties(existing: &[PropertyInfo], names: &[Atom]) ->
         out.push(prop);
     }
     out
+}
+
+fn normalized_display_properties(
+    interner: &dyn TypeDatabase,
+    original_type: TypeId,
+    normalized_properties: &[PropertyInfo],
+) -> Vec<PropertyInfo> {
+    let original_display = interner.get_display_properties(original_type);
+    let mut display_props: Vec<PropertyInfo> = normalized_properties
+        .iter()
+        .map(|prop| {
+            let Some(display_prop) = original_display
+                .as_ref()
+                .and_then(|props| props.iter().find(|candidate| candidate.name == prop.name))
+            else {
+                return prop.clone();
+            };
+
+            PropertyInfo {
+                type_id: display_prop.type_id,
+                write_type: display_prop.write_type,
+                ..prop.clone()
+            }
+        })
+        .collect();
+    crate::types::normalize_display_property_order(&mut display_props);
+    display_props
 }
 
 /// Computes the type of a template literal expression.
