@@ -1132,7 +1132,9 @@ pub fn clone_lib_files_for_checker(
         #[cfg(not(target_arch = "wasm32"))]
         {
             ensure_rayon_global_pool();
-            return maybe_parallel_iter!(lib_files).map(clone_lib_file).collect();
+            return maybe_parallel_iter!(lib_files)
+                .map(clone_lib_file)
+                .collect();
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -5434,8 +5436,7 @@ pub fn check_files_parallel(
     let resolved_module_paths = Arc::new(resolved_module_paths);
 
     let should_clone_libs_in_parallel = program.files.len() > 1;
-    let checker_lib_files =
-        clone_lib_files_for_checker(lib_files, should_clone_libs_in_parallel);
+    let checker_lib_files = clone_lib_files_for_checker(lib_files, should_clone_libs_in_parallel);
 
     // Create fresh checker lib contexts from cloned lib files (contains both arena and binder).
     // Wrapped in Arc so that per-file checkers and child delegations share
