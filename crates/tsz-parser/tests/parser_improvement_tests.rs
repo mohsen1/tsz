@@ -3019,6 +3019,60 @@ fn invalid_surrogate_unicode_escapes_in_class_member_emit_ts1127() {
 }
 
 #[test]
+fn invalid_surrogate_unicode_escapes_in_import_alias_emit_ts1127_without_cascade() {
+    let source = r#"import { foo as \uD800\uDEA7 } from "mod";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let first_escape = source.find(r"\uD800").expect("first escape") as u32;
+    let second_escape = source.find(r"\uDEA7").expect("second escape") as u32;
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, first_escape),
+            (diagnostic_codes::INVALID_CHARACTER, second_escape),
+        ],
+        "invalid surrogate escapes in import aliases should report scanner-shaped TS1127 diagnostics without parser cascades, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn es5_import_specifier_identifier_tail_reports_invalid_astral_without_comma_cascade() {
+    let source = r#"import { _𐊧 as \uD800\uDEA7 } from "mod";"#;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let raw_astral = source.find('𐊧').expect("raw astral") as u32;
+    let first_escape = source.find(r"\uD800").expect("first escape") as u32;
+    let second_escape = source.find(r"\uDEA7").expect("second escape") as u32;
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, raw_astral),
+            (diagnostic_codes::INVALID_CHARACTER, first_escape),
+            (diagnostic_codes::INVALID_CHARACTER, second_escape),
+        ],
+        "ES5 import specifier invalid identifier tails should report scanner-shaped TS1127 diagnostics without comma recovery cascades, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn es5_astral_identifier_chars_recover_as_invalid_declaration_tail() {
     let source = "export var _𐊧 = new Foo();";
     let astral_pos = source.find('𐊧').expect("astral identifier char") as u32;
@@ -3070,6 +3124,245 @@ fn es2015_astral_identifier_chars_remain_valid_identifier_parts() {
             .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
         "ES2015 astral identifier chars should remain valid identifier parts, got {diagnostics:?}"
     );
+}
+
+#[test]
+fn es2015_braced_astral_escape_remains_valid_identifier_start() {
+    let source = r"export var \u{102A7} = new Foo();";
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES2015,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "ES2015 braced astral identifier escape should scan as a valid identifier start, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_remains_invalid_identifier_start() {
+    let source = r"export var \u{102A7} = new Foo();";
+    let escape_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == escape_pos),
+        "ES5 braced astral identifier escape should report TS1127 at the escape, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_raw_astral_variable_name_reports_declaration_expected_at_type_tail() {
+    let source = "declare var 𐊧: string;";
+    let raw_astral = source.find('𐊧').expect("raw astral") as u32;
+    let colon_pos = source.find(':').expect("colon") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, raw_astral)),
+        "ES5 raw astral declaration name should report TS1127 at the astral character, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(diagnostic_codes::VARIABLE_DECLARATION_EXPECTED, colon_pos)),
+        "ES5 raw astral declaration recovery should report TS1134 at the type tail, got {diagnostics:?}"
+    );
+    assert!(
+        !actual.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            colon_pos
+        )),
+        "ES5 raw astral declaration recovery should not reclassify the type tail as TS1128, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_variable_name_reports_missing_comma_before_recovered_identifier() {
+    let source = r"declare var \u{102A7}: string;";
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let recovered_open_brace = source.find('{').expect("recovered open brace") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, escape_pos)),
+        "ES5 braced astral declaration name should report TS1127 at the escape, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(diagnostic_codes::EXPECTED, recovered_open_brace)),
+        "ES5 braced astral declaration recovery should report TS1005 at the recovered braced tail, got {diagnostics:?}"
+    );
+    assert!(
+        !actual.contains(&(diagnostic_codes::EXPECTED, escape_pos + 1)),
+        "ES5 braced astral declaration recovery should not emit a duplicate TS1005 before the recovered identifier, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_raw_astral_statement_assignment_reports_statement_expected_at_equals() {
+    let source = "if (true) { 𐊧 = \"hello\"; }";
+    let raw_astral = source.find('𐊧').expect("raw astral") as u32;
+    let equals_pos = source.find('=').expect("equals") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, raw_astral)),
+        "ES5 raw astral statement assignment should report TS1127 at the astral character, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            equals_pos
+        )),
+        "ES5 raw astral statement assignment should report TS1128 at the assignment tail, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_statement_assignment_recovers_block_followed_by_equals() {
+    let source = r#"if (true) { \u{102A7} = "hallo"; }"#;
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let recovered_identifier = escape_pos + 1;
+    let equals_pos = source.find('=').expect("equals") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert!(
+        actual.contains(&(diagnostic_codes::INVALID_CHARACTER, escape_pos)),
+        "ES5 braced astral statement assignment should report TS1127 at the escape, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(
+            diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            recovered_identifier
+        )),
+        "ES5 braced astral statement assignment should report TS1434 at the recovered identifier tail, got {diagnostics:?}"
+    );
+    assert!(
+        actual.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
+            equals_pos
+        )),
+        "ES5 braced astral statement assignment should recover the braced tail as a block and report TS2809 at `=`, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es2015_braced_astral_escape_remains_valid_in_class_and_member_access() {
+    let source = r#"
+class Foo {
+    \u{102A7}: string;
+    constructor() {
+        this.\u{102A7} = " world";
+    }
+    methodA() {
+        return this.\u{102A7};
+    }
+}
+export var _\u{102A7} = new Foo().\u{102A7};
+"#;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES2015,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::INVALID_CHARACTER),
+        "ES2015 braced astral identifier escapes should remain valid across declarations, class members, and member access, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_reports_invalid_character_across_identifier_contexts() {
+    let source = r#"
+class Foo {
+    \u{102A7}: string;
+    constructor() {
+        this.\u{102A7} = " world";
+    }
+}
+export var _\u{102A7} = new Foo().\u{102A7};
+"#;
+    let expected_escape_positions: Vec<_> = source
+        .match_indices(r"\u{102A7}")
+        .map(|(pos, _)| pos as u32)
+        .collect();
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    for escape_pos in expected_escape_positions {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == escape_pos),
+            "ES5 braced astral identifier escape should report TS1127 at {escape_pos}, got {diagnostics:?}"
+        );
+    }
 }
 
 #[test]

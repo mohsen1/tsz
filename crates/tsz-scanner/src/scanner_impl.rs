@@ -951,7 +951,19 @@ impl ScannerState {
                         self.scan_identifier_with_escapes();
                         return self.token;
                     }
-                    if escaped_ch.is_some() {
+                    if let Some(code_point) = escaped_ch {
+                        if !self.allow_astral_identifier_chars
+                            && code_point > 0xFFFF
+                            && self
+                                .source
+                                .as_bytes()
+                                .get(self.pos + 2)
+                                .is_some_and(|&b| b == b'{')
+                        {
+                            self.pos += 1;
+                            self.token = SyntaxKind::Unknown;
+                            return self.token;
+                        }
                         let _ = self.scan_unicode_escape_value();
                         self.token = SyntaxKind::Unknown;
                         return self.token;
@@ -1842,7 +1854,7 @@ impl ScannerState {
 
     /// Peek at a unicode escape sequence in identifier text without advancing
     /// the position. Returns the code point if the escape is valid
-    /// (`\uXXXX`, or a BMP `\u{XXXXX}`), None otherwise.
+    /// (`\uXXXX`, or `\u{XXXXX}` for a valid Unicode scalar), None otherwise.
     fn peek_unicode_escape(&self) -> Option<u32> {
         // Must start with \u
         if self.pos + 1 >= self.end {
@@ -1863,7 +1875,9 @@ impl ScannerState {
                 return None;
             }
             let hex = &self.source[start..end];
-            u32::from_str_radix(hex, 16).ok().filter(|&cp| cp <= 0xFFFF)
+            u32::from_str_radix(hex, 16)
+                .ok()
+                .filter(|&cp| char::from_u32(cp).is_some())
         } else {
             // \uXXXX form (exactly 4 hex digits)
             if self.pos + 5 >= self.end {
@@ -3610,6 +3624,25 @@ mod tests {
         let tokens = scan_all("a·b");
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0], (SyntaxKind::Identifier, "a·b".to_string()));
+    }
+
+    #[test]
+    fn scan_es2015_braced_astral_escape_as_identifier_start() {
+        let mut scanner = ScannerState::new(r"\u{102A7}tail".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES2015);
+
+        assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_value_ref(), "𐊧tail");
+        assert_eq!(scanner.get_token_text(), r"\u{102A7}tail");
+    }
+
+    #[test]
+    fn scan_es5_braced_astral_escape_remains_invalid_identifier_start() {
+        let mut scanner = ScannerState::new(r"\u{102A7}tail".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES5);
+
+        assert_eq!(scanner.scan(), SyntaxKind::Unknown);
+        assert_eq!(scanner.get_token_text(), "\\");
     }
 
     // ── Keywords ──────────────────────────────────────────────────────
