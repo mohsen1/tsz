@@ -562,6 +562,76 @@ const fn11 = <Params>(
     );
 }
 
+#[test]
+fn conditional_keyof_variance_assignability_matches_tsc() {
+    let source = r#"
+interface Covariant<T> {
+    foo: T extends string ? T : number;
+}
+
+interface Contravariant<T> {
+    foo: T extends string ? keyof T : number;
+}
+
+interface Invariant<T> {
+    foo: T extends string ? keyof T : T;
+}
+
+interface CovariantFalse<T> {
+    foo: T extends string ? number : T;
+}
+
+interface ContravariantFalse<T> {
+    foo: T extends string ? number : keyof T;
+}
+
+interface InvariantFalse<T> {
+    foo: T extends string ? T : keyof T;
+}
+
+function f1<A, B extends A>(a: Covariant<A>, b: Covariant<B>) {
+    a = b;
+    b = a;  // Error
+}
+
+function f2<A, B extends A>(a: Contravariant<A>, b: Contravariant<B>) {
+    a = b;  // Error
+    b = a;
+}
+
+function f3<A, B extends A>(a: Invariant<A>, b: Invariant<B>) {
+    a = b;  // Error
+    b = a;  // Error
+}
+
+function f4<A, B extends A>(a: CovariantFalse<A>, b: CovariantFalse<B>) {
+    a = b;
+    b = a;  // Error
+}
+
+function f5<A, B extends A>(a: ContravariantFalse<A>, b: ContravariantFalse<B>) {
+    a = b;  // Error
+    b = a;
+}
+
+function f6<A, B extends A>(a: InvariantFalse<A>, b: InvariantFalse<B>) {
+    a = b;  // Error
+    b = a;  // Error
+}
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        8,
+        "conditional keyof wrapper variance should produce only the tsc-expected assignments; all diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that indexed access types in conditional contexts work correctly.
 #[test]
 fn test_indexed_access_in_conditional_context() {

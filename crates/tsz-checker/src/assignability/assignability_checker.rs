@@ -2154,10 +2154,6 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if self.same_base_application_to_constrained_type_param_target(source, target) {
-            return false;
-        }
-
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
         // type arguments using computed variance BEFORE structural expansion.
@@ -2177,6 +2173,10 @@ impl<'a> CheckerState<'a> {
             if let Some(result) = check_application_variance_assignability(&inputs) {
                 return result;
             }
+        }
+
+        if self.same_base_application_to_constrained_type_param_target(source, target) {
+            return false;
         }
 
         // Pre-evaluation IndexAccess identity check: when both source and target are
