@@ -196,6 +196,15 @@ pub struct ParserState {
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
     pub(crate) suppress_next_missing_close_paren_error_once: bool,
+    /// Class-member recovery has already treated a previously consumed `}` as the
+    /// class close, so the enclosing class parser should not also emit `}` expected.
+    pub(crate) suppress_next_missing_class_close_brace_error_once: bool,
+    /// A class declaration recovered from a missing `{` at a stray `.`, so the
+    /// next non-block `}` should be treated as a stray statement-list token.
+    pub(crate) non_block_close_brace_statement_errors_remaining: u8,
+    /// Recovery has already consumed stray outer `}` tokens, so do not add a
+    /// final missing-`}` cascade at EOF for the abandoned container.
+    pub(crate) suppress_missing_close_brace_at_eof_once: bool,
     /// Speculative async-arrow parsing consumed `=>` while recovering a malformed
     /// parameter list, so the async-arrow candidate must roll back.
     pub(crate) saw_arrow_parameter_recovery: bool,
@@ -299,6 +308,9 @@ impl ParserState {
             import_attribute_tail_recovered: false,
             suppress_object_literal_comma_once: false,
             suppress_next_missing_close_paren_error_once: false,
+            suppress_next_missing_class_close_brace_error_once: false,
+            non_block_close_brace_statement_errors_remaining: 0,
+            suppress_missing_close_brace_at_eof_once: false,
             saw_arrow_parameter_recovery: false,
             pending_failed_async_arrow_colon_recovery: false,
             type_member_container_depth: 0,
@@ -340,6 +352,9 @@ impl ParserState {
         self.import_attribute_tail_recovered = false;
         self.suppress_object_literal_comma_once = false;
         self.suppress_next_missing_close_paren_error_once = false;
+        self.suppress_next_missing_class_close_brace_error_once = false;
+        self.non_block_close_brace_statement_errors_remaining = 0;
+        self.suppress_missing_close_brace_at_eof_once = false;
         self.saw_arrow_parameter_recovery = false;
         self.pending_failed_async_arrow_colon_recovery = false;
         self.type_member_container_depth = 0;
@@ -968,6 +983,21 @@ impl ParserState {
             if !self.is_token(SyntaxKind::CloseParenToken) {
                 return false;
             }
+        }
+        if kind == SyntaxKind::CloseBraceToken
+            && self.suppress_next_missing_class_close_brace_error_once
+        {
+            self.suppress_next_missing_class_close_brace_error_once = false;
+            if !self.is_token(SyntaxKind::CloseBraceToken) {
+                return false;
+            }
+        }
+        if kind == SyntaxKind::CloseBraceToken
+            && self.suppress_missing_close_brace_at_eof_once
+            && self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            self.suppress_missing_close_brace_at_eof_once = false;
+            return false;
         }
 
         if self.is_token(kind) {

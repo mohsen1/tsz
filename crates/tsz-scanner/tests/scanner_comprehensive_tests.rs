@@ -587,6 +587,32 @@ mod number_scanning {
     }
 
     #[test]
+    fn invalid_unicode_escape_identifier_start_scans_unknown() {
+        let mut scanner =
+            ScannerState::new("_\\uD4A5\\u7204\\uC316\\uE59F = local".to_string(), true);
+        let mut saw_unknown_escape = false;
+        loop {
+            let token = scanner.scan();
+            if token == SyntaxKind::Unknown && scanner.get_token_text().starts_with("\\u") {
+                saw_unknown_escape = true;
+            }
+            if token == SyntaxKind::EndOfFileToken {
+                break;
+            }
+        }
+
+        assert!(
+            saw_unknown_escape,
+            "expected at least one invalid unicode escape to scan as Unknown"
+        );
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1127),
+            "expected TS1127 for invalid unicode escape identifier start, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn decimal_bigint() {
         let mut scanner = ScannerState::new("0n".to_string(), true);
         let token = scanner.scan();

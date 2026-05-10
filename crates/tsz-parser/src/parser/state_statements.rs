@@ -473,9 +473,26 @@ impl ParserState {
         let mut statements = Vec::new();
         let mut previous_statement_was_block = false;
 
-        while !self.is_token(SyntaxKind::EndOfFileToken)
-            && !self.is_token(SyntaxKind::CloseBraceToken)
-        {
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if self.is_token(SyntaxKind::CloseBraceToken) {
+                if self.non_block_close_brace_statement_errors_remaining > 0
+                    && !self.in_block_context()
+                {
+                    self.non_block_close_brace_statement_errors_remaining -= 1;
+                    if self.non_block_close_brace_statement_errors_remaining == 0 {
+                        self.suppress_missing_close_brace_at_eof_once = true;
+                    }
+                    self.parse_error_at_current_token(
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+                break;
+            }
+
             let pos_before = self.token_pos();
 
             if self.look_ahead_is_invalid_shebang() {
@@ -494,6 +511,11 @@ impl ParserState {
                     diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
                 );
                 self.next_token();
+                previous_statement_was_block = false;
+                continue;
+            }
+
+            if self.recover_orphan_case_assignment_before_if() {
                 previous_statement_was_block = false;
                 continue;
             }
@@ -639,6 +661,80 @@ impl ParserState {
         }
 
         self.make_node_list(statements)
+    }
+
+    fn recover_orphan_case_assignment_before_if(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::CaseKeyword) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let has_same_line_equals =
+            !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::EqualsToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        if !has_same_line_equals {
+            return false;
+        }
+
+        self.parse_error_at_current_token(
+            "Declaration or statement expected.",
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        );
+        while !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            self.next_token();
+        }
+        if self.is_token(SyntaxKind::SemicolonToken) {
+            self.next_token();
+        }
+        if self.is_token(SyntaxKind::IfKeyword) {
+            self.report_orphan_case_following_if_header_recovery();
+        }
+        true
+    }
+
+    fn report_orphan_case_following_if_header_recovery(&mut self) {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        if !self.is_token(SyntaxKind::OpenParenToken) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            return;
+        }
+
+        let mut previous_expr_token: Option<(u32, u32)> = None;
+        let mut first_operator_token: Option<(u32, u32)> = None;
+        self.next_token();
+        while !matches!(
+            self.token(),
+            SyntaxKind::CloseParenToken | SyntaxKind::EndOfFileToken
+        ) {
+            if first_operator_token.is_none() && self.is_binary_operator() {
+                first_operator_token = Some((self.token_pos(), self.token_end()));
+            }
+            previous_expr_token = Some((self.token_pos(), self.token_end()));
+            self.next_token();
+        }
+        if let Some((start, end)) = first_operator_token.or(previous_expr_token) {
+            self.parse_error_at(
+                start,
+                end.saturating_sub(start),
+                "',' expected.",
+                diagnostic_codes::EXPECTED,
+            );
+        }
+        if self.is_token(SyntaxKind::CloseParenToken) {
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
     }
 
     /// Parse a statement
@@ -2214,6 +2310,7 @@ impl ParserState {
                 if self.is_token(SyntaxKind::Unknown) {
                     let snapshot = self.scanner.save_state();
                     let current = self.current_token;
+                    let unknown_text = self.scanner.get_token_text();
                     self.next_token();
                     let unknown_followed_by_equals = self.is_token(SyntaxKind::EqualsToken);
                     self.scanner.restore_state(snapshot);
@@ -2225,6 +2322,20 @@ impl ParserState {
                             diagnostic_codes::INVALID_CHARACTER,
                         );
                         self.next_token(); // consume Unknown
+
+                        if unknown_text.starts_with("\\u") {
+                            if self.parse_optional(SyntaxKind::EqualsToken)
+                                && !matches!(
+                                    self.token(),
+                                    SyntaxKind::SemicolonToken
+                                        | SyntaxKind::CloseBraceToken
+                                        | SyntaxKind::EndOfFileToken
+                                )
+                            {
+                                self.parse_assignment_expression();
+                            }
+                            break;
+                        }
 
                         if self.is_token(SyntaxKind::EqualsToken) {
                             self.parse_error_at_current_token(

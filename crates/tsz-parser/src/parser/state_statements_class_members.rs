@@ -687,20 +687,7 @@ impl ParserState {
             return false;
         }
 
-        if matches!(
-            self.current_token,
-            SyntaxKind::PublicKeyword
-                | SyntaxKind::PrivateKeyword
-                | SyntaxKind::ProtectedKeyword
-                | SyntaxKind::StaticKeyword
-                | SyntaxKind::ReadonlyKeyword
-                | SyntaxKind::AbstractKeyword
-                | SyntaxKind::OverrideKeyword
-                | SyntaxKind::AccessorKeyword
-                | SyntaxKind::DeclareKeyword
-                | SyntaxKind::AtToken
-                | SyntaxKind::AsteriskToken
-        ) {
+        if self.is_constructor_return_type_recovery_class_member_start() {
             return true;
         }
 
@@ -725,6 +712,23 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         result
+    }
+
+    fn is_constructor_return_type_recovery_class_member_start(&mut self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AtToken
+                | SyntaxKind::AsteriskToken
+        )
     }
 
     /// Parse get accessor with modifiers: static get `foo()` { }
@@ -1014,6 +1018,17 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
+            if let Some(close_pos) = self.class_member_list_outer_declaration_recovery_close_pos() {
+                self.parse_error_at(
+                    close_pos,
+                    1,
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.suppress_next_missing_class_close_brace_error_once = true;
+                break;
+            }
+
             if self.is_token(SyntaxKind::TryKeyword) && self.look_ahead_is_try_block_same_line() {
                 self.parse_error_at_current_token(
                     "Unexpected token. A constructor, method, accessor, or property was expected.",
@@ -1065,6 +1080,23 @@ impl ParserState {
         }
 
         self.make_node_list(members)
+    }
+
+    fn class_member_list_outer_declaration_recovery_close_pos(&mut self) -> Option<u32> {
+        if !self.is_token(SyntaxKind::ClassKeyword)
+            || !self.scanner.has_preceding_line_break()
+            || !self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+        {
+            return None;
+        }
+
+        let bytes = self.get_source_text().as_bytes();
+        let mut cursor = self.token_pos() as usize;
+        while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
+            cursor -= 1;
+        }
+
+        (cursor > 0 && bytes[cursor - 1] == b'}').then_some((cursor - 1) as u32)
     }
 
     fn look_ahead_is_try_block_same_line(&mut self) -> bool {
