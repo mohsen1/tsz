@@ -243,6 +243,13 @@ impl<'a> CheckerState<'a> {
             arg_str = generic_arg_str;
             param_str = generic_param_str;
         }
+        if let Some(widened_arg_str) = self
+            .widen_literal_call_argument_display_against_plain_primitive_parameter(
+                arg_type, idx, &param_str,
+            )
+        {
+            arg_str = widened_arg_str;
+        }
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
@@ -268,6 +275,31 @@ impl<'a> CheckerState<'a> {
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    fn widen_literal_call_argument_display_against_plain_primitive_parameter(
+        &mut self,
+        arg_type: TypeId,
+        arg_idx: NodeIndex,
+        param_display: &str,
+    ) -> Option<String> {
+        let param_base = match param_display {
+            "string" => TypeId::STRING,
+            "number" => TypeId::NUMBER,
+            "boolean" => TypeId::BOOLEAN,
+            "bigint" => TypeId::BIGINT,
+            "symbol" => TypeId::SYMBOL,
+            _ => return None,
+        };
+        let source = self
+            .literal_type_from_initializer(arg_idx)
+            .unwrap_or(arg_type);
+        let source_base =
+            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source);
+        if source_base == source || source_base == param_base {
+            return None;
+        }
+        Some(self.format_type_for_assignability_message(source_base))
     }
 
     pub(in crate::error_reporter::call_errors) fn mapped_property_mismatch_parameter_display(
