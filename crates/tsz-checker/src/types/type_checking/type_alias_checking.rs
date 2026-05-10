@@ -309,18 +309,15 @@ impl<'a> CheckerState<'a> {
             } else {
                 Vec::new()
             };
-            let has_definite_recursive_ref =
+            let has_stable_recursive_ref =
                 self.conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid);
-            let has_unresolved_computed_recursive_ref = if has_definite_recursive_ref {
-                self.conditional_body_has_unresolved_computed_recursive_alias_ref(
+            let has_unresolved_computed_recursive_ref = self
+                .conditional_body_has_unresolved_computed_recursive_alias_ref(
                     alias.type_node,
                     alias_sid,
-                )
-            } else {
-                false
-            };
-            if has_definite_recursive_ref
-                && (body_refs.contains(&def_id) || has_unresolved_computed_recursive_ref)
+                );
+            if (has_stable_recursive_ref && body_refs.contains(&def_id))
+                || has_unresolved_computed_recursive_ref
             {
                 // Collect type params that were pushed into scope above
                 let type_params: Vec<tsz_solver::TypeParamInfo> = alias
@@ -351,7 +348,8 @@ impl<'a> CheckerState<'a> {
                     .register_def_auto_params_in_envs(def_id, body_type, type_params);
 
                 // Evaluate with TS2589 detection flag
-                let depth_exceeded = self.evaluate_type_for_ts2589_check(body_type, def_id);
+                let depth_exceeded = has_stable_recursive_ref
+                    && self.evaluate_type_for_ts2589_check(body_type, def_id);
                 if depth_exceeded || has_unresolved_computed_recursive_ref {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     // tsc anchors TS2589 at `currentNode` (the inner self-reference
@@ -626,8 +624,11 @@ impl<'a> CheckerState<'a> {
                 if self.type_args_match_alias_params(alias_sid, type_args) {
                     return true;
                 }
+                if self.type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args) {
+                    return false;
+                }
                 return !self
-                    .type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args);
+                    .type_arg_nodes_contain_scoped_type_parameter_for_depth_check(type_args);
             }
         }
 

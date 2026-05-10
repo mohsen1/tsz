@@ -468,6 +468,32 @@ type Example = Paths<{ a: { b: string } }>;
 }
 
 #[test]
+fn recursive_conditional_alias_with_parameter_dependent_helper_args_no_definition_ts2589() {
+    let source = r#"
+type Wrap<T> = T;
+type Step<N extends number> = Wrap<N>;
+type Combine<Left extends number, Right extends number> = number;
+
+type TailRec<
+    Num extends number,
+    Count extends number,
+    Result extends number,
+> = number extends Count
+    ? number
+    : Count extends 0
+    ? Result
+    : TailRec<Num, Step<Count>, Combine<Result, Num>>;
+
+type Use<Num extends number, Count extends number> = TailRec<Num, Count, 1>;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "Should NOT emit definition-site TS2589 for recursive conditional aliases whose recursive type arguments still depend on scoped type parameters through helper aliases. Got: {diags:?}"
+    );
+}
+
+#[test]
 fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
     let types = TypeInterner::new();
     let elements = types.type_param(TypeParamInfo {
