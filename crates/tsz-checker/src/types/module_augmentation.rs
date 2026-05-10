@@ -395,7 +395,7 @@ impl<'a> CheckerState<'a> {
                 };
                 // Check if the augmentation target re-exports from source. Use
                 // context accessors because the real driver stores program-wide
-                // re-export maps on ProjectEnv instead of cloning them into each
+                // re-export maps on ProgramContext instead of cloning them into each
                 // per-file binder.
                 let wildcard_reexports_from_source = self
                     .ctx

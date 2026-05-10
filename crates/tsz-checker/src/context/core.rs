@@ -493,9 +493,9 @@ impl<'a> CheckerContext<'a> {
     /// `set_declared_modules_from_skeleton`), the declared-modules binder scan
     /// is skipped — the skeleton-derived data is used instead.
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
-        // If the 5 name-based global indices are already pre-populated (from ProjectEnv),
+        // If the 5 name-based global indices are already pre-populated (from ProgramContext),
         // skip the O(N) binder scans entirely. This is the fast path for multi-file
-        // checking where ProjectEnv::build_global_indices was called once at the driver level.
+        // checking where ProgramContext::build_global_indices was called once at the driver level.
         // Note: global_arena_index, global_declared_modules, and global_expando_index
         // are handled separately below (they're built on demand if not pre-set).
         let has_prebuilt_indices = self.global_file_locals_index.is_some()
@@ -556,7 +556,7 @@ impl<'a> CheckerContext<'a> {
         }
 
         // Fallback: build all indices from scratch (legacy path for tests and
-        // callers that don't use ProjectEnv).
+        // callers that don't use ProgramContext).
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
         // outer_key = module specifier, inner = export name
         let mut module_exports_index: crate::context::ModuleExportsIndexMap = FxHashMap::default();
@@ -1036,9 +1036,9 @@ impl<'a> CheckerContext<'a> {
     /// Look up the re-export entries for `file_name` in the cross-file
     /// program-wide re-export map.
     ///
-    /// Prefers `ProjectEnv`-level `program_reexports` (a single `Arc`-shared
+    /// Prefers `ProgramContext`-level `program_reexports` (a single `Arc`-shared
     /// allocation across all N cross-file lookup binders). Falls back to
-    /// `binder.reexports` for standalone callers without a `ProjectEnv`.
+    /// `binder.reexports` for standalone callers without a `ProgramContext`.
     /// Tries file-name key variants (`./foo.ts` / `foo.ts` / backslash-
     /// normalized).
     pub fn reexports_for_file<'b>(
@@ -1081,7 +1081,7 @@ impl<'a> CheckerContext<'a> {
     /// Prefers the project-wide `program_module_exports` (an `Arc`-shared
     /// allocation across all N cross-file lookup binders). Falls back to
     /// `binder.module_exports` for standalone callers without a
-    /// `ProjectEnv`. Tries file-name key variants
+    /// `ProgramContext`. Tries file-name key variants
     /// (`./foo.ts` / `foo.ts` / backslash-normalized).
     pub fn module_exports_for_module<'b>(
         &'b self,
@@ -1105,7 +1105,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Resolve a node → symbol lookup by arena pointer against the
     /// cross-file node-symbol map. Prefers the shared project-wide map
-    /// installed by `ProjectEnv::apply_to`; falls back to the per-binder
+    /// installed by `ProgramContext::apply_to`; falls back to the per-binder
     /// copy for tests and standalone callers.
     pub fn cross_file_node_symbols_for_arena<'b>(
         &'b self,
@@ -1134,7 +1134,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Resolve `sym_id` to its alias partner. Prefers the project-wide
-    /// `program_alias_partners` map installed by `ProjectEnv::apply_to`;
+    /// `program_alias_partners` map installed by `ProgramContext::apply_to`;
     /// falls back to per-binder `alias_partners` for tests/standalone callers.
     pub fn alias_partner_for(
         &self,
@@ -1271,7 +1271,7 @@ impl<'a> CheckerContext<'a> {
             );
         }
 
-        // No pre-built index (legacy single-context paths with no ProjectEnv
+        // No pre-built index (legacy single-context paths with no ProgramContext
         // wiring). Use the original linear scan, then build a one-shot
         // reverse index for richer specifier resolution.
         let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);

@@ -438,8 +438,8 @@ name = "stable_identity_helpers_tests"
 path = "tests/stable_identity_helpers_tests.rs"
 
 [[test]]
-name = "project_env_tests"
-path = "tests/project_env_tests.rs"
+name = "program_context_tests"
+path = "tests/program_context_tests.rs"
 
 [[test]]
 name = "generic_call_inference_tests"

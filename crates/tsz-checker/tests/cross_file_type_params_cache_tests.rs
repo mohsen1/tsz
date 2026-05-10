@@ -13,7 +13,7 @@
 //!    on the scale-cliff fixtures).
 //!
 //! These tests cover the unit-test contract: the cache is wired through
-//! the `CheckerContext` / `ProjectEnv` plumbing, and the existing
+//! the `CheckerContext` / `ProgramContext` plumbing, and the existing
 //! arena-only fast path is preserved (no double-counting). A test that
 //! exercises the constraint slow path against a synthetic two-file
 //! fixture overflows the much-smaller test stack — an artifact of the

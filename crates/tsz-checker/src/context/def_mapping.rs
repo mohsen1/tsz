@@ -1303,7 +1303,7 @@ impl<'a> CheckerContext<'a> {
     /// `DefinitionStore`'s `symbol_only_index`, so `get_or_create_def_id`
     /// Step 2 finds them in O(1) without the repair path.
     ///
-    /// Called from `ProjectEnv::apply_to` after `set_all_binders`.
+    /// Called from `ProgramContext::apply_to` after `set_all_binders`.
     /// Safe to overlap with `pre_populate_def_ids_from_binder` (the current
     /// file's binder may also appear in `all_binders`); the dedup check in
     /// `populate_def_ids_from_semantic_defs` skips already-registered entries.

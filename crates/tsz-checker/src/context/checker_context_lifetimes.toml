@@ -16,7 +16,7 @@
 # Classification policy for this initial pass (T2.1.A.1):
 #
 # 1. Borrowed `&'a` references and `Arc<...>`-wrapped shared structures
-#    consumed by ProjectEnv are `ProgramStable`.
+#    consumed by ProgramContext are `ProgramStable`.
 # 2. Caches keyed by `NodeIndex` or `(u32, ...)` source positions are
 #    `FileLocalReset` because raw indices collide across files (per
 #    PERFORMANCE_PLAN.md §6 "Detailed Reset Hazards").
@@ -716,23 +716,23 @@ reason = "Arc-snapshot overlay seeded from parent; child writes own delta"
 
 [global_symbol_file_index]
 lifetime = "ProgramStable"
-reason = "Arc-shared SymbolId -> file-idx map (ProjectEnv-installed)"
+reason = "Arc-shared SymbolId -> file-idx map (ProgramContext-installed)"
 
 [all_arenas]
 lifetime = "ProgramStable"
-reason = "Arc<Vec<Arc<NodeArena>>>; ProjectEnv-installed"
+reason = "Arc<Vec<Arc<NodeArena>>>; ProgramContext-installed"
 
 [all_binders]
 lifetime = "ProgramStable"
-reason = "Arc<Vec<Arc<BinderState>>>; ProjectEnv-installed"
+reason = "Arc<Vec<Arc<BinderState>>>; ProgramContext-installed"
 
 [global_file_locals_index]
 lifetime = "ProgramStable"
-reason = "ProjectEnv-installed global file-locals index"
+reason = "ProgramContext-installed global file-locals index"
 
 [global_module_exports_index]
 lifetime = "ProgramStable"
-reason = "ProjectEnv-installed global module-exports index"
+reason = "ProgramContext-installed global module-exports index"
 
 [global_declared_modules]
 lifetime = "ProgramStable"
@@ -744,11 +744,11 @@ reason = "Arc-shared expando-property index"
 
 [global_module_augmentations_index]
 lifetime = "ProgramStable"
-reason = "ProjectEnv-installed module-augmentations index"
+reason = "ProgramContext-installed module-augmentations index"
 
 [global_augmentation_targets_index]
 lifetime = "ProgramStable"
-reason = "ProjectEnv-installed augmentation-targets index"
+reason = "ProgramContext-installed augmentation-targets index"
 
 [global_module_binder_index]
 lifetime = "ProgramStable"

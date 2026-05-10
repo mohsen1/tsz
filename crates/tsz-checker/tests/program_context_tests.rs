@@ -1,20 +1,20 @@
-//! Tests for `ProjectEnv` — the project-wide shared environment struct.
+//! Tests for `ProgramContext` — the project-wide shared environment struct.
 //!
-//! Validates that `ProjectEnv::apply_to` correctly populates a checker context
+//! Validates that `ProgramContext::apply_to` correctly populates a checker context
 //! with all project-level shared state in a single call.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
-use tsz_checker::context::{GlobalDeclaredModules, ProjectEnv};
+use tsz_checker::context::{GlobalDeclaredModules, ProgramContext};
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::QueryCache;
 use tsz_solver::TypeInterner;
 
-/// Helper: create a minimal `ProjectEnv` with all fields defaulted.
-fn empty_project_env() -> ProjectEnv {
-    ProjectEnv {
+/// Helper: create a minimal `ProgramContext` with all fields defaulted.
+fn empty_program_context() -> ProgramContext {
+    ProgramContext {
         lib_contexts: Arc::new(vec![]),
         all_arenas: Arc::new(vec![]),
         all_binders: Arc::new(vec![]),
@@ -77,7 +77,7 @@ fn apply_to_sets_core_shared_state() {
     let binder = BinderState::new();
     let mut checker = make_checker(&arena, &binder, &query_cache);
 
-    let env = empty_project_env();
+    let env = empty_program_context();
     env.apply_to(&mut checker.ctx);
 
     // Verify project-level state was applied
@@ -103,7 +103,7 @@ fn apply_to_populates_skeleton_declared_modules() {
     exact.insert("my-module".to_string());
     let dm = GlobalDeclaredModules::from_skeleton(exact, vec![]);
 
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
     env.skeleton_declared_modules = Some(Arc::new(dm));
     env.apply_to(&mut checker.ctx);
 
@@ -138,7 +138,7 @@ fn apply_to_populates_symbol_file_targets_fallback() {
     let binder = BinderState::new();
     let mut checker = make_checker(&arena, &binder, &query_cache);
 
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
     env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0), (SymbolId(2), 1)]);
     // Do NOT call build_global_symbol_file_index — exercises fallback path.
     env.apply_to(&mut checker.ctx);
@@ -157,7 +157,7 @@ fn apply_to_uses_global_index_skips_local_copy() {
     let binder = BinderState::new();
     let mut checker = make_checker(&arena, &binder, &query_cache);
 
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
     env.symbol_file_targets = Arc::new(vec![(SymbolId(1), 0), (SymbolId(2), 1)]);
     env.build_global_symbol_file_index();
     env.apply_to(&mut checker.ctx);
@@ -213,7 +213,7 @@ fn apply_to_sets_dom_replacement_globals() {
     let binder = BinderState::new();
     let mut checker = make_checker(&arena, &binder, &query_cache);
 
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
     env.typescript_dom_replacement_globals = (true, true, false);
     env.apply_to(&mut checker.ctx);
 
@@ -230,7 +230,7 @@ fn apply_to_sets_deprecation_diagnostics() {
     let binder = BinderState::new();
     let mut checker = make_checker(&arena, &binder, &query_cache);
 
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
     env.has_deprecation_diagnostics = true;
     env.apply_to(&mut checker.ctx);
 
@@ -239,7 +239,7 @@ fn apply_to_sets_deprecation_diagnostics() {
 
 #[test]
 fn build_global_indices_if_changed_rebuilds_on_first_call() {
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
     assert!(env.last_skeleton_fingerprint.is_none());
 
     let rebuilt = env.build_global_indices_if_changed(0xCAFE);
@@ -267,7 +267,7 @@ fn build_global_indices_populates_module_binder_index() {
         .or_default()
         .set("bar".to_string(), SymbolId(2));
 
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
     env.all_binders = Arc::new(vec![Arc::new(binder_a), Arc::new(binder_b)]);
     env.build_global_indices();
 
@@ -290,7 +290,7 @@ fn build_global_indices_populates_module_binder_index() {
 
 #[test]
 fn build_global_indices_if_changed_skips_when_fingerprint_matches() {
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
 
     // First build populates everything.
     let rebuilt = env.build_global_indices_if_changed(42);
@@ -305,7 +305,7 @@ fn build_global_indices_if_changed_skips_when_fingerprint_matches() {
 
 #[test]
 fn build_global_indices_if_changed_rebuilds_on_different_fingerprint() {
-    let mut env = empty_project_env();
+    let mut env = empty_program_context();
 
     env.build_global_indices_if_changed(100);
     assert_eq!(env.last_skeleton_fingerprint, Some(100));

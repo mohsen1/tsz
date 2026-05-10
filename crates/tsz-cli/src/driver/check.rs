@@ -1098,7 +1098,7 @@ pub(super) fn collect_diagnostics(
     // the legacy `Vec<(file_idx, ModuleAugmentation)>` shape so checker
     // consumers (`module_augmentation.rs`, `property_access_augmentation.rs`)
     // see no behavior change. The legacy per-binder loop in
-    // `ProjectEnv::build_global_indices` is skipped when this is `Some`.
+    // `ProgramContext::build_global_indices` is skipped when this is `Some`.
     let skeleton_module_augmentations_index: Option<
         tsz::checker::context::GlobalModuleAugmentationsIndex,
     > = program
@@ -1111,7 +1111,7 @@ pub(super) fn collect_diagnostics(
     // (with a StableLocation) at extract time; this projection rehydrates
     // them into the legacy `Vec<(SymbolId, file_idx)>` shape so checker
     // consumers (`module_augmentation.rs`) see no behavior change. The legacy
-    // per-binder loop in `ProjectEnv::build_global_indices` is skipped when
+    // per-binder loop in `ProgramContext::build_global_indices` is skipped when
     // this is `Some`.
     let skeleton_augmentation_targets_index: Option<
         tsz::checker::context::GlobalAugmentationTargetsIndex,
@@ -1128,7 +1128,7 @@ pub(super) fn collect_diagnostics(
     // `module_entity.rs`, `type_resolution/module.rs`) see no behavior
     // change. The legacy `module_binder_index` push lines inside the
     // per-binder `module_exports.iter()` loop in
-    // `ProjectEnv::build_global_indices` are skipped when this is `Some`.
+    // `ProgramContext::build_global_indices` are skipped when this is `Some`.
     let skeleton_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>> = program
         .skeleton_index
         .as_ref()
@@ -1144,7 +1144,7 @@ pub(super) fn collect_diagnostics(
     // `state/type_resolution/module.rs`, `state/type_resolution/import_type.rs`)
     // see no behavior change. The legacy inner
     // `for (export_name, sym_id) in exports.iter()` push loop in
-    // `ProjectEnv::build_global_indices` is skipped when this is `Some`.
+    // `ProgramContext::build_global_indices` is skipped when this is `Some`.
     //
     // SymbolId-coupling note: unlike PR #1145 (file-locals index, closed for
     // a regression), this projection does NOT extract pre-merge local
@@ -1170,18 +1170,18 @@ pub(super) fn collect_diagnostics(
     let program_wildcard_reexports = Arc::clone(&program.wildcard_reexports);
     let program_wildcard_reexports_type_only = Arc::clone(&program.wildcard_reexports_type_only);
     // `program.module_exports` is already `Arc`-wrapped on `MergedProgram`;
-    // cheap atomic clone for ProjectEnv install.
+    // cheap atomic clone for ProgramContext install.
     let program_module_exports = Arc::clone(&program.module_exports);
     // Same rationale for `program.cross_file_node_symbols`: the merged
     // program already owns the outer map behind `Arc`, so installing it into
-    // the shared ProjectEnv is an O(1) clone instead of deep-cloning the
+    // the shared ProgramContext is an O(1) clone instead of deep-cloning the
     // `FxHashMap<usize, Arc<...>>` before re-sharing it.
     let program_cross_file_node_symbols = Arc::clone(&program.cross_file_node_symbols);
     // Same rationale for `program.alias_partners`: a single shared
     // FxHashMap<SymbolId, SymbolId> beats N per-binder deep-clones.
     let program_alias_partners = Arc::clone(&program.alias_partners);
 
-    let mut project_env = tsz::checker::context::ProjectEnv {
+    let mut program_context = tsz::checker::context::ProgramContext {
         lib_contexts: Arc::clone(&checker_libs.contexts),
         all_arenas: Arc::clone(&all_arenas),
         all_binders: Arc::clone(&all_binders),
@@ -1214,12 +1214,12 @@ pub(super) fn collect_diagnostics(
     // On the first build this always rebuilds; on subsequent incremental builds
     // with the same skeleton fingerprint the O(N) binder scan is skipped.
     if let Some(ref skel) = program.skeleton_index {
-        project_env.build_global_indices_if_changed(skel.fingerprint);
+        program_context.build_global_indices_if_changed(skel.fingerprint);
     } else {
-        project_env.build_global_indices();
+        program_context.build_global_indices();
     }
     // Build the shared SymbolId→file-index map once; shared via Arc across all checkers.
-    project_env.build_global_symbol_file_index();
+    program_context.build_global_symbol_file_index();
 
     // Create a shared DefinitionStore for all parallel checkers.
     // CRITICAL: All parallel checkers MUST share the same DefinitionStore so that
@@ -1234,11 +1234,11 @@ pub(super) fn collect_diagnostics(
             ),
         );
         shared_store.init_file_locks(program.files.len());
-        project_env.shared_definition_store = Some(shared_store);
+        program_context.shared_definition_store = Some(shared_store);
     }
 
     // Prime Array<T> base type with global augmentations before any file checks.
-    // The prime checker uses the shared DefinitionStore (via project_env.apply_to).
+    // The prime checker uses the shared DefinitionStore (via program_context.apply_to).
     if !program.files.is_empty() && !checker_libs.contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
@@ -1250,7 +1250,7 @@ pub(super) fn collect_diagnostics(
             file.file_name.clone(),
             &options.checker,
         );
-        project_env.apply_to(&mut checker.ctx);
+        program_context.apply_to(&mut checker.ctx);
         checker.prime_boxed_types();
     }
 
@@ -1276,7 +1276,7 @@ pub(super) fn collect_diagnostics(
             checker_libs,
             &affected_lib_interfaces,
             &affected_lib_extension_interfaces,
-            &project_env,
+            &program_context,
         )
     } else {
         FxHashSet::default()
@@ -1289,7 +1289,7 @@ pub(super) fn collect_diagnostics(
                 checker_libs,
                 &baseline_lib_datetimeformatpart_interfaces,
                 &FxHashSet::default(),
-                &project_env,
+                &program_context,
                 &[2552],
             );
             diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
@@ -1342,7 +1342,7 @@ pub(super) fn collect_diagnostics(
         affected_interfaces: &affected_lib_interfaces,
         extension_interfaces: &affected_lib_extension_interfaces,
         merged_augmentations: &merged_augmentations,
-        project_env: &project_env,
+        program_context: &program_context,
         program_has_real_syntax_errors,
         program_has_unsupported_js_root,
     };
@@ -1450,7 +1450,7 @@ pub(super) fn collect_diagnostics(
                             binder,
                             program,
                             compiler_options: &compiler_options,
-                            project_env: &project_env,
+                            program_context: &program_context,
                             resolved_modules_per_file: &resolved_modules_per_file,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
                             shared_query_cache: shared_query_cache.as_ref(),
@@ -1489,7 +1489,7 @@ pub(super) fn collect_diagnostics(
                             binder,
                             program,
                             compiler_options: &compiler_options,
-                            project_env: &project_env,
+                            program_context: &program_context,
                             resolved_modules_per_file: &resolved_modules_per_file,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
                             shared_query_cache: shared_query_cache.as_ref(),
@@ -1517,7 +1517,7 @@ pub(super) fn collect_diagnostics(
                     binder,
                     program,
                     compiler_options: &compiler_options,
-                    project_env: &project_env,
+                    program_context: &program_context,
                     resolved_modules_per_file: &resolved_modules_per_file,
                     shared_lib_cache: Arc::clone(&shared_lib_cache),
                     shared_query_cache: shared_query_cache.as_ref(),
@@ -1588,7 +1588,7 @@ pub(super) fn collect_diagnostics(
         // `estimated_size_bytes()` walks again) — only worth paying for
         // when --diagnostics or --extendedDiagnostics is requested.
         aggregated_ds_stats = if collect_compile_stats {
-            project_env
+            program_context
                 .shared_definition_store
                 .as_ref()
                 .map(|store| store.statistics())
@@ -1683,11 +1683,14 @@ pub(super) fn collect_diagnostics(
                 )
             };
             checker.ctx.report_unresolved_imports = true;
-            project_env.apply_to(&mut checker.ctx);
+            program_context.apply_to(&mut checker.ctx);
 
             // Per-file state that varies across files:
             checker.ctx.set_current_file_idx(file_idx);
-            checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
+            checker.ctx.file_is_esm = program_context
+                .file_is_esm_map
+                .get(&file.file_name)
+                .copied();
 
             // Use the per-file pre-bucketed map; see the parallel path for the
             // O(N²) → O(1) rationale. `Arc::clone` here is a single atomic
@@ -1844,7 +1847,7 @@ pub(super) fn collect_diagnostics(
             // invalidation decisions in both CLI and LSP.
             let checker_counters = checker.ctx.request_cache_counters;
             // PERF: Skip per-file `definition_store.statistics()`. When
-            // `project_env.shared_definition_store` is set, every per-file
+            // `program_context.shared_definition_store` is set, every per-file
             // checker.ctx.definition_store is `Arc::clone` of the SAME shared
             // store — calling .statistics() per file iterates that shared
             // store N times and produces N× inflated counts. The parallel
@@ -1900,7 +1903,7 @@ pub(super) fn collect_diagnostics(
         // / --extendedDiagnostics actually consumes them. Matches the parallel
         // path's gating above.
         aggregated_ds_stats = if collect_compile_stats {
-            project_env
+            program_context
                 .shared_definition_store
                 .as_ref()
                 .map(|store| store.statistics())
@@ -2233,7 +2236,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// `all_binders`, skeleton indices, `symbol_file_targets`, `resolved_module_paths/errors`,
     /// `is_external_module_by_file`, `file_is_esm_map`, `typescript_dom_replacement_globals`,
     /// and `has_deprecation_diagnostics` fields.
-    project_env: &'a tsz::checker::context::ProjectEnv,
+    program_context: &'a tsz::checker::context::ProgramContext,
     /// Per-file pre-bucketed resolved module specifiers (indexed by `file_idx`).
     /// Replaces a previous per-file scan over the program-wide
     /// `resolved_module_specifiers` set, which made each per-file checker
@@ -2303,7 +2306,7 @@ pub(super) fn check_file_for_parallel<'a>(
         binder,
         program,
         compiler_options,
-        project_env,
+        program_context,
         resolved_modules_per_file,
         shared_lib_cache,
         shared_query_cache,
@@ -2363,11 +2366,14 @@ pub(super) fn check_file_for_parallel<'a>(
 
     // Apply all project-level shared state in one call. This installs the
     // shared DefinitionStore and runs warm_local_caches_from_shared_store().
-    project_env.apply_to(&mut checker.ctx);
+    program_context.apply_to(&mut checker.ctx);
 
     // Per-file state that varies across files:
     checker.ctx.set_current_file_idx(file_idx);
-    checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
+    checker.ctx.file_is_esm = program_context
+        .file_is_esm_map
+        .get(&file.file_name)
+        .copied();
     checker.ctx.resolved_modules = Some(resolved_modules);
     // TSC suppresses many semantic diagnostics across the whole program when any
     // file has a real syntax parse error; mirror that behavior using the program-level
@@ -2475,7 +2481,7 @@ pub(super) fn check_file_for_parallel<'a>(
             &effective_options,
             program_has_real_syntax_errors,
             program_has_unsupported_js_root,
-            project_env.has_deprecation_diagnostics,
+            program_context.has_deprecation_diagnostics,
         );
 
         if !no_check {
@@ -2538,7 +2544,7 @@ struct CheckerLibFileCheckEnv<'a> {
     affected_interfaces: &'a FxHashSet<String>,
     extension_interfaces: &'a FxHashSet<String>,
     merged_augmentations: &'a MergedAugmentations,
-    project_env: &'a tsz::checker::context::ProjectEnv,
+    program_context: &'a tsz::checker::context::ProgramContext,
     program_has_real_syntax_errors: bool,
     program_has_unsupported_js_root: bool,
 }
@@ -2603,7 +2609,7 @@ fn check_checker_lib_file_for_interfaces(
         lib_bound_file.file_name.clone(),
         &options.checker,
     );
-    env.project_env.apply_to(&mut checker.ctx);
+    env.program_context.apply_to(&mut checker.ctx);
     if let Some(shared_lib_cache) = shared_lib_cache {
         checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
     }
@@ -2657,7 +2663,7 @@ fn check_checker_lib_file_for_interfaces(
 }
 
 fn check_checker_lib_file_baseline(
-    project_env: &tsz::checker::context::ProjectEnv,
+    program_context: &tsz::checker::context::ProgramContext,
     options: &ResolvedCompilerOptions,
     checker_libs: &CheckerLibSet,
     lib_idx: usize,
@@ -2685,7 +2691,7 @@ fn check_checker_lib_file_baseline(
         lib_file.file_name.clone(),
         &options.checker,
     );
-    project_env.apply_to(&mut checker.ctx);
+    program_context.apply_to(&mut checker.ctx);
     let other_lib_contexts: Vec<LibContext> = checker_libs
         .contexts
         .iter()
@@ -3537,14 +3543,14 @@ fn collect_checker_lib_baseline_fingerprints(
     checker_libs: &CheckerLibSet,
     affected_interfaces: &FxHashSet<String>,
     extension_interfaces: &FxHashSet<String>,
-    project_env: &tsz::checker::context::ProjectEnv,
+    program_context: &tsz::checker::context::ProgramContext,
 ) -> FxHashSet<LibDiagnosticFingerprint> {
     let mut fingerprints = FxHashSet::default();
 
     for lib_idx in 0..checker_libs.files.len() {
         let query_cache = QueryCache::new(&program.type_interner);
         let (diagnostics, _, _) = check_checker_lib_file_baseline(
-            project_env,
+            program_context,
             options,
             checker_libs,
             lib_idx,
@@ -3564,7 +3570,7 @@ fn collect_checker_lib_baseline_diagnostics_for_codes(
     checker_libs: &CheckerLibSet,
     affected_interfaces: &FxHashSet<String>,
     extension_interfaces: &FxHashSet<String>,
-    project_env: &tsz::checker::context::ProjectEnv,
+    program_context: &tsz::checker::context::ProgramContext,
     codes: &[u32],
 ) -> Vec<Diagnostic> {
     let code_filter = codes.iter().copied().collect::<FxHashSet<_>>();
@@ -3573,7 +3579,7 @@ fn collect_checker_lib_baseline_diagnostics_for_codes(
     for lib_idx in 0..checker_libs.files.len() {
         let query_cache = QueryCache::new(&program.type_interner);
         let (lib_diagnostics, _, _) = check_checker_lib_file_baseline(
-            project_env,
+            program_context,
             options,
             checker_libs,
             lib_idx,
