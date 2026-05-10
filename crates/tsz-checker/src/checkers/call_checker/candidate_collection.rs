@@ -109,7 +109,10 @@ impl<'a> CheckerState<'a> {
             return vec![false; arg_type_count];
         }
         args.iter()
-            .map(|&arg_idx| self.call_arg_source_is_type_assertion(arg_idx))
+            .map(|&arg_idx| {
+                self.call_arg_source_is_type_assertion(arg_idx)
+                    || self.call_arg_source_is_typed_identifier(arg_idx)
+            })
             .collect()
     }
 
@@ -127,6 +130,38 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_type_assertion(node)
             .is_some_and(|assertion| assertion.type_node.is_some())
+    }
+
+    fn call_arg_source_is_typed_identifier(&self, arg_idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol
+            .stable_declarations
+            .iter()
+            .copied()
+            .chain(std::iter::once(symbol.stable_value_declaration))
+            .filter(|loc| loc.is_known())
+            .any(|loc| {
+                self.ctx
+                    .node_at_stable_location(loc)
+                    .is_some_and(|(decl_idx, arena)| {
+                        arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| arena.get_variable_declaration(decl_node))
+                            .is_some_and(|decl| decl.type_annotation.is_some())
+                    })
+            })
     }
 
     /// Collect argument types with contextual typing from expected parameter types.

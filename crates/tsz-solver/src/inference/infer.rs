@@ -65,6 +65,7 @@ pub(crate) struct InferenceCandidate {
     pub from_index_signature: bool,
     pub object_property_index: Option<u32>,
     pub object_property_name: Option<Atom>,
+    pub(crate) source_is_type_annotation: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -583,6 +584,7 @@ impl<'a> InferenceContext<'a> {
                 from_index_signature: candidate.from_index_signature,
                 object_property_index: candidate.object_property_index,
                 object_property_name: candidate.object_property_name,
+                source_is_type_annotation: candidate.source_is_type_annotation,
             });
         }
 
@@ -1110,6 +1112,7 @@ impl<'a> InferenceContext<'a> {
             from_index_signature: false,
             object_property_index: None,
             object_property_name: None,
+            source_is_type_annotation: self.source_is_type_annotation,
         };
         self.table.union_value(
             root,
@@ -1196,6 +1199,7 @@ impl<'a> InferenceContext<'a> {
             from_index_signature: context.from_index_signature,
             object_property_index: context.object_property_index,
             object_property_name: context.object_property_name,
+            source_is_type_annotation: self.source_is_type_annotation,
         };
         if self.in_contra_mode {
             // In contravariant context (e.g., callback parameter structural

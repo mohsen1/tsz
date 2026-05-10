@@ -370,6 +370,22 @@ impl<'a> CheckerState<'a> {
                                             .as_ref()
                                             .is_some_and(|skip| index < skip.len() && skip[index])
                                         {
+                                            if self
+                                                .check_object_literal_named_property_values_against_any_target(
+                                                    arg_idx,
+                                                    expected_param,
+                                                )
+                                            {
+                                                return true;
+                                            }
+                                            if param.rest {
+                                                return self
+                                                    .check_generic_rest_object_literal_values_against_sibling_annotation(
+                                                        arg_idx,
+                                                        index,
+                                                        args,
+                                                    );
+                                            }
                                             return false;
                                         }
                                         if is_type_parameter_type(self.ctx.types, expected_param) {
@@ -506,6 +522,63 @@ impl<'a> CheckerState<'a> {
         };
 
         (result, allow_contextual_mismatch_deferral)
+    }
+
+    fn check_generic_rest_object_literal_values_against_sibling_annotation(
+        &mut self,
+        obj_literal_idx: NodeIndex,
+        current_arg_index: usize,
+        args: &[NodeIndex],
+    ) -> bool {
+        for (arg_index, &arg_idx) in args.iter().enumerate() {
+            if arg_index == current_arg_index {
+                continue;
+            }
+            let Some(annotation_type) = self.declared_type_of_identifier_argument(arg_idx) else {
+                continue;
+            };
+            if self.check_object_literal_named_property_values_against_any_target(
+                obj_literal_idx,
+                annotation_type,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn declared_type_of_identifier_argument(&mut self, arg_idx: NodeIndex) -> Option<TypeId> {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(idx)?;
+        let declaration_idxs = {
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .chain(std::iter::once(symbol.value_declaration))
+                .filter(|decl_idx| decl_idx.is_some())
+                .collect::<Vec<_>>()
+        };
+
+        for decl_idx in declaration_idxs {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if decl.type_annotation.is_some() {
+                return Some(self.get_type_from_type_node(decl.type_annotation));
+            }
+        }
+
+        None
     }
 
     pub(crate) fn try_emit_ts2339_for_missing_this_property(

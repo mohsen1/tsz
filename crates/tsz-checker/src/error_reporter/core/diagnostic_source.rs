@@ -1076,6 +1076,8 @@ impl<'a> CheckerState<'a> {
 
         let literal = self.ctx.arena.get_literal_expr(node)?;
         let target = target.map(|target| self.evaluate_type_for_assignability(target));
+        let preserve_literal_source_for_normalized_union =
+            target.is_some_and(|target| self.target_is_normalized_object_literal_union(target));
         let target_shape = target.and_then(|target| {
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
         });
@@ -1165,11 +1167,13 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|target_prop_type| {
                     self.type_contains_string_literal(target_prop_type)
                 });
-            if target_accepts_literal
-                && let Some(literal_display) = self.literal_expression_display(value_idx)
-            {
-                parts.push(format!("{display_name}: {literal_display}"));
-                continue;
+            if let Some(literal_display) = self.literal_expression_display(value_idx) {
+                let preserve_normalized_union_boolean = preserve_literal_source_for_normalized_union
+                    && matches!(literal_display.as_str(), "true" | "false");
+                if target_accepts_literal || preserve_normalized_union_boolean {
+                    parts.push(format!("{display_name}: {literal_display}"));
+                    continue;
+                }
             }
 
             // For nested object literals, recurse

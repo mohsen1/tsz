@@ -1307,6 +1307,14 @@ impl<'a> CheckerState<'a> {
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx));
         if !source_from_annotation
+            && self.target_is_normalized_object_literal_union(target)
+            && let Some(expr_idx) = expr_idx
+            && let Some(object_display) =
+                self.object_literal_source_type_display(expr_idx, Some(target))
+        {
+            source_str = object_display;
+        }
+        if !source_from_annotation
             && let Some(expr_idx) = expr_idx
             && let Some(tuple_display) =
                 self.array_literal_tuple_source_type_display(expr_idx, source, target)
@@ -1373,6 +1381,20 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|shape| shape.is_constructor)
                 || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
                     .is_some_and(|shape| !shape.construct_signatures.is_empty());
+        let evaluated_source = self.evaluate_type_for_assignability(source);
+        let source_has_display_props = self.ctx.types.get_display_properties(source).is_some()
+            || self
+                .ctx
+                .types
+                .get_display_properties(evaluated_source)
+                .is_some();
+
+        if source_has_display_props
+            && self.target_is_normalized_object_literal_union(target)
+            && Self::display_has_boolean_member_literal_assignability(&source_display)
+        {
+            return source_display;
+        }
 
         if self.is_literal_sensitive_assignment_target(target)
             || self.target_preserves_literal_surface(target)
@@ -1400,13 +1422,6 @@ impl<'a> CheckerState<'a> {
         // from outer types like `{ a: inner_fresh }` where the outer is not fresh but inner
         // properties contain fresh types — their outer canonical properties are object types
         // (not literals), so they correctly fall through to the widening path.
-        let evaluated_source = self.evaluate_type_for_assignability(source);
-        let source_has_display_props = self.ctx.types.get_display_properties(source).is_some()
-            || self
-                .ctx
-                .types
-                .get_display_properties(evaluated_source)
-                .is_some();
         let source_is_array =
             crate::query_boundaries::common::array_element_type(self.ctx.types, source).is_some()
                 || crate::query_boundaries::common::array_element_type(
@@ -1563,6 +1578,10 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn display_has_boolean_member_literal_assignability(display: &str) -> bool {
+        display.contains(": true") || display.contains(": false")
     }
 
     /// Check if a type display string contains duplicate type names in a

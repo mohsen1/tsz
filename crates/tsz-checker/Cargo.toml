@@ -878,6 +878,10 @@ name = "object_element_access_diagnostics_tests"
 path = "tests/object_element_access_diagnostics_tests.rs"
 
 [[test]]
+name = "object_literal_normalization_tests"
+path = "tests/object_literal_normalization_tests.rs"
+
+[[test]]
 name = "intersection_index_signature_fingerprint_tests"
 path = "tests/intersection_index_signature_fingerprint_tests.rs"
 
