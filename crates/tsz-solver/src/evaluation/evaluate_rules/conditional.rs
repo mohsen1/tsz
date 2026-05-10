@@ -146,13 +146,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             );
 
             // PERF: Cache predicate results for extends_type once per iteration.
-            // type_contains_infer is called up to 5 times and contains_type_parameters
+            // type_contains_infer is called up to 5 times and contains_free_type_parameters
             // at least once, each creating fresh FxHashSet/FxHashMap allocations.
             let extends_has_infer = self.type_contains_infer(extends_type)
                 || self.type_contains_infer(cond.extends_type);
+            // Use the FREE-type-parameter query: type parameters bound by inner
+            // function/callable signatures (e.g., the `T` in `<T>() => ...`) are
+            // already resolved within their own scope, so they must not force the
+            // surrounding conditional to stay deferred. Without this distinction,
+            // `(<T>() => T extends any ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2)`
+            // — the structural shape of the type-challenges `Equal<X, Y>` trick —
+            // is incorrectly held deferred whenever either side embeds a generic
+            // function literal.
             let extends_has_type_params =
-                crate::visitor::contains_type_parameters(self.interner(), extends_type)
-                    || crate::visitor::contains_type_parameters(self.interner(), cond.extends_type);
+                crate::visitor::contains_free_type_parameters(self.interner(), extends_type)
+                    || crate::visitor::contains_free_type_parameters(
+                        self.interner(),
+                        cond.extends_type,
+                    );
 
             if cond.is_distributive && check_type == TypeId::NEVER {
                 return TypeId::NEVER;
@@ -488,7 +499,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             if !extends_has_infer
                 && extends_has_type_params
-                && crate::visitor::contains_type_parameters(self.interner(), cond.check_type)
+                && crate::visitor::contains_free_type_parameters(self.interner(), cond.check_type)
                 && self
                     .resolve_generic_constraint(cond.check_type)
                     .is_none_or(|constraint| constraint == cond.check_type)
