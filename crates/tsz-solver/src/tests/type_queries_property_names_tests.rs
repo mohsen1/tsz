@@ -1,4 +1,7 @@
-use crate::type_queries::{collect_property_name_atoms_for_diagnostics, keyof_object_properties};
+use crate::type_queries::{
+    collect_homomorphic_source_property_infos, collect_property_name_atoms_for_diagnostics,
+    keyof_object_properties,
+};
 use crate::{PropertyInfo, TypeId, TypeInterner, Visibility};
 
 fn object_with_property(interner: &TypeInterner, name: &str) -> TypeId {
@@ -177,4 +180,75 @@ fn keyof_object_properties_preserves_declaration_order() {
         })
         .collect();
     assert_eq!(names, vec!["xyzunique1", "abcunique2"]);
+}
+
+#[test]
+fn homomorphic_source_display_properties_preserve_declaration_order() {
+    let interner = TypeInterner::new();
+    let storage_first_atom = interner.intern_string("storageFirstUnique");
+    let source_first_atom = interner.intern_string("sourceFirstUnique");
+    let make_prop = |name, order| PropertyInfo {
+        name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: order,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let source_first = make_prop(source_first_atom, 1);
+    let storage_first = make_prop(storage_first_atom, 2);
+    let obj = interner.object(vec![source_first.clone(), storage_first.clone()]);
+    interner.store_display_properties(obj, vec![storage_first, source_first]);
+
+    let ordered = collect_homomorphic_source_property_infos(&interner, obj);
+    let names: Vec<_> = ordered
+        .into_iter()
+        .map(|prop| interner.resolve_atom_ref(prop.name).to_string())
+        .collect();
+    assert_eq!(names, vec!["sourceFirstUnique", "storageFirstUnique"]);
+}
+
+#[test]
+fn homomorphic_array_source_prefers_es5_display_head() {
+    let interner = TypeInterner::new();
+    let make_prop = |name: &str, order| PropertyInfo {
+        name: interner.intern_string(name),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: order,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let array_base = interner.object(vec![
+        make_prop("includes", 1),
+        make_prop("length", 2),
+        make_prop("toLocaleString", 3),
+        make_prop("toString", 4),
+    ]);
+    interner.set_array_display_base_type(array_base);
+
+    let source = interner.array(TypeId::NUMBER);
+    let ordered = collect_homomorphic_source_property_infos(&interner, source);
+    let names: Vec<_> = ordered
+        .into_iter()
+        .map(|prop| interner.resolve_atom_ref(prop.name).to_string())
+        .collect();
+    assert_eq!(
+        &names[..4],
+        ["length", "toString", "toLocaleString", "includes"]
+    );
 }
