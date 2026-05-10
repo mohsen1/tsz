@@ -680,9 +680,9 @@ impl PerfCounters {
              total calls                {:>12}\n  \
              cache hits                 {:>12}\n\
              TypeInterner:\n  \
-             intern calls (total)             n/a  (not wired in this PR)\n  \
-             intern hits                      n/a  (not wired in this PR)\n  \
-             intern misses                    n/a  (not wired in this PR)\n  \
+             intern calls (total)       {:>12}\n  \
+             intern hits                {:>12}\n  \
+             intern misses              {:>12}\n  \
              string intern calls        {:>12}\n  \
              type-list intern calls     {:>12}\n  \
              object-shape intern calls  {:>12}\n  \
@@ -713,6 +713,9 @@ impl PerfCounters {
             load(&c.copy_symbol_file_targets_len_ge_1m),
             load(&c.compute_type_of_symbol_calls),
             load(&c.compute_type_of_symbol_cache_hits),
+            load(&c.interner_intern_calls),
+            load(&c.interner_intern_hits),
+            load(&c.interner_intern_misses),
             load(&c.interner_string_intern_calls),
             load(&c.interner_type_list_intern_calls),
             load(&c.interner_object_shape_intern_calls),
@@ -989,7 +992,7 @@ impl PerfCounters {
                 delegate_cross_arena: true,
                 checker_construction: true,
                 overlay_copy: true,
-                interner_intern_calls: false,
+                interner_intern_calls: true,
                 interner_per_kind: true,
                 resolver_lookup: true,
                 resolver_fs_probes: false,
@@ -1028,9 +1031,9 @@ impl PerfCounters {
                 candidate_paths_total: load(&c.resolver_candidate_paths_total),
             },
             interner: InternerCounters {
-                intern_calls: None,
-                intern_hits: None,
-                intern_misses: None,
+                intern_calls: Some(load(&c.interner_intern_calls)),
+                intern_hits: Some(load(&c.interner_intern_hits)),
+                intern_misses: Some(load(&c.interner_intern_misses)),
                 string_intern_calls: load(&c.interner_string_intern_calls),
                 type_list_intern_calls: load(&c.interner_type_list_intern_calls),
                 object_shape_intern_calls: load(&c.interner_object_shape_intern_calls),
@@ -1093,10 +1096,8 @@ mod json_tests {
         // The plan requires `null` for unwired buckets so `0` is unambiguous.
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
-        // `interner_intern_calls` etc. are not yet wired into producer code.
-        assert_eq!(json["interner"]["intern_calls"], serde_json::Value::Null);
-        assert_eq!(json["interner"]["intern_hits"], serde_json::Value::Null);
-        assert_eq!(json["interner"]["intern_misses"], serde_json::Value::Null);
+        // `lock_wait_histogram_ns` and resolver fs probes remain unwired in
+        // this PR — see follow-ups in the 2026-05-10 scale-cliff summary.
         assert_eq!(
             json["interner"]["lock_wait_histogram_ns"],
             serde_json::Value::Null
@@ -1104,9 +1105,26 @@ mod json_tests {
         assert_eq!(json["resolver"]["is_file_calls"], serde_json::Value::Null);
         assert_eq!(json["resolver"]["is_dir_calls"], serde_json::Value::Null);
         assert_eq!(json["resolver"]["read_dir_calls"], serde_json::Value::Null);
-        // The matching wired flags must agree.
-        assert_eq!(json["wired"]["interner_intern_calls"], false);
+        // The matching wired flag must agree.
         assert_eq!(json["wired"]["resolver_fs_probes"], false);
+    }
+
+    #[test]
+    fn wired_intern_call_buckets_serialize_as_numbers() {
+        // T0.3 follow-up: intern_calls/hits/misses are now wired at the
+        // solver intern site. They must surface as numbers (zero is fine
+        // when the test process has not interned any user types) and the
+        // wired flag must agree.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert!(
+            json["interner"]["intern_calls"].is_number(),
+            "intern_calls should be a number once wired, got: {}",
+            json["interner"]["intern_calls"]
+        );
+        assert!(json["interner"]["intern_hits"].is_number());
+        assert!(json["interner"]["intern_misses"].is_number());
+        assert_eq!(json["wired"]["interner_intern_calls"], true);
     }
 
     #[test]
