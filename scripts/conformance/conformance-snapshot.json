@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-05-09T23:50:38Z",
-  "git_sha": "2133fc6e952ed4b044e2d0ff4c8814961d3944e0",
+  "timestamp": "2026-05-10T06:55:47Z",
+  "git_sha": "c3e024b90d945a9bf475b274291e443923acc2c0",
   "summary": {
     "total_tests": 12582,
     "passed": 12542,
@@ -51,13 +51,6 @@
       "pass_rate": 96.0
     },
     {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 25,
-      "failed": 1,
-      "pass_rate": 96.15
-    },
-    {
       "area": "types/members",
       "total": 34,
       "passed": 33,
@@ -79,13 +72,6 @@
       "pass_rate": 97.83
     },
     {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 262,
-      "failed": 2,
-      "pass_rate": 99.24
-    },
-    {
       "area": "salsa",
       "total": 191,
       "passed": 190,
@@ -100,18 +86,18 @@
       "pass_rate": 99.49
     },
     {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 197,
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 263,
       "failed": 1,
-      "pass_rate": 99.49
+      "pass_rate": 99.62
     },
     {
       "area": "compiler",
-      "total": 6520,
-      "passed": 6499,
-      "failed": 21,
-      "pass_rate": 99.68
+      "total": 6512,
+      "passed": 6496,
+      "failed": 16,
+      "pass_rate": 99.75
     },
     {
       "area": "ambient",
@@ -166,6 +152,13 @@
       "area": "classes/constructorDeclarations",
       "total": 39,
       "passed": 39,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "classes/members",
+      "total": 198,
+      "passed": 198,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -653,6 +646,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 26,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/nonPrimitive",
       "total": 16,
       "passed": 16,
@@ -728,7 +728,7 @@
     "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 40,
+    "fingerprint_only": 31,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }
