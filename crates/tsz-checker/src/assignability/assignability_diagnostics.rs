@@ -296,6 +296,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For array literal sources, drill into element-level errors, matching
+        // tsc's `elaborateElementwise` behavior. Check the unwrapped source so
+        // equivalent forms like `([10, "20"]) satisfies number[]` and
+        // `([10, "20"] as (number | string)[]) satisfies number[]` use the same
+        // element elaboration path.
+        let unwrapped_source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        if let Some(node) = self.ctx.arena.get(unwrapped_source_idx)
+            && node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && self.try_elaborate_assignment_source_error(source_idx, target)
+        {
+            return false;
+        }
+
         self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx, keyword_pos);
         false
     }
