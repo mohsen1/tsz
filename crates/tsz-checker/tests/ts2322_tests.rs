@@ -34,6 +34,7 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "es2015.reflect.d.ts",
         "es2015.symbol.d.ts",
         "es2015.symbol.wellknown.d.ts",
+        "es2019.array.d.ts",
         "dom.d.ts",
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
@@ -5076,6 +5077,51 @@ newTextChannel2.phoneNumber = '613-555-1234';
             .iter()
             .all(|(_, message)| !message.contains("never[\"type\"]")),
         "Did not expect property-level never[\"type\"] elaboration. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_flatarray_assignment_keeps_rhs_declared_alias_display() {
+    let source = r#"
+declare const foo: unknown[];
+const bar = foo.flatMap(bar => bar as Foo);
+
+interface Foo extends Array<string> {}
+
+function f<Arr, D extends number>(x: FlatArray<Arr, any>, y: FlatArray<Arr, D>) {
+    x = y;
+    y = x;
+}
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            emit_declarations: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one FlatArray assignment TS2322. Got: {diagnostics:?}"
+    );
+    let message = &ts2322[0].1;
+    assert!(
+        message
+            .contains("Type 'FlatArray<Arr, any>' is not assignable to type 'FlatArray<Arr, D>'."),
+        "Expected source display to preserve the RHS FlatArray alias. Got: {message}"
+    );
+    assert!(
+        !message.contains("Arr | Arr extends"),
+        "Did not expect FlatArray source to expand to its conditional body. Got: {message}"
     );
 }
 
