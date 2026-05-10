@@ -2314,7 +2314,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let candidate_type = if un_widened.len() == 1 {
                             un_widened[0]
                         } else {
-                            self.interner.union(un_widened)
+                            self.interner.union(un_widened.clone())
                         };
                         let candidate_satisfies_raw = constraint_ty_raw != constraint_ty
                             && self.satisfies_raw_instantiated_constraint(
@@ -2335,6 +2335,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let Some(recovered_ty) = recovered {
                         final_subst.insert(tp.name, recovered_ty);
                     } else {
+                        if !un_widened.is_empty() {
+                            let candidate_type = if un_widened.len() == 1 {
+                                un_widened[0]
+                            } else {
+                                self.interner.union(un_widened)
+                            };
+                            let mut display_subst = final_subst.clone();
+                            display_subst.insert(tp.name, candidate_type);
+                            let display_constraint = instantiate_call_type(
+                                self.interner,
+                                constraint,
+                                &display_subst,
+                                actual_this_type,
+                            );
+                            self.interner
+                                .store_display_alias(constraint_ty, display_constraint);
+                        }
                         // Fall back to constraint type so argument checking emits TS2345
                         final_subst.insert(tp.name, constraint_ty);
                         constraint_fallback_tp_names.insert(tp.name);
