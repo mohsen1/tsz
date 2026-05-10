@@ -1113,6 +1113,32 @@ type CreateTypeOptions<
     }
 
     #[test]
+    fn mapped_type_concrete_object_constraint_reports_ts2322() {
+        let source = r#"
+interface DateLike {
+    value: number;
+}
+type T = { [P in DateLike]: number };
+"#;
+
+        let ts2322 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2322.len(),
+            1,
+            "Expected one TS2322 for concrete object mapped key constraint: {ts2322:?}"
+        );
+        assert!(
+            ts2322[0]
+                .message_text
+                .contains("Type 'DateLike' is not assignable to type 'string | number | symbol'."),
+            "TS2322 message mismatch: {ts2322:?}"
+        );
+    }
+
+    #[test]
     fn mapped_type_index_access_constraint_exceeds_keyof_reports_ts2322() {
         // When a mapped type constraint is an indexed access like AB[S] and S's
         // constraint exceeds keyof AB, tsc emits TS2322 for the mapped type constraint.

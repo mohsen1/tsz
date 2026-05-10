@@ -895,13 +895,27 @@ impl<'a> CheckerState<'a> {
         // parameters (checks constraint), unions, keyof, literals, etc.
         // Index-access constraints like AB[K] are accepted when K is known to be
         // constrained to the object's key space.
-        let is_valid = crate::query_boundaries::common::is_valid_mapped_type_key_type(
-            self.ctx.types,
-            evaluated,
-        ) || crate::query_boundaries::common::is_valid_mapped_type_key_type(
+        let constraint_is_deferred = crate::query_boundaries::common::contains_type_parameters(
             self.ctx.types,
             constraint_type,
+        ) || crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            evaluated,
         );
+        let is_valid = if constraint_is_deferred {
+            crate::query_boundaries::common::is_valid_mapped_type_key_type(
+                self.ctx.types,
+                evaluated,
+            ) || crate::query_boundaries::common::is_valid_mapped_type_key_type(
+                self.ctx.types,
+                constraint_type,
+            )
+        } else {
+            let evaluator =
+                crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+            evaluator.is_valid_computed_property_name_type(evaluated)
+                || evaluator.is_valid_computed_property_name_type(constraint_type)
+        };
         let is_deferred_index_access =
             crate::query_boundaries::common::index_access_types(self.ctx.types, evaluated)
                 .is_some_and(|(object_type, index_type)| {
