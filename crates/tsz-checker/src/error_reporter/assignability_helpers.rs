@@ -199,7 +199,7 @@ impl<'a> CheckerState<'a> {
                 target_for_display,
             )
             .is_some();
-        let (source_str, target_str) = if source_is_function_like || target_is_function_like {
+        let (mut source_str, target_str) = if source_is_function_like || target_is_function_like {
             (
                 self.format_type_diagnostic(source_for_display),
                 self.format_type_diagnostic(target_for_display),
@@ -222,6 +222,13 @@ impl<'a> CheckerState<'a> {
                 ),
             )
         };
+        if let Some(display) = self.declared_generic_alias_source_display_for_target_display(
+            anchor_idx,
+            &source_str,
+            &target_str,
+        ) {
+            source_str = display;
+        }
         let message = crate::diagnostics::format_message(
             crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],
