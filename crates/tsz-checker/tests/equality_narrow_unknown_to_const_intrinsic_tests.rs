@@ -162,6 +162,51 @@ if (u === aUnion) {
 }
 
 #[test]
+fn unknown_equality_narrows_to_object_literal_annotation_with_later_union_comparand() {
+    let source = r#"
+declare const u: unknown;
+declare const anObjectLiteral: { x: number };
+declare const aUnion: { x: number } | { y: string };
+
+if (u === anObjectLiteral) {
+    let o: object = u;
+}
+
+if (u === aUnion) {
+    type StillUnknown = unknown extends typeof u ? true : false;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 - object-literal annotation should narrow unknown to object even with a later union comparand, got: {codes:?}"
+    );
+}
+
+#[test]
+fn unknown_type2_object_literal_repro_with_initialized_unknown() {
+    let source = r#"
+const u: unknown = undefined;
+
+declare const anObjectLiteral: { x: number };
+declare const aUnion: { x: number } | { y: string };
+
+if (u === anObjectLiteral) {
+    let uObjectLiteral: object = u;
+}
+
+if (u === aUnion) {
+    type StillUnknown = unknown extends typeof u ? true : false;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for the unknownType2 object-literal repro, got: {codes:?}"
+    );
+}
+
+#[test]
 fn unknown_switch_cases_narrow_symbol_and_objectish_comparisons() {
     let source = r#"
 declare const symb: unique symbol;

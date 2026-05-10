@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-09
 - **Branch**: `fix/unknown-equality-narrows-to-anonymous-object-2026-05-09`
-- **PR**: TBD (will draft as WIP)
-- **Status**: claim
+- **PR**: #4886
+- **Status**: ready for review
 - **Workstream**: narrowing-flow (Tier 2 wrong-code campaign)
 
 ## Intent
@@ -25,25 +25,25 @@ if (u === aUnion) {                  // <- presence of this block
 }                                    //    EARLIER block above
 ```
 
-Without the second block, tsz narrows `u` correctly. The bug appears to
-be flow-graph state shared across sibling `===`-narrowing blocks when
-the comparand on one of them is itself a union. The fix needs to
-isolate per-block narrowing state so a later block does not retro-
-actively un-narrow `u` at an earlier `if`.
+Without the second block, tsz narrows `u` correctly. The narrowed
+`unknown` path was missing the annotation-comparison fallback already
+used by other flow-comparison paths, so object-literal typed comparands
+could fail to produce the `object` narrowing type.
 
 ## Targeted tests
 
 - `conformance/types/unknown/unknownType2.ts` (TS2322 false positive)
 
-## Files Touched (planned)
+## Files Touched
 
-- `crates/tsz-checker/src/...` (narrowing for `===` operator)
-  OR `crates/tsz-solver/src/narrowing/...`
-- New unit tests in the owning crate
+- `crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs`
+  (use annotation comparison types for `unknown` equality comparands)
+- `crates/tsz-checker/src/flow/control_flow/narrowing_helpers.rs`
+  (map object-like const annotations to `object`)
+- `crates/tsz-checker/tests/equality_narrow_unknown_to_const_intrinsic_tests.rs`
+  (regression coverage)
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker --lib` clean
-- `cargo nextest run -p tsz-solver --lib` clean
-- `./scripts/conformance/conformance.sh run --filter unknownType2 --verbose` flips
-- Snapshot regen `scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot` net-positive
+- `cargo test -p tsz-checker --test equality_narrow_unknown_to_const_intrinsic_tests unknown_type2_object_literal_repro_with_initialized_unknown -- --nocapture`
+- `./scripts/conformance/conformance.sh run --filter unknownType2 --verbose --workers 1`

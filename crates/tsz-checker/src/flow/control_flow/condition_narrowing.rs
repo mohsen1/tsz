@@ -1805,6 +1805,11 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(type_id) = self.resolve_const_identifier_type(idx, node) {
             return is_unknown_narrowing_literal(self.interner, type_id);
         }
+        if let Some(sym_id) = self.binder.resolve_identifier(self.arena, idx)
+            && let Some(type_id) = self.annotation_comparison_type(sym_id)
+        {
+            return is_unknown_narrowing_literal(self.interner, type_id);
+        }
         None
     }
 
