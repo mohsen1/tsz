@@ -1145,14 +1145,25 @@ impl TypeInterner {
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
                 {
-                    let mut vec = inner
-                        .index_to_key
-                        .write()
-                        .expect("interner index_to_key lock poisoned");
-                    let mut ord = inner
-                        .alloc_order
-                        .write()
-                        .expect("interner alloc_order lock poisoned");
+                    // T2.4 instrumentation: time the shard's write-lock
+                    // acquisitions. With `perf-counters-timing` ON, each
+                    // observation lands in the lock-wait histogram. With it
+                    // OFF (default) the wrapper compiles to a direct call —
+                    // no `Instant::now()`, no atomic touch.
+                    let mut vec =
+                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                            inner
+                                .index_to_key
+                                .write()
+                                .expect("interner index_to_key lock poisoned")
+                        });
+                    let mut ord =
+                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                            inner
+                                .alloc_order
+                                .write()
+                                .expect("interner alloc_order lock poisoned")
+                        });
                     let target_len = local_index as usize + 1;
                     if vec.len() < target_len {
                         vec.resize(target_len, TypeData::Error);
