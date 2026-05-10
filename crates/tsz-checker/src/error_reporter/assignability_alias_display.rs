@@ -158,7 +158,7 @@ impl<'a> CheckerState<'a> {
         if alias_args.len() < type_params.len() {
             return None;
         }
-        let substitution = tsz_solver::TypeSubstitution::from_args(
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
             type_params,
             &alias_args[..type_params.len()],
@@ -167,7 +167,11 @@ impl<'a> CheckerState<'a> {
             body_args
                 .iter()
                 .map(|&arg| {
-                    tsz_solver::instantiate_type_cached(self.ctx.types, None, arg, &substitution)
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        arg,
+                        &substitution,
+                    )
                 })
                 .collect(),
         )
