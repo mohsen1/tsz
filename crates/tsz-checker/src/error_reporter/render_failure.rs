@@ -36,6 +36,134 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.resolve_atom(atom))
     }
 
+    fn callable_type_after_display_evaluation(&mut self, ty: TypeId) -> Option<TypeId> {
+        if crate::query_boundaries::common::is_callable_type(self.ctx.types, ty) {
+            return Some(ty);
+        }
+        let evaluated = self.evaluate_type_with_resolution(ty);
+        if evaluated != TypeId::ERROR
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
+        {
+            return Some(evaluated);
+        }
+        let evaluated = self.evaluate_type_for_assignability(ty);
+        if evaluated != TypeId::ERROR
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
+        {
+            return Some(evaluated);
+        }
+        let evaluated = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
+        (evaluated != TypeId::ERROR
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated))
+        .then_some(evaluated)
+    }
+
+    fn strict_callback_param_display_type(&mut self, ty: TypeId) -> TypeId {
+        self.callable_type_after_display_evaluation(ty)
+            .unwrap_or(ty)
+    }
+
+    fn strict_callback_outer_display_type(
+        &mut self,
+        ty: TypeId,
+        param_index: usize,
+    ) -> Option<TypeId> {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+            && param_index < shape.params.len()
+        {
+            let mut shape = (*shape).clone();
+            shape.params[param_index].type_id =
+                self.strict_callback_param_display_type(shape.params[param_index].type_id);
+            return Some(self.ctx.types.factory().function(shape));
+        }
+
+        let shape = crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)?;
+        if !shape.construct_signatures.is_empty()
+            || shape.call_signatures.len() != 1
+            || param_index >= shape.call_signatures[0].params.len()
+        {
+            return None;
+        }
+        let mut sig = shape.call_signatures[0].clone();
+        sig.params[param_index].type_id =
+            self.strict_callback_param_display_type(sig.params[param_index].type_id);
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape {
+                    type_params: sig.type_params,
+                    params: sig.params,
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate,
+                    is_constructor: false,
+                    is_method: sig.is_method,
+                }),
+        )
+    }
+
+    fn strict_callback_assignment_display_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        param_index: usize,
+    ) -> Option<(String, String)> {
+        let source_display = self.strict_callback_outer_display_type(source, param_index)?;
+        let target_display = self.strict_callback_outer_display_type(target, param_index)?;
+        Some((
+            self.format_assignability_type_for_message(source_display, target_display),
+            self.format_assignability_type_for_message(target_display, source_display),
+        ))
+    }
+
+    fn strict_callback_single_call_signature(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<tsz_solver::CallSignature> {
+        let ty = self.callable_type_after_display_evaluation(ty)?;
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+        {
+            return Some(tsz_solver::CallSignature {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate,
+                is_method: shape.is_method,
+            });
+        }
+
+        let shape = crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)?;
+        if shape.construct_signatures.is_empty() && shape.call_signatures.len() == 1 {
+            Some(shape.call_signatures[0].clone())
+        } else {
+            None
+        }
+    }
+
+    fn strict_callback_inner_parameter_mismatch_exists(
+        &mut self,
+        source_param: TypeId,
+        target_param: TypeId,
+    ) -> bool {
+        let Some(inner_source) = self.strict_callback_single_call_signature(target_param) else {
+            return false;
+        };
+        let Some(inner_target) = self.strict_callback_single_call_signature(source_param) else {
+            return false;
+        };
+        inner_source
+            .params
+            .iter()
+            .zip(inner_target.params.iter())
+            .any(|(source_param, target_param)| {
+                !self.is_assignable_to(target_param.type_id, source_param.type_id)
+            })
+    }
+
     fn no_union_member_matches_switch_source_display(
         &mut self,
         source: TypeId,
@@ -807,24 +935,33 @@ impl<'a> CheckerState<'a> {
                 // (TS2202) report. When the inner failure is on a
                 // PARAMETER, no elision happens and tsc keeps the TS2322
                 // wrapper.
-                let is_callable =
-                    |ty| crate::query_boundaries::common::is_callable_type(self.ctx.types, ty);
                 let contains_type_params = |ty| {
                     crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
                 };
+                let source_callable = self.callable_type_after_display_evaluation(source);
+                let target_callable = self.callable_type_after_display_evaluation(target);
+                let source_param_callable =
+                    self.callable_type_after_display_evaluation(*source_param);
+                let target_param_callable =
+                    self.callable_type_after_display_evaluation(*target_param);
                 let strict_callback_case = depth == 0
-                    && is_callable(source)
-                    && is_callable(target)
-                    && is_callable(*source_param)
-                    && is_callable(*target_param)
-                    && !contains_type_params(*source_param)
-                    && !contains_type_params(*target_param);
+                    && source_callable.is_some()
+                    && target_callable.is_some()
+                    && source_param_callable.is_some()
+                    && target_param_callable.is_some()
+                    && !contains_type_params(source_param_callable.unwrap_or(*source_param))
+                    && !contains_type_params(target_param_callable.unwrap_or(*target_param));
                 let inner_failed_on_return = matches!(
                     inner_reason.as_deref(),
                     Some(SubtypeFailureReason::ReturnTypeMismatch { .. })
                 );
+                let inner_param_mismatch_exists = inner_failed_on_return
+                    && self.strict_callback_inner_parameter_mismatch_exists(
+                        *source_param,
+                        *target_param,
+                    );
 
-                if strict_callback_case && inner_failed_on_return {
+                if strict_callback_case && inner_failed_on_return && !inner_param_mismatch_exists {
                     let source_name = self
                         .callable_param_name_at(source, *param_index)
                         .unwrap_or_else(|| format!("arg{param_index}"));
@@ -843,14 +980,32 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                     )
                 } else {
-                    let source_str = self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    );
-                    let target_str = self.format_assignability_type_for_message(target, source);
+                    let (source_str, target_str) = if strict_callback_case {
+                        self.strict_callback_assignment_display_pair(source, target, *param_index)
+                            .unwrap_or_else(|| {
+                                (
+                                    self.format_type_for_diagnostic_role(
+                                        source,
+                                        DiagnosticTypeDisplayRole::AssignmentSource {
+                                            target,
+                                            anchor_idx: idx,
+                                        },
+                                    ),
+                                    self.format_assignability_type_for_message(target, source),
+                                )
+                            })
+                    } else {
+                        (
+                            self.format_type_for_diagnostic_role(
+                                source,
+                                DiagnosticTypeDisplayRole::AssignmentSource {
+                                    target,
+                                    anchor_idx: idx,
+                                },
+                            ),
+                            self.format_assignability_type_for_message(target, source),
+                        )
+                    };
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],

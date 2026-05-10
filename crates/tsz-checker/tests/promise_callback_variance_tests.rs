@@ -27,6 +27,13 @@ fn collect_codes(source: &str) -> Vec<u32> {
         .collect()
 }
 
+fn collect_relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
+    diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
+}
+
 #[test]
 fn promise_like_callback_pattern_rejects_mismatched_args() {
     // T appears only inside a non-method callback nested inside a method.
@@ -118,5 +125,53 @@ b = a;
     assert!(
         !codes.contains(&2322),
         "Wrap<T> wrapping a bivariant C<T> must stay bivariant, got {codes:?}"
+    );
+}
+
+#[test]
+fn callback_alias_application_is_checked_as_callable_parameter() {
+    let diags = collect_relevant_diagnostics(
+        r#"
+type Fn<T> = (x: T) => T;
+
+declare let source: (cb: Fn<string>) => void;
+declare let target: (cb: Fn<number>) => void;
+target = source;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "callback alias applications should produce the outer TS2322 wrapper, got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2328),
+        "evaluated callback alias applications must not leak top-level TS2328, got {diags:#?}"
+    );
+}
+
+#[test]
+fn callback_interface_application_is_checked_as_callable_parameter() {
+    let diags = collect_relevant_diagnostics(
+        r#"
+interface Fn<T> {
+    (x: T): T;
+}
+
+declare let source: (cb: Fn<string>) => void;
+declare let target: (cb: Fn<number>) => void;
+target = source;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("(cb: Fn<string>) => void")
+                && message.contains("(cb: Fn<number>) => void")
+        }),
+        "diagnostic should preserve declared callable interface applications on the outer wrapper, got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2328),
+        "evaluated callback interface applications must not leak top-level TS2328, got {diags:#?}"
     );
 }

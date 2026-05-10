@@ -58,6 +58,87 @@ f2 = f1;       // Error — Animal not <: Dog at the inner param level
 }
 
 #[test]
+fn callback_parameter_check_is_strict_for_extracted_static_methods() {
+    let source = r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+class Foo {
+    static f1(x: Animal): Animal { throw "wat"; }
+    static f2(x: Dog): Animal { throw "wat"; }
+}
+
+declare let f1: (cb: typeof Foo.f1) => void;
+declare let f2: (cb: typeof Foo.f2) => void;
+f1 = f2;
+f2 = f1;  // Error
+"#;
+    let diags = check_source_diagnostics(source);
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for the strict extracted-method callback assignment, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2322[0].start as usize,
+        source
+            .find("f2 = f1")
+            .expect("test source contains assignment"),
+        "TS2322 should anchor at the failing callback assignment"
+    );
+    assert_eq!(
+        ts2322[0].message_text,
+        "Type '(cb: (x: Animal) => Animal) => void' is not assignable to type '(cb: (x: Dog) => Animal) => void'."
+    );
+}
+
+#[test]
+fn strict_callback_param_display_expands_method_indexed_access_alias() {
+    let source = r#"
+// @strict: true
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+type BivariantHack<Input, Output> = { foo(x: Input): Output }["foo"];
+
+declare let f1: (cb: BivariantHack<Animal, Animal>) => void;
+declare let f2: (cb: BivariantHack<Dog, Animal>) => void;
+f1 = f2;
+f2 = f1;  // Error
+"#;
+    let diags = check_source_diagnostics(source);
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for the method-indexed-access callback assignment, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2322[0].start as usize,
+        source
+            .find("f2 = f1")
+            .expect("test source contains assignment"),
+        "TS2322 should anchor at the failing callback assignment"
+    );
+    assert_eq!(
+        ts2322[0].message_text,
+        "Type '(cb: (x: Animal) => Animal) => void' is not assignable to type '(cb: (x: Dog) => Animal) => void'."
+    );
+}
+
+#[test]
 fn callback_return_type_failure_under_strict_callback_param_check() {
     // For `fc1 = fc2`: target.f's return is Animal, source.f's return is Dog.
     // Strict covariance requires source.return <: target.return — but here we
