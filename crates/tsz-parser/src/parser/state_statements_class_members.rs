@@ -628,16 +628,20 @@ impl ParserState {
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {
-            let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
-            if !missing_type {
-                self.parse_error_at_current_token(
-                    "Type annotation cannot appear on a constructor declaration.",
-                    diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
-                );
+            if self.should_recover_constructor_return_type_at_class_member_boundary() {
+                self.error_type_expected();
+            } else {
+                let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
+                if !missing_type {
+                    self.parse_error_at_current_token(
+                        "Type annotation cannot appear on a constructor declaration.",
+                        diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                    );
+                }
+                // Consume the type annotation for recovery (use parse_return_type to match tsc,
+                // which parses type predicates even in invalid constructor return types)
+                let _ = self.parse_return_type();
             }
-            // Consume the type annotation for recovery (use parse_return_type to match tsc,
-            // which parses type predicates even in invalid constructor return types)
-            let _ = self.parse_return_type();
         }
 
         // Push a new label scope for the constructor body
@@ -665,6 +669,62 @@ impl ParserState {
                 body,
             },
         )
+    }
+
+    fn should_recover_constructor_return_type_at_class_member_boundary(&mut self) -> bool {
+        if !self.scanner.has_preceding_line_break() {
+            return false;
+        }
+
+        if matches!(
+            self.current_token,
+            SyntaxKind::CloseBraceToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::EndOfFileToken
+        ) {
+            return false;
+        }
+
+        if matches!(
+            self.current_token,
+            SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AtToken
+                | SyntaxKind::AsteriskToken
+        ) {
+            return true;
+        }
+
+        if !self.is_property_name() {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && matches!(
+                self.current_token,
+                SyntaxKind::OpenParenToken
+                    | SyntaxKind::LessThanToken
+                    | SyntaxKind::QuestionToken
+                    | SyntaxKind::ExclamationToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::SemicolonToken
+            );
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Parse get accessor with modifiers: static get `foo()` { }

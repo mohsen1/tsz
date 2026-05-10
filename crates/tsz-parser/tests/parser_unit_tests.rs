@@ -1483,6 +1483,90 @@ fn class_parameter_property() {
     );
 }
 
+fn assert_incomplete_constructor_return_colon_recovers_class_members(
+    source: &str,
+    expected_member_kinds: &[u16],
+) {
+    let (parser, root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "expected TS1110 for the missing constructor return type, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "constructor return-type recovery should not cascade into TS1068, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "constructor return-type recovery should keep following members in the class, got {diagnostics:?}"
+    );
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let actual_member_kinds: Vec<u16> = class
+        .members
+        .nodes
+        .iter()
+        .map(|&member| arena.get(member).expect("member").kind)
+        .collect();
+    assert_eq!(
+        actual_member_kinds, expected_member_kinds,
+        "expected recovered class member boundaries"
+    );
+}
+
+#[test]
+fn constructor_return_colon_no_params_recovers_following_member() {
+    assert_incomplete_constructor_return_colon_recovers_class_members(
+        "class C {\n  constructor():\n  m() {}\n}",
+        &[
+            syntax_kind_ext::CONSTRUCTOR,
+            syntax_kind_ext::METHOD_DECLARATION,
+        ],
+    );
+}
+
+#[test]
+fn constructor_return_colon_normal_params_recovers_following_member() {
+    assert_incomplete_constructor_return_colon_recovers_class_members(
+        "class C {\n  constructor(value: string):\n  m() {}\n}",
+        &[
+            syntax_kind_ext::CONSTRUCTOR,
+            syntax_kind_ext::METHOD_DECLARATION,
+        ],
+    );
+}
+
+#[test]
+fn constructor_return_colon_parameter_properties_recovers_following_member() {
+    assert_incomplete_constructor_return_colon_recovers_class_members(
+        "class C {\n  constructor(public value: string):\n  m() {}\n}",
+        &[
+            syntax_kind_ext::CONSTRUCTOR,
+            syntax_kind_ext::METHOD_DECLARATION,
+        ],
+    );
+}
+
+#[test]
+fn constructor_return_colon_recovers_following_overload_pair() {
+    assert_incomplete_constructor_return_colon_recovers_class_members(
+        "class C {\n  constructor(private value: string):\n  overload(value: string);\n  overload(value: string) {}\n}",
+        &[
+            syntax_kind_ext::CONSTRUCTOR,
+            syntax_kind_ext::METHOD_DECLARATION,
+            syntax_kind_ext::METHOD_DECLARATION,
+        ],
+    );
+}
+
 #[test]
 fn class_decorator() {
     // `@dec class Foo {}`
