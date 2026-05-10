@@ -1,6 +1,8 @@
 import playwright from "../../../TypeScript/node_modules/playwright/index.mjs";
+import { playgroundExamples } from "../src/playground-app/examples.js";
 
 const baseUrl = process.env.PLAYGROUND_URL || "http://127.0.0.1:8080/playground/";
+const examplesWithExpectedDiagnostics = new Set(["errors"]);
 
 function assert(condition, message) {
   if (!condition) {
@@ -57,20 +59,19 @@ try {
   console.log("initial errors", initialErrors);
   assert(initialErrors.count >= 3, `expected at least 3 diagnostics on errors example, got ${initialErrors.count}`);
 
-  await selectExample(page, "hello");
-  const helloSummary = await getDiagnosticsSummary(page);
-  console.log("hello summary", helloSummary);
-  assert(helloSummary.count === 0, `expected 0 diagnostics on hello example, got ${helloSummary.count}`);
+  for (const example of playgroundExamples) {
+    if (examplesWithExpectedDiagnostics.has(example.key)) {
+      continue;
+    }
 
-  await selectExample(page, "modules");
-  const modulesSummary = await getDiagnosticsSummary(page);
-  console.log("modules summary", modulesSummary);
-  assert(modulesSummary.count === 0, `expected 0 diagnostics on modules example, got ${modulesSummary.count}`);
-
-  await selectExample(page, "dts");
-  const dtsSummary = await getDiagnosticsSummary(page);
-  console.log("dts summary", dtsSummary);
-  assert(dtsSummary.count === 0, `expected 0 diagnostics on dts example, got ${dtsSummary.count}`);
+    await selectExample(page, example.key);
+    const summary = await getDiagnosticsSummary(page);
+    console.log(`${example.key} summary`, summary);
+    assert(
+      summary.count === 0,
+      `expected 0 diagnostics on ${example.key} example, got ${summary.count}: ${JSON.stringify(summary.markers)}`
+    );
+  }
 
   await selectExample(page, "errors");
   const finalErrors = await getDiagnosticsSummary(page);

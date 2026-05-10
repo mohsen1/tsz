@@ -890,6 +890,35 @@ takes({
 }
 
 #[test]
+fn annotated_variable_accepts_nested_anonymous_object_literal() {
+    let diags = check_source_diagnostics(
+        r#"
+interface User {
+  id: string,
+  profile: {
+    name: string,
+    admin: boolean
+  }
+}
+
+const user: User = {
+  id: "u1",
+  profile: {
+    name: "ada",
+    admin: true
+  }
+}
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "expected nested anonymous object literal assignment to be valid, got: {diags:?}"
+    );
+}
+
+#[test]
 fn nested_mapped_application_property_preserves_literal_context() {
     let diags = check_source_diagnostics(
         r#"

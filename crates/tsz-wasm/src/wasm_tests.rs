@@ -145,6 +145,44 @@ fn test_ts_program_semantic_diagnostics_contract() {
 }
 
 #[test]
+fn ts_program_accepts_nested_anonymous_object_literal_assignment() {
+    let mut program = TsProgram::new();
+    program.set_compiler_options("{\"strict\":true}").unwrap();
+    program.add_source_file(
+        "input.ts".to_string(),
+        r#"
+interface User {
+  id: string,
+  profile: {
+    name: string,
+    admin: boolean
+  }
+}
+
+const user: User = {
+  id: "u1",
+  profile: {
+    name: "ada",
+    admin: true
+  }
+}
+"#
+        .to_string(),
+    );
+
+    let semantic = program.get_semantic_diagnostics_json(None);
+    let semantic_json: Vec<Value> = serde_json::from_str(&semantic).unwrap();
+    let ts2322: Vec<_> = semantic_json
+        .iter()
+        .filter(|diag| diag.get("code").and_then(|v| v.as_u64()) == Some(2322))
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "expected nested anonymous object literal assignment to be valid, got {semantic}"
+    );
+}
+
+#[test]
 fn test_ts_program_diagnostics_are_stable_after_parser_parse() {
     fn diagnostic_codes(json: &str) -> Vec<u64> {
         let diagnostics: Vec<Value> = serde_json::from_str(json).expect("valid diagnostics json");
