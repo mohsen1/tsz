@@ -1,9 +1,11 @@
 //! Tests for statement parsing in the parser.
 use crate::parser::NodeIndex;
+use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
 
@@ -643,15 +645,20 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
 fn astral_identifier_debris_uses_scanner_shaped_recovery() {
     let source = r#"declare var \u{102A7}: string;
 export var _\u{102A7} = new Foo().\u{102A7};"#;
-    let (parser, _root) = parse_source(source);
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
     let diags = parser.get_diagnostics();
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
 
     for expected in [
         diagnostic_codes::INVALID_CHARACTER,
+        diagnostic_codes::EXPECTED,
         diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
         diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
-        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
     ] {
         assert!(

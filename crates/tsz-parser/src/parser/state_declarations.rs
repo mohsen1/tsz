@@ -2875,6 +2875,27 @@ impl ParserState {
             return self.parse_identifier_name();
         }
 
+        if self.is_token(SyntaxKind::Unknown) {
+            while self.is_token(SyntaxKind::Unknown) {
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                    tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                );
+                self.next_token();
+            }
+            return self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                start_pos,
+                start_pos,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            );
+        }
+
         self.error_identifier_expected();
 
         self.arena.add_identifier(
@@ -2888,6 +2909,16 @@ impl ParserState {
                 type_arguments: None,
             },
         )
+    }
+
+    fn consume_unknown_specifier_identifier_tail(&mut self) {
+        while self.is_token(SyntaxKind::Unknown) {
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+        }
     }
 
     /// Check if current token can start a module export name (identifier, keyword, or string literal).
@@ -2926,6 +2957,7 @@ impl ParserState {
 
         // Parse the first name (could be `type` or any other identifier)
         let mut name = self.parse_specifier_identifier_name();
+        self.consume_unknown_specifier_identifier_tail();
 
         // Helper macro: update keyword check state before parsing a name.
         // Equivalent to tsc's parseNameWithKeywordCheck.
@@ -2934,7 +2966,9 @@ impl ParserState {
                 check_identifier_is_keyword = $self.is_reserved_word();
                 check_identifier_start = $self.token_pos();
                 check_identifier_end = $self.token_end();
-                $self.parse_specifier_identifier_name()
+                let name = $self.parse_specifier_identifier_name();
+                $self.consume_unknown_specifier_identifier_tail();
+                name
             }};
         }
 
