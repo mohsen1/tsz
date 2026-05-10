@@ -625,19 +625,102 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
     let source = "export async function arrayFromAsync<T>(asyncIterable!: AsyncIterable<T>): Promise<T[]> {\n    const out = [];\n    for await (const v of asyncIterable) {\n        out.push(await v);\n    }\n    return out;\n}";
     let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    let has_diag = |code, start, message: &str| {
+        diags
+            .iter()
+            .any(|d| d.code == code && d.start == start && d.message == message)
+    };
+    let expect_diag = |code, start, message: &str| {
+        assert!(
+            has_diag(code, start, message),
+            "expected {code} at byte {start} with {message:?}, got {diags:?}"
+        );
+    };
+
+    let bang_pos = source.find('!').expect("source contains '!'") as u32;
+    let colon_pos = source.find("!:").expect("source contains '!:") as u32 + 1;
+    let return_type_close = source
+        .find("): Promise")
+        .expect("source contains return type close paren") as u32;
+    let return_type_colon = source
+        .find(": Promise")
+        .expect("source contains return type colon") as u32;
+    let close_bracket = source
+        .find("[]")
+        .expect("source contains empty element access") as u32
+        + 1;
+    let const_out = source.find("out =").expect("source contains const binding") as u32;
+    let const_semicolon = source.find("[];").expect("source contains const semicolon") as u32 + 2;
+    let for_await = source.find("await (").expect("source contains for-await") as u32;
+    let for_open_paren_tail = source.find("(const").expect("source contains for header") as u32 + 1;
+    let for_binding = source.find(" v of").expect("source contains for binding") as u32 + 1;
+    let for_of = source.find(" of ").expect("source contains of keyword") as u32 + 1;
+    let for_expression = source
+        .find("asyncIterable) {")
+        .expect("source contains for expression") as u32;
+    let for_close_paren = for_expression + "asyncIterable".len() as u32;
+    let for_open_brace = source
+        .find(") {\n        out.push")
+        .expect("source contains for body brace") as u32
+        + 2;
+    let member_dot = source.find(".push").expect("source contains member access") as u32;
+    let call_semicolon = source
+        .find("await v);")
+        .expect("source contains call semicolon") as u32
+        + "await v)".len() as u32;
+    let final_close_brace = source
+        .rfind('}')
+        .expect("source contains final close brace") as u32;
 
     for expected in [
-        diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
-        diagnostic_codes::EXPRESSION_EXPECTED,
-        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
-        diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+        (diagnostic_codes::EXPECTED, bang_pos, "',' expected."),
+        (
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            colon_pos,
+            "Parameter declaration expected.",
+        ),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            return_type_close,
+            "Expression expected.",
+        ),
+        (
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            return_type_colon,
+            "Declaration or statement expected.",
+        ),
+        (
+            diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+            close_bracket,
+            "An element access expression should take an argument.",
+        ),
+        (diagnostic_codes::EXPECTED, const_out, "':' expected."),
+        (diagnostic_codes::EXPECTED, const_semicolon, "',' expected."),
+        (diagnostic_codes::EXPECTED, for_await, "':' expected."),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            for_open_paren_tail,
+            "Expression expected.",
+        ),
+        (diagnostic_codes::EXPECTED, for_binding, "':' expected."),
+        (diagnostic_codes::EXPECTED, for_of, "',' expected."),
+        (diagnostic_codes::EXPECTED, for_expression, "',' expected."),
+        (diagnostic_codes::EXPECTED, for_close_paren, "',' expected."),
+        (
+            diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+            for_open_brace,
+            "Property assignment expected.",
+        ),
+        (diagnostic_codes::EXPECTED, member_dot, "',' expected."),
+        (diagnostic_codes::EXPECTED, call_semicolon, "',' expected."),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            final_close_brace,
+            "Expression expected.",
+        ),
     ] {
-        assert!(
-            codes.contains(&expected),
-            "expected diagnostic code {expected}, got {diags:?}"
-        );
+        expect_diag(expected.0, expected.1, expected.2);
     }
 }
 
