@@ -1164,7 +1164,10 @@ impl ParserState {
         self.parse_expected(SyntaxKind::IfKeyword);
         self.parse_expected(SyntaxKind::OpenParenToken);
 
+        let saved_context_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION;
         let expression = self.parse_expression();
+        self.context_flags = saved_context_flags;
 
         // Check for missing condition expression: if () { }
         if expression == NodeIndex::NONE {
@@ -1304,7 +1307,9 @@ impl ParserState {
     pub(crate) fn parse_while_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::WhileKeyword);
-        self.parse_expected(SyntaxKind::OpenParenToken);
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let missing_open_paren_before_colon =
+            !has_open_paren && self.parse_optional(SyntaxKind::ColonToken);
 
         let condition = self.parse_expression();
 
@@ -1313,12 +1318,43 @@ impl ParserState {
             self.error_expression_expected();
         }
 
-        // Error recovery: if condition parsing failed badly, resync to close paren
-        if condition.is_none() && !self.is_token(SyntaxKind::CloseParenToken) {
-            self.resync_after_error();
-        }
+        if missing_open_paren_before_colon {
+            if self.is_token(SyntaxKind::DotDotDotToken) {
+                self.error_expression_expected();
+                self.next_token();
+                let _ = self.parse_expression();
+            }
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.next_token();
+                let _ = self.parse_expression();
+            }
+            while !matches!(
+                self.token(),
+                SyntaxKind::CloseParenToken
+                    | SyntaxKind::OpenBraceToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            ) {
+                if self.is_token(SyntaxKind::CloseBracketToken) {
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                    );
+                }
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                self.next_token();
+            }
+        } else {
+            // Error recovery: if condition parsing failed badly, resync to close paren
+            if condition.is_none() && !self.is_token(SyntaxKind::CloseParenToken) {
+                self.resync_after_error();
+            }
 
-        self.parse_expected(SyntaxKind::CloseParenToken);
+            self.parse_expected(SyntaxKind::CloseParenToken);
+        }
 
         let statement = self.parse_statement();
         self.check_using_outside_block(statement);
@@ -2448,18 +2484,34 @@ impl ParserState {
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = Some(start_pos);
 
-        // Early rejection: If the current token cannot start an expression, fail immediately
-        // This prevents TS1109 from being emitted for tokens that are obviously not expressions
-        // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
-        // parse_statement()'s wildcard match.
-        if !self.is_expression_start() {
-            // Don't emit error here - let the statement-level error handling deal with it
-            // Just return NONE to indicate failure
-            self.jsx_missing_brace_semicolon_window_start = None;
-            return NodeIndex::NONE;
-        }
+        let started_with_binary_operator = !self.is_expression_start() && self.is_binary_operator();
+        let expression = if started_with_binary_operator {
+            self.error_expression_expected();
+            self.next_token();
+            let right = if self.is_expression_start() {
+                self.parse_binary_expression(2)
+            } else {
+                NodeIndex::NONE
+            };
+            if right.is_none() {
+                self.create_missing_expression()
+            } else {
+                right
+            }
+        } else {
+            // Early rejection: If the current token cannot start an expression, fail immediately
+            // This prevents TS1109 from being emitted for tokens that are obviously not expressions
+            // (e.g., }, ], ), etc.) when we fall through to parse_expression_statement() from
+            // parse_statement()'s wildcard match.
+            if !self.is_expression_start() {
+                // Don't emit error here - let the statement-level error handling deal with it
+                // Just return NONE to indicate failure
+                self.jsx_missing_brace_semicolon_window_start = None;
+                return NodeIndex::NONE;
+            }
 
-        let expression = self.parse_expression();
+            self.parse_expression()
+        };
 
         // If expression parsing failed completely, resync to recover
         if expression.is_none() {
@@ -2650,6 +2702,11 @@ impl ParserState {
             let has_numeric_follow_error = self.current_token_has_numeric_literal_follow_error();
             if jsx_head_needs_semicolon && has_numeric_follow_error {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            } else if started_with_binary_operator {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                if self.is_assignment_operator(self.token()) {
+                    self.next_token();
+                }
             } else if self.suppress_next_jsx_head_missing_semicolon {
                 self.suppress_next_jsx_head_missing_semicolon = false;
             } else if !has_numeric_follow_error && !arrow_or_func_block_followed_by_equals {

@@ -1229,12 +1229,19 @@ impl ParserState {
                     .is_token(SyntaxKind::LessThanToken)
                     .then(|| self.parse_type_parameters());
                 let heritage_clauses = self.parse_heritage_clauses();
-                self.parse_expected(SyntaxKind::OpenBraceToken);
-                let class_saved_flags = self.context_flags;
-                self.context_flags |= CONTEXT_FLAG_IN_CLASS;
-                let members = self.parse_class_members();
-                self.context_flags = class_saved_flags;
-                self.parse_expected(SyntaxKind::CloseBraceToken);
+                let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
+                let members = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
+                    self.next_token();
+                    self.non_block_close_brace_statement_errors_remaining = 2;
+                    self.make_node_list(Vec::new())
+                } else {
+                    let class_saved_flags = self.context_flags;
+                    self.context_flags |= CONTEXT_FLAG_IN_CLASS;
+                    let members = self.parse_class_members();
+                    self.context_flags = class_saved_flags;
+                    self.parse_expected(SyntaxKind::CloseBraceToken);
+                    members
+                };
                 (type_parameters, heritage_clauses, members)
             };
 
@@ -1294,12 +1301,19 @@ impl ParserState {
                     .is_token(SyntaxKind::LessThanToken)
                     .then(|| self.parse_type_parameters());
                 let heritage_clauses = self.parse_heritage_clauses();
-                self.parse_expected(SyntaxKind::OpenBraceToken);
-                let class_saved_flags = self.context_flags;
-                self.context_flags |= CONTEXT_FLAG_IN_CLASS;
-                let members = self.parse_class_members();
-                self.context_flags = class_saved_flags;
-                self.parse_expected(SyntaxKind::CloseBraceToken);
+                let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
+                let members = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
+                    self.next_token();
+                    self.non_block_close_brace_statement_errors_remaining = 2;
+                    self.make_node_list(Vec::new())
+                } else {
+                    let class_saved_flags = self.context_flags;
+                    self.context_flags |= CONTEXT_FLAG_IN_CLASS;
+                    let members = self.parse_class_members();
+                    self.context_flags = class_saved_flags;
+                    self.parse_expected(SyntaxKind::CloseBraceToken);
+                    members
+                };
                 (type_parameters, heritage_clauses, members)
             };
 

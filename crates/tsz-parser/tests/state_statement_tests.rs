@@ -1559,6 +1559,29 @@ fn modifier_led_nested_class_member_recovery_prefers_ts1068_and_ts1128() {
 }
 
 #[test]
+fn nested_class_recovery_does_not_treat_comment_close_brace_as_class_close() {
+    let source = "class C {\n  // }\n  class D {}\n}\n";
+    let comment_brace = source.find("// }").expect("comment brace") as u32 + 3;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == comment_brace
+        }),
+        "class-member recovery should only anchor TS1128 to real close-brace tokens, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        }),
+        "nested class declaration should still use class-member recovery, got {diags:?}"
+    );
+}
+
+#[test]
 fn modifier_led_try_block_in_class_body_prefers_ts1068() {
     let (parser, _root) = parse_source("class C {\n  public try {\n  }\n}");
     let diags = parser.get_diagnostics();

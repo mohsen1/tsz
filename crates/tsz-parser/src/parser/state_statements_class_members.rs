@@ -13,6 +13,7 @@ use crate::parser::{
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::ScannerState;
 
 impl ParserState {
     /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
@@ -628,16 +629,20 @@ impl ParserState {
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {
-            let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
-            if !missing_type {
-                self.parse_error_at_current_token(
-                    "Type annotation cannot appear on a constructor declaration.",
-                    diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
-                );
+            if self.should_recover_constructor_return_type_at_class_member_boundary() {
+                self.error_type_expected();
+            } else {
+                let missing_type = !self.can_token_start_type() && self.is_type_terminator_token();
+                if !missing_type {
+                    self.parse_error_at_current_token(
+                        "Type annotation cannot appear on a constructor declaration.",
+                        diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                    );
+                }
+                // Consume the type annotation for recovery (use parse_return_type to match tsc,
+                // which parses type predicates even in invalid constructor return types)
+                let _ = self.parse_return_type();
             }
-            // Consume the type annotation for recovery (use parse_return_type to match tsc,
-            // which parses type predicates even in invalid constructor return types)
-            let _ = self.parse_return_type();
         }
 
         // Push a new label scope for the constructor body
@@ -664,6 +669,66 @@ impl ParserState {
                 parameters,
                 body,
             },
+        )
+    }
+
+    fn should_recover_constructor_return_type_at_class_member_boundary(&mut self) -> bool {
+        if !self.scanner.has_preceding_line_break() {
+            return false;
+        }
+
+        if matches!(
+            self.current_token,
+            SyntaxKind::CloseBraceToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::EndOfFileToken
+        ) {
+            return false;
+        }
+
+        if self.is_constructor_return_type_recovery_class_member_start() {
+            return true;
+        }
+
+        if !self.is_property_name() {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && matches!(
+                self.current_token,
+                SyntaxKind::OpenParenToken
+                    | SyntaxKind::LessThanToken
+                    | SyntaxKind::QuestionToken
+                    | SyntaxKind::ExclamationToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::SemicolonToken
+            );
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    const fn is_constructor_return_type_recovery_class_member_start(&mut self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AtToken
+                | SyntaxKind::AsteriskToken
         )
     }
 
@@ -954,6 +1019,17 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
+            if let Some(close_pos) = self.class_member_list_outer_declaration_recovery_close_pos() {
+                self.parse_error_at(
+                    close_pos,
+                    1,
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.suppress_next_missing_class_close_brace_error_once = true;
+                break;
+            }
+
             if self.is_token(SyntaxKind::TryKeyword) && self.look_ahead_is_try_block_same_line() {
                 self.parse_error_at_current_token(
                     "Unexpected token. A constructor, method, accessor, or property was expected.",
@@ -1005,6 +1081,36 @@ impl ParserState {
         }
 
         self.make_node_list(members)
+    }
+
+    fn class_member_list_outer_declaration_recovery_close_pos(&mut self) -> Option<u32> {
+        if !self.is_token(SyntaxKind::ClassKeyword)
+            || !self.scanner.has_preceding_line_break()
+            || !self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+        {
+            return None;
+        }
+
+        self.previous_significant_close_brace_pos_before(self.token_pos())
+    }
+
+    fn previous_significant_close_brace_pos_before(&self, before_pos: u32) -> Option<u32> {
+        let mut scanner = ScannerState::new(self.get_source_text().to_string(), true);
+        scanner.set_language_version(self.language_version);
+        let mut previous_significant = None;
+
+        loop {
+            let token = scanner.scan();
+            let token_pos = scanner.get_token_start();
+            if token == SyntaxKind::EndOfFileToken || token_pos >= before_pos as usize {
+                break;
+            }
+            previous_significant = Some((token, token_pos as u32));
+        }
+
+        previous_significant
+            .filter(|(token, _)| *token == SyntaxKind::CloseBraceToken)
+            .map(|(_, pos)| pos)
     }
 
     fn look_ahead_is_try_block_same_line(&mut self) -> bool {

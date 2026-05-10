@@ -226,6 +226,15 @@ impl ParserState {
                 return left;
             }
 
+            if self.in_parenthesized_expression_context()
+                && self
+                    .arena
+                    .get(left)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+            {
+                self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
+            }
+
             let operator_token = op as u16;
             self.next_token();
             let mut right = self.parse_assignment_expression();
@@ -1499,7 +1508,7 @@ impl ParserState {
         body_node.kind == syntax_kind_ext::BLOCK
     }
 
-    const fn is_assignment_operator(&self, operator: SyntaxKind) -> bool {
+    pub(crate) const fn is_assignment_operator(&self, operator: SyntaxKind) -> bool {
         matches!(
             operator,
             SyntaxKind::EqualsToken
@@ -3269,6 +3278,7 @@ impl ParserState {
                         | SyntaxKind::DebuggerKeyword
                         | SyntaxKind::IfKeyword
                         | SyntaxKind::ElseKeyword
+                        | SyntaxKind::VarKeyword
                 ) {
                     return NodeIndex::NONE;
                 }
