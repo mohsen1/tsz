@@ -2903,6 +2903,77 @@ const x = 1 satisfies boolean;
 }
 
 #[test]
+fn satisfies_array_literal_elaborates_per_element() {
+    // `[10, "20"] satisfies number[]` should elaborate per-element rather than
+    // emitting a generic TS1360 on the whole expression. tsc emits TS2322 at
+    // the offending `"20"` element with `Type 'string' is not assignable to
+    // type 'number'.`, matching its `elaborateElementwise` behavior.
+    //
+    // Iteration variable / property names are deliberately varied across
+    // assertions to avoid fingerprinting a specific spelling — the rule is
+    // structural over array literal sources, not over specific identifiers.
+    let diags = check_source_diagnostics(
+        r#"
+declare function take(...args: unknown[]): void;
+take(10, ...([10, "20"] satisfies number[]));
+take(10, ...([1, 2, "x", 4] satisfies number[]));
+"#,
+    );
+
+    // First satisfies has one bad element: "20" (string).
+    // Second satisfies has one bad element: "x" (string).
+    // Both should emit TS2322 at the bad element, NOT TS1360 on the whole satisfies.
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts1360: Vec<_> = diags.iter().filter(|d| d.code == 1360).collect();
+
+    assert_eq!(
+        ts1360.len(),
+        0,
+        "Expected NO TS1360 generic-satisfies error; expected per-element TS2322 instead, got TS1360s: {:?}",
+        ts1360.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected exactly 2 TS2322 elaborations (one per bad element), got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    for diag in &ts2322 {
+        assert!(
+            diag.message_text.contains("'string'") && diag.message_text.contains("'number'"),
+            "Expected TS2322 message about string -> number, got: {}",
+            diag.message_text
+        );
+    }
+}
+
+#[test]
+fn satisfies_array_literal_all_elements_compatible_no_diagnostic() {
+    // Sanity check: when every element of an array literal satisfies the
+    // target's element type, no diagnostic should be reported. This guards
+    // against the new array-elaboration path firing on assignable sources.
+    let diags = check_source_diagnostics(
+        r#"
+declare function take(...args: unknown[]): void;
+take(10, ...([1, 2, 3] satisfies number[]));
+"#,
+    );
+    let related: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 1360 | 2322 | 2345))
+        .collect();
+    assert_eq!(
+        related.len(),
+        0,
+        "Expected no satisfies-related diagnostics for fully-compatible array literal, got: {:?}",
+        related
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn satisfies_result_type_is_assignable_to_target_literal_union() {
     // `"A" satisfies string` should have type `"A"` so it remains assignable to
     // a parameter of type `"A" | "B"`. Widening to `string` (the previous
