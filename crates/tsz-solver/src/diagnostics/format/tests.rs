@@ -1062,6 +1062,50 @@ fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
     );
 }
 
+#[test]
+fn format_array_like_object_with_index_expands_to_locale_string_overload_display() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
+    let includes = db.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: Some(db.intern_string("searchElement")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        TypeId::BOOLEAN,
+    ));
+    let mut unscopables =
+        PropertyInfo::new(db.intern_string("[Symbol.unscopables]"), TypeId::OBJECT);
+    unscopables.readonly = true;
+
+    let shape = crate::types::ObjectShape {
+        properties: vec![
+            PropertyInfo::new(db.intern_string("toString"), method),
+            PropertyInfo::new(db.intern_string("toLocaleString"), method),
+            PropertyInfo::new(db.intern_string("includes"), includes),
+            unscopables,
+        ],
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"),
+        "Expected Array toLocaleString overload display, got: {result}"
+    );
+}
+
 // =================================================================
 // Function type formatting
 // =================================================================

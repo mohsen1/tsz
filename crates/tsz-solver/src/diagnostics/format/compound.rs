@@ -474,6 +474,7 @@ impl<'a> TypeFormatter<'a> {
 
     pub(super) fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {
         let mut parts = Vec::new();
+        let use_array_to_locale_display = self.should_expand_array_to_locale_string_display(shape);
 
         if let Some(ref idx) = shape.string_index {
             let key_name = idx
@@ -504,10 +505,37 @@ impl<'a> TypeFormatter<'a> {
             display_props.sort_by_key(|p| p.declaration_order);
         }
         for prop in display_props {
-            parts.push(self.format_property(prop));
+            if use_array_to_locale_display && self.atom(prop.name).as_ref() == "toLocaleString" {
+                parts.push(
+                    "toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"
+                        .to_string(),
+                );
+            } else {
+                parts.push(self.format_property(prop));
+            }
         }
 
         self.format_object_parts(parts)
+    }
+
+    fn should_expand_array_to_locale_string_display(&mut self, shape: &ObjectShape) -> bool {
+        shape.number_index.is_some()
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "toString")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "toLocaleString")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "includes")
+            && shape
+                .properties
+                .iter()
+                .any(|prop| self.atom(prop.name).as_ref() == "[Symbol.unscopables]")
     }
 
     fn format_index_signature_value(&mut self, value_type: TypeId) -> String {
