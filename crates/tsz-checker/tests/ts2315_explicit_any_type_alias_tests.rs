@@ -40,7 +40,7 @@ type y = Chunk<1, 2>
 
 /// Anti-hardcoding cover: a different alias name and a different
 /// number of type arguments. The fix must key on the *structural*
-/// shape of the alias body (TypeReference to identifier `any`), not
+/// shape of the alias body (`TypeReference` to identifier `any`), not
 /// on `Chunk` specifically.
 #[test]
 fn ts2315_renamed_alias_with_explicit_any_body() {
