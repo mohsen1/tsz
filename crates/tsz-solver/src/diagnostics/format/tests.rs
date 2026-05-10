@@ -582,6 +582,52 @@ fn format_intersection_preserves_anonymous_objects() {
 }
 
 #[test]
+fn format_intersection_drops_redundant_index_signature_member() {
+    let db = TypeInterner::new();
+
+    let index_sig = crate::types::IndexSignature {
+        key_type: TypeId::NUMBER,
+        value_type: TypeId::STRING,
+        readonly: true,
+        param_name: None,
+    };
+    let with_props = db.object_with_index(crate::types::ObjectShape {
+        properties: vec![
+            PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(db.intern_string("b"), TypeId::NUMBER),
+        ],
+        string_index: None,
+        number_index: Some(index_sig),
+        symbol: None,
+        flags: Default::default(),
+    });
+    let index_only = db.object_with_index(crate::types::ObjectShape {
+        properties: vec![],
+        string_index: None,
+        number_index: Some(index_sig),
+        symbol: None,
+        flags: Default::default(),
+    });
+
+    let intersection = db.intersection2(with_props, index_only);
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(intersection);
+
+    assert!(
+        result.contains("readonly [x: number]: string"),
+        "Expected retained index signature, got: {result}"
+    );
+    assert!(
+        result.contains("a: number") && result.contains("b: number"),
+        "Expected named properties to remain, got: {result}"
+    );
+    assert!(
+        !result.contains(" & "),
+        "Expected redundant index-only member to be removed, got: {result}"
+    );
+}
+
+#[test]
 fn format_intersection_preserves_named_types() {
     // Intersections with named types (type params) should NOT be flattened
     let db = TypeInterner::new();
