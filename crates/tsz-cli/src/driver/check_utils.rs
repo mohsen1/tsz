@@ -2253,11 +2253,10 @@ pub(super) fn apply_ts_directive_suppression(
 
     // Emit TS2578 for unused @ts-expect-error directives.
     //
-    // tsc anchors this diagnostic at the comment range itself — the `/` of
-    // `//` or `/*` — not at the enclosing line start. For an indented
-    // `  // @ts-expect-error` that means the diagnostic starts at the
-    // comment opener (column 3 here), not at column 1. The span covers
-    // the entire comment.
+    // tsc anchors this diagnostic at the directive comment text, not at the
+    // enclosing line start. Same-line directives start at the `//` or `/*`
+    // opener, while directives inside multiline block comments start at the
+    // line containing the directive text.
     if !has_ts_nocheck {
         for (idx, directive) in directives.iter().enumerate() {
             if directive.is_expect_error && !directive_used[idx] {
