@@ -1038,7 +1038,16 @@ impl TypeInterner {
         if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
             return TypeId::ERROR;
         }
+        // T2.4 instrumentation: every public intern() call increments calls;
+        // hits/misses are credited at the actual outcome site so they sum to
+        // calls minus the early `ERROR` returns above.
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().interner_intern_calls,
+        );
         if let Some(id) = self.get_intrinsic_id(&key) {
+            tsz_common::perf_counters::inc(
+                &tsz_common::perf_counters::counters().interner_intern_hits,
+            );
             return id;
         }
 
@@ -1049,6 +1058,9 @@ impl TypeInterner {
         // Fast path: thread-local cache hit scoped by this interner's
         // instance_id.
         if let Some(id) = TL_CACHE.with(|c| c.intern_probe(hash, self.instance_id, &key)) {
+            tsz_common::perf_counters::inc(
+                &tsz_common::perf_counters::counters().interner_intern_hits,
+            );
             return id;
         }
 
@@ -1076,6 +1088,9 @@ impl TypeInterner {
         // Try to get existing ID (lock-free read)
         if let Some(entry) = inner.key_to_index.get(&key) {
             let local_index = *entry.value();
+            tsz_common::perf_counters::inc(
+                &tsz_common::perf_counters::counters().interner_intern_hits,
+            );
             return self.make_id(local_index, shard_idx as u32);
         }
 
@@ -1109,11 +1124,19 @@ impl TypeInterner {
                     vec[local_index as usize] = key;
                     ord[local_index as usize] = order;
                 }
+                tsz_common::perf_counters::inc(
+                    &tsz_common::perf_counters::counters().interner_intern_misses,
+                );
                 self.make_id(local_index, shard_idx as u32)
             }
             Entry::Occupied(e) => {
-                // Another thread inserted first, use their ID
+                // Another thread inserted first, use their ID. We bumped
+                // `next_index` above and won't recycle it, so this is a hit
+                // from the caller's POV (no new TypeData was stored).
                 let existing_index = *e.get();
+                tsz_common::perf_counters::inc(
+                    &tsz_common::perf_counters::counters().interner_intern_hits,
+                );
                 self.make_id(existing_index, shard_idx as u32)
             }
         }
