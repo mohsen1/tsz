@@ -4,6 +4,7 @@ use crate::diagnostics::{
     DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
     format_message,
 };
+use crate::error_reporter::assignability_literal_display::display_has_boolean_member_literal_assignability;
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
@@ -1391,7 +1392,7 @@ impl<'a> CheckerState<'a> {
 
         if source_has_display_props
             && self.target_is_normalized_object_literal_union(target)
-            && Self::display_has_boolean_member_literal_assignability(&source_display)
+            && display_has_boolean_member_literal_assignability(&source_display)
         {
             return source_display;
         }
@@ -1578,10 +1579,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    fn display_has_boolean_member_literal_assignability(display: &str) -> bool {
-        display.contains(": true") || display.contains(": false")
     }
 
     /// Check if a type display string contains duplicate type names in a
