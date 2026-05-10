@@ -890,7 +890,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
 
     assert!(
         formatted.starts_with(
-            "{ [x: number]: number; toString: () => string; toLocaleString: () => string;"
+            "{ [x: number]: number; toString: () => string; toLocaleString: { (): string;"
         ),
         "Expected mapped display to preserve Array<T> declaration order, got: {formatted}"
     );
