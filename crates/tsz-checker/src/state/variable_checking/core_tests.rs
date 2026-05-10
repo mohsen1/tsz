@@ -973,6 +973,41 @@ var fn2 = B.Point;
             "TS2403 message should not expand the merged callable namespace object, got: {msg}"
         );
     }
+
+    #[test]
+    fn enum_var_redecl_drops_duplicate_index_signature_intersection_in_message() {
+        let source = r#"
+enum E {
+    a
+}
+enum E {
+    b = 1
+}
+var y = E;
+var y: { readonly a: E; readonly b: E; readonly [x: number]: string; readonly [x: number]: string };
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected exactly 1 TS2403 for enum/object redecl: {ts2403:?}\nAll diags: {all_diags:?}"
+        );
+        let msg = &ts2403[0].message_text;
+        assert!(
+            msg.contains(
+                "here has type '{ readonly [x: number]: string; readonly a: E; readonly b: E; }'"
+            ),
+            "TS2403 should collapse duplicate index-signature intersection in current type display, got: {msg}"
+        );
+        assert!(
+            !msg.contains(" & "),
+            "TS2403 current type display should not keep redundant index-only intersection member, got: {msg}"
+        );
+    }
 }
 
 #[cfg(test)]

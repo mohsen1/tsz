@@ -1405,7 +1405,75 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|&m| self.format_intersection_member(m))
             .collect();
+        let formatted = Self::remove_redundant_index_signature_intersection_displays(formatted);
         formatted.join(" & ")
+    }
+
+    fn remove_redundant_index_signature_intersection_displays(
+        formatted: Vec<String>,
+    ) -> Vec<String> {
+        if formatted.len() <= 1 {
+            return formatted;
+        }
+
+        let sole_index_members: Vec<Option<String>> = formatted
+            .iter()
+            .map(|display| Self::sole_index_signature_object_member(display).map(str::to_string))
+            .collect();
+
+        let keep: Vec<bool> = formatted
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                !sole_index_members[idx].as_deref().is_some_and(|index_sig| {
+                    formatted
+                        .iter()
+                        .enumerate()
+                        .any(|(other_idx, other_display)| {
+                            other_idx != idx
+                                && sole_index_members[other_idx].as_deref() != Some(index_sig)
+                                && Self::object_display_contains_member(other_display, index_sig)
+                        })
+                })
+            })
+            .collect();
+
+        formatted
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(display, keep)| keep.then_some(display))
+            .collect()
+    }
+
+    fn sole_index_signature_object_member(display: &str) -> Option<&str> {
+        let inner = Self::object_display_inner(display)?;
+        let mut members = inner
+            .split(';')
+            .map(str::trim)
+            .filter(|member| !member.is_empty());
+        let member = members.next()?;
+        if members.next().is_some() {
+            return None;
+        }
+        Self::is_index_signature_display(member).then_some(member)
+    }
+
+    fn object_display_contains_member(display: &str, expected: &str) -> bool {
+        Self::object_display_inner(display)
+            .into_iter()
+            .flat_map(|inner| inner.split(';'))
+            .map(str::trim)
+            .any(|member| member == expected)
+    }
+
+    fn object_display_inner(display: &str) -> Option<&str> {
+        display
+            .strip_prefix("{ ")
+            .and_then(|inner| inner.strip_suffix(" }"))
+    }
+
+    fn is_index_signature_display(member: &str) -> bool {
+        member.contains('[') && member.contains("]:")
     }
 
     fn format_non_nullable_type_parameter_intersection(
