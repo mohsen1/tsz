@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/maxconstraints-self-ref-candidate-display-2026-05-10`
-- **PR**: TBD
+- **PR**: #4967
 - **Status**: ready
 - **Workstream**: diagnostic-conformance
 
