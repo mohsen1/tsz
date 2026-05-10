@@ -14,6 +14,10 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
+/// Missing-class-body recovery at a stray `.` leaves both the abandoned class
+/// close and its outer container close visible as statement-level stray braces.
+const CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT: u8 = 2;
+
 impl ParserState {
     fn report_missing_close_paren_after_body_recovery(&mut self) {
         let snapshot = self.scanner.save_state();
@@ -1232,7 +1236,8 @@ impl ParserState {
                 let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
                 let members = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
                     self.next_token();
-                    self.non_block_close_brace_statement_errors_remaining = 2;
+                    self.non_block_close_brace_statement_errors_remaining =
+                        CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT;
                     self.make_node_list(Vec::new())
                 } else {
                     let class_saved_flags = self.context_flags;
@@ -1304,7 +1309,8 @@ impl ParserState {
                 let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
                 let members = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
                     self.next_token();
-                    self.non_block_close_brace_statement_errors_remaining = 2;
+                    self.non_block_close_brace_statement_errors_remaining =
+                        CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT;
                     self.make_node_list(Vec::new())
                 } else {
                     let class_saved_flags = self.context_flags;

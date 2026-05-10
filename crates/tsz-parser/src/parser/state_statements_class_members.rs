@@ -13,7 +13,6 @@ use crate::parser::{
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
-use tsz_scanner::scanner_impl::ScannerState;
 
 impl ParserState {
     /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
@@ -1091,13 +1090,13 @@ impl ParserState {
             return None;
         }
 
-        let bytes = self.get_source_text().as_bytes();
-        let mut cursor = self.token_pos() as usize;
-        while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
-            cursor -= 1;
-        }
+        self.previous_significant_close_brace_pos_ending_at(self.scanner.get_token_full_start())
+    }
 
-        (cursor > 0 && bytes[cursor - 1] == b'}').then_some((cursor - 1) as u32)
+    fn previous_significant_close_brace_pos_ending_at(&self, token_end: usize) -> Option<u32> {
+        let close_pos = token_end.checked_sub(1)?;
+        (self.get_source_text().as_bytes().get(close_pos) == Some(&b'}'))
+            .then(|| self.u32_from_usize(close_pos))
     }
 
     fn look_ahead_is_try_block_same_line(&mut self) -> bool {
