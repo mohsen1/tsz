@@ -1117,30 +1117,30 @@ pub fn clone_lib_files_for_checker(
     lib_files: &[Arc<lib_loader::LibFile>],
     should_clone_libs_in_parallel: bool,
 ) -> Vec<Arc<lib_loader::LibFile>> {
-    let clone_lib_files = if should_clone_libs_in_parallel {
+    let clone_lib_file = |lib: &Arc<lib_loader::LibFile>| {
+        let source = lib
+            .arena
+            .get_source_file_at(lib.root_index)
+            .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
+        Arc::new(lib_loader::LibFile::from_source(
+            lib.file_name.clone(),
+            source.text.to_string(),
+        ))
+    };
+
+    if should_clone_libs_in_parallel {
         #[cfg(not(target_arch = "wasm32"))]
         {
             ensure_rayon_global_pool();
-            maybe_parallel_iter!(lib_files)
+            return maybe_parallel_iter!(lib_files).map(clone_lib_file).collect();
         }
         #[cfg(target_arch = "wasm32")]
-        lib_files.iter()
-    } else {
-        lib_files.iter()
-    };
+        {
+            return lib_files.iter().map(clone_lib_file).collect();
+        }
+    }
 
-    clone_lib_files
-        .map(|lib| {
-            let source = lib
-                .arena
-                .get_source_file_at(lib.root_index)
-                .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
-            Arc::new(lib_loader::LibFile::from_source(
-                lib.file_name.clone(),
-                source.text.to_string(),
-            ))
-        })
-        .collect()
+    lib_files.iter().map(clone_lib_file).collect()
 }
 
 /// Parse and bind a single lib file, returning a `LibFile` or error.
