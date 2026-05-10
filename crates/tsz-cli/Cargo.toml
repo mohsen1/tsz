@@ -32,9 +32,11 @@ default = []
 # Perf-tools build: enables internal-only flags used by the bench harness.
 # - `--diagnostics-json <path>` (`PERFORMANCE_PLAN.md` §4.T0.2)
 # - `--perf-counters-json <path>` (`PERFORMANCE_PLAN.md` §4.T0.3)
-# Default release builds MUST NOT enable this; the flags are invisible in
-# `--help` and runtime hooks compile out entirely.
-perf-tools = []
+# Pulls in `tsz-common/perf-counters-timing` so the interner lock-wait
+# histogram is wired in attribution-mode bench runs. Default release
+# builds MUST NOT enable this; the flags are invisible in `--help` and
+# the timing hooks compile out entirely.
+perf-tools = ["tsz-common/perf-counters-timing"]
 
 [dependencies]
 tsz = { workspace = true }
