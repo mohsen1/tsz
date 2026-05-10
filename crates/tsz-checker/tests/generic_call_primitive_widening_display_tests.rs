@@ -92,6 +92,21 @@ f("");
     );
 }
 
+#[test]
+fn union_parameter_collapsed_to_primitive_widens_literal_source() {
+    let source = r#"
+declare function f1<T>(x: T, y: string | T): T;
+f1("hello", 1);
+"#;
+    let msgs = ts2345_messages(source);
+    assert_eq!(msgs.len(), 1, "expected one TS2345, got: {msgs:#?}");
+    assert!(
+        msgs[0].contains("Argument of type 'number'")
+            && msgs[0].contains("parameter of type 'string'"),
+        "collapsed primitive union target should widen mismatching literal source, got: {msgs:#?}"
+    );
+}
+
 // `<T>(a: T, b: T)` with no constraint: tsc preserves the literal candidates.
 // The fix must NOT widen here.
 #[test]

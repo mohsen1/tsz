@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-09
 - **Branch**: `fix/ts2345-widen-literal-arg-2026-05-09`
-- **PR**: TBD (will draft as WIP)
-- **Status**: claim
+- **PR**: #4889
+- **Status**: ready for review
 - **Workstream**: type-display-parity (Tier 1 fingerprint campaign)
 
 ## Intent
@@ -31,16 +31,14 @@ needs an analog (or to share the same helper).
 - `conformance/types/typeRelationships/typeInference/unionTypeInference.ts`
   (TS2345, single fingerprint diff)
 
-## Files Touched (planned)
+## Files Touched
 
 - `crates/tsz-checker/src/error_reporter/call_errors/error_emission.rs`
   (TS2345 call site)
-- `crates/tsz-checker/src/error_reporter/generics.rs`
-  (move `widen_literal_type_arg_for_constraint_display` to a shared location, OR add a dedicated TS2345 variant)
-- New unit tests
+- `crates/tsz-checker/tests/generic_call_primitive_widening_display_tests.rs`
+  (regression coverage)
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker --lib` clean
-- `./scripts/conformance/conformance.sh run --filter unionTypeInference --verbose` flips
-- Snapshot regen net-positive
+- `cargo test -p tsz-checker --test generic_call_primitive_widening_display_tests union_parameter_collapsed_to_primitive_widens_literal_source -- --nocapture`
+- `./scripts/conformance/conformance.sh run --filter unionTypeInference --verbose --workers 1`
