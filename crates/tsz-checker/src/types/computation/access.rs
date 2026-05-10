@@ -1631,6 +1631,19 @@ impl<'a> CheckerState<'a> {
                     .factory()
                     .index_access(pre_resolution_object_type, index_type);
             }
+            if skip_flow_narrowing
+                && self.ctx.exact_optional_property_types()
+                && let Some(index) = literal_index
+                && let Some(elements) = crate::query_boundaries::common::tuple_elements(
+                    self.ctx.types,
+                    object_type_for_access,
+                )
+                && let Some(element) = elements.get(index)
+                && element.optional
+                && !element.rest
+            {
+                return element.type_id;
+            }
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
 

@@ -656,7 +656,17 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.in_destructuring_target {
                     continue;
                 }
-                let undef_type = TypeId::UNDEFINED;
+                let (hole_type, hole_optional) = if self.ctx.exact_optional_property_types()
+                    && (tuple_context.is_some()
+                        || force_tuple_for_union_context
+                        || force_tuple_for_mapped
+                        || force_tuple_for_constraint_hint
+                        || force_tuple_for_tuple_like)
+                {
+                    (TypeId::NEVER, true)
+                } else {
+                    (TypeId::UNDEFINED, false)
+                };
                 if tuple_context.is_some()
                     || force_tuple_for_union_context
                     || force_tuple_for_mapped
@@ -665,13 +675,13 @@ impl<'a> CheckerState<'a> {
                     || self.ctx.in_const_assertion
                 {
                     tuple_elements.push(TupleElement {
-                        type_id: undef_type,
+                        type_id: hole_type,
                         name: None,
-                        optional: false,
+                        optional: hole_optional,
                         rest: false,
                     });
                 } else {
-                    element_types.push(undef_type);
+                    element_types.push(hole_type);
                     // Note: we don't add to element_nodes since there is no node
                     // for an elision. Excess property checks are skipped for the slot.
                 }

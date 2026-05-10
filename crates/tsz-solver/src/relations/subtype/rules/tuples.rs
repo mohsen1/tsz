@@ -193,13 +193,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                // An optional target slot accepts `undefined` in addition to its
-                // declared type (`[string?]` is structurally `[(string |
-                // undefined)?]`). This applies whether the source slot is
-                // optional or required — `[string, undefined?]` must remain
-                // assignable to `[string, number?]` because both source values
-                // (undefined or slot-absent) fit the target's optional slot.
-                let target_elem_type = if t_elem.optional {
+                // Without exact optional types, an optional target slot accepts
+                // `undefined` in addition to its declared type. With
+                // exactOptionalPropertyTypes, tuple optionals mirror property
+                // optionals: absence is allowed, but a present `undefined` must
+                // be explicitly included in the element type.
+                let target_elem_type = if t_elem.optional && !self.exact_optional_property_types {
                     self.interner.union2(t_elem.type_id, TypeId::UNDEFINED)
                 } else {
                     t_elem.type_id

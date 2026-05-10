@@ -179,6 +179,22 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        if write_target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(write_target_node)
+            && self
+                .get_literal_index_from_node(access.name_or_argument)
+                .is_some()
+        {
+            let object_type = self.get_type_of_write_target_base_expression(access.expression);
+            let object_type = self.evaluate_application_type(object_type);
+            let object_type = self.resolve_type_for_property_access(object_type);
+            if crate::query_boundaries::common::tuple_elements(self.ctx.types, object_type)
+                .is_some()
+            {
+                return false;
+            }
+        }
+
         let is_property_like_write =
             if write_target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 true
