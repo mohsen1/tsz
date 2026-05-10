@@ -60,18 +60,6 @@ impl CrossFileQueryKind {
     }
 }
 
-// Backwards-compatible aliases. Inline `pub(crate) const` definitions so
-// existing call sites keep compiling while the typed-query migration in
-// PR 6B+ replaces them one bucket at a time.
-pub(crate) const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 =
-    CrossFileQueryKind::InterfaceType.as_storage_kind();
-pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 =
-    CrossFileQueryKind::ClassInstanceType.as_storage_kind();
-pub(crate) const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 =
-    CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind();
-pub(crate) const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 =
-    CrossFileQueryKind::SymbolType.as_storage_kind();
-
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
 
@@ -1185,7 +1173,7 @@ impl<'a> CheckerState<'a> {
             && *type_id != TypeId::ERROR
         {
             self.ctx.definition_store.cache_resolved_cross_file_query(
-                CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
+                CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
                 file_idx as u32,
                 sym_id.0,
                 0,
@@ -1912,28 +1900,5 @@ mod cross_file_query_kind_tests {
             3
         );
         assert_eq!(CrossFileQueryKind::SymbolType.as_storage_kind(), 4);
-    }
-
-    /// The legacy `pub(crate) const` aliases must keep returning the same
-    /// `u8` as the typed enum. Catches accidental drift if a future PR
-    /// bumps a variant's discriminant without updating the const.
-    #[test]
-    fn const_aliases_match_enum_storage() {
-        assert_eq!(
-            super::CROSS_FILE_QUERY_INTERFACE_TYPE,
-            CrossFileQueryKind::InterfaceType.as_storage_kind()
-        );
-        assert_eq!(
-            super::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
-            CrossFileQueryKind::ClassInstanceType.as_storage_kind()
-        );
-        assert_eq!(
-            super::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind()
-        );
-        assert_eq!(
-            super::CROSS_FILE_QUERY_SYMBOL_TYPE,
-            CrossFileQueryKind::SymbolType.as_storage_kind()
-        );
     }
 }
