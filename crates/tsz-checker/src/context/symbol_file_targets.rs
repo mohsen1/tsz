@@ -26,12 +26,12 @@ pub(super) struct SymbolFileTargetsNode {
 }
 
 impl SymbolFileTargetsNode {
-    /// Total entries visible through this node (own entries plus the
-    /// transitive parent chain). Used to attribute "entries inherited
-    /// at copy time" to the overlay perf counter (`PERFORMANCE_PLAN.md`
-    /// §4.T0.3 follow-up): with the Arc-snapshot model nothing is
-    /// physically copied, but we still want to know how much state the
-    /// child can observe.
+    /// Entries represented by this immutable snapshot. Layered snapshots
+    /// store `parent.total_entries + entries.len()`, so shadowed keys are
+    /// counted once per layer. Flattened snapshots first merge the parent
+    /// layers and delta into this node's `entries`, so shadowed keys are
+    /// counted once there. The overlay perf counter uses this value to size
+    /// the parent snapshot handed to a child checker.
     #[must_use]
     pub(super) const fn total_entries(&self) -> usize {
         self.total_entries

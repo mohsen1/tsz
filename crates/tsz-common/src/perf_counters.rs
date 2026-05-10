@@ -590,7 +590,10 @@ pub fn enabled() -> bool {
 /// log-spaced over 100 ns…100 ms with a final overflow bucket; see
 /// [`LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS`]. Gated behind the
 /// `perf-counters-timing` feature: when the feature is off this function
-/// (and its only caller, [`time_shard_write`]) compile out entirely.
+/// is not compiled at all (the `cfg` excludes the entire item), and the
+/// only call site lives inside the feature-on variant of
+/// [`time_shard_write`], which is replaced with a no-op stub that calls
+/// `f()` directly.
 #[cfg(feature = "perf-counters-timing")]
 #[inline]
 fn record_lock_wait_ns(ns: u64) {
@@ -646,7 +649,10 @@ pub fn time_shard_write<R>(_shard_idx: u32, f: impl FnOnce() -> R) -> R {
 /// `perf-counters-timing` cfg feature is on). Independent of
 /// `enabled_fast()`: a build with the feature on but the env var off
 /// still has the histogram fields and serializes them as zeroes; a
-/// build with the feature off has no histogram code at all.
+/// build with the feature off keeps the histogram fields (so the
+/// `PerfCounters` layout is feature-stable) but compiles out the
+/// timing + recording logic and serializes the histogram as `null` via
+/// [`PerfCounterSnapshot`].
 #[inline(always)]
 pub const fn lock_wait_histogram_wired() -> bool {
     cfg!(feature = "perf-counters-timing")
