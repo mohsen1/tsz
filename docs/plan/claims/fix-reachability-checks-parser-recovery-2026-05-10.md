@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/reachability-checks-parser-recovery-2026-05-10`
-- **PR**: TBD
+- **PR**: #4958
 - **Status**: ready
 - **Workstream**: conformance parser recovery
 
