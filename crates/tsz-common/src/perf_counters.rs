@@ -692,9 +692,9 @@ impl PerfCounters {
              mapped intern calls        {:>12}\n\
              Resolver:\n  \
              lookup calls               {:>12}\n  \
-             is_file calls                    n/a  (not wired in this PR)\n  \
-             is_dir calls                     n/a  (not wired in this PR)\n  \
-             read_dir calls                   n/a  (not wired in this PR)\n  \
+             is_file calls              {:>12}\n  \
+             is_dir calls               {:>12}\n  \
+             read_dir calls             {:>12}\n  \
              read_package_json calls    {:>12}\n  \
              candidate paths total      {:>12}\n",
             load(&c.delegate_cross_arena_calls),
@@ -724,6 +724,9 @@ impl PerfCounters {
             load(&c.interner_conditional_intern_calls),
             load(&c.interner_mapped_intern_calls),
             load(&c.resolver_lookup_calls),
+            load(&c.resolver_is_file_calls),
+            load(&c.resolver_is_dir_calls),
+            load(&c.resolver_read_dir_calls),
             load(&c.resolver_read_package_json_calls),
             load(&c.resolver_candidate_paths_total),
         ) + &Self::dump_cross_arena_symbol_miss_classification()
@@ -995,7 +998,7 @@ impl PerfCounters {
                 interner_intern_calls: true,
                 interner_per_kind: true,
                 resolver_lookup: true,
-                resolver_fs_probes: false,
+                resolver_fs_probes: true,
                 compute_type_of_symbol: true,
             },
             delegate: DelegateCounters {
@@ -1024,9 +1027,9 @@ impl PerfCounters {
             },
             resolver: ResolverCounters {
                 lookup_calls: load(&c.resolver_lookup_calls),
-                is_file_calls: None,
-                is_dir_calls: None,
-                read_dir_calls: None,
+                is_file_calls: Some(load(&c.resolver_is_file_calls)),
+                is_dir_calls: Some(load(&c.resolver_is_dir_calls)),
+                read_dir_calls: Some(load(&c.resolver_read_dir_calls)),
                 package_json_reads: load(&c.resolver_read_package_json_calls),
                 candidate_paths_total: load(&c.resolver_candidate_paths_total),
             },
@@ -1094,19 +1097,33 @@ mod json_tests {
     #[test]
     fn unwired_buckets_serialize_as_null() {
         // The plan requires `null` for unwired buckets so `0` is unambiguous.
+        // After resolver fs-probe wiring landed, `lock_wait_histogram_ns`
+        // is the only remaining unwired bucket on the snapshot surface.
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
-        // `lock_wait_histogram_ns` and resolver fs probes remain unwired in
-        // this PR — see follow-ups in the 2026-05-10 scale-cliff summary.
         assert_eq!(
             json["interner"]["lock_wait_histogram_ns"],
             serde_json::Value::Null
         );
-        assert_eq!(json["resolver"]["is_file_calls"], serde_json::Value::Null);
-        assert_eq!(json["resolver"]["is_dir_calls"], serde_json::Value::Null);
-        assert_eq!(json["resolver"]["read_dir_calls"], serde_json::Value::Null);
-        // The matching wired flag must agree.
-        assert_eq!(json["wired"]["resolver_fs_probes"], false);
+    }
+
+    #[test]
+    fn wired_resolver_fs_probe_buckets_serialize_as_numbers() {
+        // T0.3 follow-up: resolver `is_file`/`is_dir`/`read_dir` are wired
+        // through `count_is_file`/`count_is_dir`/`count_read_dir` thin
+        // wrappers in `crates/tsz-cli/src/driver/resolution.rs`. They
+        // must serialize as numbers (zero is fine in this test process)
+        // and the wired flag must agree.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert!(
+            json["resolver"]["is_file_calls"].is_number(),
+            "is_file_calls should be a number once wired, got: {}",
+            json["resolver"]["is_file_calls"]
+        );
+        assert!(json["resolver"]["is_dir_calls"].is_number());
+        assert!(json["resolver"]["read_dir_calls"].is_number());
+        assert_eq!(json["wired"]["resolver_fs_probes"], true);
     }
 
     #[test]
