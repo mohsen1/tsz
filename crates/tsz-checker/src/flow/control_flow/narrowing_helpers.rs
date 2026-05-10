@@ -1,7 +1,7 @@
 //! Stateless helpers for `narrowing.rs`.
 //!
 //! Maps AST kinds and primitive identifier names to `TypeId` intrinsics, plus
-//! resolution of a const variable's type annotation to a primitive intrinsic.
+//! resolution of a const variable's type annotation to a primitive/object-like intrinsic.
 //! Lifted out of `narrowing.rs` to keep that file under the 2000-LOC ceiling.
 
 use tsz_binder::BinderState;
@@ -64,9 +64,8 @@ pub(super) fn is_global_undefined_identifier(
     true
 }
 
-/// Resolve a const variable's `type_annotation` node to a primitive `TypeId`
-/// when the annotation is a primitive keyword (e.g. `string`) or a no-arg
-/// type reference whose name is a primitive identifier.
+/// Resolve a const variable's `type_annotation` node to a primitive/object-like
+/// `TypeId` when the annotation can act as an `unknown` equality comparand.
 pub(super) fn const_annotation_intrinsic_type(
     arena: &NodeArena,
     ann_idx: NodeIndex,
@@ -74,6 +73,14 @@ pub(super) fn const_annotation_intrinsic_type(
     let ann_node = arena.get(ann_idx)?;
     if let Some(intrinsic) = primitive_keyword_intrinsic(ann_node.kind) {
         return Some(intrinsic);
+    }
+    if matches!(
+        ann_node.kind,
+        k if k == tsz_parser::parser::syntax_kind_ext::TYPE_LITERAL
+            || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_TYPE
+            || k == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
+    ) {
+        return Some(TypeId::OBJECT);
     }
     if ann_node.kind != tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
         return None;
