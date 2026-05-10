@@ -6,11 +6,11 @@
 //! site re-derived the same key shape and reject rules; this module
 //! owns them once.
 //!
-//! Bucket discriminants now route through the typed
+//! Bucket discriminants route through the typed
 //! [`CrossFileQueryKind`](crate::state_type_analysis::cross_file::CrossFileQueryKind)
-//! enum rather than the legacy `CROSS_FILE_QUERY_*` `u8` constants. The
-//! storage layer is unchanged; the migration is purely call-site hygiene
-//! to avoid bare `u8` arguments at typed entry points.
+//! enum. The storage layer keys cache entries by the enum's `as_storage_kind()`
+//! `u8` value, but no call site outside the storage boundary should handle
+//! bare `u8` discriminants — the helpers below are the only typed entry points.
 
 use tsz_binder::SymbolId;
 
@@ -21,7 +21,7 @@ use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
     /// Look up a cached cross-file symbol-type via the canonical
-    /// `CROSS_FILE_QUERY_SYMBOL_TYPE` bucket.
+    /// `CrossFileQueryKind::SymbolType` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
@@ -56,7 +56,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file symbol-type result in the canonical
-    /// `CROSS_FILE_QUERY_SYMBOL_TYPE` bucket.
+    /// `CrossFileQueryKind::SymbolType` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -92,7 +92,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file interface-type via the canonical
-    /// `CROSS_FILE_QUERY_INTERFACE_TYPE` bucket.
+    /// `CrossFileQueryKind::InterfaceType` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off,
@@ -132,7 +132,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file interface-type result in the canonical
-    /// `CROSS_FILE_QUERY_INTERFACE_TYPE` bucket.
+    /// `CrossFileQueryKind::InterfaceType` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -168,9 +168,9 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file interface-member simple type via the
-    /// canonical `CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE` bucket.
+    /// canonical `CrossFileQueryKind::InterfaceMemberSimpleType` bucket.
     ///
-    /// Unlike the `SYMBOL_TYPE` / `INTERFACE_TYPE` buckets (keyed by `sym_id`),
+    /// Unlike the `SymbolType` / `InterfaceType` buckets (keyed by `sym_id`),
     /// this bucket is keyed by `(interface_idx, member_idx)` so a single
     /// interface's members each live under their own entry.
     ///
@@ -208,7 +208,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file interface-member simple type result in the
-    /// canonical `CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE` bucket.
+    /// canonical `CrossFileQueryKind::InterfaceMemberSimpleType` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -246,7 +246,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file class-instance-type via the canonical
-    /// `CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE` bucket.
+    /// `CrossFileQueryKind::ClassInstanceType` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`), or
