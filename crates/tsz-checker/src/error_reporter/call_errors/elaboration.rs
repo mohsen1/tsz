@@ -1381,9 +1381,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let is_iat =
-                |t| crate::query_boundaries::common::is_index_access_type(self.ctx.types, t);
-            if is_iat(target_prop_type) || is_iat(target_prop_type_for_diagnostic) {
+            if self.target_has_never_indexed_access_surface(target_prop_type)
+                || self.target_has_never_indexed_access_surface(target_prop_type_for_diagnostic)
+            {
                 continue; // tsc elaborateElementwise: keep TS2322 on outer object for generic indexed-access props
             }
 
@@ -1944,11 +1944,37 @@ impl<'a> CheckerState<'a> {
         elaborated
     }
 
+    fn target_has_never_indexed_access_surface(&self, target_type: TypeId) -> bool {
+        self.type_has_never_indexed_access_surface(target_type, 0)
+    }
+
     fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
-        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, target_type) {
+        self.type_has_indexed_access_surface(target_type, 0)
+    }
+
+    fn type_has_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let db = self.ctx.types.as_type_database();
+        if crate::query_boundaries::common::index_access_types(db, target_type).is_some() {
             return true;
         }
-
+        if let Some(members) = crate::query_boundaries::common::union_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
         if crate::query_boundaries::common::is_generic_application(self.ctx.types, target_type)
             && let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
                 self.ctx.types,
@@ -1958,7 +1984,55 @@ impl<'a> CheckerState<'a> {
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && let Some(body) = def.body
         {
-            return crate::query_boundaries::common::is_index_access_type(self.ctx.types, body);
+            return self.type_has_indexed_access_surface(body, depth + 1);
+        }
+
+        false
+    }
+
+    fn type_has_never_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let db = self.ctx.types.as_type_database();
+        if let Some((object_type, _)) =
+            crate::query_boundaries::common::index_access_types(db, target_type)
+            && object_type == TypeId::NEVER
+        {
+            return true;
+        }
+        if let Some(members) = crate::query_boundaries::common::union_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_never_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(db, target_type)
+            && members
+                .iter()
+                .any(|&member| self.type_has_never_indexed_access_surface(member, depth + 1))
+        {
+            return true;
+        }
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, target_type)
+            && let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
+                self.ctx.types,
+                target_type,
+            )
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && let Some(body) = def.body
+        {
+            return self.type_has_never_indexed_access_surface(body, depth + 1);
+        }
+
+        if depth == 0 {
+            let display = self.format_type_diagnostic(target_type);
+            if display.contains("never[") {
+                return true;
+            }
         }
 
         false
