@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-10
 - **Branch**: `fix/reachability-recovery-review-state-2026-05-10`
-- **PR**: TBD
+- **PR**: #4971
 - **Status**: in review
 - **Workstream**: parser-conformance
 
