@@ -318,7 +318,16 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut branch_props: Vec<PropertyInfo> = branch.into_values().collect();
                 branch_props.sort_by_key(|p| p.declaration_order);
-                let obj = self.ctx.types.factory().object(branch_props);
+                let mut display_props = branch_props.clone();
+                crate::query_boundaries::common::normalize_display_property_order(
+                    &mut display_props,
+                );
+                let obj = self
+                    .ctx
+                    .types
+                    .factory()
+                    .object_preserve_declaration_order(branch_props);
+                self.ctx.types.store_display_properties(obj, display_props);
                 union_members.push(obj);
             }
             self.ctx.types.factory().union(union_members)
@@ -328,7 +337,19 @@ impl<'a> CheckerState<'a> {
 
             if string_index_types.is_empty() && number_index_types.is_empty() {
                 if has_spread {
-                    self.ctx.types.factory().object(properties)
+                    let mut display_props = properties.clone();
+                    crate::query_boundaries::common::normalize_display_property_order(
+                        &mut display_props,
+                    );
+                    let type_id = self
+                        .ctx
+                        .types
+                        .factory()
+                        .object_preserve_declaration_order(properties);
+                    self.ctx
+                        .types
+                        .store_display_properties(type_id, display_props);
+                    type_id
                 } else {
                     let type_id = if all_properties_context_sensitive {
                         self.ctx
@@ -419,7 +440,23 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                self.ctx.types.factory().object_with_index(shape)
+                let display_props = if has_spread {
+                    shape.mark_preserve_declaration_order();
+                    let mut display_props = shape.properties.clone();
+                    crate::query_boundaries::common::normalize_display_property_order(
+                        &mut display_props,
+                    );
+                    Some(display_props)
+                } else {
+                    None
+                };
+                let type_id = self.ctx.types.factory().object_with_index(shape);
+                if let Some(display_props) = display_props {
+                    self.ctx
+                        .types
+                        .store_display_properties(type_id, display_props);
+                }
+                type_id
             }
         };
 
