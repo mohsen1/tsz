@@ -789,11 +789,43 @@ fn index_access_object_type_arg_alias_hint(
             .and_then(|alias| get_type_application(db, alias))
     })?;
     let &arg = app.args.first()?;
-    let TypeData::Lazy(def_id) = db.lookup(arg)? else {
-        return None;
+    let def_id = if let TypeData::Lazy(def_id) = db.lookup(arg)? {
+        def_id
+    } else {
+        def_store.find_type_alias_by_body(arg).or_else(|| {
+            let canonical_arg = canonical_alias_lookup_body(db, arg)?;
+            def_store.find_type_alias_by_body(canonical_arg)
+        })?
     };
     let def = def_store.get(def_id)?;
-    (def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty()).then_some(arg)
+    (def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty())
+        .then(|| db.lazy(def_id))
+}
+
+fn canonical_alias_lookup_body(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id)? {
+        TypeData::Union(list_id) => {
+            let members = db.type_list(list_id);
+            let canonical = db.union_literal_reduce(
+                members
+                    .iter()
+                    .map(|&member| db.get_display_alias(member).unwrap_or(member))
+                    .collect(),
+            );
+            (canonical != type_id).then_some(canonical)
+        }
+        TypeData::Intersection(list_id) => {
+            let members = db.type_list(list_id);
+            let canonical = db.intersection(
+                members
+                    .iter()
+                    .map(|&member| db.get_display_alias(member).unwrap_or(member))
+                    .collect(),
+            );
+            (canonical != type_id).then_some(canonical)
+        }
+        _ => None,
+    }
 }
 
 /// Get the operand of a `KeyOf` type. Returns `Some(inner)` for `keyof T`.
