@@ -2155,3 +2155,92 @@ fn test_outer_equal_conditional_evaluates_to_true_for_any_lhs() {
         interner.lookup(result)
     );
 }
+
+// =============================================================================
+// Distribution Optimization Tests
+// =============================================================================
+
+/// Test that distributive conditional types work correctly over multi-member unions.
+///
+/// This test exercises the `distribute_conditional` optimization where the memo
+/// `HashMap` is pre-allocated and reused across iterations.
+#[test]
+fn test_distribution_over_multi_member_union() {
+    // Create a 10-member string literal union and verify distribution works correctly.
+    // Pattern: (A | B | C | ...) extends string ? "yes" : "no"
+    // Since all members are string literals, they all pass the extends check.
+    let interner = TypeInterner::new();
+
+    // Create 10 string literal types
+    let members: Vec<TypeId> = (0..10)
+        .map(|i| interner.literal_string(&i.to_string()))
+        .collect();
+
+    let union = interner.union(members);
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+
+    let cond = ConditionalType {
+        check_type: union,
+        extends_type: TypeId::STRING,
+        true_type: yes,
+        false_type: no,
+        is_distributive: true,
+    };
+
+    let cond_id = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_id);
+
+    // All 10 members extend string, so they all take the true branch.
+    // The result should be just "yes" (union of 10 identical "yes" values).
+    assert_eq!(
+        result, yes,
+        "All string literals extend string, should return 'yes'"
+    );
+}
+
+/// Test distribution where members take different branches.
+#[test]
+fn test_distribution_mixed_branches() {
+    // Create a union of string and number literals.
+    // Pattern: (string | number | boolean) extends string ? "is-string" : "not-string"
+    // String takes true branch, number and boolean take false branch.
+    let interner = TypeInterner::new();
+
+    let members = vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN];
+    let union = interner.union(members);
+    let is_string = interner.literal_string("is-string");
+    let not_string = interner.literal_string("not-string");
+
+    let cond = ConditionalType {
+        check_type: union,
+        extends_type: TypeId::STRING,
+        true_type: is_string,
+        false_type: not_string,
+        is_distributive: true,
+    };
+
+    let cond_id = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_id);
+
+    // Result should be "is-string" | "not-string"
+    if let Some(TypeData::Union(result_members)) = interner.lookup(result) {
+        let result_list = interner.type_list(result_members);
+        assert_eq!(
+            result_list.len(),
+            2,
+            "Expected union of two results, got {:?}",
+            result_list.len()
+        );
+        assert!(
+            result_list.contains(&is_string),
+            "Expected 'is-string' in result"
+        );
+        assert!(
+            result_list.contains(&not_string),
+            "Expected 'not-string' in result"
+        );
+    } else {
+        panic!("Expected union result, got {:?}", interner.lookup(result));
+    }
+}
