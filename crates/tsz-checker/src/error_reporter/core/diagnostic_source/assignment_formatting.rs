@@ -10,6 +10,31 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(in crate::error_reporter) fn declared_identifier_candidate_preserves_source_surface(
+        &self,
+        existing: &str,
+        candidate: &str,
+    ) -> bool {
+        if existing == candidate {
+            return true;
+        }
+        if existing.contains("| undefined") && !candidate.contains("| undefined") {
+            return false;
+        }
+        if existing.contains("?:")
+            && candidate.contains("?:")
+            && existing.contains("| undefined") != candidate.contains("| undefined")
+        {
+            return false;
+        }
+        if (existing.contains("[K in ") || existing.contains("[P in "))
+            && !(candidate.contains("[K in ") || candidate.contains("[P in "))
+        {
+            return false;
+        }
+        true
+    }
+
     pub(in crate::error_reporter) fn source_type_contains_number_literal_only_union(
         &self,
         ty: TypeId,

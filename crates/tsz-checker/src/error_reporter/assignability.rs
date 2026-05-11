@@ -1006,10 +1006,7 @@ impl<'a> CheckerState<'a> {
             target_str = authoritative;
         }
 
-        // For non-generic type aliases whose evaluated form has a display_alias
-        // (i.e., the alias wraps a generic Application like `type Foo = Id<{...}>`),
-        // tsc shows the Application form in TS2322 messages. Replace the alias name
-        // with the display_alias-based formatter output.
+        // Non-generic aliases that wrap applications display the application.
         let rewrite_application_alias =
             |state: &Self, ty: TypeId, display: &str| -> Option<String> {
                 if display.contains('<') || display.contains('{') || display.contains('|') {
@@ -1022,10 +1019,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return None; // Keep concrete literal displays instead of repainting alias provenance.
                 }
-                // Only for types whose display_alias is an Application (were
-                // produced by Application eval). JSDoc typedef aliases store
-                // Lazy display aliases for exact-optional diagnostics and must
-                // not trigger this TS2322 application rewrite.
+                // JSDoc typedef lazy aliases must not trigger this rewrite.
                 let alias = state.ctx.types.get_display_alias(ty)?;
                 crate::query_boundaries::common::application_info(state.ctx.types, alias)?;
                 let mut formatter = state
@@ -1297,6 +1291,7 @@ impl<'a> CheckerState<'a> {
         if !source_from_annotation
             && let Some(expr_idx) = expr_idx
             && let Some(display) = self.declared_identifier_source_display(expr_idx, target, source)
+            && self.declared_identifier_candidate_preserves_source_surface(&source_str, &display)
         {
             source_str = display;
             source_from_annotation = true;
@@ -1872,6 +1867,7 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.direct_diagnostic_source_expression(anchor_idx))
                 && let Some(display) =
                     self.declared_identifier_source_display(expr_idx, target, source)
+                && self.declared_identifier_candidate_preserves_source_surface(&src_str, &display)
             {
                 src_str = display;
             }

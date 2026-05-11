@@ -91,6 +91,7 @@ impl<'a> CheckerState<'a> {
             || annotation_text.contains(" & ")
             || annotation_text.contains('<')
             || annotation_text.contains('.')
+            || (source_display.contains("| undefined") && !annotation_text.contains("| undefined"))
             || crate::error_reporter::assignability::display_is_literal_value(source_display)
         {
             return message;

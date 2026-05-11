@@ -85,6 +85,8 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.direct_diagnostic_source_expression(idx))
                 && let Some(display) =
                     self.declared_identifier_source_display(expr_idx, target, source)
+                && self
+                    .declared_identifier_candidate_preserves_source_surface(&source_str, &display)
             {
                 source_str = display;
             }
@@ -113,7 +115,6 @@ impl<'a> CheckerState<'a> {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
             }
-
             if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
                 &source_str,
                 &target_str,
