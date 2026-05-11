@@ -251,6 +251,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let body = def.body?;
+        let args: Vec<_> = args
+            .into_iter()
+            .map(|arg| {
+                if self.is_failed_typeof_instantiation_arg(arg) {
+                    TypeId::ANY
+                } else {
+                    arg
+                }
+            })
+            .collect();
         let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
             &def.type_params,
