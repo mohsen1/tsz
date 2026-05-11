@@ -404,7 +404,7 @@ const arr: any[] = r;
 /// in unit tests without lib.d.ts it falls back to TS2322.
 #[test]
 fn test_ts2740_index_signature_object_to_array() {
-    let diagnostics = compile_and_get_diagnostics(
+    let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"
 type Objectish<T extends unknown> = { [K in keyof T]: T[K] };
 type IndirectArrayish<U extends unknown[]> = Objectish<U>;
@@ -424,6 +424,25 @@ function bar(objectish: Objectish<any>, indirectArrayish: IndirectArrayish<any>)
         error_count, 2,
         "Expected two assignability errors (one for objectish, one for indirectArrayish). \
          Both are object types with index signatures assigned to any[].\n\
+         Actual diagnostics: {diagnostics:#?}"
+    );
+    let missing_property_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2740)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        missing_property_messages
+            .iter()
+            .any(|message| message.contains("Type 'Objectish<any>' is missing")),
+        "Expected missing-property diagnostics to display the mapped body alias \
+         rather than the wrapper alias. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !missing_property_messages
+            .iter()
+            .any(|message| message.contains("Type 'IndirectArrayish<any>' is missing")),
+        "Generic wrapper aliases should unfold one level in missing-property display. \
          Actual diagnostics: {diagnostics:#?}"
     );
 }

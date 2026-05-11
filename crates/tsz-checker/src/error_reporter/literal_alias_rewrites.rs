@@ -12,8 +12,7 @@ impl<'a> CheckerState<'a> {
         if crate::error_reporter::assignability::display_is_literal_value(&source_display) {
             return source_display;
         }
-        self.ts2739_alias_of_application_source_display(source)
-            .map(|unfolded| self.format_type_diagnostic(unfolded))
+        self.ts2739_alias_of_application_source_display_text(source)
             .unwrap_or(source_display)
     }
 

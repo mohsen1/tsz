@@ -726,6 +726,15 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Do not follow display aliases whose origin is an Application.
+    /// Used when a diagnostic has already selected the application spelling it
+    /// wants to show and formatter-level provenance would repaint it as a
+    /// wrapper alias.
+    pub const fn with_skip_application_display_alias_chase(mut self) -> Self {
+        self.skip_application_display_alias_chase = true;
+        self
+    }
+
     /// Skip one specific type alias name and display its evaluated body instead.
     pub fn with_skip_type_alias_def_id(mut self, def_id: DefId) -> Self {
         self.skip_type_alias_def_ids.insert(def_id);

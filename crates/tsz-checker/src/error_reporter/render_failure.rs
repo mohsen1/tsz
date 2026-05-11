@@ -1605,18 +1605,19 @@ impl<'a> CheckerState<'a> {
             // the application form `A<X1, X2, ...>` rather than the wrapper
             // alias name `B`. See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
             // line 91. Falls through to the role formatter for any other shape.
-            let src_str =
-                if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                    self.format_type_diagnostic(unfolded)
-                } else {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
-                };
+            let src_str = if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
+            } else {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
+            };
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let prop_list: Vec<String> = all_missing
                 .iter()
@@ -1789,15 +1790,21 @@ impl<'a> CheckerState<'a> {
         // - the already-evaluated structural form (find_def_for_type points
         //   back at the alias's definition),
         // - or an `Application(Lazy(DefId), [args...])` when generic.
+        let source_application =
+            crate::query_boundaries::common::application_info(self.ctx.types, source).or_else(
+                || {
+                    let alias = self.ctx.types.get_display_alias(source)?;
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                },
+            );
+
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
             .or_else(|| self.ctx.definition_store.find_def_for_type(source))
             .or_else(|| {
                 // Application path: peek at the application's base to find
                 // the alias's def_id.
-                let app_id =
-                    crate::query_boundaries::common::application_id(self.ctx.types, source)?;
-                let app = self.ctx.types.type_application(app_id);
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+                let (base, _) = source_application.as_ref()?;
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, *base)
             })?;
         let def = self.ctx.definition_store.get(def_id)?;
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
@@ -1838,16 +1845,14 @@ impl<'a> CheckerState<'a> {
         }
         // Substitute the wrapper's type-params with the source application's
         // args so the displayed application reflects the call-site instantiation.
-        let source_app_id =
-            crate::query_boundaries::common::application_id(self.ctx.types, source)?;
-        let source_app = self.ctx.types.type_application(source_app_id);
-        if source_app.args.len() != def.type_params.len() {
+        let (_, source_args) = source_application?;
+        if source_args.len() != def.type_params.len() {
             return None;
         }
         let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
             &def.type_params,
-            &source_app.args,
+            &source_args,
         );
         let body_args: Vec<TypeId> = body_app
             .args
@@ -1866,6 +1871,27 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .application(body_app.base, body_args),
         )
+    }
+
+    pub(in crate::error_reporter) fn format_unfolded_ts2739_source_display(
+        &self,
+        unfolded: TypeId,
+    ) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_skip_application_display_alias_chase()
+            .with_skip_application_alias_names();
+        formatter.format(unfolded).into_owned()
+    }
+
+    pub(in crate::error_reporter) fn ts2739_alias_of_application_source_display_text(
+        &self,
+        source: TypeId,
+    ) -> Option<String> {
+        self.ts2739_alias_of_application_source_display(source)
+            .map(|unfolded| self.format_unfolded_ts2739_source_display(unfolded))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2354,8 +2380,10 @@ impl<'a> CheckerState<'a> {
             // displayed as `NumberTo<number>` in the missing-properties source.
             if source_type_is_object {
                 "{}".to_string()
-            } else if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                self.format_type_diagnostic(unfolded)
+            } else if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
             } else {
                 self.format_type_for_diagnostic_role(
                     source,

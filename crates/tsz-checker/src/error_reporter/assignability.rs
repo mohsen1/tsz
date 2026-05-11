@@ -831,10 +831,10 @@ impl<'a> CheckerState<'a> {
                     // `type NumberToNumber = NumberTo<number>` source. The unfold
                     // is scoped to the missing-properties source only — TS2322
                     // target context and TS2339 receiver keep the alias name.
-                    let src_str = if let Some(unfolded) =
-                        self.ts2739_alias_of_application_source_display(source)
+                    let src_str = if let Some(display) =
+                        self.ts2739_alias_of_application_source_display_text(source)
                     {
-                        self.format_type_diagnostic(unfolded)
+                        display
                     } else {
                         self.format_type_for_diagnostic_role(
                             source,
@@ -1744,10 +1744,10 @@ impl<'a> CheckerState<'a> {
                 // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
                 // line 91. Falls through to the normal source role formatter
                 // when no unfold candidate exists.
-                let src_str = if let Some(unfolded) =
-                    self.ts2739_alias_of_application_source_display(source)
+                let src_str = if let Some(display) =
+                    self.ts2739_alias_of_application_source_display_text(source)
                 {
-                    self.format_type_diagnostic(unfolded)
+                    display
                 } else {
                     self.format_type_for_diagnostic_role(
                         source,
@@ -1851,8 +1851,8 @@ impl<'a> CheckerState<'a> {
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
             let mut src_str = src_str;
             let mut tgt_str = tgt_str;
-            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                src_str = self.format_type_diagnostic(unfolded);
+            if let Some(display) = self.ts2739_alias_of_application_source_display_text(source) {
+                src_str = display;
             }
             if tgt_str.trim() != "{}"
                 && let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str)
