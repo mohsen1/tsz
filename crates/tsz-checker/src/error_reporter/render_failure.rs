@@ -1773,14 +1773,9 @@ impl<'a> CheckerState<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    /// For TS2739 source display: when `source` is a non-generic type alias
-    /// (`type B = A<X1, X2, ...>`) whose body is a generic Application of a
-    /// different named type, return the body Application's TypeId so the
-    /// caller can format it as `A<X1, X2, ...>` instead of the wrapper
-    /// alias name `B`. Returns `None` for any other shape (already an
-    /// Application, primitive aliases, generic aliases with their own type
-    /// parameters, aliases of unions/intersections/object literals, etc.),
-    /// leaving normal formatting in charge.
+    /// For TS2739 source display, unfold wrapper aliases like
+    /// `type B = A<X>` to the body application `A<X>`. Other shapes keep
+    /// normal formatting.
     pub(in crate::error_reporter) fn ts2739_alias_of_application_source_display(
         &self,
         source: TypeId,
@@ -1811,13 +1806,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if def.type_params.is_empty() {
-            // Non-generic wrapper alias path — recover the as-written
-            // Application form via display_alias when the source is already
-            // evaluated, or via the alias body when the source is still the
-            // lazy alias reference. This still only unfolds aliases whose body
-            // is a generic type-alias Application; generic class defaults,
-            // unions, intersections, object literals, and bare references keep
-            // the wrapper alias.
+            // Recover the as-written application via display_alias for
+            // evaluated sources, or via the alias body for lazy references.
             let app_origin = self
                 .ctx
                 .types
@@ -1838,7 +1828,12 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .definition_store
                 .get(app_base_def_id)
-                .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+                .is_some_and(|def| {
+                    matches!(
+                        def.kind,
+                        tsz_solver::def::DefKind::TypeAlias | tsz_solver::def::DefKind::Interface
+                    )
+                })
             {
                 return None;
             }
