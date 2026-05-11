@@ -773,6 +773,36 @@ pub fn record_delegate_cross_arena_miss() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a hit on the cross-file type-parameter extraction cache. Mirrors
+/// [`record_delegate_cross_arena_miss`]: gate-once and one `counters()`
+/// lookup, then increment exactly the per-outcome counter that names this
+/// branch of the cache.
+#[inline]
+pub fn record_cross_file_type_params_cache_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .cross_file_type_params_cache_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a miss on the cross-file type-parameter extraction cache. Counted
+/// when the slow path runs to build a child checker, regardless of whether
+/// the slow path ultimately returns `Some(_)` — see the call sites in
+/// `state/type_environment/core.rs` for the rationale (counting only on
+/// `Some(_)` undercounts misses when the slow path runs but extraction fails,
+/// distorting attribution for Tier-2 decision-making).
+#[inline]
+pub fn record_cross_file_type_params_cache_miss() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .cross_file_type_params_cache_misses
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
