@@ -258,13 +258,14 @@ impl<'a> CheckerState<'a> {
             // line 91. Falls through to the previous behavior for any other
             // shape so direct Application sources, primitive aliases, etc.
             // continue to format as before.
-            let src_str =
-                if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                    self.format_type_diagnostic(unfolded)
-                } else {
-                    let evaluated_source = self.evaluate_type_for_assignability(source);
-                    self.format_type_diagnostic(evaluated_source)
-                };
+            let src_str = if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
+            } else {
+                let evaluated_source = self.evaluate_type_for_assignability(source);
+                self.format_type_diagnostic(evaluated_source)
+            };
             let tgt_str = self.format_type_diagnostic(target);
             let prop_list: Vec<String> = missing_props
                 .iter()
@@ -388,9 +389,9 @@ impl<'a> CheckerState<'a> {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
             if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
-                && let Some(unfolded) = self.ts2739_alias_of_application_source_display(source)
+                && let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source)
             {
-                source_str = self.format_type_diagnostic(unfolded);
+                source_str = display;
             }
             if target_str.trim() != "{}"
                 && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)

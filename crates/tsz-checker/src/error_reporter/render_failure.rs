@@ -1605,18 +1605,19 @@ impl<'a> CheckerState<'a> {
             // the application form `A<X1, X2, ...>` rather than the wrapper
             // alias name `B`. See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
             // line 91. Falls through to the role formatter for any other shape.
-            let src_str =
-                if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                    self.format_type_diagnostic(unfolded)
-                } else {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
-                };
+            let src_str = if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
+            } else {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
+            };
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let prop_list: Vec<String> = all_missing
                 .iter()
@@ -1772,14 +1773,9 @@ impl<'a> CheckerState<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    /// For TS2739 source display: when `source` is a non-generic type alias
-    /// (`type B = A<X1, X2, ...>`) whose body is a generic Application of a
-    /// different named type, return the body Application's TypeId so the
-    /// caller can format it as `A<X1, X2, ...>` instead of the wrapper
-    /// alias name `B`. Returns `None` for any other shape (already an
-    /// Application, primitive aliases, generic aliases with their own type
-    /// parameters, aliases of unions/intersections/object literals, etc.),
-    /// leaving normal formatting in charge.
+    /// For TS2739 source display, unfold wrapper aliases like
+    /// `type B = A<X>` to the body application `A<X>`. Other shapes keep
+    /// normal formatting.
     pub(in crate::error_reporter) fn ts2739_alias_of_application_source_display(
         &self,
         source: TypeId,
@@ -1789,31 +1785,56 @@ impl<'a> CheckerState<'a> {
         // - the already-evaluated structural form (find_def_for_type points
         //   back at the alias's definition),
         // - or an `Application(Lazy(DefId), [args...])` when generic.
+        let source_application =
+            crate::query_boundaries::common::application_info(self.ctx.types, source).or_else(
+                || {
+                    let alias = self.ctx.types.get_display_alias(source)?;
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                },
+            );
+
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
             .or_else(|| self.ctx.definition_store.find_def_for_type(source))
             .or_else(|| {
                 // Application path: peek at the application's base to find
                 // the alias's def_id.
-                let app_id =
-                    crate::query_boundaries::common::application_id(self.ctx.types, source)?;
-                let app = self.ctx.types.type_application(app_id);
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+                let (base, _) = source_application.as_ref()?;
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, *base)
             })?;
         let def = self.ctx.definition_store.get(def_id)?;
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
         if def.type_params.is_empty() {
-            // Non-generic wrapper alias path — recover the as-written
-            // Application form via display_alias. This exists only when the
-            // alias's body is a generic Application — for aliases of unions,
-            // intersections, object literals, or bare references, no
-            // display_alias is recorded so the alias name stays.
-            let app_origin = self.ctx.types.get_display_alias(source)?;
+            // Recover the as-written application via display_alias for
+            // evaluated sources, or via the alias body for lazy references.
+            let app_origin = self
+                .ctx
+                .types
+                .get_display_alias(source)
+                .filter(|&alias| {
+                    crate::query_boundaries::common::application_id(self.ctx.types, alias).is_some()
+                })
+                .or(def.body)?;
             let app_id =
                 crate::query_boundaries::common::application_id(self.ctx.types, app_origin)?;
             let app = self.ctx.types.type_application(app_id);
             if app.args.is_empty() {
+                return None;
+            }
+            let app_base_def_id =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
+            if !self
+                .ctx
+                .definition_store
+                .get(app_base_def_id)
+                .is_some_and(|def| {
+                    matches!(
+                        def.kind,
+                        tsz_solver::def::DefKind::TypeAlias | tsz_solver::def::DefKind::Interface
+                    )
+                })
+            {
                 return None;
             }
             return Some(app_origin);
@@ -1838,16 +1859,14 @@ impl<'a> CheckerState<'a> {
         }
         // Substitute the wrapper's type-params with the source application's
         // args so the displayed application reflects the call-site instantiation.
-        let source_app_id =
-            crate::query_boundaries::common::application_id(self.ctx.types, source)?;
-        let source_app = self.ctx.types.type_application(source_app_id);
-        if source_app.args.len() != def.type_params.len() {
+        let (_, source_args) = source_application?;
+        if source_args.len() != def.type_params.len() {
             return None;
         }
         let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
             &def.type_params,
-            &source_app.args,
+            &source_args,
         );
         let body_args: Vec<TypeId> = body_app
             .args
@@ -2354,8 +2373,10 @@ impl<'a> CheckerState<'a> {
             // displayed as `NumberTo<number>` in the missing-properties source.
             if source_type_is_object {
                 "{}".to_string()
-            } else if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                self.format_type_diagnostic(unfolded)
+            } else if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
             } else {
                 self.format_type_for_diagnostic_role(
                     source,

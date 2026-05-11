@@ -2661,6 +2661,39 @@ fn skip_application_alias_names_suppresses_nested_application_display_alias() {
 }
 
 #[test]
+fn skip_application_display_alias_chase_keeps_selected_application_name() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: db.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let objectish_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Objectish"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let indirect_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("IndirectArrayish"),
+        vec![type_param("U")],
+        TypeId::UNKNOWN,
+    ));
+    let objectish_app = db.application(db.lazy(objectish_def), vec![TypeId::ANY]);
+    let indirect_app = db.application(db.lazy(indirect_def), vec![TypeId::ANY]);
+    db.store_display_alias(objectish_app, indirect_app);
+
+    let mut default_fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(default_fmt.format(objectish_app), "IndirectArrayish<any>");
+
+    let mut selected_app_fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_skip_application_display_alias_chase();
+    assert_eq!(selected_app_fmt.format(objectish_app), "Objectish<any>");
+}
+
+#[test]
 fn concrete_display_alias_can_name_preexisting_structural_type() {
     let db = TypeInterner::new();
     let evaluated = db.object(vec![PropertyInfo::new(
