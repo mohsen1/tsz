@@ -21,8 +21,10 @@
 //! also designing the reset semantics at the same time.
 
 use super::CheckerContext;
+use tsz_binder::BinderState;
+use tsz_parser::parser::node::NodeArena;
 
-impl CheckerContext<'_> {
+impl<'a> CheckerContext<'a> {
     /// Reset file-local state so the same `CheckerContext` can be
     /// reused for the next file in a sequential session-reuse path.
     ///
@@ -95,10 +97,59 @@ impl CheckerContext<'_> {
         self.diagnostics.clear();
         self.emitted_diagnostics.clear();
 
-        // Node-keyed caches.
+        // Primary NodeIndex→TypeId cache. This is the cache that holds
+        // the type of every checked AST node; without clearing it, a
+        // switch to a new arena would return the prior file's types
+        // for the new file's identically-numbered nodes — producing
+        // silent-but-wrong diagnostics (often *zero* diagnostics
+        // because the cached "fine" type wins).
+        self.node_types.clear();
+
+        // Node-keyed caches (FxHashMap shape).
         self.request_node_types.clear();
         self.class_instance_type_cache.clear();
         self.class_constructor_type_cache.clear();
+        self.class_instance_type_to_decl.clear();
+        self.flow_narrowed_nodes.clear();
+        self.daa_error_nodes.clear();
+        self.deferred_ts2454_errors.clear();
+        self.type_only_nodes.clear();
+        // `name_resolution_diagnostics.reported_nodes` holds the
+        // `NodeIndex` set per file for TS2304/TS2552 dedup; clear it
+        // alongside the counter.
+        self.name_resolution_diagnostics.reported_nodes.clear();
+        self.name_resolution_diagnostics
+            .spelling_suggestions_emitted
+            .set(0);
+
+        // Class chain / heritage caches keyed by `NodeIndex`.
+        self.class_chain_summary_cache.borrow_mut().clear();
+        self.class_symbol_to_decl_cache.borrow_mut().clear();
+        self.heritage_symbol_cache.borrow_mut().clear();
+        self.base_constructor_expr_cache.borrow_mut().clear();
+        self.base_instance_expr_cache.borrow_mut().clear();
+        self.class_decl_miss_cache.borrow_mut().clear();
+
+        // Flow-analysis state (`FlowNodeId` and `(u32, u32)` position
+        // keyed). All file-local; carrying entries across files yields
+        // wrong narrowing.
+        self.flow_analysis_cache.borrow_mut().clear();
+        self.flow_worklist.borrow_mut().clear();
+        self.flow_in_worklist.borrow_mut().clear();
+        self.flow_visited.borrow_mut().clear();
+        self.flow_results.borrow_mut().clear();
+        self.flow_switch_reference_cache.borrow_mut().clear();
+        self.flow_numeric_atom_cache.borrow_mut().clear();
+        self.flow_reference_match_cache.borrow_mut().clear();
+        self.symbol_last_assignment_pos.borrow_mut().clear();
+        self.symbol_flow_confirmed.borrow_mut().clear();
+        // `CallPredicateMap` has no `.clear()`; replace with default.
+        // `NarrowableIdentifierCache` is a `Vec<u8>`-backed dense cache;
+        // replace with an empty one to drop the stored data without
+        // exposing an internal `.clear()` method through the public API.
+        self.call_type_predicates = crate::control_flow::CallPredicateMap::default();
+        *self.narrowable_identifier_cache.borrow_mut() =
+            crate::context::NarrowableIdentifierCache::new();
 
         // Resolution stacks (force-clear the import stack; symbol-
         // resolution stack/set are asserted empty as an invariant).
@@ -145,6 +196,64 @@ impl CheckerContext<'_> {
             self.symbol_resolution_set.is_empty(),
             "symbol_resolution_set non-empty at file boundary",
         );
+    }
+
+    /// Re-target this `CheckerContext` at the next file in a sequential
+    /// session-reuse path (`PERFORMANCE_PLAN.md` §6 step 5; T2.1.B).
+    ///
+    /// Steps, in order:
+    /// 1. Run `reset_for_next_file()` to drain file-local state from the
+    ///    previous file (diagnostics, node-keyed caches, depth counters,
+    ///    resolution stacks; see that method's docstring for the full
+    ///    list).
+    /// 2. Swap the borrowed `arena` and `binder` references to point at the
+    ///    next file. Both borrows must originate from the same enclosing
+    ///    `'a` lifetime — typically the `program` lifetime in
+    ///    `crates/tsz-cli/src/driver/check.rs`, where every file's
+    ///    `arena` and pre-built `BinderState` are guaranteed to outlive
+    ///    the whole sequential loop.
+    /// 3. Update `current_file_idx` and `file_name` so per-file
+    ///    diagnostic anchoring and arena lookups land on the right
+    ///    file.
+    ///
+    /// Per-file configuration (compiler-option flags, `file_is_esm`,
+    /// `resolved_modules`, parse-error positions) is **not** touched
+    /// here — that's the job of the caller's existing
+    /// `configure_checker_per_file` (in the driver) or
+    /// `set_resolved_modules` / `set_current_file_idx` (in tests). Keep
+    /// that responsibility outside this helper so the API surface
+    /// stays narrow: this method moves the *checker* to the next file;
+    /// the caller moves the *configuration*.
+    ///
+    /// Cross-file program state — `lib_contexts`, `all_arenas`,
+    /// `all_binders`, the shared `DefinitionStore`, symbol-keyed
+    /// caches that are stable across files — is intentionally
+    /// **preserved**. Those entries are exactly the allocations
+    /// session-reuse is meant to amortize.
+    ///
+    /// # Soundness of swapping `&'a` fields
+    ///
+    /// `arena` and `binder` are `&'a` references. Reassigning a `&'a T`
+    /// field to a different `&'a T` is type-safe in Rust as long as
+    /// both references carry the same `'a` — `'a` is fixed once the
+    /// `CheckerContext` is constructed. The caller's contract is that
+    /// every file's `NodeArena` and `BinderState` outlives the
+    /// `CheckerContext`. Pre-building all binders into a
+    /// `Vec<BinderState>` before the loop satisfies this naturally
+    /// because `program.files[i].arena` and `binders[i]` both live
+    /// for the duration of the function that owns the `Vec`.
+    pub fn switch_to_file(
+        &mut self,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        file_name: String,
+        file_idx: usize,
+    ) {
+        self.reset_for_next_file();
+        self.arena = arena;
+        self.binder = binder;
+        self.file_name = file_name;
+        self.current_file_idx = file_idx;
     }
 }
 
