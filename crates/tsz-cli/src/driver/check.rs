@@ -1433,7 +1433,43 @@ pub(super) fn collect_diagnostics(
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
             let use_sequential_checking = work_items.len() <= 32;
-            if use_sequential_checking {
+            // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): when the
+            // `TSZ_FILE_SESSION_REUSE` env var is set, the sequential
+            // path constructs one `CheckerState` and re-targets it
+            // across files via `CheckerContext::switch_to_file`
+            // instead of constructing one per file. Gated on the
+            // sequential branch because the parallel branch needs
+            // per-thread state, which the reuse path doesn't model.
+            // `extract_type_cache=true` (set when `--emit` or
+            // `--declaration` is on) consumes the `CheckerState` per
+            // file via `extract_cache(self)`. The reuse path holds
+            // ONE `CheckerState` across the whole loop, so it can't
+            // call the consuming variant. Pinning `--noEmit` runs is
+            // exactly the bench/profiling scenario T2.1.B is built
+            // for, so this restriction matches the use case rather
+            // than narrowing it.
+            let use_file_session_reuse = use_sequential_checking
+                && !extract_type_cache
+                && std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some();
+            if use_file_session_reuse {
+                check_files_sequentially_with_reuse(
+                    &work_items,
+                    program,
+                    &compiler_options,
+                    &program_context,
+                    &resolved_modules_per_file,
+                    Arc::clone(&shared_lib_cache),
+                    shared_query_cache.as_ref(),
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    extract_type_cache,
+                    build_checker_binder,
+                )
+            } else if use_sequential_checking {
                 work_items
                     .iter()
                     .map(|&file_idx| {
@@ -2613,6 +2649,204 @@ pub(super) fn check_file_for_parallel<'a>(
         qc_stats,
         ds_stats,
     )
+}
+
+/// Sequential session-reuse path for T2.1.B (`PERFORMANCE_PLAN.md` §6
+/// PR table item T2.1.B: "Add a sequential session-reuse path behind
+/// a flag").
+///
+/// Differences from the default `work_items.iter().map(check_file_for_parallel).collect()`
+/// path:
+///
+/// 1. **One `CheckerState` for the entire loop** (vs. one per file).
+///    Constructed lazily on the first non-skip-lib-check file so an
+///    all-declaration-file `work_items` doesn't pay setup cost.
+/// 2. **One `QueryCache` for the entire loop** (vs. one per file).
+///    The shared L2 path (`shared_query_cache`) already shared a
+///    cache across files when present; this path also reuses the
+///    primary `QueryCache` across files when `shared_query_cache` is
+///    `None`.
+/// 3. **`program_context.apply_to` runs once** (vs. once per file).
+///    The `apply_to` work — Arc-cloning shared program-level state
+///    into `ctx`, warming the local caches from the shared
+///    `DefinitionStore` — is identical across files and only
+///    needs to land once. Subsequent files inherit it through the
+///    same `ctx`.
+/// 4. **Pre-built `Vec<BinderState>`** holds every file's binder for
+///    the duration of the loop, satisfying `CheckerState`'s `&'a
+///    BinderState` lifetime requirement. The fresh-per-file path
+///    drops the binder at each iteration's end; this path holds
+///    them all so the next `switch_to_file` call has a valid
+///    `&BinderState` to swap to.
+///
+/// Per-file work that still happens N times:
+/// - `configure_checker_per_file` (file-local config: `file_idx`,
+///   `resolved_modules`, parse-error positions, etc.)
+/// - `CheckerContext::switch_to_file` (drains file-local caches,
+///   swaps `arena`/`binder`/`file_name`/`file_idx`)
+/// - The actual `check_source_file` work and diagnostic
+///   post-processing (via `run_check_on_existing_checker`)
+///
+/// Caller's contract: gated on `TSZ_FILE_SESSION_REUSE=1` env var.
+/// The flag-off default goes through `check_file_for_parallel` per
+/// file unchanged.
+///
+/// **Correctness gate**: this path must produce byte-identical
+/// diagnostics to the flag-off path under any conformance fixture,
+/// or it is wrong (`PERFORMANCE_PLAN.md` §6 T2.1.B `DoD` line). If a
+/// future change introduces a divergence, the responsible change is
+/// the one to fix, not the flag — the flag exists to *measure* the
+/// allocation savings, not to gate behavior changes.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn check_files_sequentially_with_reuse<F>(
+    work_items: &[usize],
+    program: &MergedProgram,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    shared_query_cache: Option<&tsz_solver::SharedQueryCache>,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    skip_lib_check: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+    extract_type_cache: bool,
+    build_checker_binder: F,
+) -> Vec<CheckFileResult>
+where
+    F: Fn(usize) -> tsz_binder::BinderState,
+{
+    // Pre-build every binder via the caller-provided closure. Each
+    // file's `CheckerContext::binder` is a `&'a BinderState`, so the
+    // binders must outlive the `CheckerState` we construct below;
+    // collecting into a `Vec` owned by this function satisfies that.
+    // The closure form lets the caller hold the module-resolution
+    // tables (`cached_module_specifiers`, `resolved_module_paths`,
+    // `merged_augmentations`) in its own scope without threading them
+    // through this function's signature.
+    let binders: Vec<tsz_binder::BinderState> = work_items
+        .iter()
+        .map(|&file_idx| build_checker_binder(file_idx))
+        .collect();
+
+    // One `QueryCache` for the whole loop. Mirrors the per-file
+    // construction in `check_file_for_parallel`, but built once.
+    let query_cache = if let Some(shared) = shared_query_cache {
+        QueryCache::new_with_shared(&program.type_interner, shared)
+    } else {
+        QueryCache::new(&program.type_interner)
+    };
+
+    let mut results: Vec<CheckFileResult> = Vec::with_capacity(work_items.len());
+    let mut checker: Option<CheckerState> = None;
+
+    for (loop_idx, &file_idx) in work_items.iter().enumerate() {
+        let file = &program.files[file_idx];
+
+        // skipLibCheck: skip type checking of declaration files. Same
+        // contract as `check_file_for_parallel`'s early-return; we
+        // emit an empty result and do *not* touch the shared
+        // `CheckerState` for this file.
+        if skip_lib_check && is_declaration_file(&file.file_name) {
+            results.push((
+                Vec::new(),
+                None,
+                RequestCacheCounters::default(),
+                tsz_solver::QueryCacheStatistics::default(),
+                tsz_solver::StoreStatistics::default(),
+            ));
+            continue;
+        }
+
+        let resolved_modules: Arc<rustc_hash::FxHashSet<String>> = resolved_modules_per_file
+            .get(file_idx)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(rustc_hash::FxHashSet::default()));
+
+        // Lazy construction on the first non-skipped file. After this,
+        // subsequent iterations use `switch_to_file` to re-target the
+        // same `CheckerState` at the next file.
+        if checker.is_none() {
+            let mut state = CheckerState::with_options_deferred_def_store(
+                &file.arena,
+                &binders[loop_idx],
+                &query_cache,
+                file.file_name.clone(),
+                compiler_options,
+            );
+            state.ctx.report_unresolved_imports = true;
+            state.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+            // `apply_to` is the expensive setup we're amortising:
+            // shared `DefinitionStore`, shared global indices,
+            // resolved-module maps, file-is-ESM map, etc. Running it
+            // once vs. N-times is the headline win for this path.
+            program_context.apply_to(&mut state.ctx);
+            checker = Some(state);
+        } else if let Some(ref mut state) = checker {
+            state.ctx.switch_to_file(
+                &file.arena,
+                &binders[loop_idx],
+                file.file_name.clone(),
+                file_idx,
+            );
+        }
+
+        let state = checker.as_mut().expect("checker constructed above");
+        configure_checker_per_file(
+            &mut state.ctx,
+            file,
+            file_idx,
+            program_context,
+            resolved_modules,
+            program_has_real_syntax_errors,
+        );
+
+        let file_diagnostics = run_check_on_existing_checker(
+            state,
+            file,
+            compiler_options,
+            program_context,
+            no_check,
+            check_js,
+            explicit_check_js_false,
+            program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
+        );
+
+        let checker_counters = state.ctx.request_cache_counters;
+        // `QueryCache::statistics()` is cumulative over the whole loop
+        // because we reuse the same cache. The aggregator merges per-
+        // file stats; emitting cumulative numbers N times would inflate
+        // them. Emit them once on the last iteration to keep the
+        // aggregator's invariant: sum of per-file QC stats == final
+        // cumulative QC stats.
+        let qc_stats = if loop_idx + 1 == work_items.len() {
+            query_cache.statistics()
+        } else {
+            tsz_solver::QueryCacheStatistics::default()
+        };
+        let ds_stats = tsz_solver::StoreStatistics::default();
+        // The reuse path is gated on `!extract_type_cache` at the
+        // call site; this loop never observes `extract_type_cache=true`,
+        // so we always emit `None` for the per-file `TypeCache` slot.
+        // See the call site in the sequential-branch dispatch for
+        // the rationale.
+        let type_cache = None;
+        let _ = extract_type_cache;
+
+        results.push((
+            file_diagnostics,
+            type_cache,
+            checker_counters,
+            qc_stats,
+            ds_stats,
+        ));
+    }
+
+    results
 }
 
 struct CheckerLibFileCheckEnv<'a> {
