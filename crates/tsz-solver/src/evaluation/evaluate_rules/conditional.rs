@@ -46,6 +46,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // loop so their capacity is preserved across iterations.
         let mut loop_bindings: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut loop_visited: FxHashSet<(TypeId, TypeId)> = FxHashSet::default();
+        let mut tail_application_branch: Option<TypeId> = None;
         // Cycle detection for the tail-recursion loop.
         // Tracks (check_type, extends_type) pairs seen during tail calls.
         // When the same pair is encountered again, the conditional is cyclically
@@ -552,6 +553,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             if let Some(TypeData::Conditional(next_cond_id)) =
                                 self.interner().lookup(instantiated)
                             {
+                                tail_application_branch.get_or_insert(substituted_true);
                                 let next_cond = self.interner().get_conditional(next_cond_id);
                                 current_cond = next_cond;
                                 tail_recursion_count += 1;
@@ -560,7 +562,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             // Not a conditional — evaluate normally.
                             // Signal the intermediate Application for forward display alias.
                             self.apparent_conditional_branch = Some(substituted_true);
-                            return self.evaluate(instantiated);
+                            return self.evaluate_preserving_tail_application_branch_alias(
+                                instantiated,
+                                Some(substituted_true),
+                            );
                         }
                     }
                     // Direct Application branch.
@@ -569,6 +574,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::Application(_))
                     ) {
                         self.apparent_conditional_branch = Some(substituted_true);
+                        return self.evaluate_preserving_tail_application_branch_alias(
+                            substituted_true,
+                            Some(substituted_true),
+                        );
                     }
                     return self.evaluate(substituted_true);
                 }
@@ -663,13 +672,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if let Some(TypeData::Conditional(next_cond_id)) =
                             self.interner().lookup(instantiated)
                         {
+                            tail_application_branch.get_or_insert(cond.false_type);
                             let next_cond = self.interner().get_conditional(next_cond_id);
                             current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
                         self.apparent_conditional_branch = Some(cond.false_type);
-                        return self.evaluate(instantiated);
+                        return self.evaluate_preserving_tail_application_branch_alias(
+                            instantiated,
+                            Some(cond.false_type),
+                        );
                     }
                     if matches!(
                         self.interner().lookup(cond.false_type),
@@ -798,13 +811,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(instantiated)
                     {
+                        tail_application_branch.get_or_insert(result_branch);
                         let next_cond = self.interner().get_conditional(next_cond_id);
                         current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
                     self.apparent_conditional_branch = Some(result_branch);
-                    return self.evaluate(instantiated);
+                    return self.evaluate_preserving_tail_application_branch_alias(
+                        instantiated,
+                        Some(result_branch),
+                    );
                 }
                 if matches!(
                     self.interner().lookup(result_branch),
@@ -815,16 +832,68 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Not a tail-recursive case - evaluate normally
-            return self.evaluate_preserving_intersection_branch_alias(result_branch);
+            return self.evaluate_preserving_tail_application_branch_alias(
+                result_branch,
+                tail_application_branch,
+            );
         }
+    }
+
+    fn evaluate_preserving_tail_application_branch_alias(
+        &mut self,
+        branch: TypeId,
+        tail_application_branch: Option<TypeId>,
+    ) -> TypeId {
+        let evaluated = self.evaluate_preserving_intersection_branch_alias(branch);
+        if let Some(application_branch) = tail_application_branch
+            && evaluated != application_branch
+            && self.is_concrete_application_branch(application_branch, evaluated)
+        {
+            self.interner()
+                .store_display_alias_preferring_application(evaluated, application_branch);
+        }
+        evaluated
     }
 
     fn evaluate_preserving_intersection_branch_alias(&mut self, branch: TypeId) -> TypeId {
         let evaluated = self.evaluate(branch);
-        if evaluated != branch && self.is_concrete_application_led_intersection(branch) {
-            self.interner().store_display_alias(evaluated, branch);
+        if evaluated != branch {
+            if self.is_concrete_application_branch(branch, evaluated) {
+                self.interner()
+                    .store_display_alias_preferring_application(evaluated, branch);
+            } else if self.is_concrete_application_led_intersection(branch) {
+                self.interner().store_display_alias(evaluated, branch);
+            }
         }
         evaluated
+    }
+
+    fn is_concrete_application_branch(&self, branch: TypeId, evaluated: TypeId) -> bool {
+        matches!(
+            self.interner().lookup(branch),
+            Some(TypeData::Application(_))
+        ) && Self::is_displayable_conditional_branch_result(self.interner(), evaluated)
+            && !crate::type_queries::contains_generic_type_parameters_db(self.interner(), branch)
+    }
+
+    fn is_displayable_conditional_branch_result(
+        interner: &dyn crate::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        matches!(
+            interner.lookup(type_id),
+            Some(
+                TypeData::Application(_)
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Mapped(_)
+            )
+        )
     }
 
     fn is_concrete_application_led_intersection(&self, type_id: TypeId) -> bool {
@@ -1179,7 +1248,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             return true_inst;
         }
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     /// Handle tuple extends pattern: T extends [infer U] ? ...
@@ -1279,7 +1348,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     /// Handle object extends pattern: T extends { prop: infer U } ? ...
@@ -1416,7 +1485,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     /// Handle object property infer pattern
@@ -1475,7 +1544,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     fn resolve_conditional_infer_property(
@@ -1713,7 +1782,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     /// Try to match conditional types at the Application level before structural expansion.

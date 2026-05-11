@@ -7,7 +7,10 @@ use crate::{
     evaluation::evaluate::evaluate_type,
     intern::TypeInterner,
     relations::subtype::SubtypeChecker,
-    type_queries::{collect_finite_mapped_property_names, get_finite_mapped_property_type},
+    type_queries::{
+        collect_finite_mapped_property_names, get_finite_mapped_property_type,
+        get_finite_mapped_property_type_with_evaluator,
+    },
 };
 
 #[test]
@@ -700,6 +703,54 @@ fn test_finite_mapped_property_type_specializes_key_filtered_template() {
     assert!(
         get_finite_mapped_property_type(&interner, mapped_id, "bar").is_none(),
         "lowercase key should be filtered out when resolving the specialized property type"
+    );
+}
+
+#[test]
+fn test_finite_mapped_property_type_preserves_template_alias_provenance() {
+    let interner = TypeInterner::new();
+
+    let item_name = interner.intern_string("item");
+    let key_name = interner.intern_string("K");
+    let renderable_alias = interner.lazy(crate::def::DefId(400));
+    let renderable_body = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    let checker_ref = interner.lazy(crate::def::DefId(401));
+    let checker_renderable = interner.application(checker_ref, vec![renderable_alias]);
+
+    let source = interner.object(vec![PropertyInfo::new(item_name, TypeId::UNKNOWN)]);
+    let key_param_info = TypeParamInfo {
+        name: key_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param_info,
+        constraint: interner.keyof(source),
+        name_type: None,
+        template: checker_renderable,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+    let mapped_id = crate::mapped_type_id(&interner, mapped).expect("expected mapped type id");
+
+    let item_ty =
+        get_finite_mapped_property_type_with_evaluator(&interner, mapped_id, "item", |type_id| {
+            if type_id == checker_renderable || type_id == renderable_alias {
+                renderable_body
+            } else {
+                evaluate_type(&interner, type_id)
+            }
+        })
+        .expect("expected item property");
+
+    assert_eq!(item_ty, renderable_body);
+    assert_eq!(
+        interner.get_display_alias(renderable_body),
+        Some(renderable_alias),
+        "mapped property evaluation should keep the direct alias referenced inside the template"
     );
 }
 

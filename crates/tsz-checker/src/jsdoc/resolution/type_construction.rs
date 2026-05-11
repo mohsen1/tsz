@@ -1596,7 +1596,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let result = if let Some(cb) = info.callback {
-            self.type_from_jsdoc_callback(cb, &type_param_infos)
+            self.type_from_jsdoc_callback(cb)
         } else {
             self.type_from_jsdoc_object_typedef(info)
         };
@@ -1615,11 +1615,7 @@ impl<'a> CheckerState<'a> {
         Some((result.unwrap_or(TypeId::ANY), type_param_infos))
     }
 
-    fn type_from_jsdoc_callback(
-        &mut self,
-        cb: JsdocCallbackInfo,
-        type_params: &[tsz_solver::TypeParamInfo],
-    ) -> Option<TypeId> {
+    fn type_from_jsdoc_callback(&mut self, cb: JsdocCallbackInfo) -> Option<TypeId> {
         let factory = self.ctx.types.factory();
         let mut params = Vec::new();
         let mut this_type = None;
@@ -1734,8 +1730,12 @@ impl<'a> CheckerState<'a> {
             TypeId::VOID
         };
 
+        // `@template` on a JSDoc callback typedef belongs to the typedef alias:
+        // `type B<T> = () => T`, not `<T>() => T`. Keeping those parameters on
+        // the function body makes alias instantiation shadow them, so `B<string>`
+        // still formats and behaves like the uninstantiated `B`.
         Some(factory.function(FunctionShape {
-            type_params: type_params.to_vec(),
+            type_params: Vec::new(),
             params,
             this_type,
             return_type,
