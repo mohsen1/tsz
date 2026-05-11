@@ -1988,11 +1988,4 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
-
-    pub(in crate::error_reporter) fn canonicalize_assignment_numeric_literal_union_display(
-        &self,
-        display: String,
-    ) -> String {
-        display.replace("1 | 2", "2 | 1")
-    }
 }

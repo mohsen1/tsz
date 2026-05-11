@@ -7,9 +7,90 @@ use super::content_predicates::{
     get_array_element_type, get_intersection_members, get_tuple_elements, get_union_members,
 };
 use crate::TypeDatabase;
-use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId, Visibility};
+use crate::types::{
+    LiteralValue, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
+};
 use rustc_hash::FxHashSet;
+use std::sync::Arc;
 use tsz_common::Atom;
+
+pub enum AssignmentNumericDisplayChildren {
+    Application { base: TypeId, args: Vec<TypeId> },
+    Members(Vec<TypeId>),
+    Array(TypeId),
+    Tuple(Vec<TupleElement>),
+    Object(Arc<ObjectShape>),
+    None,
+}
+
+pub fn assignment_numeric_display_children(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> AssignmentNumericDisplayChildren {
+    if type_id.is_intrinsic() {
+        return AssignmentNumericDisplayChildren::None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            AssignmentNumericDisplayChildren::Application {
+                base: app.base,
+                args: app.args.clone(),
+            }
+        }
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            AssignmentNumericDisplayChildren::Members(db.type_list(list_id).to_vec())
+        }
+        Some(TypeData::Array(element)) => AssignmentNumericDisplayChildren::Array(element),
+        Some(TypeData::Tuple(elements)) => {
+            AssignmentNumericDisplayChildren::Tuple(db.tuple_list(elements).to_vec())
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            AssignmentNumericDisplayChildren::Object(db.object_shape(shape_id))
+        }
+        _ => AssignmentNumericDisplayChildren::None,
+    }
+}
+
+pub fn object_shape_for_assignment_numeric_display(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Arc<ObjectShape>> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            Some(db.object_shape(shape_id))
+        }
+        _ => None,
+    }
+}
+
+pub fn number_literal_bits(db: &dyn TypeDatabase, type_id: TypeId) -> Option<u64> {
+    if type_id.is_intrinsic() {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(LiteralValue::Number(value))) => Some(value.0.to_bits()),
+        _ => None,
+    }
+}
+
+pub fn is_number_literal_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match assignment_numeric_display_children(db, type_id) {
+        AssignmentNumericDisplayChildren::Members(members) => {
+            members.len() > 1
+                && members
+                    .iter()
+                    .all(|&member| number_literal_bits(db, member).is_some())
+        }
+        _ => false,
+    }
+}
 
 /// Collect `TypeIds` of callable properties from an object type.
 ///

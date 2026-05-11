@@ -1045,8 +1045,10 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.evaluated_literal_alias_source_display(target) {
             target_str = display;
         }
-        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
-        target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
+        source_str =
+            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        target_str =
+            self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
             &source_str,
             &target_str,
@@ -1074,8 +1076,10 @@ impl<'a> CheckerState<'a> {
         {
             target_str = display;
         }
-        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
-        target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
+        source_str =
+            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        target_str =
+            self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         (source_str, target_str)
     }
 
@@ -1338,8 +1342,10 @@ impl<'a> CheckerState<'a> {
         {
             target_str = display;
         }
-        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
-        target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
+        source_str =
+            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        target_str =
+            self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         (source_str, target_str)
     }
 
@@ -1873,8 +1879,10 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.type_query_static_array_structural_display(&src_str) {
                 src_str = display;
             }
-            src_str = self.canonicalize_assignment_numeric_literal_union_display(src_str);
-            tgt_str = self.canonicalize_assignment_numeric_literal_union_display(tgt_str);
+            src_str =
+                self.canonicalize_assignment_numeric_literal_union_display(source, target, src_str);
+            tgt_str =
+                self.canonicalize_assignment_numeric_literal_union_display(target, source, tgt_str);
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);
