@@ -1219,8 +1219,7 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
             return None;
         }
-        let parent = self.ctx.binder.get_symbol(symbol.parent)?;
-        Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name))
+        self.format_qualified_enum_name_for_message(ty)
     }
 
     fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
