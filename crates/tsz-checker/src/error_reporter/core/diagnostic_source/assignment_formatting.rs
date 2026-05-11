@@ -35,6 +35,40 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    pub(in crate::error_reporter) fn direct_type_query_primitive_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        display_type: TypeId,
+    ) -> Option<String> {
+        let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
+        if !annotation_text.trim_start().starts_with("typeof ") {
+            return None;
+        }
+
+        let evaluated = if let Some(symbol_ref) =
+            crate::query_boundaries::common::type_query_symbol(self.ctx.types, display_type)
+        {
+            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+            let value_decl = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .map(|symbol| symbol.value_declaration)
+                .unwrap_or(NodeIndex::NONE);
+            self.type_of_value_declaration_for_symbol(sym_id, value_decl)
+        } else {
+            self.evaluate_type_for_assignability(display_type)
+        };
+        let widened = self.widen_type_for_display(evaluated);
+        if !crate::query_boundaries::common::is_primitive_type(self.ctx.types, widened)
+            || crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, widened)
+        {
+            return None;
+        }
+
+        Some(self.format_type_for_assignability_message(widened))
+    }
+
     pub(in crate::error_reporter) fn source_type_contains_number_literal_only_union(
         &self,
         ty: TypeId,
@@ -391,6 +425,11 @@ impl<'a> CheckerState<'a> {
                 {
                     return display;
                 }
+                if let Some(display) =
+                    self.direct_type_query_primitive_source_display(expr_idx, display_type)
+                {
+                    return display;
+                }
                 if let Some(display) = self.rebuilt_array_source_display(display_type, target) {
                     return display;
                 }
@@ -561,6 +600,11 @@ impl<'a> CheckerState<'a> {
             {
                 return display;
             }
+            if let Some(display) =
+                self.direct_type_query_primitive_source_display(expr_idx, display_type)
+            {
+                return display;
+            }
             if let Some(display) = self.rebuilt_array_source_display(display_type, target) {
                 return display;
             }
@@ -593,6 +637,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     display_type
                 };
+            let source_enum_symbol = self.enum_symbol_from_enumish_type(display_type);
+            let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
+            if source_enum_symbol.is_some()
+                && target_enum_symbol.is_some()
+                && source_enum_symbol != target_enum_symbol
+            {
+                return self.format_assignability_type_for_message(display_type, target);
+            }
             let formatted = self.format_type_for_assignability_message(display_type);
             let resolved_for_access = self.resolve_type_for_property_access(display_type);
             let resolved = self.judge_evaluate(resolved_for_access);
@@ -664,6 +716,11 @@ impl<'a> CheckerState<'a> {
                     return intersection_display;
                 }
                 return self.format_annotation_like_type(&display);
+            }
+            if let Some(display) =
+                self.direct_type_query_primitive_source_display(expr_idx, display_type)
+            {
+                return display;
             }
             return formatted;
         }
@@ -883,6 +940,11 @@ impl<'a> CheckerState<'a> {
             };
             let assignability_display =
                 self.format_assignability_type_for_message(display_target, source);
+            if let Some((annotation_base, _)) = display.trim().split_once('<')
+                && assignability_display.trim() == annotation_base.trim()
+            {
+                return self.format_annotation_like_type(&display);
+            }
             if assignability_display.starts_with('"')
                 || assignability_display.starts_with('`')
                 || assignability_display == "true"

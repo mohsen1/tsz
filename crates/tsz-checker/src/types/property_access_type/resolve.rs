@@ -1934,8 +1934,11 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let resolved_class_access =
-                        self.resolve_class_for_access(access.expression, object_type_for_access);
+                    let (resolved_class_access, current_class_member_initializer_receiver) = self
+                        .resolve_class_access_with_current_member_initializer_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        );
                     let mut class_chain_summary = None;
                     let static_this_member_context = is_this_access
                         && (self
@@ -2068,20 +2071,10 @@ impl<'a> CheckerState<'a> {
                             false,
                         );
                     }
-                    if class_chain_summary.is_none()
-                        && self.property_access_is_current_class_member_initializer_receiver(
-                            access.expression,
-                            object_type_for_access,
-                        )
-                        && let Some((class_idx, _)) = resolved_class_access
-                    {
-                        class_chain_summary = Some(self.summarize_class_chain(class_idx));
-                    }
                     if let Some(member_type) = self.recover_property_from_class_chain_summary(
-                        access.expression,
-                        object_type_for_access,
+                        current_class_member_initializer_receiver,
                         resolved_class_access,
-                        class_chain_summary.as_deref(),
+                        &mut class_chain_summary,
                         property_name,
                     ) {
                         return self.finalize_property_access_result(
@@ -2424,11 +2417,12 @@ impl<'a> CheckerState<'a> {
                     let in_circular_computed_property =
                         self.ctx.checking_computed_property_name.is_some()
                             && !self.ctx.class_instance_resolution_set.is_empty();
-                    let in_current_class_construction = self
-                        .property_access_is_current_class_construction_recovery(
-                            access.expression,
-                            display_object_type,
-                        );
+                    let in_current_class_construction = self.has_recoverable_current_class_member(
+                        current_class_member_initializer_receiver,
+                        resolved_class_access,
+                        &mut class_chain_summary,
+                        property_name,
+                    );
                     if !property_name.starts_with('#')
                         && !accessibility_error_emitted
                         && !self.is_super_expression(access.expression)

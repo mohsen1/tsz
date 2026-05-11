@@ -36,13 +36,23 @@ impl<'a> CheckerState<'a> {
         source_display: &str,
         target_display: &str,
     ) -> Option<String> {
-        if !source_display.contains(" extends ") && !source_display.contains("infer ") {
-            return None;
-        }
         let expr_idx = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))?;
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
+        if annotation_text.contains('<')
+            && let Some(annotation_name) = Self::generic_alias_name_from_display(&annotation_text)
+            && Self::generic_alias_name_from_display(source_display) == Some(annotation_name)
+            && Self::generic_alias_name_from_display(target_display) == Some(annotation_name)
+        {
+            return Some(source_display.to_string());
+        }
+        if !source_display.contains(" extends ")
+            && !source_display.contains("infer ")
+            && !source_display.contains("=>")
+        {
+            return None;
+        }
         Self::declared_generic_alias_annotation_matches_target_display(
             &annotation_text,
             target_display,
@@ -87,6 +97,12 @@ impl<'a> CheckerState<'a> {
             return message;
         };
         if annotation_text == source_display
+            || annotation_text.trim_start().starts_with("typeof ")
+            || source_display.starts_with("import(")
+            || (source_display.contains('{') && !annotation_text.contains('{'))
+            || (!annotation_text.contains('<')
+                && source_display.contains('<')
+                && target_display.contains('<'))
             || annotation_text.contains(" | ")
             || annotation_text.contains(" & ")
             || annotation_text.contains('<')

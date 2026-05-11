@@ -80,9 +80,15 @@ impl<'a> CheckerState<'a> {
                 source_str = self.format_assignability_type_for_message(source, target);
                 target_str = self.format_assignability_type_for_message(target, source);
             }
-            if let Some(expr_idx) = self
+            let source_expr_idx = self
                 .assignment_source_expression(idx)
-                .or_else(|| self.direct_diagnostic_source_expression(idx))
+                .or_else(|| self.direct_diagnostic_source_expression(idx));
+            let declared_identifier_is_literal_only_alias =
+                source_expr_idx.is_some_and(|expr_idx| {
+                    self.declared_identifier_has_literal_only_alias_source(expr_idx)
+                });
+            if !declared_identifier_is_literal_only_alias
+                && let Some(expr_idx) = source_expr_idx
                 && let Some(display) =
                     self.declared_identifier_source_display(expr_idx, target, source)
                 && self
@@ -90,7 +96,16 @@ impl<'a> CheckerState<'a> {
             {
                 source_str = display;
             }
+            let source_is_direct_type_query_primitive = self
+                .direct_diagnostic_source_expression(idx)
+                .or_else(|| self.assignment_source_expression(idx))
+                .and_then(|expr_idx| {
+                    self.direct_type_query_primitive_source_display(expr_idx, source)
+                })
+                .is_some_and(|display| display == source_str);
             if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
+                && !source_is_direct_type_query_primitive
+                && !crate::query_boundaries::common::is_tuple_type(self.ctx.types, source)
                 && let Some(display) = self.evaluated_literal_alias_source_display(source)
             {
                 source_str = self
@@ -439,7 +454,6 @@ impl<'a> CheckerState<'a> {
             target_str = self
                 .canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         }
-
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],

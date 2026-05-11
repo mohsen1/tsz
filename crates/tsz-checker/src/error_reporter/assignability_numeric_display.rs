@@ -23,6 +23,7 @@ impl<'a> CheckerState<'a> {
         self.collect_numeric_literal_union_display_replacements(
             display_type,
             other_display_type,
+            false,
             &mut seen,
             &mut replacements,
         );
@@ -37,6 +38,7 @@ impl<'a> CheckerState<'a> {
             self.collect_numeric_literal_union_display_replacements(
                 evaluated,
                 (other_evaluated != other_type).then_some(other_evaluated),
+                false,
                 &mut seen,
                 &mut replacements,
             );
@@ -47,7 +49,6 @@ impl<'a> CheckerState<'a> {
             }
             return display;
         }
-
         replacements.sort_by_key(|(source_order, _)| std::cmp::Reverse(source_order.len()));
         replacements
             .into_iter()
@@ -60,6 +61,7 @@ impl<'a> CheckerState<'a> {
         &self,
         type_id: TypeId,
         other_type: Option<TypeId>,
+        rewrite_alias_origin: bool,
         seen: &mut Vec<(TypeId, Option<TypeId>)>,
         replacements: &mut Vec<(String, String)>,
     ) {
@@ -70,13 +72,15 @@ impl<'a> CheckerState<'a> {
         seen.push(seen_key);
 
         if self.source_type_contains_number_literal_only_union(type_id) {
-            if self.is_number_literal_union_for_display_order(type_id)
+            let source_order =
+                self.format_type_for_assignability_message_with_union_origin_policy(type_id, false);
+            if !source_order.contains(" | ")
+                && self.is_number_literal_union_for_display_order(type_id)
+                && !rewrite_alias_origin
                 && self.numeric_literal_union_origin_preserves_alias(type_id)
             {
                 return;
             }
-            let source_order =
-                self.format_type_for_assignability_message_with_union_origin_policy(type_id, false);
             let canonical_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
             let assignment_order = if !source_order.contains(" | ") {
@@ -115,6 +119,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|args| args.get(index))
                             .copied(),
+                        true,
                         seen,
                         replacements,
                     );
@@ -125,6 +130,7 @@ impl<'a> CheckerState<'a> {
                     self.collect_numeric_literal_union_display_replacements(
                         member,
                         other_type,
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -136,6 +142,7 @@ impl<'a> CheckerState<'a> {
                     other_type.and_then(|other| {
                         crate::query_boundaries::common::array_element_type(self.ctx.types, other)
                     }),
+                    rewrite_alias_origin,
                     seen,
                     replacements,
                 );
@@ -151,6 +158,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|elements| elements.get(index))
                             .map(|element| element.type_id),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -173,6 +181,7 @@ impl<'a> CheckerState<'a> {
                     self.collect_numeric_literal_union_display_replacements(
                         property.type_id,
                         other_property.map(|property| property.type_id),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -180,6 +189,7 @@ impl<'a> CheckerState<'a> {
                         self.collect_numeric_literal_union_display_replacements(
                             property.write_type,
                             other_property.map(|property| property.write_type),
+                            rewrite_alias_origin,
                             seen,
                             replacements,
                         );
@@ -192,6 +202,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|shape| shape.string_index.as_ref())
                             .map(|index| index.value_type),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -203,6 +214,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|shape| shape.number_index.as_ref())
                             .map(|index| index.value_type),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
