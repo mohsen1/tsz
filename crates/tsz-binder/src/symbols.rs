@@ -603,7 +603,10 @@ impl SymbolArena {
     pub fn alloc(&mut self, flags: u32, name: String) -> SymbolId {
         let id = SymbolId(
             self.base_offset
-                + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                .checked_add(
+                    u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                )
+                .expect("symbol arena allocation overflows u32"),
         );
         if !name.is_empty() {
             Arc::make_mut(&mut self.name_index)
@@ -625,7 +628,10 @@ impl SymbolArena {
     pub fn alloc_from(&mut self, source: &Symbol) -> SymbolId {
         let id = SymbolId(
             self.base_offset
-                + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                .checked_add(
+                    u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+                )
+                .expect("symbol arena allocation overflows u32"),
         );
         if !source.escaped_name.is_empty() {
             Arc::make_mut(&mut self.name_index)
