@@ -1109,6 +1109,9 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
         });
         let mut parts = Vec::new();
+        let mut contextual_index_key_kind: Option<&'static str> = None;
+        let mut contextual_index_value_displays = Vec::new();
+        let mut all_contextual_index_properties = !literal.elements.nodes.is_empty();
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
             let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
@@ -1148,6 +1151,13 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => return None,
             };
+            let computed_index_kind =
+                self.contextual_computed_index_key_kind(name_idx, target_shape.as_deref());
+            match (contextual_index_key_kind, computed_index_kind) {
+                (None, Some(kind)) => contextual_index_key_kind = Some(kind),
+                (Some(existing), Some(kind)) if existing == kind => {}
+                _ => all_contextual_index_properties = false,
+            }
             let property_name = self
                 .get_property_name(name_idx)
                 .map(|name| self.ctx.types.intern_string(&name));
@@ -1292,6 +1302,9 @@ impl<'a> CheckerState<'a> {
                 self.widen_function_like_display_type(value_display_type);
             let value_display =
                 self.format_type_for_assignability_message(widened_value_display_type);
+            if computed_index_kind.is_some() {
+                contextual_index_value_displays.push(value_display.clone());
+            }
             parts.push(format!("{display_name}: {value_display}"));
         }
 
@@ -1299,7 +1312,44 @@ impl<'a> CheckerState<'a> {
             return Some("{}".to_string());
         }
 
+        if all_contextual_index_properties
+            && let Some(key_kind) = contextual_index_key_kind
+            && !contextual_index_value_displays.is_empty()
+        {
+            contextual_index_value_displays.dedup();
+            return Some(format!(
+                "{{ [x: {key_kind}]: {}; }}",
+                contextual_index_value_displays.join(" | ")
+            ));
+        }
+
         Some(format!("{{ {}; }}", parts.join("; ")))
+    }
+
+    fn contextual_computed_index_key_kind(
+        &mut self,
+        name_idx: NodeIndex,
+        target_shape: Option<&tsz_solver::ObjectShape>,
+    ) -> Option<&'static str> {
+        let shape = target_shape?;
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+        let key_type = self.get_type_of_node(computed.expression);
+        if crate::query_boundaries::common::is_symbol_or_unique_symbol(self.ctx.types, key_type) {
+            return None;
+        }
+        let key_type =
+            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, key_type);
+        if key_type == TypeId::NUMBER && shape.number_index.is_some() {
+            return Some("number");
+        }
+        if (key_type == TypeId::STRING || key_type == TypeId::ANY) && shape.string_index.is_some() {
+            return Some("string");
+        }
+        None
     }
 
     pub(crate) fn target_preserves_literal_surface(&mut self, target: TypeId) -> bool {

@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/computed-literal-key-contextual-diagnostics-5637`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5644
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
@@ -21,5 +21,7 @@ display outside the contextual assignment fingerprint path.
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter computedPropertyNamesContextualType --verbose`
-- Planned: focused checker regression test for `+ "foo"` and `"" + "foo"` computed keys
+- `cargo fmt --all --check`
+- `cargo test -p tsz-checker --test ts2322_literal_source_display_tests` (5 passed, 1 ignored)
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter computedPropertyNamesContextualType --verbose` (20/20 passed)
+- `git diff --check`
