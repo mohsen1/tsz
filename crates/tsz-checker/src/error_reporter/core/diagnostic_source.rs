@@ -601,7 +601,15 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        annotation.contains('&') || !annotation.starts_with('{')
+        if annotation.contains('&') || !annotation.starts_with('{') {
+            return true;
+        }
+
+        if annotation.contains('[') && annotation.contains(']') && formatted.contains("__unique_") {
+            return true;
+        }
+
+        false
     }
 
     pub(in crate::error_reporter) fn format_declared_annotation_for_diagnostic(
@@ -1128,6 +1136,15 @@ impl<'a> CheckerState<'a> {
                 }
                 k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
                     self.ctx.arena.get_literal(name_node)?.text.clone()
+                }
+                k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                    if let Some(name) = self.get_member_name_display_text(name_idx) {
+                        name
+                    } else {
+                        let computed = self.ctx.arena.get_computed_property(name_node)?;
+                        let expr = self.node_text(computed.expression)?;
+                        format!("[{expr}]", expr = expr.trim())
+                    }
                 }
                 _ => return None,
             };

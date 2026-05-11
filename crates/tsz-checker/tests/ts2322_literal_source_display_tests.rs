@@ -76,3 +76,30 @@ e = (false as any) as E | boolean;
         }
     }
 }
+
+#[test]
+fn ts2322_preserves_computed_unique_symbol_object_key_display() {
+    let diagnostics = diagnostic_messages(
+        r#"
+const sym = Symbol();
+
+function gg2(x: { [key: symbol]: string }, y: { [sym]: number }) {
+    x = y;
+}
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .expect("expected TS2322 for computed unique-symbol object assignability");
+
+    assert!(
+        ts2322.1.contains("Type '{ [sym]: number; }'"),
+        "computed-key TS2322 should show source as `{{ [sym]: number; }}`, got: {ts2322:?}",
+    );
+    assert!(
+        !ts2322.1.contains("Type '{ __unique_"),
+        "TS2322 should not hide computed keys behind synthetic `__unique_` names, got: {ts2322:?}",
+    );
+}
