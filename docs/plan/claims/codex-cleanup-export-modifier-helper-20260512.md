@@ -1,4 +1,4 @@
-# [WIP] chore(emitter): centralize declaration export modifier checks
+# chore(emitter): centralize declaration export modifier checks
 
 - **Date**: 2026-05-11
 - **Branch**: `codex/cleanup-export-modifier-helper-20260512`
