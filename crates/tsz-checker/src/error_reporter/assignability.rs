@@ -1282,6 +1282,14 @@ impl<'a> CheckerState<'a> {
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx));
         if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
+            && let Some(display) =
+                self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
             && self.target_is_normalized_object_literal_union(target)
             && let Some(expr_idx) = expr_idx
             && let Some(object_display) =
@@ -1342,8 +1350,10 @@ impl<'a> CheckerState<'a> {
         {
             target_str = display;
         }
-        source_str =
-            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        if !source_from_annotation {
+            source_str = self
+                .canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        }
         target_str =
             self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         (source_str, target_str)
@@ -1879,8 +1889,20 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.type_query_static_array_structural_display(&src_str) {
                 src_str = display;
             }
-            src_str =
-                self.canonicalize_assignment_numeric_literal_union_display(source, target, src_str);
+            let source_from_annotation = self
+                .direct_diagnostic_source_expression(anchor_idx)
+                .or_else(|| self.assignment_source_expression(anchor_idx))
+                .and_then(|expr_idx| {
+                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+                })
+                .map(|display| {
+                    src_str = display;
+                })
+                .is_some();
+            if !source_from_annotation {
+                src_str = self
+                    .canonicalize_assignment_numeric_literal_union_display(source, target, src_str);
+            }
             tgt_str =
                 self.canonicalize_assignment_numeric_literal_union_display(target, source, tgt_str);
             // TS2719: when both types display identically but are different,

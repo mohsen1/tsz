@@ -7,6 +7,7 @@ use super::content_predicates::{
     get_array_element_type, get_intersection_members, get_tuple_elements, get_union_members,
 };
 use crate::TypeDatabase;
+use crate::def::{DefKind, DefinitionStore};
 use crate::types::{
     LiteralValue, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
 };
@@ -89,6 +90,39 @@ pub fn is_number_literal_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
                     .all(|&member| number_literal_bits(db, member).is_some())
         }
         _ => false,
+    }
+}
+
+pub fn numeric_literal_union_origin_preserves_alias(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let Some(origin) = db.get_union_origin(type_id) else {
+        return false;
+    };
+    origin
+        .iter()
+        .copied()
+        .any(|member| display_origin_member_is_type_alias(db, def_store, member))
+}
+
+fn display_origin_member_is_type_alias(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Lazy(def_id)) => def_store
+            .get(def_id)
+            .is_some_and(|def| def.kind == DefKind::TypeAlias),
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            display_origin_member_is_type_alias(db, def_store, app.base)
+        }
+        _ => db
+            .get_display_alias(type_id)
+            .is_some_and(|alias| display_origin_member_is_type_alias(db, def_store, alias)),
     }
 }
 
