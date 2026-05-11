@@ -2373,87 +2373,43 @@ pub(super) type CheckFileResult = (
 /// Each invocation creates its own `CheckerState` (with its own mutable context)
 /// and its own `QueryCache` (using `RefCell`/`Cell` for zero-overhead single-threaded caching).
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
-pub(super) fn check_file_for_parallel<'a>(
-    context: CheckFileForParallelContext<'a>,
-) -> CheckFileResult {
-    let CheckFileForParallelContext {
-        file_idx,
-        binder,
-        program,
-        compiler_options,
-        program_context,
-        resolved_modules_per_file,
-        shared_lib_cache,
-        shared_query_cache,
-        no_check,
-        check_js,
-        explicit_check_js_false,
-        skip_lib_check,
-        program_has_real_syntax_errors,
-        program_has_unsupported_js_root,
-        extract_type_cache,
-    } = context;
-    let file = &program.files[file_idx];
-    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
-    if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (
-            Vec::new(),
-            None,
-            RequestCacheCounters::default(),
-            tsz_solver::QueryCacheStatistics::default(),
-            tsz_solver::StoreStatistics::default(),
-        );
-    }
-
-    // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
-    // For multi-file projects, use shared L2 cache to avoid redundant computation.
-    let query_cache = if let Some(shared) = shared_query_cache {
-        QueryCache::new_with_shared(&program.type_interner, shared)
-    } else {
-        QueryCache::new(&program.type_interner)
-    };
-
-    // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
-    // re-filtering the program-wide cross-file set per file. The bucketed
-    // version is built once in `collect_diagnostics` and shared via `Arc`.
-    // Per-file `Arc::clone` is a single atomic increment — no deep copy of
-    // the `FxHashSet<String>` contents. Saves ~120K string clones on the
-    // 6086-file large-ts-repo fixture.
-    let resolved_modules: Arc<FxHashSet<String>> = resolved_modules_per_file
-        .get(file_idx)
-        .cloned()
-        .unwrap_or_else(|| Arc::new(FxHashSet::default()));
-
-    // apply_to (below) installs the project-wide shared DefinitionStore and
-    // warms the per-file caches from it. Use the deferred constructor so we
-    // don't build a throwaway per-file store first — that work showed up in
-    // profiles as a non-trivial fraction of total CPU on large projects, all
-    // of it overwritten moments later.
-    let mut checker = CheckerState::with_options_deferred_def_store(
-        &file.arena,
-        &binder,
-        &query_cache,
-        file.file_name.clone(),
-        compiler_options,
-    );
-    checker.ctx.report_unresolved_imports = true;
-    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
-
-    // Apply all project-level shared state in one call. This installs the
-    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
-    program_context.apply_to(&mut checker.ctx);
-
-    // Per-file `CheckerContext` configuration. Extracted into a helper
-    // to seam construction from per-file configuration; T2.1.B's
-    // sequential session-reuse path will reuse this entry point.
-    configure_checker_per_file(
-        &mut checker.ctx,
-        file,
-        file_idx,
-        program_context,
-        resolved_modules,
-        program_has_real_syntax_errors,
-    );
+/// Run `check_source_file` on a fully-configured `CheckerState`, then
+/// post-process and shape the resulting `Vec<Diagnostic>`.
+///
+/// Extracted from `check_file_for_parallel` so the T2.1.B sequential
+/// session-reuse path (`PERFORMANCE_PLAN.md` §6) can reuse the same
+/// per-file check pipeline against a `CheckerState` that's been
+/// re-targeted at the next file via `CheckerContext::switch_to_file`,
+/// instead of constructing a fresh checker per file.
+///
+/// **Pure refactor**: the body is byte-for-byte the post-
+/// `configure_checker_per_file` portion of `check_file_for_parallel`.
+/// Default behavior is unchanged because the same function is called
+/// in the same order with the same arguments.
+///
+/// Caller's contract:
+///
+/// - `checker` has been constructed for `file` and configured via
+///   `configure_checker_per_file` (or `switch_to_file` →
+///   `configure_checker_per_file`).
+/// - `program_context.apply_to(&mut checker.ctx)` has been called.
+/// - `checker.ctx.diagnostics` is drained at function entry — anything
+///   left over from a prior file is appended to this file's output.
+///   In practice this means callers reusing a `CheckerState` across
+///   files must have invoked `switch_to_file` (which drains
+///   diagnostics via `reset_for_next_file`) before this function.
+#[allow(clippy::too_many_arguments)]
+fn run_check_on_existing_checker<'a>(
+    checker: &mut CheckerState<'a>,
+    file: &tsz::parallel::BoundFile,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+) -> Vec<Diagnostic> {
     let filtered_parse_diagnostics =
         filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
     let is_js = is_js_file(Path::new(&file.file_name));
@@ -2552,6 +2508,102 @@ pub(super) fn check_file_for_parallel<'a>(
             compiler_options.emit_declarations && check_js && is_js,
         );
     }
+
+    file_diagnostics
+}
+
+pub(super) fn check_file_for_parallel<'a>(
+    context: CheckFileForParallelContext<'a>,
+) -> CheckFileResult {
+    let CheckFileForParallelContext {
+        file_idx,
+        binder,
+        program,
+        compiler_options,
+        program_context,
+        resolved_modules_per_file,
+        shared_lib_cache,
+        shared_query_cache,
+        no_check,
+        check_js,
+        explicit_check_js_false,
+        skip_lib_check,
+        program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
+        extract_type_cache,
+    } = context;
+    let file = &program.files[file_idx];
+    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
+    if skip_lib_check && is_declaration_file(&file.file_name) {
+        return (
+            Vec::new(),
+            None,
+            RequestCacheCounters::default(),
+            tsz_solver::QueryCacheStatistics::default(),
+            tsz_solver::StoreStatistics::default(),
+        );
+    }
+
+    // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
+    // For multi-file projects, use shared L2 cache to avoid redundant computation.
+    let query_cache = if let Some(shared) = shared_query_cache {
+        QueryCache::new_with_shared(&program.type_interner, shared)
+    } else {
+        QueryCache::new(&program.type_interner)
+    };
+
+    // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
+    // re-filtering the program-wide cross-file set per file. The bucketed
+    // version is built once in `collect_diagnostics` and shared via `Arc`.
+    // Per-file `Arc::clone` is a single atomic increment — no deep copy of
+    // the `FxHashSet<String>` contents. Saves ~120K string clones on the
+    // 6086-file large-ts-repo fixture.
+    let resolved_modules: Arc<FxHashSet<String>> = resolved_modules_per_file
+        .get(file_idx)
+        .cloned()
+        .unwrap_or_else(|| Arc::new(FxHashSet::default()));
+
+    // apply_to (below) installs the project-wide shared DefinitionStore and
+    // warms the per-file caches from it. Use the deferred constructor so we
+    // don't build a throwaway per-file store first — that work showed up in
+    // profiles as a non-trivial fraction of total CPU on large projects, all
+    // of it overwritten moments later.
+    let mut checker = CheckerState::with_options_deferred_def_store(
+        &file.arena,
+        &binder,
+        &query_cache,
+        file.file_name.clone(),
+        compiler_options,
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
+
+    // Apply all project-level shared state in one call. This installs the
+    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
+    program_context.apply_to(&mut checker.ctx);
+
+    // Per-file `CheckerContext` configuration. Extracted into a helper
+    // to seam construction from per-file configuration; T2.1.B's
+    // sequential session-reuse path will reuse this entry point.
+    configure_checker_per_file(
+        &mut checker.ctx,
+        file,
+        file_idx,
+        program_context,
+        resolved_modules,
+        program_has_real_syntax_errors,
+    );
+    let file_diagnostics = run_check_on_existing_checker(
+        &mut checker,
+        file,
+        compiler_options,
+        program_context,
+        no_check,
+        check_js,
+        explicit_check_js_false,
+        program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
+    );
 
     let checker_counters = checker.ctx.request_cache_counters;
     let qc_stats = query_cache.statistics();
