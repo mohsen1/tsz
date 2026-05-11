@@ -1241,6 +1241,17 @@ impl<'a> NamespaceES5Transformer<'a> {
     ) -> Option<IRNode> {
         let func_data = self.arena.get_function_at(func_idx)?;
 
+        if let Some(body_node) = self.arena.get(func_data.body)
+            && body_node.kind != syntax_kind_ext::BLOCK
+        {
+            // Malformed `function f() => expr` declarations keep `expr` as the
+            // recovery body. TypeScript emits that expression as a statement,
+            // not as a function declaration or namespace export.
+            return Some(IRNode::ExpressionStatement(Box::new(
+                AstToIr::new(self.arena).convert_expression(func_data.body),
+            )));
+        }
+
         // Skip declaration-only functions (no body)
         if func_data.body.is_none() {
             return None;

@@ -3,6 +3,31 @@ use crate::output::printer::{PrintOptions, Printer};
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
+#[test]
+fn namespace_recovers_malformed_export_function_arrow_body() {
+    let source = "namespace M {\n    export namespace N {\n        export function f(x:number)=>2*x;\n    }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("2 * x;"),
+        "Recovered malformed function arrow body should emit as a statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function f"),
+        "Recovered malformed function arrow body should not emit a function declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("N.f = f"),
+        "Recovered malformed function arrow body should not emit a namespace export assignment.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: type-only import-equals inside a namespace must not
 /// leave a phantom blank line. The import `import T = M1.I;` produces no
 /// JS output (type-only alias), but `emit_namespace_body_statements` used
