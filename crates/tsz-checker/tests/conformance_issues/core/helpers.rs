@@ -1637,6 +1637,103 @@ var r14 = foo7(1, c);
     );
 }
 
+#[test]
+fn test_generic_construct_signature_arg_survives_concrete_target() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo<T>(x: new(a: T) => T) {
+    return new x(null);
+}
+
+interface I {
+    new <T>(x: T): T;
+}
+interface I2<T> {
+    new (x: T): T;
+}
+declare var i: I;
+declare var i2: I2<string>;
+declare var a: {
+    new <T>(x: T): T;
+}
+
+var r = foo(i);
+var r2 = foo<string>(i);
+var r3 = foo(i2);
+var r3b = foo(a);
+
+function foo2<T, U>(x: T, cb: new(a: T) => U) {
+    return new cb(x);
+}
+
+var r4 = foo2(1, i2);
+var r4b = foo2(1, a);
+var r5 = foo2(1, i);
+var r6 = foo2<string, string>('', i2);
+
+function foo3<T, U>(x: T, cb: new(a: T) => U, y: U) {
+    return new cb(x);
+}
+
+var r7 = foo3(null, i, '');
+var r7b = foo3(null, a, '');
+var r8 = foo3(1, i2, 1);
+var r9 = foo3<string, string>('', i2, '');
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        3,
+        "Expected only the three tsc TS2345s from genericCallWithFunctionTypedArguments2, got: {diagnostics:?}"
+    );
+    assert!(
+        !ts2345.iter().any(|(_, message)| message.contains(
+            "Argument of type 'new <T>(x: T) => T' is not assignable to parameter of type 'new (a: null) => string'"
+        )),
+        "Did not expect TS2345 for foo3(null, generic constructor, ''), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_generic_construct_signature_argument_survives_concrete_return_context() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo3<T, U>(x: T, cb: new(a: T) => U, y: U) {
+    return new cb(x);
+}
+
+declare var ctor: { new <T>(x: T): T };
+var ok = foo3(null, ctor, '');
+
+declare var nongeneric: { new (x: string): string };
+var err = foo3(null, nongeneric, '');
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected only the non-generic constructor argument to remain TS2345, got: {diagnostics:?}"
+    );
+}
+
 /// Generic constructor calls should widen scalar literal argument types
 /// (e.g., `true` → `boolean`) for TS2345 error messages, matching tsc.
 /// Regression test for exportAssignmentConstrainedGenericType conformance.

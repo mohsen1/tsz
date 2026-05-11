@@ -407,18 +407,21 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 false
                             };
-                            // Use contains_type_parameters (not just is_type_parameter_type) so that
-                            // callable expected types like `(...args: A) => B` — where A and B are
-                            // outer inference variables, not quantified in the signature — also
-                            // participate in deferral. `should_defer_contextual_argument_mismatch`
-                            // applies the real policy; this guard just avoids calling it for
-                            // fully-concrete expected types where deferral is never appropriate.
-                            let defer_mismatch =
+                            // Let the central deferral policy decide contextual/generic
+                            // constructor mismatches. The expected parameter can be fully
+                            // concrete after outer call inference, while the source argument
+                            // still has its own generic construct signature.
+                            let should_consult_deferral_policy =
                                 common::contains_type_parameters(self.ctx.types, expected_param)
-                                    && self.should_defer_contextual_argument_mismatch(
+                                    || self.generic_construct_argument_mismatch_may_be_contextual(
                                         arg_type,
                                         expected_param,
                                     );
+                            let defer_mismatch = should_consult_deferral_policy
+                                && self.should_defer_contextual_argument_mismatch(
+                                    arg_type,
+                                    expected_param,
+                                );
                             if !fresh_assignable && !excess_property_recovery && !defer_mismatch {
                                 allow_contextual_mismatch_deferral = false;
                             }
@@ -522,6 +525,44 @@ impl<'a> CheckerState<'a> {
         };
 
         (result, allow_contextual_mismatch_deferral)
+    }
+
+    fn generic_construct_argument_mismatch_may_be_contextual(
+        &mut self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        let (actual_has_construct, actual_has_generic_construct) =
+            self.construct_signature_flags(actual);
+        let (expected_has_construct, expected_has_generic_construct) =
+            self.construct_signature_flags(expected);
+
+        actual_has_construct
+            && expected_has_construct
+            && (actual_has_generic_construct || expected_has_generic_construct)
+    }
+
+    fn construct_signature_flags(&mut self, type_id: TypeId) -> (bool, bool) {
+        let signatures = common::construct_signatures_for_type(self.ctx.types, type_id)
+            .filter(|signatures| !signatures.is_empty())
+            .or_else(|| {
+                let evaluated = self.evaluate_type_with_env(type_id);
+                (evaluated != type_id)
+                    .then(|| common::construct_signatures_for_type(self.ctx.types, evaluated))
+                    .flatten()
+                    .filter(|signatures| !signatures.is_empty())
+            });
+
+        signatures
+            .map(|signatures| {
+                (
+                    true,
+                    signatures
+                        .iter()
+                        .any(|signature| !signature.type_params.is_empty()),
+                )
+            })
+            .unwrap_or((false, false))
     }
 
     fn check_generic_rest_object_literal_values_against_sibling_annotation(
