@@ -792,6 +792,76 @@ fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     );
 }
 
+#[test]
+fn jsx_intrinsic_excess_attrs_report_for_intersection_alias_props() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace React {
+            interface ClassAttributes<T> {
+                ref?: T;
+            }
+            type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = ClassAttributes<T> & E;
+            interface HTMLAttributes<T> {
+                className?: string;
+                onClick?: (event: T) => void;
+            }
+            interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {
+                href?: string;
+            }
+        }
+        interface HTMLAnchorElement {}
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {
+                a: React.DetailedHTMLProps<React.AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>;
+                plain: { className?: string };
+            }
+        }
+
+        <a class="" />;
+        <a for="" class="" />;
+        <plain class="" />;
+        "#,
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected both intrinsic elements to report excess JSX attrs, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type '{ class: string; }' is not assignable to type 'DetailedHTMLProps<AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>'."
+        )),
+        "Expected intersection alias intrinsic target display, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type '{ for: string; class: string; }' is not assignable to type 'DetailedHTMLProps<AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>'."
+        )),
+        "Expected combined excess attrs to be reported once at the first bad attr, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("and 'class' does not exist in type '{ className?: string | undefined; }'")),
+        "Expected plain intrinsic excess attr diagnostic, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|diag| diag
+                .message_text
+                .contains("{ for: string; class: string; }"))
+            .count(),
+        1,
+        "Expected one synthesized excess diagnostic for multiple bad attrs, got: {diagnostics:?}"
+    );
+}
+
 /// Class components with multi-construct overloads (like React.Component with
 /// `constructor(props: Readonly<P>)` and `constructor(props: P, context?: any)`)
 /// must emit TS2769 when the overload props type evaluates to `unknown` due to

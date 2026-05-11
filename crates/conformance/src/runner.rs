@@ -353,7 +353,6 @@ const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
     "styledComponentsInstantiaionLimitNotReached",
     "intersectionsOfLargeUnions2",
     "isolatedModulesReExportType",
-    "spellingSuggestionJSXAttribute",
     "isolatedDeclarationErrorsObjects",
     "mixinAccessModifiers",
     "typeFromPropertyAssignment39",

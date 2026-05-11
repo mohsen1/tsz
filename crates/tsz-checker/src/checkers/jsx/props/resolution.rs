@@ -397,6 +397,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 props_type,
             );
+        let suppress_excess_for_generic_props = props_has_type_params
+            && (raw_props_has_type_params
+                || component_type.is_some()
+                || special_attr_component_type.is_some());
         let component_has_managed_props_metadata = component_type.is_some_and(|comp| {
             use crate::query_boundaries::common::PropertyAccessResult;
             matches!(
@@ -757,7 +761,8 @@ impl<'a> CheckerState<'a> {
                             });
 
                             if !has_string_index // excess property check
-                            && !props_has_type_params
+                            && !has_excess_property_error
+                            && !suppress_excess_for_generic_props
                             && !component_has_type_params
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
