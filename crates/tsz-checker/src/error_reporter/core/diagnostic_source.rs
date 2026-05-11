@@ -1485,7 +1485,7 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE) {
             return None;
         }
-        // Merged INTERFACE+VALUE (e.g. `Date`): `get_type_of_symbol` returns the interface side, not the value-position constructor.
+        // Merged INTERFACE+VALUE: `get_type_of_symbol` returns the interface side.
         if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
             && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
         {
@@ -1496,19 +1496,16 @@ impl<'a> CheckerState<'a> {
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx) {
-            let declared_enum_symbol = self
+        if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
+            && let Some(declared_enum_symbol) = self
                 .enum_symbol_from_enumish_type(declared_type)
-                .or_else(|| self.enum_symbol_from_enumish_type(expr_display_type));
-            let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
-            if declared_enum_symbol.is_some()
-                && declared_enum_symbol == target_enum_symbol
-                && !annotation_text.contains(" | ")
-                && !annotation_text.contains(" & ")
-                && !annotation_text.contains('<')
-            {
-                return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
-            }
+                .or_else(|| self.enum_symbol_from_enumish_type(expr_display_type))
+            && Some(declared_enum_symbol) == self.enum_symbol_from_enumish_type(target)
+            && !annotation_text.contains(" | ")
+            && !annotation_text.contains(" & ")
+            && !annotation_text.contains('<')
+        {
+            return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
         }
         let type_query_alias_def_id = self.declared_source_type_query_alias_def_id(expr_idx);
         let prefer_declared_display = if declared_type == TypeId::ANY
@@ -1609,17 +1606,8 @@ impl<'a> CheckerState<'a> {
             return Some(display);
         }
 
-        // When the declared type annotation contains literal property types
-        // (e.g. `var z: { length: 2; }`), the standard widening path produces
-        // `length: number` instead of `length: 2`. tsc preserves the declared
-        // literal in the error message.
-        // Only applies to declared annotation types (canonical props contain Literal types,
-        // no display_properties on `declared_type` itself). Fresh object literals (inferred
-        // types from expressions like `var o1 = { one: 1 }`) have display_properties on
-        // `declared_type` and must NOT be handled here — the rewrite function widens them.
-        // NOTE: check `declared_type` directly (not its evaluated form) because
-        // `evaluate_type_with_env` strips display_properties from fresh types, making their
-        // evaluated form look like a declared annotation type.
+        // Preserve literal property types from declared annotations while
+        // leaving fresh object-literal display_properties to the widening path.
         if prefer_declared_display
             && self
                 .ctx

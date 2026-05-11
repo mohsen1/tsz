@@ -1758,14 +1758,8 @@ impl<'a> CheckerState<'a> {
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {
-                // For TS2739 (and the TS2741 single-missing variant), when
-                // the source is a non-generic type alias whose body is a
-                // generic Application (`type B = A<X1, X2, ...>`), tsc
-                // unfolds one level to display the application form
-                // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
-                // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
-                // line 91. Falls through to the normal source role formatter
-                // when no unfold candidate exists.
+                // TS2739/TS2741 unfold `type B = A<X>` sources to `A<X>`;
+                // otherwise fall through to normal source-role formatting.
                 let src_str = if let Some(display) =
                     self.ts2739_alias_of_application_source_display_text(source)
                 {
@@ -1934,20 +1928,12 @@ impl<'a> CheckerState<'a> {
                 .zip(authoritative_tgt.as_ref())
                 .is_some_and(|(src, tgt)| src != tgt);
 
-            // The authoritative-name fallback below replaces a structural display
-            // (like `{ ... }`) with the type's nominal name (e.g. `Foo`).  When the
-            // display is already a concrete literal value — `4`, `"hello"`,
-            // `true` — that lookup wrongly repaints the source as an unrelated
-            // boxed/wrapper interface (TypeId-keyed `find_def_for_type` can hand
-            // back `Boolean`/`Number` for primitive sources).  Keep the literal.
+            // Do not repaint literal displays as boxed/wrapper interfaces via
+            // authoritative-name fallback.
             let display_is_literal_value = display_is_literal_value;
 
-            // TS2719 is reserved for two NOMINAL types that share a name but are
-            // structurally distinct (typically merged-declaration ambiguity).
-            // Literal-value displays — `"foo"`, `42`, `true`, etc. — never carry
-            // a nominal identity, so identical literal-value displays must mean
-            // identical types. Emitting TS2719 with `Type '"name"' is not
-            // assignable to type '"name"'` is misleading. Fall through to TS2322.
+            // Literal-value display pairs are not distinct nominal types; use
+            // the regular TS2322 path instead of TS2719.
             let pair_is_literal_value =
                 display_is_literal_value(&src_str) && display_is_literal_value(&tgt_str);
             let (message, code) = if src_str == tgt_str
