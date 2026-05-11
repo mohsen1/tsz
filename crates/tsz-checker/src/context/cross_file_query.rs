@@ -1,21 +1,14 @@
-//! Helpers for the canonical cross-file query buckets.
+//! Helpers for the canonical `CROSS_FILE_QUERY_SYMBOL_TYPE` bucket.
 //!
 //! Centralises the gate + bucket lookup + sentinel-filtering pattern that
 //! showed up in five reader call sites and four writer call sites after
 //! PRs #1922, #1926, #1932, #1934, #1937, #1939, #1943, #1949. Each
 //! site re-derived the same key shape and reject rules; this module
 //! owns them once.
-//!
-//! Bucket discriminants now route through the typed
-//! [`CrossFileQueryKind`](crate::state_type_analysis::cross_file::CrossFileQueryKind)
-//! enum rather than the legacy `CROSS_FILE_QUERY_*` `u8` constants. The
-//! storage layer is unchanged; the migration is purely call-site hygiene
-//! to avoid bare `u8` arguments at typed entry points.
 
 use tsz_binder::SymbolId;
 
 use crate::query_boundaries::common::type_id_is_known_to_db;
-use crate::state_type_analysis::cross_file::CrossFileQueryKind;
 
 use super::CheckerContext;
 
@@ -37,7 +30,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -81,7 +74,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -113,7 +106,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, _params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -157,7 +150,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -189,7 +182,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, _params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
             file_idx,
             interface_idx.0,
             member_idx.0,
@@ -235,7 +228,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
             file_idx,
             interface_idx.0,
             member_idx.0,
@@ -270,7 +263,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -287,7 +280,6 @@ impl<'a> CheckerContext<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use super::CrossFileQueryKind;
     use crate::context::{CheckerContext, CheckerOptions};
     use tsz_binder::{BinderState, SymbolId};
     use tsz_parser::parser::{NodeArena, NodeIndex};
@@ -326,7 +318,7 @@ mod tests {
         ));
 
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
             7,
             11,
             0,
@@ -335,7 +327,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_TYPE,
             7,
             12,
             0,
@@ -344,7 +336,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
             7,
             21,
             22,
@@ -353,7 +345,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
             7,
             13,
             0,
