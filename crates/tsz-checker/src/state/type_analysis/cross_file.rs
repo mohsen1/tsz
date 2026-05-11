@@ -678,9 +678,24 @@ impl<'a> CheckerState<'a> {
 
         if should_delegate {
             // PERF: count cross-arena delegation calls for the perf plan.
-            // See `docs/plan/PERFORMANCE_PLAN.md`.
-            let perf = tsz_common::perf_counters::counters();
-            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_calls);
+            // See `docs/plan/PERFORMANCE_PLAN.md`. Gate once with
+            // `enabled_fast()` and cache the resulting `&'static
+            // PerfCounters` pointer in `perf`. An enabled run pays the
+            // gate read plus one `counters()` `OnceLock<PerfCounters>`
+            // deref per delegate entry (vs. one per increment); a
+            // disabled run pays only the gate read and the subsequent
+            // `if let Some(p) = perf` checks are predictable branches
+            // on a local `None` that the optimizer folds away. Same
+            // pattern `TypeInterner::intern` uses for `pc`.
+            let perf = if tsz_common::perf_counters::enabled_fast() {
+                Some(tsz_common::perf_counters::counters())
+            } else {
+                None
+            };
+            if let Some(p) = perf {
+                p.delegate_cross_arena_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             // Track the running peak recursion depth via an RAII guard. Drop
             // decrements when this call returns / unwinds. Per
             // PERFORMANCE_PLAN.md §4.1.1 site #11.
@@ -692,7 +707,10 @@ impl<'a> CheckerState<'a> {
             if !needs_cross_file_delegation
                 && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
             {
-                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_lib);
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_lib
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.ctx.symbol_types.insert(sym_id, cached_type);
                 return Some((cached_type, Vec::new()));
             }
@@ -704,7 +722,10 @@ impl<'a> CheckerState<'a> {
                     cross_file_idx.unwrap_or(self.ctx.current_file_idx) as u32,
                 )
             {
-                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_cross_file);
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_cross_file
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.ctx.symbol_types.insert(sym_id, cached_type);
                 return Some((cached_type, cached_params));
             }
@@ -771,7 +792,10 @@ impl<'a> CheckerState<'a> {
 
             // Both caches and the alias shortcut missed → about to do real work
             // (boxed child checker construction + recursion).
-            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_misses);
+            if let Some(p) = perf {
+                p.delegate_cross_arena_misses
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let miss_source = if needs_cross_file_delegation {
                 CrossArenaSymbolMissSource::SymbolFileTarget
             } else {
