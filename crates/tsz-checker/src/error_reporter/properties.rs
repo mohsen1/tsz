@@ -1010,6 +1010,12 @@ impl<'a> CheckerState<'a> {
                 let widened = self.widen_type_for_display(init_type);
                 return self.format_type_diagnostic(widened);
             }
+            if !self.is_js_file() {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                if evaluated != type_id && self.named_type_display_name(evaluated).is_some() {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
+            }
             return self.format_type_diagnostic_structural(type_id);
         }
 

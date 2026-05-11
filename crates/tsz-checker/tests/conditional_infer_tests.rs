@@ -860,6 +860,79 @@ const grandUser: GrandUser = {
 }
 
 #[test]
+fn test_build_tree_terminal_property_receiver_displays_evaluated_leaf_type() {
+    let element_source = r#"
+type Length<T extends any[]> = T["length"];
+type Prepend<V, T extends any[]> = ((head: V, ...args: T) => void) extends (
+  ...args: infer R
+) => void
+  ? R
+  : any;
+
+type BuildTree<T, N extends number = -1, I extends any[] = []> = {
+  1: T;
+  0: T & { children: BuildTree<T, N, Prepend<any, I>>[] };
+}[Length<I> extends N ? 1 : 0];
+
+interface User {
+  name: string;
+}
+
+type GrandUser = BuildTree<User, 2>;
+declare const grandUser: GrandUser;
+grandUser.children[0].children[0].children[0];
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(element_source);
+    let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(ts2339.len(), 1, "Expected one TS2339, got: {diagnostics:?}");
+
+    let message = &ts2339[0].message_text;
+    assert!(
+        message.contains("type 'User'"),
+        "terminal recursive conditional receiver should display the evaluated leaf type, got: {message:?}"
+    );
+    assert!(
+        !message.contains("BuildTree<"),
+        "property receiver display should not preserve the recursive helper alias at the terminal leaf, got: {message:?}"
+    );
+
+    let renamed_element_source = r#"
+type Length<T extends any[]> = T["length"];
+type PushFront<V, T extends any[]> = ((head: V, ...args: T) => void) extends (
+  ...args: infer R
+) => void
+  ? R
+  : any;
+
+type TreeAt<T, N extends number = -1, I extends any[] = []> = {
+  1: T;
+  0: T & { kids: TreeAt<T, N, PushFront<any, I>>[] };
+}[Length<I> extends N ? 1 : 0];
+
+interface Person {
+  id: string;
+}
+
+type Family = TreeAt<Person, 1>;
+declare const family: Family;
+family.kids[0].kids[0];
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(renamed_element_source);
+    let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(ts2339.len(), 1, "Expected one TS2339, got: {diagnostics:?}");
+
+    let message = &ts2339[0].message_text;
+    assert!(
+        message.contains("type 'Person'"),
+        "renamed terminal recursive conditional receiver should display the evaluated leaf type, got: {message:?}"
+    );
+    assert!(
+        !message.contains("TreeAt<"),
+        "renamed property receiver display should not preserve the recursive helper alias at the terminal leaf, got: {message:?}"
+    );
+}
+
+#[test]
 fn test_conditional_key_selects_depth_terminal_branch() {
     let source = r#"
 type Length<T extends any[]> = T["length"];
