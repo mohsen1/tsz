@@ -2281,6 +2281,79 @@ fn collect_no_check_file_diagnostics(
     )
 }
 
+/// Per-file `CheckerContext` configuration extracted from
+/// `check_file_for_parallel`. Sets the fields that vary across files in
+/// a program — file index, ESM-ness, resolved modules, and the seven
+/// parse-diagnostic-derived fields the checker reads to suppress or
+/// classify diagnostics in syntax-error files.
+///
+/// The split between construction and per-file configuration is the
+/// seam `PERFORMANCE_PLAN.md` §6 T2.1.B's sequential session-reuse
+/// path will plug into: construct the `CheckerContext` once, then
+/// repeatedly call `configure_checker_per_file()`, `check_source_file()`,
+/// and `reset_for_next_file()` rather than constructing a fresh
+/// `CheckerState` per file. This commit only does the extraction; the
+/// reuse loop itself is a separate sub-PR.
+///
+/// Pure refactor: the field assignments and their derivations are
+/// byte-for-byte identical to the inline version, so default behavior
+/// is unchanged.
+fn configure_checker_per_file<'a>(
+    ctx: &mut tsz::checker::context::CheckerContext<'a>,
+    file: &tsz::parallel::BoundFile,
+    file_idx: usize,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules: Arc<rustc_hash::FxHashSet<String>>,
+    program_has_real_syntax_errors: bool,
+) {
+    ctx.set_current_file_idx(file_idx);
+    ctx.file_is_esm = program_context
+        .file_is_esm_map
+        .get(&file.file_name)
+        .copied();
+    ctx.resolved_modules = Some(resolved_modules);
+    // TSC suppresses many semantic diagnostics across the whole program when any
+    // file has a real syntax parse error; mirror that behavior using the program-level
+    // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
+    ctx.has_parse_errors = program_has_real_syntax_errors;
+    // Exclude grammar checks that don't affect AST structure from
+    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
+    //   TS1009 - Trailing comma (checker grammar error in TSC)
+    //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
+    //   TS1185 - Merge conflict marker (not a real parse failure)
+    ctx.has_syntax_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| !is_non_suppressing_parse_error(d.code));
+    ctx.syntax_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| !is_non_suppressing_parse_error(d.code))
+        .map(|d| d.start)
+        .collect();
+    ctx.all_parse_error_positions = file.parse_diagnostics.iter().map(|d| d.start).collect();
+    ctx.nullable_type_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
+        .map(|d| d.start)
+        .collect();
+    ctx.has_real_syntax_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_real_syntax_error(d.code));
+    ctx.has_structural_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_structural_parse_error(d.code));
+    ctx.real_syntax_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| is_real_syntax_error(d.code))
+        .map(|d| d.start)
+        .collect();
+}
+
 /// Result of checking a single file for the parallel checking path: diagnostics,
 /// optional `TypeCache` snapshot, per-file request counters, and solver
 /// query-cache / definition-store statistics aggregated by the caller.
@@ -2368,54 +2441,17 @@ pub(super) fn check_file_for_parallel<'a>(
     // shared DefinitionStore and runs warm_local_caches_from_shared_store().
     program_context.apply_to(&mut checker.ctx);
 
-    // Per-file state that varies across files:
-    checker.ctx.set_current_file_idx(file_idx);
-    checker.ctx.file_is_esm = program_context
-        .file_is_esm_map
-        .get(&file.file_name)
-        .copied();
-    checker.ctx.resolved_modules = Some(resolved_modules);
-    // TSC suppresses many semantic diagnostics across the whole program when any
-    // file has a real syntax parse error; mirror that behavior using the program-level
-    // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
-    checker.ctx.has_parse_errors = program_has_real_syntax_errors;
-    // Exclude grammar checks that don't affect AST structure from
-    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
-    //   TS1009 - Trailing comma (checker grammar error in TSC)
-    //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
-    //   TS1185 - Merge conflict marker (not a real parse failure)
-    checker.ctx.has_syntax_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| !is_non_suppressing_parse_error(d.code));
-    checker.ctx.syntax_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| !is_non_suppressing_parse_error(d.code))
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.all_parse_error_positions =
-        file.parse_diagnostics.iter().map(|d| d.start).collect();
-    checker.ctx.nullable_type_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.has_real_syntax_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_real_syntax_error(d.code));
-    checker.ctx.has_structural_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_structural_parse_error(d.code));
-    checker.ctx.real_syntax_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| is_real_syntax_error(d.code))
-        .map(|d| d.start)
-        .collect();
+    // Per-file `CheckerContext` configuration. Extracted into a helper
+    // to seam construction from per-file configuration; T2.1.B's
+    // sequential session-reuse path will reuse this entry point.
+    configure_checker_per_file(
+        &mut checker.ctx,
+        file,
+        file_idx,
+        program_context,
+        resolved_modules,
+        program_has_real_syntax_errors,
+    );
     let filtered_parse_diagnostics =
         filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
     let is_js = is_js_file(Path::new(&file.file_name));

@@ -870,6 +870,104 @@ pub fn record_resolver_lookup_call() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record one `Path::is_file()` probe from the resolver fast path.
+/// Used by the `count_is_file` wrapper in `tsz-cli/src/driver/resolution.rs`,
+/// which bundles the syscall and the counter in one place. Gate once,
+/// deref `counters()` once, increment.
+#[inline]
+pub fn record_resolver_is_file() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_is_file_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one `Path::is_dir()` probe from the resolver fast path.
+/// Sibling to [`record_resolver_is_file`].
+#[inline]
+pub fn record_resolver_is_dir() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_is_dir_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one `std::fs::read_dir()` call from the resolver. Sibling to
+/// [`record_resolver_is_file`]. The cost of the syscall itself dwarfs
+/// the counter overhead — this helper is only structural cleanup.
+#[inline]
+pub fn record_resolver_read_dir() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_read_dir_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one candidate path examined during module resolution
+/// (path-mapping virtual roots and suffix-extension expansion).
+/// Lifted into a helper so the two emit sites in
+/// `tsz-cli/src/driver/resolution.rs` don't re-pay the `counters()`
+/// `OnceLock` deref.
+#[inline]
+pub fn record_resolver_candidate_path() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_candidate_paths_total
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one uncached `package.json` read. Sits inside the resolver's
+/// `read_package_json_uncached`, which `large-ts-repo` profiles flag
+/// as the dominant resolver work — keeping the gate cheap matters even
+/// though the surrounding `read_to_string` is several orders of
+/// magnitude more expensive.
+#[inline]
+pub fn record_resolver_read_package_json() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_read_package_json_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a root `CheckerState` construction. Called from each of the
+/// nine `CheckerState::new` / `with_*` constructors in
+/// `tsz-checker/src/state/state.rs`. Sibling to the other `record_*`
+/// helpers — gate once, look up `counters()` once, increment.
+#[inline]
+pub fn record_checker_state_constructed() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .checker_state_constructed
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record an invocation of `CheckerContext::reset_for_next_file()`. Bumps
+/// only on the sequential session-reuse path (T2.1.B). Sibling to the
+/// other `record_*` helpers — gate once, look up `counters()` once,
+/// increment. Compared against `checker_state_constructed` in
+/// attribution mode to detect reuse-vs-construct directly.
+#[inline]
+pub fn record_file_session_reset() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .file_session_resets
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
