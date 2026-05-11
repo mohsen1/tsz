@@ -3275,6 +3275,74 @@ fn es5_braced_astral_escape_after_import_alias_recovers_as_specifier_tail() {
 }
 
 #[test]
+fn es5_braced_astral_escape_after_export_alias_recovers_as_specifier_tail() {
+    let source = r#"export { _x as _\u{102A7} } from "mod";"#;
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32 + 2;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let close_brace_pos = source.find("} from").expect("specifier close brace") as u32;
+    let from_pos = source.find("from").expect("from keyword") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                close_brace_pos,
+            ),
+            (
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                from_pos,
+            ),
+        ],
+        "export alias escaped astral tail should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reset_clears_braced_unicode_specifier_tail_recovery_state() {
+    let source = r#"import { _x as _\u{102A7} } from "mod";"#;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+    assert!(
+        parser.current_specifier_recovered_braced_unicode_escape_debris,
+        "sanity check: first parse should exercise braced unicode specifier recovery"
+    );
+
+    parser.reset(
+        "test.ts".to_string(),
+        r#"import { value } from "mod";"#.to_string(),
+    );
+
+    assert!(
+        !parser.current_specifier_recovered_braced_unicode_escape_debris,
+        "reset should clear stale specifier recovery state"
+    );
+}
+
+#[test]
 fn es5_raw_astral_variable_name_reports_declaration_expected_at_type_tail() {
     let source = "declare var 𐊧: string;";
     let raw_astral = source.find('𐊧').expect("raw astral") as u32;

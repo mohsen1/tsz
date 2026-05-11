@@ -347,6 +347,7 @@ impl ParserState {
         self.last_named_imports_consumed_closing_brace = false;
         self.last_named_imports_recovered_to_from = false;
         self.last_named_imports_had_structural_error = false;
+        self.current_specifier_recovered_braced_unicode_escape_debris = false;
         self.deferred_module_close_braces = 0;
         self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;

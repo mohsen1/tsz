@@ -576,6 +576,7 @@ impl ParserState {
 
         let mut elements = Vec::new();
         let mut emitted_comma_error = false;
+        let mut leave_closing_brace_for_statement_recovery = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -589,6 +590,8 @@ impl ParserState {
 
             let spec = self.parse_export_specifier();
             elements.push(spec);
+            let spec_recovered_braced_unicode_escape_debris =
+                self.current_specifier_recovered_braced_unicode_escape_debris;
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 // tsc uses parseDelimitedList which emits `',' expected.` when
@@ -603,6 +606,23 @@ impl ParserState {
                         diagnostic_codes::EXPECTED,
                     );
                     emitted_comma_error = true;
+                    if spec_recovered_braced_unicode_escape_debris
+                        && self.is_token(SyntaxKind::OpenBraceToken)
+                    {
+                        self.next_token(); // consume the `{` from `\u{...}` debris
+                        while !matches!(
+                            self.token(),
+                            SyntaxKind::CloseBraceToken | SyntaxKind::EndOfFileToken
+                        ) {
+                            self.next_token();
+                        }
+                        if self.is_token(SyntaxKind::CloseBraceToken) {
+                            self.next_token(); // consume the `}` from the braced escape
+                        }
+                        if self.is_token(SyntaxKind::CloseBraceToken) {
+                            leave_closing_brace_for_statement_recovery = true;
+                        }
+                    }
                 }
                 break;
             }
@@ -610,7 +630,7 @@ impl ParserState {
 
         // Skip '}' expected if we already emitted ',' expected at the same position.
         // tsc's parseDelimitedList emits only the comma error, not a closing brace error.
-        if !emitted_comma_error {
+        if !emitted_comma_error && !leave_closing_brace_for_statement_recovery {
             self.parse_expected(SyntaxKind::CloseBraceToken);
         }
         let end_pos = self.token_end();
