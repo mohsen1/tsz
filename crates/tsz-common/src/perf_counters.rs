@@ -420,6 +420,7 @@ pub struct PerfCounters {
     pub interner_type_list_intern_calls: AtomicU64,
     pub interner_object_shape_intern_calls: AtomicU64,
     pub interner_function_shape_intern_calls: AtomicU64,
+    pub interner_callable_shape_intern_calls: AtomicU64,
     pub interner_application_intern_calls: AtomicU64,
     pub interner_conditional_intern_calls: AtomicU64,
     pub interner_mapped_intern_calls: AtomicU64,
@@ -492,6 +493,7 @@ impl PerfCounters {
             interner_type_list_intern_calls: AtomicU64::new(0),
             interner_object_shape_intern_calls: AtomicU64::new(0),
             interner_function_shape_intern_calls: AtomicU64::new(0),
+            interner_callable_shape_intern_calls: AtomicU64::new(0),
             interner_application_intern_calls: AtomicU64::new(0),
             interner_conditional_intern_calls: AtomicU64::new(0),
             interner_mapped_intern_calls: AtomicU64::new(0),
@@ -930,6 +932,19 @@ pub fn record_interner_mapped_intern_call() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a `TypeInterner::intern_callable_shape` call. Mirrors the
+/// sibling `record_interner_function_shape_intern_call` shape — gate
+/// once, one `counters()` lookup, increment the named field.
+#[inline]
+pub fn record_interner_callable_shape_intern_call() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .interner_callable_shape_intern_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a `TypeInterner::intern_application` call.
 #[inline]
 pub fn record_interner_application_intern_call() {
@@ -1121,6 +1136,7 @@ impl PerfCounters {
              type-list intern calls     {:>12}\n  \
              object-shape intern calls  {:>12}\n  \
              function-shape intern calls{:>12}\n  \
+             callable-shape intern calls{:>12}\n  \
              application intern calls   {:>12}\n  \
              conditional intern calls   {:>12}\n  \
              mapped intern calls        {:>12}\n\
@@ -1155,6 +1171,7 @@ impl PerfCounters {
             snap.interner.type_list_intern_calls,
             snap.interner.object_shape_intern_calls,
             snap.interner.function_shape_intern_calls,
+            snap.interner.callable_shape_intern_calls,
             snap.interner.application_intern_calls,
             snap.interner.conditional_intern_calls,
             snap.interner.mapped_intern_calls,
@@ -1411,6 +1428,7 @@ pub struct InternerCounters {
     pub type_list_intern_calls: u64,
     pub object_shape_intern_calls: u64,
     pub function_shape_intern_calls: u64,
+    pub callable_shape_intern_calls: u64,
     pub application_intern_calls: u64,
     pub conditional_intern_calls: u64,
     pub mapped_intern_calls: u64,
@@ -1484,6 +1502,7 @@ impl PerfCounters {
                 type_list_intern_calls: load(&c.interner_type_list_intern_calls),
                 object_shape_intern_calls: load(&c.interner_object_shape_intern_calls),
                 function_shape_intern_calls: load(&c.interner_function_shape_intern_calls),
+                callable_shape_intern_calls: load(&c.interner_callable_shape_intern_calls),
                 application_intern_calls: load(&c.interner_application_intern_calls),
                 conditional_intern_calls: load(&c.interner_conditional_intern_calls),
                 mapped_intern_calls: load(&c.interner_mapped_intern_calls),
