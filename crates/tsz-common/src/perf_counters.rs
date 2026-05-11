@@ -377,6 +377,15 @@ pub struct PerfCounters {
     /// site. Total equals `checker_state_with_parent_cache_constructed`.
     pub with_parent_cache_by_reason: [AtomicU64; CHECKER_CREATION_REASON_COUNT],
 
+    // ─── checker file-session ────────────────────────────────────────────
+    /// Number of times `CheckerContext::reset_for_next_file()` has been
+    /// invoked. Zero on the default per-file checker construction path;
+    /// nonzero only on a sequential session-reuse path (T2.1.B).
+    /// Attribution-mode verification: in a reuse run the counter equals
+    /// `(files_checked - 1)` and `checker_state_constructed` falls by the
+    /// same amount versus the baseline construction-per-file path.
+    pub file_session_resets: AtomicU64,
+
     // ─── overlay copy ────────────────────────────────────────────────────
     pub copy_symbol_file_targets_calls: AtomicU64,
     pub copy_symbol_file_targets_entries_total: AtomicU64,
@@ -462,6 +471,7 @@ impl PerfCounters {
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
                 CHECKER_CREATION_REASON_COUNT],
+            file_session_resets: AtomicU64::new(0),
             copy_symbol_file_targets_calls: AtomicU64::new(0),
             copy_symbol_file_targets_entries_total: AtomicU64::new(0),
             copy_symbol_file_targets_entries_max: AtomicU64::new(0),
