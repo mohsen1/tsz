@@ -1183,6 +1183,10 @@ impl<'a> CheckerState<'a> {
         let mut collapsed_enum = None;
 
         for member in members {
+            if let Some(name) = self.format_enum_member_name_for_message(member) {
+                rendered.push(name);
+                continue;
+            }
             let widened = self.widen_enum_member_type(member);
             if let Some(enum_sym) = self.enum_symbol_from_enumish_type(widened)
                 && let Some(symbol) = self.ctx.binder.get_symbol(enum_sym)
@@ -1206,6 +1210,17 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
+    }
+
+    fn format_enum_member_name_for_message(&mut self, ty: TypeId) -> Option<String> {
+        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+        let parent = self.ctx.binder.get_symbol(symbol.parent)?;
+        Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name))
     }
 
     fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
