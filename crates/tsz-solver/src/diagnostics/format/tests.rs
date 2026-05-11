@@ -4133,6 +4133,24 @@ fn store_union_origin_preserves_source_order_for_number_literal_union() {
     assert_eq!(fmt.format(union_id), "0 | 1 | 2");
 }
 
+#[test]
+fn formatter_can_ignore_union_origin_for_canonical_number_literal_display() {
+    let db = TypeInterner::new();
+
+    let two = db.literal_number(2.0);
+    let one = db.literal_number(1.0);
+    let zero = db.literal_number(0.0);
+    let origin = vec![zero, one, two];
+    let union_id = db.union(origin.clone());
+    db.store_union_origin(union_id, origin);
+
+    let mut source_order = TypeFormatter::new(&db);
+    assert_eq!(source_order.format(union_id), "0 | 1 | 2");
+
+    let mut canonical_order = TypeFormatter::new(&db).with_ignore_union_origins();
+    assert_eq!(canonical_order.format(union_id), "0 | 2 | 1");
+}
+
 // Negative case: a number-literal-only union whose canonical order already
 // matches the source order should NOT trigger origin storage. Storing it
 // would waste memory and pin the order even if a later inferred-union

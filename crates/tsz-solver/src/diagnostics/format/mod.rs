@@ -168,6 +168,10 @@ pub struct TypeFormatter<'a> {
     /// while still keeping `PropertyKey` in other diagnostics. The default is
     /// false to preserve the existing behavior across every other surface.
     expand_primitive_key_union: bool,
+    /// When true, render union members in canonical interner order even when a
+    /// source/display origin was recorded. This is used by narrow diagnostic
+    /// surfaces where tsc does not preserve source-written union order.
+    ignore_union_origins: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -378,6 +382,7 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
             expand_primitive_key_union: false,
+            ignore_union_origins: false,
         }
     }
 
@@ -592,6 +597,7 @@ impl<'a> TypeFormatter<'a> {
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
             expand_primitive_key_union: false,
+            ignore_union_origins: false,
         }
     }
 
@@ -654,6 +660,13 @@ impl<'a> TypeFormatter<'a> {
     /// diagnostic.
     pub const fn with_expanded_primitive_key_union(mut self) -> Self {
         self.expand_primitive_key_union = true;
+        self
+    }
+
+    /// Render unions in canonical formatter order, ignoring any stored
+    /// source/display origin for this formatter instance.
+    pub const fn with_ignore_union_origins(mut self) -> Self {
+        self.ignore_union_origins = true;
         self
     }
 
@@ -1445,7 +1458,9 @@ impl<'a> TypeFormatter<'a> {
                 // expand to T's body). The checker records the unflattened
                 // input member list as a side-table "origin"; consult it here
                 // before structural display.
-                if let Some(origin) = self.interner.get_union_origin(type_id) {
+                if !self.ignore_union_origins
+                    && let Some(origin) = self.interner.get_union_origin(type_id)
+                {
                     return self.format_union(origin.as_slice()).into();
                 }
                 let members = self.interner.type_list(*members);

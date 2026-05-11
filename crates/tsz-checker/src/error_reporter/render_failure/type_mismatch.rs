@@ -66,10 +66,12 @@ impl<'a> CheckerState<'a> {
             if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
                 && let Some(display) = self.evaluated_literal_alias_source_display(source)
             {
-                source_str = self.canonicalize_assignment_numeric_literal_union_display(display);
+                source_str = self
+                    .canonicalize_assignment_numeric_literal_union_display(source, target, display);
             }
             if let Some(display) = self.evaluated_literal_alias_source_display(target) {
-                target_str = self.canonicalize_assignment_numeric_literal_union_display(display);
+                target_str = self
+                    .canonicalize_assignment_numeric_literal_union_display(target, source, display);
             }
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 source, target, source_str,
@@ -357,7 +359,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
+        source_str =
+            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
@@ -386,8 +389,10 @@ impl<'a> CheckerState<'a> {
                 source_str = direct_source;
                 target_str = direct_target;
             }
-            source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
-            target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
+            source_str = self
+                .canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+            target_str = self
+                .canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         }
 
         let base = format_message(

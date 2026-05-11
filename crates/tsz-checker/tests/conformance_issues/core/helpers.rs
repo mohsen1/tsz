@@ -1334,6 +1334,53 @@ ps1 = ps12;
 }
 
 #[test]
+fn test_function_type_parameter_constraint_display_preserves_numeric_union_origin() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface NMap {
+  1: 'A'
+  2: 'B'
+  3: 'C'
+  4: 'D'
+}
+
+declare const g: <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]
+type G2 = <T extends 1 | 2 | 3 | 4>(x: `${T}`) => NMap[T]
+const g2: G2 = g;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322 for template-literal generic parameter mismatch, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("<T extends 1 | 2 | 3>")),
+        "Expected function constraint display to preserve source numeric-union order, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| !message.contains("<T extends 2 | 1 | 3>")),
+        "Assignment numeric-union canonicalization must not rewrite function type-parameter constraints, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_declared_out_variance_controls_application_assignability_even_when_invalid() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
