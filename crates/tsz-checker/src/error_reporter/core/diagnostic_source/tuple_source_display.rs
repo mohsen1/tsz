@@ -63,20 +63,23 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let display_element_idx = self.ctx.arena.skip_parenthesized(element_idx);
         let display_element_node = self.ctx.arena.get(display_element_idx)?;
-        // In tuple source displays, tsc keeps boolean literals even when
-        // contextual typing has widened the element type to `boolean`.
-        if display_element_node.kind == SyntaxKind::TrueKeyword as u16 {
-            return Some("true".to_string());
-        }
-        if display_element_node.kind == SyntaxKind::FalseKeyword as u16 {
-            return Some("false".to_string());
+        let target_element = target_elements
+            .as_ref()
+            .and_then(|elements| elements.get(element_position));
+
+        // Boolean literals are preserved only for positions that are actually
+        // contextually typed by the target tuple. Extra elements past a fixed
+        // target tuple are displayed through the normal widened fallback.
+        if target_element.is_some() {
+            if display_element_node.kind == SyntaxKind::TrueKeyword as u16 {
+                return Some("true".to_string());
+            }
+            if display_element_node.kind == SyntaxKind::FalseKeyword as u16 {
+                return Some("false".to_string());
+            }
         }
 
-        if target_elements
-            .as_ref()
-            .and_then(|elements| elements.get(element_position))
-            .is_some_and(|element| self.type_includes_literal_type(element.type_id))
-        {
+        if target_element.is_some_and(|element| self.type_includes_literal_type(element.type_id)) {
             return self.literal_expression_display(element_idx);
         }
         None
