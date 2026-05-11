@@ -1137,18 +1137,6 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(self.ctx.binder)
         };
 
-        // PERF: count cross-arena delegation calls and track recursion depth.
-        // Matches the symbol-resolution path; without this the per-reason
-        // child-checker construction counters covered the class-instance path
-        // but the aggregate `delegate_cross_arena_calls`/`max_recursion_depth`
-        // counters did not.
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().delegate_cross_arena_calls,
-            );
-        }
-        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
-
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
             delegate_binder,
@@ -1295,14 +1283,6 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
-
-        // PERF: see the matching block in `delegate_cross_arena_class_instance_type`.
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().delegate_cross_arena_calls,
-            );
-        }
-        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
@@ -1526,14 +1506,6 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
-
-        // PERF: see the matching block in `delegate_cross_arena_class_instance_type`.
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().delegate_cross_arena_calls,
-            );
-        }
-        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             interface_arena,
