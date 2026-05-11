@@ -1566,7 +1566,68 @@ fn format_tuple_optional_element() {
         },
     ]);
     let result = fmt.format(tuple);
-    assert_eq!(result, "[string, number?]");
+    assert_eq!(result, "[string, (number | undefined)?]");
+}
+
+#[test]
+fn format_tuple_named_optional_element() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let tuple = db.tuple(vec![crate::types::TupleElement {
+        type_id: TypeId::STRING,
+        name: Some(db.intern_string("name")),
+        optional: true,
+        rest: false,
+    }]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[name?: string | undefined]");
+}
+
+#[test]
+fn format_tuple_optional_elements_preserve_surface_in_exact_optional_mode() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db).with_exact_optional_property_types(true);
+
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: Some(db.intern_string("count")),
+            optional: true,
+            rest: false,
+        },
+    ]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[string?, count?: number]");
+}
+
+#[test]
+fn format_tuple_optional_absorbing_types_keep_suffix_form() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: Some(db.intern_string("value")),
+            optional: true,
+            rest: false,
+        },
+    ]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[any?, value?: unknown]");
 }
 
 #[test]
@@ -2597,6 +2658,39 @@ fn skip_application_alias_names_suppresses_nested_application_display_alias() {
         fmt.format(omit_app),
         "Omit<{ p1: number; } & { p2: number; }, \"p2\">"
     );
+}
+
+#[test]
+fn skip_application_display_alias_chase_keeps_selected_application_name() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: db.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let objectish_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Objectish"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let indirect_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("IndirectArrayish"),
+        vec![type_param("U")],
+        TypeId::UNKNOWN,
+    ));
+    let objectish_app = db.application(db.lazy(objectish_def), vec![TypeId::ANY]);
+    let indirect_app = db.application(db.lazy(indirect_def), vec![TypeId::ANY]);
+    db.store_display_alias(objectish_app, indirect_app);
+
+    let mut default_fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(default_fmt.format(objectish_app), "IndirectArrayish<any>");
+
+    let mut selected_app_fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_skip_application_display_alias_chase();
+    assert_eq!(selected_app_fmt.format(objectish_app), "Objectish<any>");
 }
 
 #[test]

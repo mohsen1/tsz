@@ -9,6 +9,7 @@ mod tuple_source_display;
 mod type_query_alias;
 
 use crate::diagnostics::diagnostic_codes;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -1574,6 +1575,12 @@ impl<'a> CheckerState<'a> {
         {
             return Some(display);
         }
+        if prefer_declared_display
+            && let Some(display) =
+                self.declared_numeric_literal_union_alias_source_display(expr_idx, declared_type)
+        {
+            return Some(display);
+        }
         if let Some(display) = self.narrowed_string_literal_residual_union_display(
             declared_type,
             expr_display_type,
@@ -1699,6 +1706,32 @@ impl<'a> CheckerState<'a> {
         let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
 
         (prefer_declared_display && declared_display != expr_display).then_some(declared_display)
+    }
+
+    pub(in crate::error_reporter) fn declared_numeric_literal_union_alias_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        declared_type: TypeId,
+    ) -> Option<String> {
+        let evaluated = self.evaluate_type_for_assignability(declared_type);
+        if !diagnostic_query::is_number_literal_union(self.ctx.types, evaluated) {
+            return None;
+        }
+        let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
+        Self::annotation_text_is_plain_type_reference(&annotation_text)
+            .then(|| self.format_declared_annotation_for_diagnostic(&annotation_text))
+    }
+
+    fn annotation_text_is_plain_type_reference(annotation_text: &str) -> bool {
+        let text = annotation_text.trim();
+        !text.is_empty()
+            && text.split('.').all(|part| {
+                let mut chars = part.chars();
+                chars
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+                    && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            })
     }
 
     /// Returns `true` when `narrowed`'s union members are a strict subset of

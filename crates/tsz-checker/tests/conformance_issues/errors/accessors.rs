@@ -404,7 +404,7 @@ const arr: any[] = r;
 /// in unit tests without lib.d.ts it falls back to TS2322.
 #[test]
 fn test_ts2740_index_signature_object_to_array() {
-    let diagnostics = compile_and_get_diagnostics(
+    let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"
 type Objectish<T extends unknown> = { [K in keyof T]: T[K] };
 type IndirectArrayish<U extends unknown[]> = Objectish<U>;
@@ -416,14 +416,30 @@ function bar(objectish: Objectish<any>, indirectArrayish: IndirectArrayish<any>)
 }
         "#,
     );
-    let error_count = diagnostics
+    let missing_property_messages: Vec<_> = diagnostics
         .iter()
-        .filter(|d| d.0 == 2322 || d.0 == 2740)
-        .count();
+        .filter(|(code, _)| *code == 2740)
+        .map(|(_, message)| message.as_str())
+        .collect();
     assert_eq!(
-        error_count, 2,
-        "Expected two assignability errors (one for objectish, one for indirectArrayish). \
-         Both are object types with index signatures assigned to any[].\n\
+        missing_property_messages.len(),
+        2,
+        "Expected two TS2740 diagnostics (one for objectish, one for indirectArrayish). \
+         The wrapper-alias case must not fall back to TS2322.\n\
+         Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        missing_property_messages
+            .iter()
+            .all(|message| message.contains("Type 'Objectish<any>' is missing")),
+        "Expected all missing-property diagnostics to display the mapped body alias \
+         rather than the wrapper alias. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !missing_property_messages
+            .iter()
+            .any(|message| message.contains("Type 'IndirectArrayish<any>' is missing")),
+        "Generic wrapper aliases should unfold one level in missing-property display. \
          Actual diagnostics: {diagnostics:#?}"
     );
 }

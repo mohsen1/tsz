@@ -210,3 +210,28 @@ q[i].missing;
         "number-typed element access must not fall back to the string index display, got {messages:#?}"
     );
 }
+
+#[test]
+fn string_index_signature_display_ignores_number_index_alias_surface() {
+    let source = r#"
+type StringAlias = { a: string };
+type NumberValue = { a: string; numeric: string };
+declare const q: { [index: number]: NumberValue; [key: string]: { a: string } };
+q["name"].missing;
+"#;
+    let messages = diagnostic_messages(source);
+
+    assert!(
+        messages.iter().any(|(code, message)| {
+            *code == 2339
+                && message == "Property 'missing' does not exist on type '{ a: string; }'."
+        }),
+        "string element access should use the structural string index value display, got {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|(_, message)| !message.contains("StringAlias")),
+        "string element access must not borrow an alias because the number index value is aliased, got {messages:#?}"
+    );
+}

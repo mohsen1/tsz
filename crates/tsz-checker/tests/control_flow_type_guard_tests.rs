@@ -33,6 +33,21 @@ fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn strict_diagnostics_with_libs(source: &str) -> Vec<(u32, String)> {
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+
+    tsz_checker::test_utils::check_source_with_libs(source, "test.ts", options, &lib_files)
+        .into_iter()
+        .filter(|d| d.code != 2318 && d.code != 6133)
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 #[test]
 fn nested_or_right_operand_preserves_false_path_narrowing() {
     let diagnostics = strict_diagnostics(
@@ -1836,6 +1851,73 @@ function f(obj: { kind: 'foo', foo?: string } | { kind: 'bar', bar?: number }) {
         ts2339.is_empty() && ts2322.is_empty(),
         "Expected no errors: aliased loose == condition should narrow discriminated union, \
          ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn filter_truthiness_callback_does_not_inherit_type_predicate_overload() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+const values: (number | null)[] = [1, null, 2];
+const filtered: number[] = values.filter(x => !!x);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 because `!!x` should not infer `x is number`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn mapped_then_filter_truthiness_callback_does_not_inherit_type_predicate_overload() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+const values: (number | null)[] = [1, null, 2];
+const mapped = values.map(x => x);
+const filtered: number[] = mapped.filter(x => !!x);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 after map/filter because `!!x` should not infer `x is number`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn filter_null_comparison_callback_still_infers_type_predicate() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+const values: (number | null)[] = [1, null, 2];
+const filtered: number[] = values.filter(x => x !== null);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "`x !== null` should infer `x is number` for filter, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn contextual_type_guard_assignment_requires_explicit_or_inferred_predicate() {
+    let diagnostics = strict_diagnostics(
+        r#"
+const truthyGuard: (x: number | null) => x is number = x => !!x;
+const nullGuard: (x: number | null) => x is number = x => x !== null;
+"#,
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for `x => !!x`; `x => x !== null` should infer a predicate. Got: {diagnostics:#?}"
     );
 }
 

@@ -250,6 +250,9 @@ impl<'a> CheckerState<'a> {
         {
             arg_str = widened_arg_str;
         }
+        if self.inline_literal_satisfies_has_permissive_target(idx) {
+            arg_str = Self::widen_member_literals_in_display_text(&arg_str);
+        }
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(

@@ -488,6 +488,8 @@ impl ParserState {
     /// Stops at closing brace without error (closing brace is expected).
     /// Uses resynchronization to recover from errors and continue parsing.
     pub(crate) fn parse_statements(&mut self) -> NodeList {
+        self.statement_list_depth += 1;
+        let statement_list_depth = self.statement_list_depth;
         let mut statements = Vec::new();
         let mut previous_statement_was_block = false;
 
@@ -498,7 +500,8 @@ impl ParserState {
                 {
                     self.non_block_close_brace_statement_errors_remaining -= 1;
                     if self.non_block_close_brace_statement_errors_remaining == 0 {
-                        self.suppress_missing_close_brace_at_eof_once = true;
+                        self.suppress_missing_close_brace_at_eof_statement_depth =
+                            Some(statement_list_depth.saturating_sub(1));
                     }
                     self.parse_error_at_current_token(
                         "Declaration or statement expected.",
@@ -682,6 +685,7 @@ impl ParserState {
             }
         }
 
+        self.statement_list_depth -= 1;
         self.make_node_list(statements)
     }
 
@@ -2334,6 +2338,15 @@ impl ParserState {
                 // the initializer start, instead of bubbling out as TS1005 ';'
                 // from parse_semicolon.
                 if self.is_token(SyntaxKind::Unknown) {
+                    if self.current_unknown_starts_braced_unicode_escape_debris() {
+                        self.consume_braced_unicode_escape_debris_after_unknown();
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        continue;
+                    }
+
                     let snapshot = self.scanner.save_state();
                     let current = self.current_token;
                     let unknown_text = self.scanner.get_token_text();

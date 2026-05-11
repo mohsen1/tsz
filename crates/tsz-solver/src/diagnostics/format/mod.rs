@@ -726,6 +726,15 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Do not follow display aliases whose origin is an Application.
+    /// Used when a diagnostic has already selected the application spelling it
+    /// wants to show and formatter-level provenance would repaint it as a
+    /// wrapper alias.
+    pub const fn with_skip_application_display_alias_chase(mut self) -> Self {
+        self.skip_application_display_alias_chase = true;
+        self
+    }
+
     /// Skip one specific type alias name and display its evaluated body instead.
     pub fn with_skip_type_alias_def_id(mut self, def_id: DefId) -> Self {
         self.skip_type_alias_def_ids.insert(def_id);
@@ -1309,13 +1318,17 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     false
                 };
-            let use_lazy_type_alias =
+            let use_lazy_display_alias =
                 if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(alias_origin) {
                     self.def_store
                         .and_then(|ds| ds.get(def_id).map(|def| (ds, def)))
                         .is_some_and(|(ds, def)| {
-                            def.kind == crate::def::DefKind::TypeAlias
-                                && def.type_params.is_empty()
+                            matches!(
+                                def.kind,
+                                crate::def::DefKind::TypeAlias
+                                    | crate::def::DefKind::Interface
+                                    | crate::def::DefKind::Class
+                            ) && def.type_params.is_empty()
                                 && !def.body.is_some_and(|body| ds.is_computed_body(body))
                         })
                 } else {
@@ -1370,7 +1383,10 @@ impl<'a> TypeFormatter<'a> {
                     ))
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
-            if (!is_simple_type || use_keyof_alias || use_application_alias || use_lazy_type_alias)
+            if (!is_simple_type
+                || use_keyof_alias
+                || use_application_alias
+                || use_lazy_display_alias)
                 && !skip_alias_chase
                 && self.display_alias_visiting.insert(alias_origin)
             {

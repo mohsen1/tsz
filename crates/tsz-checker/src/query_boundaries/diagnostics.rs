@@ -29,6 +29,14 @@ pub(crate) fn is_number_literal_union(db: &dyn tsz_solver::TypeDatabase, type_id
     tsz_solver::type_queries::is_number_literal_union(db, type_id)
 }
 
+pub(crate) fn numeric_literal_union_origin_preserves_alias(
+    db: &dyn tsz_solver::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::numeric_literal_union_origin_preserves_alias(db, def_store, type_id)
+}
+
 pub(crate) fn collect_property_name_atoms_for_diagnostics(
     db: &dyn tsz_solver::TypeDatabase,
     type_id: TypeId,

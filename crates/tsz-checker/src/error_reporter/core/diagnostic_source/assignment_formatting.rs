@@ -897,6 +897,12 @@ impl<'a> CheckerState<'a> {
             // Use diagnostic mode to avoid synthetic `?: undefined` in unions
             let assignability_display =
                 self.format_assignability_type_for_message(display_target, source);
+            if self
+                .lookup_type_alias_name_for_display(display_target)
+                .is_some_and(|alias| alias == assignability_display)
+            {
+                return assignability_display;
+            }
             let fallback = self.format_type_diagnostic_widened(
                 self.widen_fresh_object_literal_properties_for_display(display_target),
             );

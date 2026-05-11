@@ -1441,12 +1441,13 @@ impl<'a> CheckerState<'a> {
             type_predicate = Some(pred);
         }
 
-        // Inherit type predicate from contextual type when no explicit annotation exists.
-        // This handles cases like: `const fn: (v: any) => asserts v is string = (v) => { ... }`
-        // where the arrow function should inherit the assertion predicate from the declared type.
+        // Inherit assertion predicates from contextual types when no explicit annotation exists.
+        // Non-assertion `x is T` predicates must be explicit or inferred from the body; otherwise
+        // overloads like `Array#filter` can make a truthiness callback look like a proved guard.
         if type_predicate.is_none()
             && let Some(ref ctx_shape) = contextual_signature_shape
             && let Some(ref ctx_pred) = ctx_shape.type_predicate
+            && ctx_pred.asserts
         {
             type_predicate = Some(*ctx_pred);
         }

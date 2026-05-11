@@ -13,7 +13,6 @@ use crate::parser::{
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
-use tsz_scanner::scanner_impl::ScannerState;
 
 impl ParserState {
     /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
@@ -1091,26 +1090,13 @@ impl ParserState {
             return None;
         }
 
-        self.previous_significant_close_brace_pos_before(self.token_pos())
+        self.previous_significant_close_brace_pos_ending_at(self.scanner.get_token_full_start())
     }
 
-    fn previous_significant_close_brace_pos_before(&self, before_pos: u32) -> Option<u32> {
-        let mut scanner = ScannerState::new(self.get_source_text().to_string(), true);
-        scanner.set_language_version(self.language_version);
-        let mut previous_significant = None;
-
-        loop {
-            let token = scanner.scan();
-            let token_pos = scanner.get_token_start();
-            if token == SyntaxKind::EndOfFileToken || token_pos >= before_pos as usize {
-                break;
-            }
-            previous_significant = Some((token, token_pos as u32));
-        }
-
-        previous_significant
-            .filter(|(token, _)| *token == SyntaxKind::CloseBraceToken)
-            .map(|(_, pos)| pos)
+    fn previous_significant_close_brace_pos_ending_at(&self, token_end: usize) -> Option<u32> {
+        let close_pos = token_end.checked_sub(1)?;
+        (self.get_source_text().as_bytes().get(close_pos) == Some(&b'}'))
+            .then(|| self.u32_from_usize(close_pos))
     }
 
     fn look_ahead_is_try_block_same_line(&mut self) -> bool {

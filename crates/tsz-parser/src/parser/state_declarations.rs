@@ -2758,6 +2758,8 @@ impl ParserState {
             let spec = self.parse_import_specifier();
             elements.push(spec);
             let spec_had_errors = self.parse_diagnostics.len() > diagnostics_before;
+            let spec_recovered_braced_unicode_escape_debris =
+                self.current_specifier_recovered_braced_unicode_escape_debris;
 
             // Distinguish structural parse failures from semantic errors.
             // A specifier like `{ default }` parses successfully (consuming `default`)
@@ -2816,6 +2818,25 @@ impl ParserState {
                     ),
                     diagnostic_codes::EXPECTED,
                 );
+                if spec_recovered_braced_unicode_escape_debris
+                    && self.is_token(SyntaxKind::OpenBraceToken)
+                {
+                    self.next_token(); // consume the `{` from `\u{...}` debris
+                    while !matches!(
+                        self.token(),
+                        SyntaxKind::CloseBraceToken | SyntaxKind::EndOfFileToken
+                    ) {
+                        self.next_token();
+                    }
+                    if self.is_token(SyntaxKind::CloseBraceToken) {
+                        self.next_token(); // consume the `}` from the braced escape
+                    }
+                    self.last_named_imports_had_structural_error = true;
+                    if self.is_token(SyntaxKind::CloseBraceToken) {
+                        leave_closing_brace_for_statement_recovery = true;
+                    }
+                    break;
+                }
                 // If no progress was made (specifier didn't consume any tokens),
                 // consume one token to avoid infinite loop — matches tsc behavior.
                 if self.token_pos() == element_start {
@@ -2913,6 +2934,12 @@ impl ParserState {
 
     fn consume_unknown_specifier_identifier_tail(&mut self) {
         while self.is_token(SyntaxKind::Unknown) {
+            if self.current_unknown_starts_braced_unicode_escape_debris() {
+                self.consume_braced_unicode_escape_debris_after_unknown();
+                self.current_specifier_recovered_braced_unicode_escape_debris = true;
+                break;
+            }
+
             self.parse_error_at_current_token(
                 tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
                 tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
@@ -2940,6 +2967,7 @@ impl ParserState {
     /// - `{ type something }` → type-only, name=something
     /// - `{ type something as alias }` → type-only, name=alias, propertyName=something
     pub(crate) fn parse_import_or_export_specifier(&mut self, kind: u16) -> NodeIndex {
+        self.current_specifier_recovered_braced_unicode_escape_debris = false;
         let start_pos = self.token_pos();
         let mut is_type_only = false;
         let mut property_name = NodeIndex::NONE;

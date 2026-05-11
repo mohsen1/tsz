@@ -792,6 +792,76 @@ fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     );
 }
 
+#[test]
+fn jsx_intrinsic_excess_attrs_report_for_intersection_alias_props() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace React {
+            interface ClassAttributes<T> {
+                ref?: T;
+            }
+            type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = ClassAttributes<T> & E;
+            interface HTMLAttributes<T> {
+                className?: string;
+                onClick?: (event: T) => void;
+            }
+            interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {
+                href?: string;
+            }
+        }
+        interface HTMLAnchorElement {}
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {
+                a: React.DetailedHTMLProps<React.AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>;
+                plain: { className?: string };
+            }
+        }
+
+        <a class="" />;
+        <a for="" class="" />;
+        <plain class="" />;
+        "#,
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected both intrinsic elements to report excess JSX attrs, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type '{ class: string; }' is not assignable to type 'DetailedHTMLProps<AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>'."
+        )),
+        "Expected intersection alias intrinsic target display, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type '{ for: string; class: string; }' is not assignable to type 'DetailedHTMLProps<AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>'."
+        )),
+        "Expected combined excess attrs to be reported once at the first bad attr, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("and 'class' does not exist in type '{ className?: string | undefined; }'")),
+        "Expected plain intrinsic excess attr diagnostic, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|diag| diag
+                .message_text
+                .contains("{ for: string; class: string; }"))
+            .count(),
+        1,
+        "Expected one synthesized excess diagnostic for multiple bad attrs, got: {diagnostics:?}"
+    );
+}
+
 /// Class components with multi-construct overloads (like React.Component with
 /// `constructor(props: Readonly<P>)` and `constructor(props: P, context?: any)`)
 /// must emit TS2769 when the overload props type evaluates to `unknown` due to
@@ -1053,6 +1123,9 @@ fn jsx_generic_sfc_defaulted_props_contextually_type_function_attributes() {
 fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
     let diagnostics = check_jsx_codes(
         r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
         type Defaultize<TProps, TDefaults> =
             & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
             & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
@@ -1101,6 +1174,9 @@ fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
 fn jsx_library_managed_attributes_preserves_function_default_props_in_jsx() {
     let diagnostics = check_jsx_codes(
         r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
         type Defaultize<TProps, TDefaults> =
             & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
             & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
@@ -1920,6 +1996,218 @@ fn jsx_generic_class_optional_ctor_constraint_reports_errors() {
     assert!(
         codes.contains(&2739) || codes.contains(&2322),
         "Expected TS2739 or TS2322 for constraint-only generic with optional ctor, got: {codes:?}",
+    );
+}
+
+#[test]
+fn jsx_library_managed_attributes_reports_excess_props_with_metadata() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
+        type Readonly<T> = { readonly [K in keyof T]: T[K] };
+        type Defaultize<TProps, TDefaults> =
+            & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
+            & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
+            & Partial<TDefaults>;
+        type Inferred<S> = {
+            [K in keyof S]: S[K] extends Checker<infer V, infer R>
+                ? Checker<V, R>[typeof marker]
+                : {}
+        };
+
+        declare const marker: unique symbol;
+        interface Checker<V, Required = false> {
+            isRequired: Checker<V, true>;
+            [marker]: Required extends true ? V : V | null | undefined;
+        }
+        declare namespace Kinds {
+            const number: Checker<number>;
+            const renderable: Checker<Renderable>;
+        }
+        type Renderable = string | number | ComponentBase<{}, {}>;
+
+        declare class ComponentBase<P = {}, S = {}> {
+            constructor(props: P);
+            props: P & Readonly<{ children: Renderable[] }>;
+            setState(s: Partial<S>): S;
+            render(): Renderable;
+        }
+        declare namespace JSX {
+            interface Element extends ComponentBase {}
+            interface IntrinsicElements {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { defaultProps: infer D; propTypes: infer T; }
+                    ? Defaultize<P & Inferred<T>, D>
+                    : C extends { defaultProps: infer D }
+                        ? Defaultize<P, D>
+                        : C extends { propTypes: infer T }
+                            ? P & Inferred<T>
+                            : P;
+        }
+
+        class WithBoth extends ComponentBase {
+            static propTypes = {
+                label: Kinds.renderable.isRequired,
+                count: Kinds.number,
+            };
+            static defaultProps = { count: 1 };
+        }
+        <WithBoth label="ok" extra="bad" />;
+
+        class WithDefaults extends ComponentBase {
+            static defaultProps = { count: 1 };
+        }
+        <WithDefaults count={1} extra="bad" />;
+        "#,
+    );
+    let excess_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 && diag.message_text.contains("'extra' does not exist"))
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert_eq!(
+        excess_messages.len(),
+        2,
+        "Expected excess-property TS2322 for both managed-props components, got: {diagnostics:?}"
+    );
+    assert!(
+        excess_messages
+            .iter()
+            .any(|message| message.contains("Defaultize<Inferred<")),
+        "Expected propTypes+defaultProps excess target to preserve Defaultize<Inferred<...>>, got: {excess_messages:?}"
+    );
+    assert!(
+        excess_messages
+            .iter()
+            .any(|message| message.contains("Defaultize<{}, { count: number; }>")),
+        "Expected defaultProps-only excess target to preserve Defaultize<{{}}, defaults>, got: {excess_messages:?}"
+    );
+}
+
+#[test]
+fn jsx_library_managed_attributes_preserves_inferred_union_alias_for_required_prop() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Partial<T> = { [K in keyof T]?: T[K] };
+        type Readonly<T> = { readonly [K in keyof T]: T[K] };
+        type Inferred<S> = {
+            [K in keyof S]: S[K] extends Checker<infer V, infer R>
+                ? Checker<V, R>[typeof marker]
+                : never
+        };
+        declare const marker: unique symbol;
+        interface Checker<V, Required = false> {
+            isRequired: Checker<V, true>;
+            [marker]: Required extends true ? V : V | null | undefined;
+        }
+        declare namespace Kinds {
+            const renderable: Checker<Renderable>;
+        }
+        type Renderable = string | number | ComponentBase<{}, {}>;
+        declare class ComponentBase<P = {}, S = {}> {
+            constructor(props: P);
+            props: P & Readonly<{ children: Renderable[] }>;
+            setState(s: Partial<S>): S;
+            render(): Renderable;
+        }
+        declare namespace JSX {
+            interface Element extends ComponentBase {}
+            interface IntrinsicElements {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T } ? P & Inferred<T> : P;
+        }
+        class RequiredRenderable extends ComponentBase {
+            static propTypes = {
+                item: Kinds.renderable.isRequired,
+            };
+        }
+        <RequiredRenderable item={null} />;
+        "#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for null assigned to required Renderable prop");
+    assert!(
+        diag.message_text.contains("type 'Renderable'"),
+        "Expected target display to preserve the inferred union alias, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("string | number | ComponentBase"),
+        "Required prop display should not expand the Renderable alias, got: {diag:?}"
+    );
+}
+
+#[test]
+fn jsx_library_managed_attributes_preserves_named_props_inside_defaultize() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
+        type Readonly<T> = { readonly [K in keyof T]: T[K] };
+        type Defaultize<TProps, TDefaults> =
+            & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
+            & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
+            & Partial<TDefaults>;
+        type Inferred<S> = {
+            [K in keyof S]: S[K] extends Checker<infer V, infer R>
+                ? Checker<V, R>[typeof marker]
+                : {}
+        };
+        declare const marker: unique symbol;
+        interface Checker<V, Required = false> {
+            isRequired: Checker<V, true>;
+            [marker]: Required extends true ? V : V | null | undefined;
+        }
+        declare namespace Kinds {
+            const renderable: Checker<Renderable>;
+        }
+        type Renderable = string | number | ComponentBase<{}, {}>;
+        interface OwnProps {
+            title: string;
+        }
+        declare class ComponentBase<P = {}, S = {}> {
+            constructor(props: P);
+            props: P & Readonly<{ children: Renderable[] }>;
+            setState(s: Partial<S>): S;
+            render(): Renderable;
+        }
+        declare namespace JSX {
+            interface Element extends ComponentBase {}
+            interface IntrinsicElements {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { defaultProps: infer D; propTypes: infer T; }
+                    ? Defaultize<P & Inferred<T>, D>
+                    : P;
+        }
+        class WithOwnProps extends ComponentBase<OwnProps> {
+            static propTypes = {
+                child: Kinds.renderable.isRequired,
+            };
+            static defaultProps = { title: "fallback" };
+        }
+        <WithOwnProps title="ok" />;
+        "#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for missing required propTypes-derived child");
+    assert!(
+        diag.message_text
+            .contains("Defaultize<OwnProps & Inferred<"),
+        "Expected Defaultize target to preserve OwnProps inside the intersection, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("Defaultize<{ title: string; } & Inferred<"),
+        "Defaultize target should not expand OwnProps structurally, got: {diag:?}"
     );
 }
 

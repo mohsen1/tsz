@@ -1468,6 +1468,44 @@ fn class_missing_body_at_dot_reports_stray_outer_closes_without_eof_close() {
 }
 
 #[test]
+fn class_missing_body_at_dot_does_not_suppress_later_eof_close_brace() {
+    let source = "namespace N {\n  class A .\n    public method1() { }\n  }\n}\nfunction f() {\n";
+    let fingerprints = diagnostic_fingerprints(source);
+
+    assert!(
+        fingerprints.iter().any(|(code, _, _, message)| {
+            *code == diagnostic_codes::EXPECTED && message == "'}' expected."
+        }),
+        "missing class body recovery should not hide a later function EOF close-brace error, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn nested_class_recovery_anchors_real_close_before_comments() {
+    let source = "class C {\n  m() {}\n  /* comment } */\n  class D {}\n}\n";
+    let member_close_pos = source.find("m() {}").expect("method") as u32 + "m() {".len() as u32;
+    let comment_close_pos =
+        source.find("comment }").expect("comment") as u32 + "comment ".len() as u32;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == member_close_pos
+        }),
+        "nested class recovery should anchor TS1128 to the previous real close brace, got {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == comment_close_pos
+        }),
+        "nested class recovery should ignore close-brace text inside comments, got {diags:?}"
+    );
+}
+
+#[test]
 fn unicode_escape_unknown_variable_name_reports_only_invalid_character() {
     let source = "function f() {\n  var  _\\uD4A5\\u7204\\uC316\\uE59F  = local;\n}\n";
     let fingerprints = diagnostic_fingerprints(source);

@@ -110,29 +110,6 @@ pub enum CheckerCreationReason {
 
 pub const CHECKER_CREATION_REASON_COUNT: usize = 17;
 
-/// Number of log-spaced buckets in the interner lock-wait histogram.
-/// See `LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS` for the bucket boundaries.
-pub const LOCK_WAIT_BUCKET_COUNT: usize = 8;
-
-/// Upper bounds of the lock-wait histogram buckets, in nanoseconds. An
-/// observation `ns` lands in the lowest-index bucket where
-/// `ns < bucket_upper_bound`. The boundaries are log-spaced over the
-/// 100ns…100ms range, with a final overflow bucket (`u64::MAX`) for
-/// outliers. Plan §4.T0.3 notes that interner contention at the cliff
-/// is the signal we need; a coarse log-bucketed histogram is enough
-/// to distinguish "tail-bound" from "broadly slow" without paying for
-/// per-shard or fine-grained quantile machinery.
-pub const LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS: [u64; LOCK_WAIT_BUCKET_COUNT] = [
-    100,         // < 100 ns
-    1_000,       // < 1 µs
-    10_000,      // < 10 µs
-    100_000,     // < 100 µs
-    1_000_000,   // < 1 ms
-    10_000_000,  // < 10 ms
-    100_000_000, // < 100 ms
-    u64::MAX,    // overflow
-];
-
 /// Human-readable names, one entry per `CheckerCreationReason` variant.
 /// MUST stay in sync with the enum.
 pub const REASON_NAMES: [&str; CHECKER_CREATION_REASON_COUNT] = [
@@ -346,10 +323,6 @@ pub struct PerfCounters {
     pub delegate_cross_arena_cache_hits_lib: AtomicU64,
     pub delegate_cross_arena_cache_hits_cross_file: AtomicU64,
     pub delegate_cross_arena_misses: AtomicU64,
-    /// T2.2 cross-file type-parameter memo: hits and misses on the
-    /// `extract_type_params_from_decl` slow-path memoization. A hit means
-    /// the slow-path's `with_parent_cache_attributed(..., TypeEnvironmentCore)`
-    /// was elided.
     pub cross_file_type_params_cache_hits: AtomicU64,
     pub cross_file_type_params_cache_misses: AtomicU64,
     pub delegate_max_recursion_depth: AtomicU64,
@@ -423,13 +396,6 @@ pub struct PerfCounters {
     pub interner_application_intern_calls: AtomicU64,
     pub interner_conditional_intern_calls: AtomicU64,
     pub interner_mapped_intern_calls: AtomicU64,
-    /// Lock-wait histogram. Each call to [`time_shard_write`] adds one
-    /// observation to the bucket whose upper bound first exceeds the
-    /// elapsed nanoseconds. Only populated when the
-    /// `perf-counters-timing` cargo feature is enabled — otherwise
-    /// `time_shard_write` compiles to a direct call of its closure
-    /// and the histogram stays at all-zero.
-    pub interner_lock_wait_histogram_ns: [AtomicU64; LOCK_WAIT_BUCKET_COUNT],
 
     // ─── compute_type_of_symbol ──────────────────────────────────────────
     pub compute_type_of_symbol_calls: AtomicU64,
@@ -495,7 +461,6 @@ impl PerfCounters {
             interner_application_intern_calls: AtomicU64::new(0),
             interner_conditional_intern_calls: AtomicU64::new(0),
             interner_mapped_intern_calls: AtomicU64::new(0),
-            interner_lock_wait_histogram_ns: [const { AtomicU64::new(0) }; LOCK_WAIT_BUCKET_COUNT],
             compute_type_of_symbol_calls: AtomicU64::new(0),
             compute_type_of_symbol_cache_hits: AtomicU64::new(0),
             resolver_lookup_calls: AtomicU64::new(0),
@@ -594,78 +559,6 @@ impl Drop for DelegateDepthGuard {
 /// that gating them is more expensive than just doing them.
 pub fn enabled() -> bool {
     counters().enabled.load(Ordering::Relaxed)
-}
-
-/// Record a single lock-wait observation into the histogram. Buckets are
-/// log-spaced over 100 ns…100 ms with a final overflow bucket; see
-/// [`LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS`]. Gated behind the
-/// `perf-counters-timing` feature: when the feature is off this function
-/// is not compiled at all (the `cfg` excludes the entire item), and the
-/// only call site lives inside the feature-on variant of
-/// [`time_shard_write`], which is replaced with a no-op stub that calls
-/// `f()` directly.
-#[cfg(feature = "perf-counters-timing")]
-#[inline]
-fn record_lock_wait_ns(ns: u64) {
-    if !enabled_fast() {
-        return;
-    }
-    let buckets = &counters().interner_lock_wait_histogram_ns;
-    for (i, &upper) in LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS.iter().enumerate() {
-        if ns < upper {
-            buckets[i].fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-    }
-}
-
-/// Time a contended write inside the type-interner. The closure runs in
-/// both modes; the cost of the timing infrastructure is the
-/// difference between the two `cfg`-gated implementations:
-///
-/// - **`perf-counters-timing` ON**: `Instant::now()` brackets the closure;
-///   the elapsed nanos land in the lock-wait histogram (gated on
-///   `enabled_fast()`, so timing-mode runs that don't enable counters
-///   still pay only the gate load + closure call).
-/// - **`perf-counters-timing` OFF (default)**: the wrapper compiles to a
-///   direct call of `f()`. Zero `Instant::now()` calls, zero atomic
-///   loads, zero histogram accesses. Default release builds do not pay
-///   the timing cost the plan §4.T0.3 explicitly forbids.
-///
-/// `_shard_idx` is reserved for a future per-shard breakdown; today
-/// every shard's observations land in the same global histogram.
-#[cfg(feature = "perf-counters-timing")]
-#[inline]
-pub fn time_shard_write<R>(_shard_idx: u32, f: impl FnOnce() -> R) -> R {
-    if !enabled_fast() {
-        return f();
-    }
-    // `web_time::Instant` is the WASM-safe drop-in for `std::time::Instant`;
-    // tsz-common is compiled for wasm32 and the arch guard bans the std
-    // type even on cfg-gated paths. See `scripts/arch/arch_guard.py`.
-    let start = web_time::Instant::now();
-    let result = f();
-    record_lock_wait_ns(start.elapsed().as_nanos() as u64);
-    result
-}
-
-#[cfg(not(feature = "perf-counters-timing"))]
-#[inline(always)]
-pub fn time_shard_write<R>(_shard_idx: u32, f: impl FnOnce() -> R) -> R {
-    f()
-}
-
-/// Whether the lock-wait histogram is *physically wired* (the
-/// `perf-counters-timing` cfg feature is on). Independent of
-/// `enabled_fast()`: a build with the feature on but the env var off
-/// still has the histogram fields and serializes them as zeroes; a
-/// build with the feature off keeps the histogram fields (so the
-/// `PerfCounters` layout is feature-stable) but compiles out the
-/// timing + recording logic and serializes the histogram as `null` via
-/// [`PerfCounterSnapshot`].
-#[inline(always)]
-pub const fn lock_wait_histogram_wired() -> bool {
-    cfg!(feature = "perf-counters-timing")
 }
 
 /// Record a `CheckerState::with_parent_cache` construction with attribution.
@@ -1114,9 +1007,9 @@ impl PerfCounters {
              total calls                {:>12}\n  \
              cache hits                 {:>12}\n\
              TypeInterner:\n  \
-             intern calls (total)       {:>12}\n  \
-             intern hits                {:>12}\n  \
-             intern misses              {:>12}\n  \
+             intern calls (total)             n/a  (not wired in this PR)\n  \
+             intern hits                      n/a  (not wired in this PR)\n  \
+             intern misses                    n/a  (not wired in this PR)\n  \
              string intern calls        {:>12}\n  \
              type-list intern calls     {:>12}\n  \
              object-shape intern calls  {:>12}\n  \
@@ -1126,9 +1019,9 @@ impl PerfCounters {
              mapped intern calls        {:>12}\n\
              Resolver:\n  \
              lookup calls               {:>12}\n  \
-             is_file calls              {:>12}\n  \
-             is_dir calls               {:>12}\n  \
-             read_dir calls             {:>12}\n  \
+             is_file calls                    n/a  (not wired in this PR)\n  \
+             is_dir calls                     n/a  (not wired in this PR)\n  \
+             read_dir calls                   n/a  (not wired in this PR)\n  \
              read_package_json calls    {:>12}\n  \
              candidate paths total      {:>12}\n",
             snap.delegate.calls,

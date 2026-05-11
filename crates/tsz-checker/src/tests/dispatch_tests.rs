@@ -398,6 +398,39 @@ type Cache<N extends string, QR> = {
 }
 
 #[test]
+fn ts2635_instantiation_expression_treats_failed_typeof_as_any_in_alias_display() {
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;
+const createCacheReducer = <N extends string, QR>(
+    queries: Cache<N, QR>["queries"],
+) => {
+    const queriesMap = {} as QR;
+    const initialState = { queries: queriesMap };
+    return (state = initialState) => state;
+};
+type Cache<N extends string, QR> = {
+    queries: {
+        [QK in keyof QR]: RT<typeof createCacheReducer<QR>>;
+    };
+};
+"#,
+    );
+
+    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
+    let message = &ts2635[0].message_text;
+    assert!(
+        message.contains("queries: { [QK in keyof QR]: any; }"),
+        "Expected failed typeof-instantiation aliases to reduce through any, got: {message:?}"
+    );
+    assert!(
+        !message.contains("[QK in keyof QR]: (state?: { queries: QR; })"),
+        "TS2635 display must not expand the failed typeof-instantiation inside the parameter map, got: {message:?}"
+    );
+}
+
+#[test]
 fn ts2344_valid_typeof_instantiation_does_not_emit_constraint_diagnostic() {
     // Sanity check: a *successful* typeof-instantiation expression must not
     // trigger TS2344 against a callable constraint. Use a concrete type arg

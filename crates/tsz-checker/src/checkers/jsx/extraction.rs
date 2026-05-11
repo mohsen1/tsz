@@ -1355,7 +1355,15 @@ impl<'a> CheckerState<'a> {
         };
         let props_alias_hint = self
             .jsx_class_component_props_alias_hint(raw_instance_type)
-            .or_else(|| self.jsx_class_component_props_alias_hint(instance_type));
+            .or_else(|| self.jsx_class_component_props_alias_hint(instance_type))
+            .or_else(|| {
+                first_param_type.filter(|&param_type| {
+                    crate::query_boundaries::common::type_has_displayable_name(
+                        self.ctx.types,
+                        param_type,
+                    )
+                })
+            });
 
         // Look up ElementAttributesProperty to know which instance property is props
         // Pass element_idx so TS2608 can be emitted if >1 property

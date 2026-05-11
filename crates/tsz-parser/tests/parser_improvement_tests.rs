@@ -96,6 +96,82 @@ fn parameter_array_binding_reserved_words_match_tsc_recovery_fingerprints() {
 }
 
 #[test]
+fn block_bodied_arrow_statement_recovers_invalid_conditional_tail_without_branch_cascades() {
+    let source = "(a?) => { return a; } ? (b)=>(c)=>81 : (c)=>(d)=>82;\n";
+    let question_pos = source.find(" ? (b)").expect("outer question") as u32 + 1;
+    let colon_pos = source.find(" : ").expect("outer colon") as u32 + 1;
+    let first_branch_arrow = source.find("(b)=>").expect("true branch arrow") as u32 + 3;
+    let second_branch_arrow = source.find("(c)=>81").expect("nested true branch arrow") as u32 + 3;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, colon_pos, "';' expected."),
+        ],
+        "invalid conditional tail after a block-bodied arrow expression should recover like tsc, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.start == first_branch_arrow || diag.start == second_branch_arrow),
+        "branch-local arrows are recovery debris and must not produce cascaded TS1005 diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn block_bodied_arrow_statement_recovers_invalid_tail_with_nested_conditional_branch() {
+    let source = "(a?) => { return a; } ? flag ? left : right : fallback;\n";
+    let question_pos = source.find(" ? flag").expect("outer question") as u32 + 1;
+    let nested_colon_pos = source.find(" : right").expect("nested colon") as u32 + 1;
+    let outer_colon_pos = source.find(" : fallback").expect("outer colon") as u32 + 1;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, outer_colon_pos, "';' expected."),
+        ],
+        "recovery should skip nested conditional branch contents and anchor at the outer `:`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.start != nested_colon_pos),
+        "nested branch colon should not be mistaken for the outer tail separator: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn parenthesized_arrow_condition_still_parses_conditional_branch_arrows() {
+    let source = "((a?) => { return a; }) ? (b?) => b : (c?) => c;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "parenthesized arrow expressions are valid conditional conditions and should not use statement-tail recovery, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
     // Should be more permissive to avoid false positives
@@ -3162,6 +3238,183 @@ fn es5_braced_astral_escape_remains_invalid_identifier_start() {
             .iter()
             .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == escape_pos),
         "ES5 braced astral identifier escape should report TS1127 at the escape, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_identifier_recovers_inside_variable_list() {
+    let source = r"export var _\u{102A7} = new Foo();";
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find('{').expect("open brace") as u32;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+        ],
+        "ES5 escaped astral identifier tail should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_identifier_recovers_across_same_line_trivia() {
+    let source = r"export var _ /*tail*/ \u{102A7} = new Foo();";
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find('{').expect("open brace") as u32;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+        ],
+        "same-line trivia before escaped astral debris should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_import_alias_recovers_as_specifier_tail() {
+    let source = r#"import { _x as _\u{102A7} } from "mod";"#;
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32 + 2;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let close_brace_pos = source.find("} from").expect("specifier close brace") as u32;
+    let from_pos = source.find("from").expect("from keyword") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                close_brace_pos,
+            ),
+            (
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                from_pos,
+            ),
+        ],
+        "import alias escaped astral tail should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_escape_after_export_alias_recovers_as_specifier_tail() {
+    let source = r#"export { _x as _\u{102A7} } from "mod";"#;
+    let escape_pos = source.find('\\').expect("unicode escape") as u32;
+    let open_brace_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32 + 2;
+    let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
+    let close_brace_pos = source.find("} from").expect("specifier close brace") as u32;
+    let from_pos = source.find("from").expect("from keyword") as u32;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::INVALID_CHARACTER, escape_pos),
+            (diagnostic_codes::EXPECTED, open_brace_pos),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                numeric_tail_pos,
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                close_brace_pos,
+            ),
+            (
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                from_pos,
+            ),
+        ],
+        "export alias escaped astral tail should recover like tsc, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reset_clears_braced_unicode_specifier_tail_recovery_state() {
+    let source = r#"import { _x as _\u{102A7} } from "mod";"#;
+    let mut parser = ParserState::new_with_language_version(
+        "test.ts".to_string(),
+        source.to_string(),
+        ScriptTarget::ES5,
+    );
+    let _root = parser.parse_source_file();
+    assert!(
+        parser.current_specifier_recovered_braced_unicode_escape_debris,
+        "sanity check: first parse should exercise braced unicode specifier recovery"
+    );
+
+    parser.reset(
+        "test.ts".to_string(),
+        r#"import { value } from "mod";"#.to_string(),
+    );
+
+    assert!(
+        !parser.current_specifier_recovered_braced_unicode_escape_debris,
+        "reset should clear stale specifier recovery state"
     );
 }
 

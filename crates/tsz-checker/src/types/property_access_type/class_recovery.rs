@@ -37,6 +37,9 @@ impl<'a> CheckerState<'a> {
         let Some(class_sym) = self.ctx.binder.get_node_symbol(class_idx) else {
             return false;
         };
+        if !self.ctx.class_instance_resolution_set.contains(&class_sym) {
+            return false;
+        }
         if self.ctx.checking_computed_property_name.is_none()
             && !self.property_access_is_in_class_property_initializer(expression)
         {

@@ -164,6 +164,9 @@ pub struct ParserState {
     /// Whether the most recently parsed named import list hit a structural
     /// recovery path rather than a semantic-only specifier error.
     pub(crate) last_named_imports_had_structural_error: bool,
+    /// Whether the current import/export specifier consumed scanner debris from
+    /// an invalid braced unicode escape in an identifier tail.
+    pub(crate) current_specifier_recovered_braced_unicode_escape_debris: bool,
     /// When recovery consumes a malformed arrow-body `}` directly, keep a small
     /// number of following module-closing braces in the token stream so outer
     /// list recovery can report them as stray braces.
@@ -203,8 +206,13 @@ pub struct ParserState {
     /// next non-block `}` should be treated as a stray statement-list token.
     pub(crate) non_block_close_brace_statement_errors_remaining: u8,
     /// Recovery has already consumed stray outer `}` tokens, so do not add a
-    /// final missing-`}` cascade at EOF for the abandoned container.
-    pub(crate) suppress_missing_close_brace_at_eof_once: bool,
+    /// final missing-`}` cascade at EOF for the abandoned statement-list
+    /// container. The stored depth scopes the suppression to that container,
+    /// so nested EOF close-brace expectations still report their own errors.
+    pub(crate) suppress_missing_close_brace_at_eof_statement_depth: Option<u32>,
+    /// Number of active block-like statement lists being parsed. Used only to
+    /// scope abandoned-container EOF close-brace suppression.
+    pub(crate) statement_list_depth: u32,
     /// Speculative async-arrow parsing consumed `=>` while recovering a malformed
     /// parameter list, so the async-arrow candidate must roll back.
     pub(crate) saw_arrow_parameter_recovery: bool,
@@ -254,14 +262,14 @@ impl ParserState {
     #[must_use]
     pub(crate) fn u32_from_usize(&self, value: usize) -> u32 {
         let _ = self;
-        u32::try_from(value).expect("parser offsets must fit in u32")
+        u32::try_from(value).expect("parser offsets must fit in u32::MAX")
     }
 
     #[inline]
     #[must_use]
     pub(crate) fn u16_from_node_flags(&self, value: u32) -> u16 {
         let _ = self;
-        u16::try_from(value).expect("parser node flags must fit in u16")
+        u16::try_from(value).expect("parser node flags must fit in u16::MAX")
     }
 
     /// Create a new Parser for the given source text.
@@ -299,6 +307,7 @@ impl ParserState {
             last_named_imports_consumed_closing_brace: false,
             last_named_imports_recovered_to_from: false,
             last_named_imports_had_structural_error: false,
+            current_specifier_recovered_braced_unicode_escape_debris: false,
             deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
             deferred_type_member_close_braces: 0,
@@ -310,7 +319,8 @@ impl ParserState {
             suppress_next_missing_close_paren_error_once: false,
             suppress_next_missing_class_close_brace_error_once: false,
             non_block_close_brace_statement_errors_remaining: 0,
-            suppress_missing_close_brace_at_eof_once: false,
+            suppress_missing_close_brace_at_eof_statement_depth: None,
+            statement_list_depth: 0,
             saw_arrow_parameter_recovery: false,
             pending_failed_async_arrow_colon_recovery: false,
             type_member_container_depth: 0,
@@ -343,6 +353,7 @@ impl ParserState {
         self.last_named_imports_consumed_closing_brace = false;
         self.last_named_imports_recovered_to_from = false;
         self.last_named_imports_had_structural_error = false;
+        self.current_specifier_recovered_braced_unicode_escape_debris = false;
         self.deferred_module_close_braces = 0;
         self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;
@@ -354,7 +365,8 @@ impl ParserState {
         self.suppress_next_missing_close_paren_error_once = false;
         self.suppress_next_missing_class_close_brace_error_once = false;
         self.non_block_close_brace_statement_errors_remaining = 0;
-        self.suppress_missing_close_brace_at_eof_once = false;
+        self.suppress_missing_close_brace_at_eof_statement_depth = None;
+        self.statement_list_depth = 0;
         self.saw_arrow_parameter_recovery = false;
         self.pending_failed_async_arrow_colon_recovery = false;
         self.type_member_container_depth = 0;
@@ -557,6 +569,49 @@ impl ParserState {
     pub(crate) fn next_token(&mut self) -> SyntaxKind {
         self.current_token = self.scanner.scan();
         self.current_token
+    }
+
+    /// Returns true when the current `Unknown` token is the leading backslash
+    /// of scanner debris for a braced unicode escape (`\u{...}`).
+    pub(crate) fn current_unknown_starts_braced_unicode_escape_debris(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::Unknown) || self.scanner.get_token_text_ref() != "\\" {
+            return false;
+        }
+
+        let unknown_end = self.token_end();
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+
+        self.next_token();
+        let saw_escape_u = self.token_pos() == unknown_end
+            && self.is_identifier_or_keyword()
+            && self.scanner.get_token_text_ref() == "u";
+        let u_end = self.token_end();
+
+        let result = if saw_escape_u {
+            self.next_token();
+            self.token_pos() == u_end && self.is_token(SyntaxKind::OpenBraceToken)
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
+    /// Consume the current invalid-character token and the adjacent `u` token
+    /// from braced unicode escape debris, leaving the parser at `{`.
+    pub(crate) fn consume_braced_unicode_escape_debris_after_unknown(&mut self) {
+        debug_assert!(self.current_unknown_starts_braced_unicode_escape_debris());
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+        );
+        self.next_token(); // consume `\`
+        if self.is_identifier_or_keyword() && self.scanner.get_token_text_ref() == "u" {
+            self.next_token(); // consume `u`, leaving `{`
+        }
     }
 
     /// Consume a keyword token, checking for TS1260 (keywords cannot contain escape characters).
@@ -992,12 +1047,14 @@ impl ParserState {
                 return false;
             }
         }
-        if kind == SyntaxKind::CloseBraceToken
-            && self.suppress_missing_close_brace_at_eof_once
-            && self.is_token(SyntaxKind::EndOfFileToken)
-        {
-            self.suppress_missing_close_brace_at_eof_once = false;
-            return false;
+        if kind == SyntaxKind::CloseBraceToken && self.is_token(SyntaxKind::EndOfFileToken) {
+            let suppress_for_this_statement_list = self
+                .suppress_missing_close_brace_at_eof_statement_depth
+                .is_some_and(|depth| depth == self.statement_list_depth);
+            if suppress_for_this_statement_list {
+                self.suppress_missing_close_brace_at_eof_statement_depth = None;
+                return false;
+            }
         }
 
         if self.is_token(kind) {

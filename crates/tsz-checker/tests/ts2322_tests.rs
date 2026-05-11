@@ -455,6 +455,82 @@ function fx1(x: Variants) {
     );
 }
 
+#[test]
+fn test_ts2322_numeric_literal_union_alias_source_display_preserved() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+type Single = 1;
+type Count = 1 | 2 | 3;
+type Offset = 0 | 1 | 2;
+
+function assign(single: Single, count: Count, offset: Offset) {
+    single = count;
+    single = offset;
+}
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'Count' is not assignable to type '1'.")),
+        "numeric union source aliases should survive TS2322 display, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'Offset' is not assignable to type '1'.")),
+        "numeric union source aliases should survive TS2322 display, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| { !message.contains("2 | 3 | 1") && !message.contains("0 | 2 | 1") }),
+        "numeric union canonicalization must not expand preserved source aliases: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_numeric_literal_union_alias_source_display_preserved_for_property_assignment() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+interface Slot {
+    value: 10;
+}
+type Choices = 10 | 20 | 30;
+
+function write(slot: Slot, choices: Choices) {
+    slot.value = choices;
+}
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'Choices' is not assignable to type '10'.")),
+        "property assignment should also preserve the numeric union source alias, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| !message.contains("20 | 30 | 10")),
+        "property assignment should not expand the preserved alias into reordered numeric members: {ts2322:#?}"
+    );
+}
+
 fn compile_with_options(
     source: &str,
     file_name: &str,

@@ -89,11 +89,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Whether this empty array literal is being used to write into a storage
-    /// slot whose declared type already pins the element shape.
+    /// Whether this empty array literal is in a context whose declared or
+    /// defaulted type already pins the element shape.
     ///
     /// In those contexts (variable initializers with annotations, assignment
-    /// RHS, return statement RHS for an annotated return type, etc.) tsc
+    /// RHS, defaulting expressions, return statement RHS for an annotated
+    /// return type, etc.) tsc
     /// adopts the contextual element type for `[]` rather than the
     /// evolving-array `never[]` base. Adopting the contextual element here
     /// avoids `never[]` poisoning subsequent flow narrowing of the storage
@@ -106,7 +107,7 @@ impl<'a> CheckerState<'a> {
     /// contextual type there is a still-being-inferred type parameter; using
     /// it would prevent the inference engine from binding the parameter to
     /// `never`.
-    fn empty_array_in_storage_assignment_context(&self, idx: NodeIndex) -> bool {
+    fn empty_array_can_adopt_contextual_element_type(&self, idx: NodeIndex) -> bool {
         let Some(parent_idx) = self.ctx.arena.parent_of(idx) else {
             return false;
         };
@@ -127,12 +128,17 @@ impl<'a> CheckerState<'a> {
                     // `||=` and `??=` widen because the RHS is the
                     // "default value" replacing a falsy/nullable LHS, so
                     // adopting the LHS element type matches user intent.
+                    // `params.path || []` also uses the left operand as
+                    // contextual type when no outer contextual type is
+                    // available, so this prevents a fallback `never[]` from
+                    // polluting `Omit<...>["path"] | never[]` unions.
                     binary.right == idx
                         && (binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
                             || binary.operator_token
                                 == tsz_scanner::SyntaxKind::BarBarEqualsToken as u16
                             || binary.operator_token
-                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16)
+                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16
+                            || binary.operator_token == tsz_scanner::SyntaxKind::BarBarToken as u16)
                 }),
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
                 .ctx
@@ -369,7 +375,7 @@ impl<'a> CheckerState<'a> {
                 // expando initializer or otherwise wants the evolving-array
                 // base — those cases set `empty_array_literal_prefers_never`.
                 if !self.empty_array_literal_prefers_never(idx)
-                    && self.empty_array_in_storage_assignment_context(idx)
+                    && self.empty_array_can_adopt_contextual_element_type(idx)
                     && let Some(elem) = crate::query_boundaries::common::array_element_type(
                         self.ctx.types,
                         resolved,

@@ -98,14 +98,16 @@ impl<'a> CheckerState<'a> {
         let resolver = crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types);
         let prefers_number_index =
             self.element_access_argument_prefers_number_index(argument, argument_node.kind);
-        let raw_index_value_type = if prefers_number_index {
-            resolver
-                .resolve_number_index(declared_type)
-                .or_else(|| resolver.resolve_string_index(declared_type))?
+        let (raw_index_value_type, selected_number_index) = if prefers_number_index {
+            if let Some(index_value_type) = resolver.resolve_number_index(declared_type) {
+                (index_value_type, true)
+            } else {
+                (resolver.resolve_string_index(declared_type)?, false)
+            }
+        } else if let Some(index_value_type) = resolver.resolve_string_index(declared_type) {
+            (index_value_type, false)
         } else {
-            resolver
-                .resolve_string_index(declared_type)
-                .or_else(|| resolver.resolve_number_index(declared_type))?
+            (resolver.resolve_number_index(declared_type)?, true)
         };
         if raw_index_value_type == TypeId::ANY {
             return None;
@@ -116,7 +118,8 @@ impl<'a> CheckerState<'a> {
             .types
             .get_display_alias(raw_index_value_type)
             .is_some()
-            || self.element_access_base_declares_index_value_alias(base_expr, prefers_number_index);
+            || self
+                .element_access_base_declares_index_value_alias(base_expr, selected_number_index);
         let index_value_type = self.evaluate_type_with_env(raw_index_value_type);
         if matches!(index_value_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
@@ -167,7 +170,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn element_access_base_declares_index_value_alias(
-        &self,
+        &mut self,
         base_expr: NodeIndex,
         wants_number_index: bool,
     ) -> bool {
@@ -208,17 +211,8 @@ impl<'a> CheckerState<'a> {
                 let Some(index_signature) = self.ctx.arena.get_index_signature(member_node) else {
                     return false;
                 };
-                if wants_number_index
-                    && !index_signature.parameters.nodes.iter().any(|param_idx| {
-                        self.ctx
-                            .arena
-                            .get(*param_idx)
-                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                            .and_then(|param| self.ctx.arena.get(param.type_annotation))
-                            .is_some_and(|param_type| {
-                                param_type.kind == SyntaxKind::NumberKeyword as u16
-                            })
-                    })
+                if !self
+                    .index_signature_matches_requested_index(index_signature, wants_number_index)
                 {
                     return false;
                 }
@@ -227,6 +221,32 @@ impl<'a> CheckerState<'a> {
                     .get(index_signature.type_annotation)
                     .is_some_and(|value_type| value_type.kind == syntax_kind_ext::TYPE_REFERENCE)
             })
+    }
+
+    fn index_signature_matches_requested_index(
+        &mut self,
+        index_signature: &tsz_parser::parser::node::IndexSignatureData,
+        wants_number_index: bool,
+    ) -> bool {
+        index_signature.parameters.nodes.iter().any(|param_idx| {
+            let Some(param_type_annotation) = self
+                .ctx
+                .arena
+                .get(*param_idx)
+                .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                .map(|param| param.type_annotation)
+            else {
+                return false;
+            };
+            if wants_number_index {
+                return self
+                    .ctx
+                    .arena
+                    .get(param_type_annotation)
+                    .is_some_and(|param_type| param_type.kind == SyntaxKind::NumberKeyword as u16);
+            }
+            self.get_type_from_type_node(param_type_annotation) == TypeId::STRING
+        })
     }
 
     pub(crate) fn format_structural_type_for_property_receiver_message(

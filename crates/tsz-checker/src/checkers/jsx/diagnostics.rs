@@ -27,9 +27,18 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsx_intrinsic_props_display_type(&mut self, props_type: TypeId) -> TypeId {
+        if let Some(expanded) = self.expand_jsx_display_type_alias_application(props_type) {
+            if crate::query_boundaries::common::type_has_displayable_name(
+                self.ctx.types,
+                props_type,
+            ) && crate::query_boundaries::common::is_intersection_type(self.ctx.types, expanded)
+            {
+                return props_type;
+            }
+            return expanded;
+        }
         let normalized = self.normalize_jsx_required_props_target(props_type);
         self.expand_jsx_display_type_alias_application(normalized)
-            .or_else(|| self.expand_jsx_display_type_alias_application(props_type))
             .unwrap_or(normalized)
     }
 

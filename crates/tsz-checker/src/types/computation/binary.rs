@@ -455,8 +455,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// tsc routes these to the assignability gateway:
     /// - bare type parameters (`T`)
-    /// - unions whose every member is a type parameter or a primitive
-    ///   (`T | U`, `string | number | T`)
+    /// - unions that contain a type parameter/primitive assignability member
+    ///   (`T | U`, `string | number | T`, `T | { a: string }`)
     /// - intersections whose every member is a type parameter or
     ///   primitive constraint (`T & U`, `T & (0 | 1 | 2)`)
     ///
@@ -473,9 +473,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if let Some(members) = common::union_members(self.ctx.types, ty) {
+            // A union containing a bare generic or primitive constituent is
+            // reported through assignability to `object`, even when other
+            // constituents are object-like. This is the shape produced by a
+            // false branch of `("a" in x && "b" in x)`: `T | (T & Record<...>)`.
             return members
                 .iter()
-                .all(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
+                .any(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
         }
         if let Some(members) = common::intersection_members(self.ctx.types, ty) {
             // Intersections with an empty-object-constraint member

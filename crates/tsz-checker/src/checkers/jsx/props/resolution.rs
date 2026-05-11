@@ -397,6 +397,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 props_type,
             );
+        let suppress_excess_for_generic_props = props_has_type_params
+            && (raw_props_has_type_params
+                || component_type.is_some()
+                || special_attr_component_type.is_some());
         let component_has_managed_props_metadata = component_type.is_some_and(|comp| {
             use crate::query_boundaries::common::PropertyAccessResult;
             matches!(
@@ -721,17 +725,19 @@ impl<'a> CheckerState<'a> {
                                 entry.1 = attr_value_type;
                             }
 
-                            if component_has_managed_props_metadata {
-                                needs_special_attr_object_assignability = true;
-                                continue;
-                            }
-
                             let props_target_has_object_shape =
                                 crate::query_boundaries::common::object_shape_for_type(
                                     self.ctx.types,
                                     props_type,
                                 )
                                 .is_some();
+                            if component_has_managed_props_metadata
+                                && !props_target_has_object_shape
+                            {
+                                needs_special_attr_object_assignability = true;
+                                continue;
+                            }
+
                             if !props_target_has_object_shape {
                                 needs_special_attr_object_assignability = true;
                                 continue;
@@ -757,7 +763,8 @@ impl<'a> CheckerState<'a> {
                             });
 
                             if !has_string_index // excess property check
-                            && !props_has_type_params
+                            && !has_excess_property_error
+                            && !suppress_excess_for_generic_props
                             && !component_has_type_params
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
