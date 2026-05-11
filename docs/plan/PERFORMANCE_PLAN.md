@@ -59,7 +59,7 @@ measurement once available.
 
 | Work item | Status | Next action |
 | --- | --- | --- |
-| Gate local `large-ts-repo` fallback | Done, verify | Audit for other implicit local fallbacks and record fixture provenance in JSON. |
+| Gate local `large-ts-repo` fallback | Done | Audit completed: `LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"` at `scripts/bench/bench-vs-tsgo.sh:105` is the only local fixture fallback, and it is already gated behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` (lines 112-114). No other implicit local-fixture paths found. Fixture provenance in diagnostics JSON is the T0.2 piece (#4970). |
 | Perf-only diagnostics JSON | Done (#4945, #4970) | T0.2 shipped. `PhaseTimings` sub-buckets (`config_discovery_ms`, `source_discovery_ms`, `module_resolution_ms`, `load_libs_ms`) split in #4970. |
 | Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015/#5060/#5061/#5064) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` is now wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061), still gated on the `perf-counters-timing` cargo feature per §3. `delegate_cross_arena_cache_hits_cross_file` is now incremented at all four typed-cache read sites after #5064 (previously only the symbol-resolution slice). Awaiting an attribution-mode bench run to gather contention data. |
 | Fresh phase split | Done (2026-05-10) | See `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`. monorepo-003..006 cliff: check ≈ 85 %, parse_bind ≈ 12.5 %. `large-ts-repo` deferred (OOM / stack overflow on current `main`); re-measure after first T2.2 PR. |
@@ -210,14 +210,16 @@ No Tier 2 architecture PR starts until Tier 0 exits.
 
 ### T0.1 Fixture Provenance
 
-Status: **done / verify** for the local fallback gate.
+Status: **done** for the local fallback gate.
 
-Required follow-ups:
-
-- Audit `scripts/bench/bench-vs-tsgo.sh` for other implicit local fixture
-  fallbacks.
-- Emit fixture provenance into diagnostics JSON: configured ref, actual
-  checkout SHA, path used, repo URL, and whether local override was enabled.
+- Audit complete: `LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"`
+  (`scripts/bench/bench-vs-tsgo.sh:105`) is the only local fixture
+  fallback, already gated behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1`
+  (lines 112-114). No other implicit local-fixture paths exist in the
+  bench script.
+- Fixture provenance is emitted into diagnostics JSON per #4970
+  (configured ref, actual checkout SHA, path, repo URL, local override
+  flag).
 - PR descriptions may use local fixtures only when they explicitly say
   `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` was used and do not present that as
   canonical benchmark evidence.
