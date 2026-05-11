@@ -2,6 +2,7 @@
 
 mod assignment_formatting;
 mod compound_assignment_context;
+mod generic_source_display;
 mod literal_widening_policy;
 mod object_literal_targets;
 mod static_schema;
@@ -189,6 +190,14 @@ impl<'a> CheckerState<'a> {
             && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
             && self.is_assignment_operator(bin.operator_token)
             && bin.left == expr_idx
+        {
+            return None;
+        }
+
+        if (parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            || parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT)
+            && let Some(for_in_of) = self.ctx.arena.get_for_in_of(parent_node)
+            && for_in_of.initializer == expr_idx
         {
             return None;
         }
@@ -521,7 +530,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn should_prefer_declared_source_annotation_display(
+    pub(in crate::error_reporter) fn should_prefer_declared_source_annotation_display(
         &mut self,
         expr_idx: NodeIndex,
         expr_type: TypeId,
@@ -543,12 +552,21 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if annotation.contains('&') && !annotation.starts_with("keyof ") {
+            if self.source_type_contains_number_literal_only_union(expr_type) {
+                return false;
+            }
             return !annotation.starts_with("null |") && !annotation.starts_with("undefined |");
         }
 
         let display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(expr_type));
         let formatted = self.format_type_for_assignability_message(display_type);
+        if formatted == "unknown"
+            && annotation.contains('<')
+            && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, expr_type)
+        {
+            return true;
+        }
         // Keep declaration-site function signatures whenever the fallback display
         // has diverged from the annotation. tsc prefers the declared callable
         // surface for source identifiers, especially when the computed display has
@@ -583,7 +601,15 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        annotation.contains('&') || !annotation.starts_with('{')
+        if annotation.contains('&') || !annotation.starts_with('{') {
+            return true;
+        }
+
+        if annotation.contains('[') && annotation.contains(']') && formatted.contains("__unique_") {
+            return true;
+        }
+
+        false
     }
 
     pub(in crate::error_reporter) fn format_declared_annotation_for_diagnostic(
@@ -1111,6 +1137,15 @@ impl<'a> CheckerState<'a> {
                 k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
                     self.ctx.arena.get_literal(name_node)?.text.clone()
                 }
+                k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                    if let Some(name) = self.get_member_name_display_text(name_idx) {
+                        name
+                    } else {
+                        let computed = self.ctx.arena.get_computed_property(name_node)?;
+                        let expr = self.node_text(computed.expression)?;
+                        format!("[{expr}]", expr = expr.trim())
+                    }
+                }
                 _ => return None,
             };
             let property_name = self
@@ -1482,7 +1517,7 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE) {
             return None;
         }
-        // Merged INTERFACE+VALUE (e.g. `Date`): `get_type_of_symbol` returns the interface side, not the value-position constructor.
+        // Merged INTERFACE+VALUE: `get_type_of_symbol` returns the interface side.
         if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
             && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
         {
@@ -1491,6 +1526,41 @@ impl<'a> CheckerState<'a> {
 
         let declared_type = self.get_type_of_symbol(sym_id);
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
+            && let Some(declared_enum_symbol) = self
+                .enum_symbol_from_enumish_type(declared_type)
+                .or_else(|| self.enum_symbol_from_enumish_type(expr_display_type))
+            && Some(declared_enum_symbol) == self.enum_symbol_from_enumish_type(target)
+            && !annotation_text.contains(" | ")
+            && !annotation_text.contains(" & ")
+            && !annotation_text.contains('<')
+        {
+            return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
+        }
+        let expr_enum_display_type = if self
+            .enum_symbol_from_enumish_type(expr_display_type)
+            .is_some()
+        {
+            expr_display_type
+        } else {
+            declared_type
+        };
+        let expr_enum_symbol = self.enum_symbol_from_enumish_type(expr_enum_display_type);
+        let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
+        if expr_enum_symbol.is_some()
+            && target_enum_symbol.is_some()
+            && expr_enum_symbol != target_enum_symbol
+        {
+            return Some(
+                self.format_assignability_type_for_message(expr_enum_display_type, target),
+            );
+        }
+        if self
+            .declared_diagnostic_source_annotation_text(expr_idx)
+            .is_some_and(|annotation_text| annotation_text.trim_start().starts_with("typeof "))
+        {
             return None;
         }
         let type_query_alias_def_id = self.declared_source_type_query_alias_def_id(expr_idx);
@@ -1592,17 +1662,8 @@ impl<'a> CheckerState<'a> {
             return Some(display);
         }
 
-        // When the declared type annotation contains literal property types
-        // (e.g. `var z: { length: 2; }`), the standard widening path produces
-        // `length: number` instead of `length: 2`. tsc preserves the declared
-        // literal in the error message.
-        // Only applies to declared annotation types (canonical props contain Literal types,
-        // no display_properties on `declared_type` itself). Fresh object literals (inferred
-        // types from expressions like `var o1 = { one: 1 }`) have display_properties on
-        // `declared_type` and must NOT be handled here — the rewrite function widens them.
-        // NOTE: check `declared_type` directly (not its evaluated form) because
-        // `evaluate_type_with_env` strips display_properties from fresh types, making their
-        // evaluated form look like a declared annotation type.
+        // Preserve literal property types from declared annotations while
+        // leaving fresh object-literal display_properties to the widening path.
         if prefer_declared_display
             && self
                 .ctx
@@ -1705,7 +1766,13 @@ impl<'a> CheckerState<'a> {
         };
         let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
 
-        (prefer_declared_display && declared_display != expr_display).then_some(declared_display)
+        (prefer_declared_display && declared_display != expr_display).then(|| {
+            self.canonicalize_assignment_numeric_literal_union_display(
+                declared_type,
+                target,
+                declared_display,
+            )
+        })
     }
 
     pub(in crate::error_reporter) fn declared_numeric_literal_union_alias_source_display(
@@ -1904,74 +1971,6 @@ impl<'a> CheckerState<'a> {
             .diagnostics
             .iter()
             .any(|diag| diag.code == code && diag.start >= start && diag.start < end)
-    }
-
-    /// When the source of an assignment is a generic intersection (e.g., `T & U`
-    /// where at least one member is a type parameter with a constraint), return
-    /// the reduced base-constraint form for display.  Returns `None` when no
-    /// reduction applies (source is not an intersection, or no members have
-    /// usable constraints, or the reduction yields the same type).
-    ///
-    /// This matches tsc's `getBaseConstraintOfType` behavior for intersection
-    /// types: the base constraint of `T & U` is `constraint(T) & constraint(U)`,
-    /// which the interner further simplifies via distribution.
-    pub(in crate::error_reporter) fn generic_intersection_source_display_substitution(
-        &self,
-        source: TypeId,
-    ) -> Option<TypeId> {
-        let members = crate::query_boundaries::common::intersection_members(
-            self.ctx.types.as_type_database(),
-            source,
-        )?;
-        // Only rewrite when at least one member is a bare type parameter with a
-        // constraint — otherwise there's no reduction and this would just hide
-        // the intersection unnecessarily.
-        let has_constrained_type_param = members.iter().any(|&m| {
-            crate::query_boundaries::common::type_param_info(self.ctx.types.as_type_database(), m)
-                .and_then(|info| info.constraint)
-                .is_some()
-        });
-        if !has_constrained_type_param {
-            return None;
-        }
-        let reduced = crate::query_boundaries::common::get_base_constraint_for_display(
-            self.ctx.types.as_type_database(),
-            source,
-        );
-        if reduced == source || self.is_literal_only_union_for_diagnostic_display(reduced) {
-            return None;
-        }
-        Some(reduced)
-    }
-
-    fn is_literal_only_union_for_diagnostic_display(&self, ty: TypeId) -> bool {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty)
-        else {
-            return false;
-        };
-        !members.is_empty()
-            && members.iter().all(|&member| {
-                crate::query_boundaries::common::literal_value(self.ctx.types, member).is_some()
-                    || member == TypeId::BOOLEAN_TRUE
-                    || member == TypeId::BOOLEAN_FALSE
-            })
-    }
-
-    /// Whether `type_id` is a union whose every member is function-like
-    /// (function shape or callable shape). Used by
-    /// `widen_function_like_display_type` to avoid collapsing such unions to
-    /// a single member, matching tsc's TS2322 source display for conditional
-    /// expressions assigned to function-typed annotations.
-    pub(in crate::error_reporter) fn union_is_all_function_like(&self, type_id: TypeId) -> bool {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        else {
-            return false;
-        };
-        members.iter().all(|&m| {
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, m).is_some()
-                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, m)
-                    .is_some()
-        })
     }
 }
 

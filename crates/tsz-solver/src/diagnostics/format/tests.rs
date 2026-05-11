@@ -481,6 +481,56 @@ fn format_union_named_construct_callable_without_parentheses() {
 }
 
 #[test]
+fn format_union_of_intersections_factors_common_type_parameter() {
+    let db = TypeInterner::new();
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let two = db.literal_number(2.0);
+    let one = db.literal_number(1.0);
+    let zero = db.literal_number(0.0);
+
+    let union = db.union(vec![
+        db.intersection2(t, zero),
+        db.intersection2(t, one),
+        db.intersection2(t, two),
+    ]);
+    let mut fmt = TypeFormatter::new(&db);
+
+    assert_eq!(fmt.format(union), "T & (0 | 2 | 1)");
+}
+
+#[test]
+fn format_union_of_intersections_does_not_factor_different_common_parts() {
+    let db = TypeInterner::new();
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let u = db.type_param(TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let union = db.union(vec![
+        db.intersection2(t, db.literal_number(0.0)),
+        db.intersection2(u, db.literal_number(1.0)),
+    ]);
+    let mut fmt = TypeFormatter::new(&db);
+    let rendered = fmt.format(union);
+
+    assert!(rendered.contains("(T & 0)"), "got: {rendered}");
+    assert!(rendered.contains("(U & 1)"), "got: {rendered}");
+}
+
+#[test]
 fn format_large_union_truncation() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

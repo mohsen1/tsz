@@ -628,6 +628,8 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .register_type_to_def(type_id, def_id);
+        let alias_lazy = self.ctx.types.factory().lazy(def_id);
+        self.ctx.types.store_display_alias(type_id, alias_lazy);
         def_id
     }
     /// Resolve a generic JSDoc type reference: `Name<Arg1, Arg2, ...>`.

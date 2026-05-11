@@ -627,6 +627,10 @@ impl<'a> TypeFormatter<'a> {
             ordered = reordered;
         }
 
+        if let Some(factored) = self.format_union_of_intersections_with_common_parts(&ordered) {
+            return factored;
+        }
+
         self.format_ordered_union_members(ordered)
     }
 
@@ -728,6 +732,83 @@ impl<'a> TypeFormatter<'a> {
         }
         let reordered: Vec<TypeId> = found.into_iter().collect::<Option<Vec<_>>>()?;
         Some(reordered)
+    }
+
+    fn format_union_of_intersections_with_common_parts(
+        &mut self,
+        members: &[TypeId],
+    ) -> Option<String> {
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut common: Option<Vec<TypeId>> = None;
+        let mut union_remainders = Vec::with_capacity(members.len());
+        for &member in members {
+            let intersection_members = match self.interner.lookup(member) {
+                Some(TypeData::Intersection(list_id)) => {
+                    self.interner.type_list(list_id).as_ref().to_vec()
+                }
+                _ => return None,
+            };
+            if intersection_members.len() < 2 {
+                return None;
+            }
+
+            let mut numeric_literal_parts = Vec::new();
+            let mut non_numeric_parts = Vec::new();
+            for part in intersection_members {
+                if matches!(
+                    self.interner.lookup(part),
+                    Some(TypeData::Literal(LiteralValue::Number(_)))
+                ) {
+                    numeric_literal_parts.push(part);
+                } else {
+                    non_numeric_parts.push(part);
+                }
+            }
+
+            if numeric_literal_parts.len() != 1 || non_numeric_parts.is_empty() {
+                return None;
+            }
+
+            match &common {
+                Some(common_parts) if common_parts == &non_numeric_parts => {}
+                Some(_) => return None,
+                None => common = Some(non_numeric_parts),
+            }
+            union_remainders.push(numeric_literal_parts[0]);
+        }
+
+        union_remainders.sort_by(|&left, &right| {
+            let left_number = match self.interner.lookup(left) {
+                Some(TypeData::Literal(LiteralValue::Number(number))) => number,
+                _ => return std::cmp::Ordering::Equal,
+            };
+            let right_number = match self.interner.lookup(right) {
+                Some(TypeData::Literal(LiteralValue::Number(number))) => number,
+                _ => return std::cmp::Ordering::Equal,
+            };
+            let left_zero = left_number.0.to_bits() == 0.0f64.to_bits();
+            let right_zero = right_number.0.to_bits() == 0.0f64.to_bits();
+            right_zero
+                .cmp(&left_zero)
+                .then_with(|| right_number.0.total_cmp(&left_number.0))
+        });
+
+        let common = common?;
+        let common_display = common
+            .iter()
+            .map(|&part| self.format_intersection_member(part))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        let remainder_union = self.interner.union(union_remainders);
+        let remainder_display = match self.interner.lookup(remainder_union) {
+            Some(TypeData::Union(list_id)) => self
+                .format_ordered_union_members(self.interner.type_list(list_id).as_ref().to_vec()),
+            _ => self.format(remainder_union).into_owned(),
+        };
+        Some(format!("{common_display} & ({remainder_display})"))
     }
 
     fn remove_redundant_intersection_displays(

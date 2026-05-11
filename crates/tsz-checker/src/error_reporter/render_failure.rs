@@ -747,7 +747,7 @@ impl<'a> CheckerState<'a> {
                                 },
                             )
                         } else {
-                            self.format_type_diagnostic(display_source)
+                            self.format_assignability_type_for_message(display_source, target)
                         },
                         if use_structural_source_display {
                             self.format_type_for_diagnostic_role(
@@ -758,7 +758,7 @@ impl<'a> CheckerState<'a> {
                                 },
                             )
                         } else {
-                            self.format_type_diagnostic(target)
+                            self.format_assignability_type_for_message(target, display_source)
                         },
                     )
                 } else {
