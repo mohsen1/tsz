@@ -854,6 +854,22 @@ pub fn record_compute_type_of_symbol_cache_hit() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record one `ModuleResolver::lookup()` call from
+/// `tsz-cli/src/driver/sources.rs` — the entry point for per-import
+/// module resolution. Sibling to the fs-probe `record_resolver_*`
+/// helpers but lives in a different file (sources.rs vs resolution.rs)
+/// because resolution caching happens at the lookup level, above the
+/// individual fs-probe wrappers.
+#[inline]
+pub fn record_resolver_lookup_call() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_lookup_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
