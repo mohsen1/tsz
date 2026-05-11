@@ -268,6 +268,31 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         print_diagnostics(&result, elapsed, args.extended_diagnostics);
     }
 
+    // Perf-tools-only: write the machine-readable diagnostics JSON report.
+    // The flag and call site both compile out of default release builds.
+    #[cfg(feature = "perf-tools")]
+    if let Some(path) = args.diagnostics_json.as_deref() {
+        let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+        if let Err(err) = tsz_cli::perf_json::write_compilation_report(path, &result, &raw_args) {
+            tracing::warn!(
+                "failed to write diagnostics JSON to {}: {err}",
+                path.display()
+            );
+        }
+    }
+
+    // Perf-tools-only: write the perf-counter JSON snapshot. The flag and
+    // the call both compile out of default release builds.
+    #[cfg(feature = "perf-tools")]
+    if let Some(path) = args.perf_counters_json.as_deref()
+        && let Err(err) = tsz_common::perf_counters::PerfCounters::write_json_to(path)
+    {
+        tracing::warn!(
+            "failed to write perf-counter JSON to {}: {err}",
+            path.display()
+        );
+    }
+
     if !result.diagnostics.is_empty() {
         let pretty = args
             .pretty
