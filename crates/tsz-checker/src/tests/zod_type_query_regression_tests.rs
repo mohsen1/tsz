@@ -360,3 +360,40 @@ const msg = issueData.message || "";
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn zod_issue_5030_defaults_path_with_logical_or_array_literal() {
+    let diags = check_source_diagnostics(
+        r#"
+type ParseParams = {
+    path: (string | number)[];
+    data: unknown;
+    errorMap: unknown;
+    async: boolean;
+};
+
+type Partial<T> = { [P in keyof T]?: T[P] };
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+type ParseParamsNoData = Omit<ParseParams, "data">;
+type ParsePathComponent = string | number;
+
+declare function pathFromArray(arr: ParsePathComponent[]): unknown;
+
+function test(params: Partial<ParseParamsNoData>) {
+    pathFromArray(params.path || []);
+}
+"#,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "Expected `params.path || []` to keep path as `(string | number)[]` in argument position, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
