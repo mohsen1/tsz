@@ -86,9 +86,10 @@ impl CheckerContext<'_> {
         // Attribution counter: increments only on the sequential session-
         // reuse path (T2.1.B). Zero on the default construction-per-file
         // path, so reuse vs construct is observable from a single counter.
-        // Gated by `enabled_fast()` inside `inc`, so disabled runs pay
-        // only one relaxed atomic load + branch.
-        tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().file_session_resets);
+        // The helper gates on `enabled_fast()` once before the
+        // `counters()` `OnceLock` deref, so disabled runs pay only one
+        // relaxed atomic load + branch.
+        tsz_common::perf_counters::record_file_session_reset();
 
         // Diagnostic buffers.
         self.diagnostics.clear();

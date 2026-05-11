@@ -937,6 +937,21 @@ pub fn record_checker_state_constructed() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record an invocation of `CheckerContext::reset_for_next_file()`. Bumps
+/// only on the sequential session-reuse path (T2.1.B). Sibling to the
+/// other `record_*` helpers — gate once, look up `counters()` once,
+/// increment. Compared against `checker_state_constructed` in
+/// attribution mode to detect reuse-vs-construct directly.
+#[inline]
+pub fn record_file_session_reset() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .file_session_resets
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
