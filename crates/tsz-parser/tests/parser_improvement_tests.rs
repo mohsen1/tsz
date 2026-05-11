@@ -96,6 +96,82 @@ fn parameter_array_binding_reserved_words_match_tsc_recovery_fingerprints() {
 }
 
 #[test]
+fn block_bodied_arrow_statement_recovers_invalid_conditional_tail_without_branch_cascades() {
+    let source = "(a?) => { return a; } ? (b)=>(c)=>81 : (c)=>(d)=>82;\n";
+    let question_pos = source.find(" ? (b)").expect("outer question") as u32 + 1;
+    let colon_pos = source.find(" : ").expect("outer colon") as u32 + 1;
+    let first_branch_arrow = source.find("(b)=>").expect("true branch arrow") as u32 + 3;
+    let second_branch_arrow = source.find("(c)=>81").expect("nested true branch arrow") as u32 + 3;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, colon_pos, "';' expected."),
+        ],
+        "invalid conditional tail after a block-bodied arrow expression should recover like tsc, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.start == first_branch_arrow || diag.start == second_branch_arrow),
+        "branch-local arrows are recovery debris and must not produce cascaded TS1005 diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn block_bodied_arrow_statement_recovers_invalid_tail_with_nested_conditional_branch() {
+    let source = "(a?) => { return a; } ? flag ? left : right : fallback;\n";
+    let question_pos = source.find(" ? flag").expect("outer question") as u32 + 1;
+    let nested_colon_pos = source.find(" : right").expect("nested colon") as u32 + 1;
+    let outer_colon_pos = source.find(" : fallback").expect("outer colon") as u32 + 1;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, outer_colon_pos, "';' expected."),
+        ],
+        "recovery should skip nested conditional branch contents and anchor at the outer `:`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.start != nested_colon_pos),
+        "nested branch colon should not be mistaken for the outer tail separator: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn parenthesized_arrow_condition_still_parses_conditional_branch_arrows() {
+    let source = "((a?) => { return a; }) ? (b?) => b : (c?) => c;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "parenthesized arrow expressions are valid conditional conditions and should not use statement-tail recovery, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
     // Should be more permissive to avoid false positives

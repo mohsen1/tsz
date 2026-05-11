@@ -2731,6 +2731,9 @@ impl ParserState {
                 self.suppress_next_jsx_head_missing_semicolon = false;
             } else if !has_numeric_follow_error && !arrow_or_func_block_followed_by_equals {
                 self.parse_error_for_missing_semicolon_after(expression);
+                if self.expression_statement_block_function_recovers_conditional_tail(expression) {
+                    self.recover_invalid_conditional_tail_after_expression_statement();
+                }
             }
             // For malformed JSX heads like `<X -attr={...} />`, tsc reports `';' expected`
             // at `=` and then continues from the `{...}` tail, which can surface
@@ -2760,5 +2763,131 @@ impl ParserState {
             end_pos,
             ExprStatementData { expression },
         )
+    }
+
+    fn expression_statement_block_function_recovers_conditional_tail(
+        &self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.is_token(SyntaxKind::QuestionToken) {
+            return false;
+        }
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if !node.is_function_expression_or_arrow() {
+            return false;
+        }
+        let Some(function) = self.arena.get_function(node) else {
+            return false;
+        };
+        self.arena
+            .get(function.body)
+            .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
+    }
+
+    fn recover_invalid_conditional_tail_after_expression_statement(&mut self) {
+        if !self.is_token(SyntaxKind::QuestionToken) {
+            return;
+        }
+
+        self.next_token(); // consume the stray `?`
+        if self.skip_invalid_conditional_branch_to_colon() && self.is_token(SyntaxKind::ColonToken)
+        {
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token(); // consume the stray `:`
+            self.skip_invalid_conditional_branch_to_statement_end();
+        }
+    }
+
+    fn skip_invalid_conditional_branch_to_colon(&mut self) -> bool {
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut nested_conditionals = 0u32;
+
+        while !matches!(
+            self.token(),
+            SyntaxKind::EndOfFileToken | SyntaxKind::SemicolonToken
+        ) {
+            match self.token() {
+                SyntaxKind::OpenParenToken => paren_depth += 1,
+                SyntaxKind::CloseParenToken => paren_depth = paren_depth.saturating_sub(1),
+                SyntaxKind::OpenBraceToken => brace_depth += 1,
+                SyntaxKind::CloseBraceToken => {
+                    if brace_depth == 0 {
+                        return false;
+                    }
+                    brace_depth -= 1;
+                }
+                SyntaxKind::OpenBracketToken => bracket_depth += 1,
+                SyntaxKind::CloseBracketToken => bracket_depth = bracket_depth.saturating_sub(1),
+                SyntaxKind::QuestionToken
+                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
+                {
+                    nested_conditionals += 1;
+                }
+                SyntaxKind::ColonToken
+                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
+                {
+                    if nested_conditionals == 0 {
+                        return true;
+                    }
+                    nested_conditionals -= 1;
+                }
+                _ => {}
+            }
+            self.next_token();
+        }
+
+        false
+    }
+
+    fn skip_invalid_conditional_branch_to_statement_end(&mut self) {
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut bracket_depth = 0u32;
+
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if paren_depth == 0
+                && brace_depth == 0
+                && bracket_depth == 0
+                && self.scanner.has_preceding_line_break()
+            {
+                break;
+            }
+
+            match self.token() {
+                SyntaxKind::SemicolonToken
+                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
+                {
+                    self.next_token();
+                    break;
+                }
+                SyntaxKind::OpenParenToken => paren_depth += 1,
+                SyntaxKind::CloseParenToken => {
+                    if paren_depth == 0 {
+                        break;
+                    }
+                    paren_depth -= 1;
+                }
+                SyntaxKind::OpenBraceToken => brace_depth += 1,
+                SyntaxKind::CloseBraceToken => {
+                    if brace_depth == 0 {
+                        break;
+                    }
+                    brace_depth -= 1;
+                }
+                SyntaxKind::OpenBracketToken => bracket_depth += 1,
+                SyntaxKind::CloseBracketToken => {
+                    if bracket_depth == 0 {
+                        break;
+                    }
+                    bracket_depth -= 1;
+                }
+                _ => {}
+            }
+            self.next_token();
+        }
     }
 }
