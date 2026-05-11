@@ -57,3 +57,33 @@ function fn<T extends { a: true }[]>(f: (...args: T) => void) {
         );
     }
 }
+
+/// A rest parameter whose type parameter belongs to the called signature is
+/// inferred from the supplied arguments. It should not be checked early as an
+/// aggregate tuple against the unconstrained type parameter.
+#[test]
+fn callable_local_generic_rest_spreads_still_use_inference() {
+    let source = r#"
+declare function open<T extends unknown[]>(...args: T): T;
+declare function narrowed<T extends (string | number | boolean)[]>(...args: T): T;
+
+function test<U extends string[], V extends [number, number]>(u: U, v: V) {
+  open(...u);
+  open(...u, ...v);
+  open(true, ...v);
+  narrowed(...u);
+  narrowed(...u, ...v);
+}
+"#;
+    let diags = check_source_diagnostics(source);
+
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Callable-local generic rest parameters should infer spread arguments without TS2345, got: {:?}",
+        ts2345
+            .iter()
+            .map(|d| (d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

@@ -712,6 +712,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let rest_args = &arg_types[rest_start..];
+        if rest_args
+            .iter()
+            .any(|&arg| self.generic_spread_argument_marker_inner(arg).is_some())
+        {
+            return None;
+        }
         let mut aggregate_offset = 0usize;
         let mut aggregate_expected = rest_type;
         let expansion = self.expand_tuple_rest(rest_type);
@@ -887,6 +893,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let name = elem.name?;
         (self.interner.resolve_atom(name) == SPREAD_ARGUMENT_MARKER_NAME).then_some(elem.type_id)
+    }
+
+    fn generic_spread_argument_marker_inner(&self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let elems = self.interner.tuple_list(elems_id);
+        let [elem] = &*elems else {
+            return None;
+        };
+        if !elem.rest || elem.name.is_some() {
+            return None;
+        }
+        matches!(
+            self.interner.lookup(elem.type_id),
+            Some(TypeData::TypeParameter(_))
+        )
+        .then_some(elem.type_id)
     }
 
     fn normalize_spread_actual_type(&mut self, type_id: TypeId) -> TypeId {
