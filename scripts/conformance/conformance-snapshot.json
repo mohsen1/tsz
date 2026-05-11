@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-05-11T10:26:39Z",
-  "git_sha": "068b0de06f5cfe8fd09a8b3f3063e09b439de132",
+  "timestamp": "2026-05-11T21:54:58Z",
+  "git_sha": "7203deaf820a834b4e78135d164b3a5257421613",
   "summary": {
     "total_tests": 12582,
     "passed": 12563,
@@ -23,18 +23,25 @@
       "pass_rate": 93.75
     },
     {
+      "area": "types/rest",
+      "total": 18,
+      "passed": 17,
+      "failed": 1,
+      "pass_rate": 94.44
+    },
+    {
+      "area": "types/literal",
+      "total": 44,
+      "passed": 42,
+      "failed": 2,
+      "pass_rate": 95.45
+    },
+    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 23,
       "failed": 1,
       "pass_rate": 95.83
-    },
-    {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 25,
-      "failed": 1,
-      "pass_rate": 96.15
     },
     {
       "area": "types/members",
@@ -51,18 +58,18 @@
       "pass_rate": 97.06
     },
     {
-      "area": "types/literal",
-      "total": 44,
-      "passed": 43,
-      "failed": 1,
-      "pass_rate": 97.73
-    },
-    {
       "area": "types/typeParameters",
       "total": 46,
       "passed": 45,
       "failed": 1,
       "pass_rate": 97.83
+    },
+    {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 262,
+      "failed": 2,
+      "pass_rate": 99.24
     },
     {
       "area": "salsa",
@@ -72,25 +79,11 @@
       "pass_rate": 99.48
     },
     {
-      "area": "jsx",
-      "total": 195,
-      "passed": 194,
-      "failed": 1,
-      "pass_rate": 99.49
-    },
-    {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 263,
-      "failed": 1,
-      "pass_rate": 99.62
-    },
-    {
       "area": "compiler",
       "total": 6520,
-      "passed": 6512,
-      "failed": 8,
-      "pass_rate": 99.88
+      "passed": 6513,
+      "failed": 7,
+      "pass_rate": 99.89
     },
     {
       "area": "ambient",
@@ -520,6 +513,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "jsx",
+      "total": 195,
+      "passed": 195,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "moduleResolution",
       "total": 42,
       "passed": 42,
@@ -646,6 +646,13 @@
       "pass_rate": 100.0
     },
     {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 26,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
       "area": "types/nonPrimitive",
       "total": 16,
       "passed": 16,
@@ -663,13 +670,6 @@
       "area": "types/primitives",
       "total": 35,
       "passed": 35,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
-      "area": "types/rest",
-      "total": 18,
-      "passed": 18,
       "failed": 0,
       "pass_rate": 100.0
     },
