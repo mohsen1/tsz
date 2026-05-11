@@ -1667,7 +1667,15 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|e| {
                 if e.optional && !e.rest {
-                    self.format_stripping_undefined(e.type_id)
+                    // Match tsc behavior: optional tuple elements display as
+                    // `(type | undefined)?` with the full type including undefined
+                    // wrapped in parentheses and the `?` after the closing paren.
+                    let formatted = self.format(e.type_id).into_owned();
+                    if self.type_contains_undefined(e.type_id) {
+                        format!("({formatted})?")
+                    } else {
+                        format!("({formatted} | undefined)?")
+                    }
                 } else {
                     self.format(e.type_id).into_owned()
                 }
@@ -1681,8 +1689,10 @@ impl<'a> TypeFormatter<'a> {
             .zip(disambiguated)
             .map(|(e, type_str)| {
                 let rest = if e.rest { "..." } else { "" };
-                // Rest elements are never printed with `?` in tsc
-                let optional = if e.optional && !e.rest { "?" } else { "" };
+                // Rest elements are never printed with `?` in tsc.
+                // For optional elements, the `?` is already embedded in the
+                // parenthesized type string above (e.g., `(string | undefined)?`).
+                let optional = "";
                 if let Some(name_atom) = e.name {
                     let name = self.atom(name_atom);
                     format!("{rest}{name}{optional}: {type_str}")
