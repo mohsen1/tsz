@@ -127,12 +127,17 @@ impl<'a> CheckerState<'a> {
                     // `||=` and `??=` widen because the RHS is the
                     // "default value" replacing a falsy/nullable LHS, so
                     // adopting the LHS element type matches user intent.
+                    // `params.path || []` also uses the left operand as
+                    // contextual type when no outer contextual type is
+                    // available, so this prevents a fallback `never[]` from
+                    // polluting `Omit<...>["path"] | never[]` unions.
                     binary.right == idx
                         && (binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
                             || binary.operator_token
                                 == tsz_scanner::SyntaxKind::BarBarEqualsToken as u16
                             || binary.operator_token
-                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16)
+                                == tsz_scanner::SyntaxKind::QuestionQuestionEqualsToken as u16
+                            || binary.operator_token == tsz_scanner::SyntaxKind::BarBarToken as u16)
                 }),
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
                 .ctx
