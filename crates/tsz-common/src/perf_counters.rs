@@ -741,6 +741,38 @@ pub fn record_cross_arena_alias_shortcut_outcome(outcome: CrossArenaAliasShortcu
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a cross-arena delegate invocation that has no cache fast path —
+/// i.e., every call is a miss. Increments both `delegate_cross_arena_calls`
+/// and `delegate_cross_arena_misses` with a single `counters()` lookup.
+///
+/// The hand-rolled call-site pattern this helper replaces was:
+///
+/// ```rust,ignore
+/// if tsz_common::perf_counters::enabled_fast() {
+///     tsz_common::perf_counters::inc(
+///         &tsz_common::perf_counters::counters().delegate_cross_arena_calls,
+///     );
+///     tsz_common::perf_counters::inc(
+///         &tsz_common::perf_counters::counters().delegate_cross_arena_misses,
+///     );
+/// }
+/// ```
+///
+/// — which pays two `counters()` `OnceLock` derefs per increment pair.
+/// This helper folds them into one. Callers that have a cache fast path
+/// (e.g. lib-delegation hit) should keep using `inc(&perf.delegate_cross_arena_calls)`
+/// directly and only call this when the miss is unconditional.
+#[inline]
+pub fn record_delegate_cross_arena_miss() {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.delegate_cross_arena_calls.fetch_add(1, Ordering::Relaxed);
+    c.delegate_cross_arena_misses
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
