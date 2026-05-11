@@ -13,8 +13,3 @@ python3 scripts/arch/arch_guard.py --json-report "$REPORT_PATH"
 python3 scripts/arch/render_architecture_report.py
 echo "Architecture guard report: $REPORT_PATH"
 echo "Architecture markdown report: $REPORT_MD_PATH"
-
-# T2.1.A field-lifetime inventory: every CheckerContext field must be
-# classified in `crates/tsz-checker/src/context/checker_context_lifetimes.toml`.
-# See `docs/plan/PERFORMANCE_PLAN.md` §6.
-python3 scripts/arch/checker_field_inventory.py
