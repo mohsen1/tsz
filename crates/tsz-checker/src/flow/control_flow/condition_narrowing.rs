@@ -10,6 +10,30 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
+    fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
+        let mut members = Vec::with_capacity(types.len());
+        let mut saw_reachable = false;
+
+        for ty in types {
+            if ty != TypeId::NEVER {
+                saw_reachable = true;
+            }
+            if !members.contains(&ty) {
+                members.push(ty);
+            }
+        }
+
+        if saw_reachable {
+            members.retain(|&ty| ty != TypeId::NEVER);
+        }
+
+        match members.len() {
+            0 => TypeId::NEVER,
+            1 => members[0],
+            _ => self.interner.union_preserve_members(members),
+        }
+    }
+
     pub(crate) fn narrow_by_switch_true_case_clause(
         &self,
         type_id: TypeId,
@@ -1601,10 +1625,7 @@ impl<'a> FlowAnalyzer<'a> {
                 antecedent_id,
                 visited_aliases,
             );
-            return Some(tsz_solver::utils::union_or_single(
-                self.interner,
-                vec![left_false, right_false],
-            ));
+            return Some(self.union_logical_condition_branches(vec![left_false, right_false]));
         }
 
         // For ||= and ??= in condition context: `if (x ||= y)` / `if (x ??= y)`
@@ -1662,10 +1683,7 @@ impl<'a> FlowAnalyzer<'a> {
                     antecedent_id,
                     visited_aliases,
                 );
-                return Some(tsz_solver::utils::union_or_single(
-                    self.interner,
-                    vec![left_true, right_true],
-                ));
+                return Some(self.union_logical_condition_branches(vec![left_true, right_true]));
             }
 
             let left_false = self.narrow_type_by_condition_inner(
@@ -1722,10 +1740,7 @@ impl<'a> FlowAnalyzer<'a> {
                     antecedent_id,
                     visited_aliases,
                 );
-                return Some(tsz_solver::utils::union_or_single(
-                    self.interner,
-                    vec![left_true, right_true],
-                ));
+                return Some(self.union_logical_condition_branches(vec![left_true, right_true]));
             }
 
             let left_false = self.narrow_type_by_condition_inner(

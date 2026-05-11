@@ -250,6 +250,10 @@ name = "control_flow_type_guard_tests"
 path = "tests/control_flow_type_guard_tests.rs"
 
 [[test]]
+name = "array_isarray_mutual_subtype_narrowing_tests"
+path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
+
+[[test]]
 name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 
