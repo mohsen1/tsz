@@ -213,23 +213,34 @@ how to pick, diagnose, fix with unit tests, and open a PR without bailing.
 
 ## Pre-commit Hook Details
 
-The pre-commit hook (`scripts/githooks/pre-commit`) runs these checks in order:
+The pre-commit hook (`scripts/githooks/pre-commit`) defaults to a fast local
+gate. It formats the tree, lints directly changed workspace crates, runs tests
+for directly changed workspace crates, and skips TypeScript submodule reset and
+the slower CI-parity gates unless explicitly requested.
 
-1. **Submodule reset** — resets TypeScript submodule to pinned SHA
-2. **Submodule block** — prevents committing TypeScript submodule changes
-3. **Crate detection** — identifies which crates are affected by changed files
-4. **Target cleanup** — removes stale build artifacts older than 7 days
-5. **Formatting** — `cargo fmt` with auto-fix and re-stage
-6. **Clippy** — `cargo clippy --fix` then verify with `-D warnings`
-7. **CI parity lint** — full workspace clippy matching CI configuration
-8. **WASM check** — `cargo check` with `wasm32-unknown-unknown` target
-9. **Architecture guard** — `check-checker-boundaries.sh`
-10. **Tests** — `cargo nextest run` for affected crates
+In fast mode it runs these checks in order:
+
+1. **Submodule block** — prevents committing TypeScript submodule changes
+2. **Optional submodule reset** — resets TypeScript only when `TSZ_PRECOMMIT_RESET_TYPESCRIPT=1`
+3. **Crate detection** — identifies directly changed and transitively affected crates
+4. **Formatting** — `cargo fmt` with auto-fix and re-stage
+5. **Clippy** — `cargo clippy --lib -D warnings` for directly changed crates
+6. **Architecture guard** — `check-checker-boundaries.sh` when checker or architecture files changed
+7. **Tests** — `cargo nextest run` for directly changed crates by default
 
 Environment variables to control behavior:
 - `TSZ_SKIP_HOOKS=1` — skip all checks
 - `TSZ_SKIP_BENCH=1` — skip microbenchmark check
-- `TSZ_SKIP_CLEAN=1` — skip target cleanup
-- `TSZ_SKIP_LINT_PARITY=1` — skip CI parity lint
-- `TSZ_SKIP_WASM_LINT=1` — skip wasm32 check
-- `TSZ_TEST_ALL=1` — force testing all crates
+- `TSZ_PRECOMMIT_FULL=1` — run strict legacy-style checks: cleanup, clippy fix, CI parity lint, wasm check, and transitive tests
+- `TSZ_PRECOMMIT_CLEAN=1` — run target cleanup in fast mode
+- `TSZ_PRECOMMIT_CLIPPY_FIX=1` — run `cargo clippy --fix` before clippy verification
+- `TSZ_PRECOMMIT_CI_PARITY=1` — run full CI parity lint in fast mode
+- `TSZ_PRECOMMIT_WASM=1` — run the wasm32 check in fast mode
+- `TSZ_PRECOMMIT_RESET_TYPESCRIPT=1` — reset/init the TypeScript submodule before checking
+- `TSZ_PRECOMMIT_TEST_SCOPE=affected` — test changed crates plus transitive dependents
+- `TSZ_PRECOMMIT_TEST_SCOPE=all` or `TSZ_TEST_ALL=1` — force testing all workspace crates
+- `TSZ_GIT_HOOK_RESET_TYPESCRIPT=1` — reset/init TypeScript from post-merge and post-rewrite hooks
+
+The TypeScript submodule is intentionally on-demand in git hooks. Conformance,
+emit, and fourslash runners initialize or validate `TypeScript/` when those
+suites need the corpus or baselines.

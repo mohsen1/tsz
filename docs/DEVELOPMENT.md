@@ -22,10 +22,9 @@ The setup script initializes the TypeScript submodule (pinned to a specific comm
 
 Pre-commit hooks run automatically on every commit. They enforce:
 - `cargo fmt` — format code (auto-fixes and re-stages)
-- `cargo clippy` — lint with `-D warnings` on affected crates and CI parity commands
-- `wasm32` compile check — ensures WASM compatibility
-- Architecture boundary checks — prevents cross-layer imports
-- Unit tests — runs tests for affected crates only
+- `cargo clippy` — lint with `-D warnings` on directly changed crates by default
+- Architecture boundary checks — prevents cross-layer imports when checker or architecture files changed
+- Unit tests — runs tests for directly changed crates by default
 
 To manually install hooks:
 ```bash
@@ -40,9 +39,14 @@ TSZ_SKIP_HOOKS=1 git commit -m "message"
 Environment variables for hook control:
 - `TSZ_SKIP_HOOKS=1` — skip all pre-commit checks
 - `TSZ_SKIP_BENCH=1` — skip microbenchmark regression check
-- `TSZ_SKIP_CLEAN=1` — skip target cleanup step
-- `TSZ_SKIP_LINT_PARITY=1` — skip CI parity lint commands
-- `TSZ_SKIP_WASM_LINT=1` — skip wasm32 lint gate
+- `TSZ_PRECOMMIT_FULL=1` — run the slower strict pre-commit path
+- `TSZ_PRECOMMIT_TEST_SCOPE=affected` — test changed crates plus transitive dependents
+- `TSZ_PRECOMMIT_TEST_SCOPE=all` or `TSZ_TEST_ALL=1` — test all workspace crates
+- `TSZ_PRECOMMIT_CI_PARITY=1` — run full CI parity lint commands
+- `TSZ_PRECOMMIT_WASM=1` — run the wasm32 lint gate
+- `TSZ_PRECOMMIT_CLEAN=1` — run target cleanup
+- `TSZ_PRECOMMIT_RESET_TYPESCRIPT=1` — reset/init the TypeScript submodule before checking
+- `TSZ_GIT_HOOK_RESET_TYPESCRIPT=1` — reset/init TypeScript after merge or rewrite hooks
 
 ## Project Structure
 
@@ -218,7 +222,7 @@ This monitors RSS and kills the process if it exceeds the limit (default: 75% of
 
 ## Tips
 
-- Pre-commit hooks check only affected crates — changing `tsz-scanner` triggers checks on scanner + all dependents
+- Pre-commit hooks check directly changed crates by default; use `TSZ_PRECOMMIT_TEST_SCOPE=affected` to include transitive dependents
 - Use `cargo check -p tsz-checker` for fast feedback during development
 - The TypeScript submodule is read-only — never commit changes to it
 - Conformance snapshot files are generated artifacts — update them with `conformance.sh snapshot`

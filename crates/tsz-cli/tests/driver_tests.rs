@@ -1512,6 +1512,90 @@ export default Object.assign(A, {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn declaration_emit_symlinked_import_type_package_ref_stays_portable() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("Folder/monorepo/package-a/index.d.ts"),
+        r#"export declare const styles: import("styled-components").InterpolationValue[];
+"#,
+    );
+    write_file(
+        &base.join("Folder/node_modules/styled-components/package.json"),
+        r#"{
+  "name": "styled-components",
+  "version": "3.3.3",
+  "typings": "typings/styled-components.d.ts"
+}"#,
+    );
+    write_file(
+        &base.join("Folder/node_modules/styled-components/typings/styled-components.d.ts"),
+        r#"export interface InterpolationValue {}
+"#,
+    );
+    write_file(
+        &base.join("Folder/monorepo/core/index.ts"),
+        r#"import { styles } from "package-a";
+
+export function getStyles() {
+    return styles;
+}
+"#,
+    );
+    std::fs::create_dir_all(base.join("Folder/monorepo/package-a/node_modules"))
+        .expect("package-a node_modules");
+    std::fs::create_dir_all(base.join("Folder/monorepo/core/node_modules"))
+        .expect("core node_modules");
+    std::os::unix::fs::symlink(
+        base.join("Folder/node_modules/styled-components"),
+        base.join("Folder/monorepo/package-a/node_modules/styled-components"),
+    )
+    .expect("styled-components symlink");
+    std::os::unix::fs::symlink(
+        base.join("Folder/monorepo/package-a"),
+        base.join("Folder/monorepo/core/node_modules/package-a"),
+    )
+    .expect("package-a symlink");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--ignoreConfig",
+        "--alwaysStrict",
+        "true",
+        "--esModuleInterop",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "Folder/monorepo/package-a/index.d.ts",
+        "Folder/node_modules/styled-components/typings/styled-components.d.ts",
+        "Folder/monorepo/core/index.ts",
+    ])
+    .expect("CLI args should parse");
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != 2883),
+        "symlinked package import type should be portable, got: {:#?}",
+        result.diagnostics
+    );
+    let dts =
+        fs::read_to_string(base.join("Folder/monorepo/core/index.d.ts")).expect("read core d.ts");
+    assert!(
+        dts.contains(
+            r#"export declare function getStyles(): import("styled-components").InterpolationValue[];"#
+        ),
+        "expected bare package import type in declaration emit, got: {dts}"
+    );
+}
+
 #[test]
 fn declaration_emit_commonjs_call_tuple_reports_nested_reference_ts2883() {
     let temp = TempDir::new().expect("temp dir");
@@ -17931,6 +18015,47 @@ fn cli_removed_compiler_option_flags_emit_ts5102() {
             "TS5102 message must mention {option_name:?}, got: {removed_diags:#?}"
         );
     }
+}
+
+#[test]
+fn cli_removed_compiler_option_flags_do_not_block_emit() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "export const ok: number = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--pretty",
+        "false",
+        "--typeRoots",
+        "./empty-types",
+        "--importsNotUsedAsValues",
+        "preserve",
+        "--preserveValueImports",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| d.code
+            == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION),
+        "expected TS5102 for removed CLI flags, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        base.join("main.js").exists(),
+        "direct CLI TS5102 should not stop JS emit"
+    );
+    assert!(
+        result
+            .emitted_files
+            .iter()
+            .any(|path| path.file_name().and_then(|name| name.to_str()) == Some("main.js")),
+        "main.js should be reported as emitted: {:#?}",
+        result.emitted_files
+    );
 }
 
 #[test]

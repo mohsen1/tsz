@@ -1016,6 +1016,9 @@ fn compile_inner(
     if cli_ignore_deprecations_silences_6_0(args) {
         config_diagnostics.retain(|d| !is_deprecation_diagnostic_code(d.code));
     }
+    let config_has_removed_option_diagnostic = config_diagnostics
+        .iter()
+        .any(|d| is_removed_option_diagnostic_code(d.code));
     config_diagnostics.extend(validate_cli_compiler_option_diagnostics(
         args,
         config.as_ref(),
@@ -1031,15 +1034,15 @@ fn compile_inner(
     }
 
     // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
-    // in tsc: they stop compilation and report only config-level errors.
-    // Match this behavior to avoid extra file-level diagnostics.
+    // in tsc when they come from configuration: they stop compilation and report
+    // only config-level errors. Direct CLI TS5102 is still reported, but we let
+    // emit continue so baseline emit invocations for removed-but-parsed flags
+    // can compare generated JS/DTS instead of failing before output exists.
     if config_diagnostics.iter().any(|d| {
         d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS
-            || d.code == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || d.code
-                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
-            || d.code
-                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
+                == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
+            || (config_has_removed_option_diagnostic && is_removed_option_diagnostic_code(d.code))
     }) {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
@@ -3852,6 +3855,12 @@ const fn is_deprecation_diagnostic_code(code: u32) -> bool {
         == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
         || code
             == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+}
+
+const fn is_removed_option_diagnostic_code(code: u32) -> bool {
+    code == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
+        || code
+            == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
 }
 
 const fn cli_target_value(target: Target) -> &'static str {
