@@ -2,7 +2,9 @@
 
 mod assignment_formatting;
 mod compound_assignment_context;
+mod contextual_index_display;
 mod generic_source_display;
+mod literal_surface;
 mod literal_widening_policy;
 mod object_literal_targets;
 mod static_schema;
@@ -1109,6 +1111,9 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
         });
         let mut parts = Vec::new();
+        let mut contextual_index_key_kind: Option<&'static str> = None;
+        let mut contextual_index_value_types = Vec::new();
+        let mut all_contextual_index_properties = !literal.elements.nodes.is_empty();
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
             let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
@@ -1148,6 +1153,13 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => return None,
             };
+            let computed_index_kind =
+                self.contextual_computed_index_key_kind(name_idx, target_shape.as_deref());
+            match (contextual_index_key_kind, computed_index_kind) {
+                (None, Some(kind)) => contextual_index_key_kind = Some(kind),
+                (Some(existing), Some(kind)) if existing == kind => {}
+                _ => all_contextual_index_properties = false,
+            }
             let property_name = self
                 .get_property_name(name_idx)
                 .map(|name| self.ctx.types.intern_string(&name));
@@ -1292,6 +1304,9 @@ impl<'a> CheckerState<'a> {
                 self.widen_function_like_display_type(value_display_type);
             let value_display =
                 self.format_type_for_assignability_message(widened_value_display_type);
+            if computed_index_kind.is_some() {
+                contextual_index_value_types.push(widened_value_display_type);
+            }
             parts.push(format!("{display_name}: {value_display}"));
         }
 
@@ -1299,45 +1314,15 @@ impl<'a> CheckerState<'a> {
             return Some("{}".to_string());
         }
 
+        if let Some(index_display) = self.contextual_index_signature_source_display(
+            all_contextual_index_properties,
+            contextual_index_key_kind,
+            contextual_index_value_types,
+        ) {
+            return Some(index_display);
+        }
+
         Some(format!("{{ {}; }}", parts.join("; ")))
-    }
-
-    pub(crate) fn target_preserves_literal_surface(&mut self, target: TypeId) -> bool {
-        let target = self.evaluate_type_for_assignability(target);
-
-        let has_literal_member = |shape: &tsz_solver::ObjectShape| {
-            shape
-                .properties
-                .iter()
-                .any(|prop| self.type_contains_string_literal(prop.type_id))
-        };
-
-        if let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
-            && has_literal_member(&shape)
-        {
-            return true;
-        }
-
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, target)
-        {
-            return members.into_iter().any(|member| {
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
-                    .is_some_and(|shape| has_literal_member(&shape))
-            });
-        }
-
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, target)
-        {
-            return members.into_iter().any(|member| {
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
-                    .is_some_and(|shape| has_literal_member(&shape))
-            });
-        }
-
-        false
     }
 
     pub(in crate::error_reporter) fn is_literal_sensitive_assignment_target(

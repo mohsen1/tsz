@@ -103,3 +103,69 @@ function gg2(x: { [key: symbol]: string }, y: { [sym]: number }) {
         "TS2322 should not hide computed keys behind synthetic `__unique_` names, got: {ts2322:?}",
     );
 }
+
+#[test]
+fn ts2322_normalizes_contextual_computed_string_keys_to_index_signature_display() {
+    let diagnostics = diagnostic_messages(
+        r#"
+interface I {
+    [s: string]: boolean;
+    [s: number]: boolean;
+}
+
+var o: I = {
+    [""+"foo"]: "",
+    [""+"bar"]: 0,
+    [""+"baz"]: ""
+};
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .expect("expected TS2322 for contextual computed string keys");
+
+    assert!(
+        ts2322
+            .1
+            .contains("Type '{ [x: string]: string | number; }'"),
+        "contextual computed string keys should render as a string index signature, got: {ts2322:?}",
+    );
+    assert!(
+        !ts2322.1.contains("[\"\"+\"foo\"]"),
+        "TS2322 should not expose expanded computed string key text, got: {ts2322:?}",
+    );
+}
+
+#[test]
+fn ts2322_normalizes_contextual_computed_number_keys_to_index_signature_display() {
+    let diagnostics = diagnostic_messages(
+        r#"
+interface I {
+    [s: number]: boolean;
+}
+
+var o: I = {
+    [+"foo"]: 0,
+    [+"bar"]: ""
+};
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .expect("expected TS2322 for contextual computed number keys");
+
+    assert!(
+        ts2322
+            .1
+            .contains("Type '{ [x: number]: string | number; }'"),
+        "contextual computed number keys should render as a number index signature, got: {ts2322:?}",
+    );
+    assert!(
+        !ts2322.1.contains("[+\"foo\"]"),
+        "TS2322 should not expose expanded computed number key text, got: {ts2322:?}",
+    );
+}
