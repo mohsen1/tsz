@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-11
 - **Branch**: `codex/cleanup-export-modifier-helper-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5645
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -20,5 +20,5 @@ declaration kinds.
 
 ## Verification
 
-- Planned: `cargo fmt --check`
-- Planned: `cargo nextest run -p tsz-emitter`
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-emitter` (2254 passed, 9 skipped)
