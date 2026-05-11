@@ -61,13 +61,13 @@ measurement once available.
 | --- | --- | --- |
 | Gate local `large-ts-repo` fallback | Done, verify | Audit for other implicit local fallbacks and record fixture provenance in JSON. |
 | Perf-only diagnostics JSON | Done (#4945, #4970) | T0.2 shipped. `PhaseTimings` sub-buckets (`config_discovery_ms`, `source_discovery_ms`, `module_resolution_ms`, `load_libs_ms`) split in #4970. |
-| Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015/#5060/#5061) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` is now wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061), still gated on the `perf-counters-timing` cargo feature per §3. Awaiting an attribution-mode bench run to gather contention data. |
+| Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` stays gated on the `perf-counters-timing` cargo feature per §3 — increment sites pending. |
 | Fresh phase split | Done (2026-05-10) | See `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`. monorepo-003..006 cliff: check ≈ 85 %, parse_bind ≈ 12.5 %. `large-ts-repo` deferred (OOM / stack overflow on current `main`); re-measure after first T2.2 PR. |
 | Resolver/source-discovery fast path | **Deferred** | Resolver lookups ~1/file, package.json reads ~1/package on cliff. Not on the hot path. Revisit only after T2.2 lands. |
 | Checker lifetime split | **Promoted** | T0.4 shows `with_parent_cache_constructed = 1.28 × files`. Start T2.1 lifetime split before any generic pooling. |
 | Typed cross-file query migration | **Promoted** | T0.4 shows `delegate.cache_hits_cross_file = 0` on cliff fixtures (~1100 calls, 0 % hit). Highest-priority Tier 2 work. Migrate one `CheckerCreationReason` per PR. |
 | Lib snapshot Phase 2/3 | Demoted | Revive only if lib construction/merge is measured as non-trivial. |
-| Interner redesign | **Blocked on contention measurement** | T0.4 shows interner volume is high (7 M string interns). `intern_calls`/`hits`/`misses` are wired (#4960/#4993/#5009); lock-wait increment sites are wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061). Next gate is an attribution-mode run with `--features tsz-common/perf-counters-timing` so the histogram fills. Only then decide whether T2.4 is needed. |
+| Interner redesign | **Blocked on contention measurement** | T0.4 shows interner volume is high (7 M string interns). `intern_calls`/`hits`/`misses` are now wired (#4960/#4993/#5009); next gate is `lock_wait_histogram_ns` data, which requires building with the `perf-counters-timing` cargo feature and increment-site wiring. Only then decide whether T2.4 is needed. |
 
 ---
 
