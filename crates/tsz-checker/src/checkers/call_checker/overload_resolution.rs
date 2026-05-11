@@ -1014,7 +1014,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.instantiate_overload_return_with_context(
                             &sig,
-                            instantiated_params.as_deref(),
+                            retry_params
+                                .as_deref()
+                                .or(instantiated_params.as_deref()),
                             sig_contextual_type,
                             final_return_type,
                         )
