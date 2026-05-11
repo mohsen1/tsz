@@ -902,11 +902,46 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // The rejection below is sound for covariant and invariant positions —
+        // narrowing the type parameter via a constraint cannot be erased by
+        // structural compare. It is NOT sound for contravariant positions:
+        // `Contra<X> <: Contra<U>` is valid when U extends X (the parameterized
+        // relationship is reversed), and the variance-aware fast path that runs
+        // immediately after this is responsible for accepting it. Skip the
+        // contravariant slots here so we don't pre-empt that decision.
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base);
+        let variances = def_id.and_then(|d| {
+            tsz_solver::TypeResolver::get_type_param_variance(&self.ctx, d).or_else(|| {
+                tsz_solver::QueryDatabase::get_type_param_variance(self.ctx.types, d).or_else(
+                    || {
+                        let computed =
+                            tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
+                                self.ctx.types.as_type_database(),
+                                &self.ctx,
+                                d,
+                            );
+                        if let Some(ref variances) = computed {
+                            self.ctx
+                                .types
+                                .insert_type_param_variance(d, variances.clone());
+                        }
+                        computed
+                    },
+                )
+            })
+        });
+
         source_args
             .iter()
             .copied()
             .zip(target_args.iter().copied())
-            .any(|(source_arg, target_arg)| {
+            .enumerate()
+            .any(|(i, (source_arg, target_arg))| {
+                if let Some(ref variances) = variances
+                    && variances.get(i).is_some_and(|v| v.is_contravariant())
+                {
+                    return false;
+                }
                 crate::query_boundaries::common::type_param_info(self.ctx.types, target_arg)
                     .and_then(|param| param.constraint)
                     .is_some_and(|constraint| {
