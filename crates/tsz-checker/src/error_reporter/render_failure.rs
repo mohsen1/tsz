@@ -1815,8 +1815,9 @@ impl<'a> CheckerState<'a> {
             // Application form via display_alias when the source is already
             // evaluated, or via the alias body when the source is still the
             // lazy alias reference. This still only unfolds aliases whose body
-            // is a generic Application; unions, intersections, object literals,
-            // and bare references keep the wrapper alias.
+            // is a generic type-alias Application; generic class defaults,
+            // unions, intersections, object literals, and bare references keep
+            // the wrapper alias.
             let app_origin = self
                 .ctx
                 .types
@@ -1829,6 +1830,16 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::application_id(self.ctx.types, app_origin)?;
             let app = self.ctx.types.type_application(app_id);
             if app.args.is_empty() {
+                return None;
+            }
+            let app_base_def_id =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
+            if !self
+                .ctx
+                .definition_store
+                .get(app_base_def_id)
+                .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+            {
                 return None;
             }
             return Some(app_origin);
