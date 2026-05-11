@@ -1566,7 +1566,68 @@ fn format_tuple_optional_element() {
         },
     ]);
     let result = fmt.format(tuple);
-    assert_eq!(result, "[string, number?]");
+    assert_eq!(result, "[string, (number | undefined)?]");
+}
+
+#[test]
+fn format_tuple_named_optional_element() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let tuple = db.tuple(vec![crate::types::TupleElement {
+        type_id: TypeId::STRING,
+        name: Some(db.intern_string("name")),
+        optional: true,
+        rest: false,
+    }]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[name?: string | undefined]");
+}
+
+#[test]
+fn format_tuple_optional_elements_preserve_surface_in_exact_optional_mode() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db).with_exact_optional_property_types(true);
+
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: Some(db.intern_string("count")),
+            optional: true,
+            rest: false,
+        },
+    ]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[string?, count?: number]");
+}
+
+#[test]
+fn format_tuple_optional_absorbing_types_keep_suffix_form() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: Some(db.intern_string("value")),
+            optional: true,
+            rest: false,
+        },
+    ]);
+    let result = fmt.format(tuple);
+    assert_eq!(result, "[any?, value?: unknown]");
 }
 
 #[test]
