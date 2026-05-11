@@ -1396,6 +1396,12 @@ pub struct PerfCounterSnapshot {
     pub overlay: OverlayCounters,
     pub resolver: ResolverCounters,
     pub interner: InternerCounters,
+    /// Per-`CheckerCreationReason` breakdown. Always
+    /// `CHECKER_CREATION_REASON_COUNT` long; rows for inactive reasons
+    /// carry all-zero counts (matching the text dump's filter behavior
+    /// would force consumers to handle missing rows; emitting the full
+    /// table keeps the JSON shape stable).
+    pub by_reason: Vec<ByReasonRow>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -1438,6 +1444,36 @@ pub struct CheckerCounters {
     pub file_session_resets: u64,
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
+}
+
+/// One row in the per-`CheckerCreationReason` JSON breakdown.
+///
+/// Counterpart of one row in `dump_by_reason`'s text dump, lifted into
+/// machine-readable form so the bench harness and offline analysis tools
+/// (`scripts/conformance/query-conformance.py`-style readers) can pick
+/// the next T2.2 migration target from data instead of `dump_string`
+/// parsing.
+///
+/// Reason names match `REASON_NAMES`. A future-added variant lands as a
+/// new row automatically — the array is always `CHECKER_CREATION_REASON_COUNT`
+/// long, so consumers don't need to special-case unknown reasons.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct ByReasonRow {
+    /// Stable, human-readable name (from `REASON_NAMES`).
+    pub reason: &'static str,
+    /// `with_parent_cache` constructions attributed to this reason.
+    /// Sums to `checker.with_parent_cache_constructed` across all rows.
+    pub with_parent_cache_constructed: u64,
+    /// `copy_symbol_file_targets` invocations attributed to this reason.
+    /// Sums to `overlay.copy_calls` across all rows.
+    pub overlay_copy_calls: u64,
+    /// Cumulative entries copied across all overlay copies for this reason.
+    /// Sums to `overlay.entries_total` across all rows.
+    pub overlay_copy_entries: u64,
+    /// High-water mark of the per-overlay-copy entries count for this reason.
+    /// NOT a sum — this is `max` across calls. Useful for spotting one
+    /// pathological copy hiding inside an otherwise reasonable bucket.
+    pub overlay_copy_max_entries: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -1563,6 +1599,15 @@ impl PerfCounters {
                     None
                 },
             },
+            by_reason: (0..CHECKER_CREATION_REASON_COUNT)
+                .map(|i| ByReasonRow {
+                    reason: REASON_NAMES[i],
+                    with_parent_cache_constructed: load(&c.with_parent_cache_by_reason[i]),
+                    overlay_copy_calls: load(&c.overlay_copy_calls_by_reason[i]),
+                    overlay_copy_entries: load(&c.overlay_copy_entries_by_reason[i]),
+                    overlay_copy_max_entries: load(&c.overlay_copy_max_entries_by_reason[i]),
+                })
+                .collect(),
         }
     }
 
@@ -1605,10 +1650,53 @@ mod json_tests {
             "overlay",
             "resolver",
             "interner",
+            "by_reason",
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
         assert_eq!(json["schema_version"], 1);
+    }
+
+    #[test]
+    fn by_reason_array_has_one_row_per_reason_with_stable_field_shape() {
+        // The T2.2 migration order (`PERFORMANCE_PLAN.md` §7) needs
+        // per-`CheckerCreationReason` data to pick the next target.
+        // `dump_string` exposes that breakdown as text; this snapshot
+        // field exposes it as JSON. Lock both invariants:
+        //   1. exactly `CHECKER_CREATION_REASON_COUNT` rows, in declaration order
+        //      (so consumers can index by `REASON_NAMES`).
+        //   2. each row has the documented field set; no rename, add, or
+        //      remove can slip in without flipping this test.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["by_reason"].as_array().expect("by_reason is array");
+        assert_eq!(
+            rows.len(),
+            CHECKER_CREATION_REASON_COUNT,
+            "by_reason length must match REASON_NAMES so consumers can index by reason"
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["reason"], REASON_NAMES[i],
+                "by_reason[{i}] is out of declaration order"
+            );
+            let obj = row.as_object().expect("row is object");
+            let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+            let expected: std::collections::BTreeSet<&str> = [
+                "reason",
+                "with_parent_cache_constructed",
+                "overlay_copy_calls",
+                "overlay_copy_entries",
+                "overlay_copy_max_entries",
+            ]
+            .into_iter()
+            .collect();
+            assert_eq!(
+                actual, expected,
+                "by_reason row {i} (`{}`) drifted from the field lock",
+                REASON_NAMES[i]
+            );
+        }
     }
 
     #[test]
