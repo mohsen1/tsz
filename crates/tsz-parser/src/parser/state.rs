@@ -164,6 +164,9 @@ pub struct ParserState {
     /// Whether the most recently parsed named import list hit a structural
     /// recovery path rather than a semantic-only specifier error.
     pub(crate) last_named_imports_had_structural_error: bool,
+    /// Whether the current import/export specifier consumed scanner debris from
+    /// an invalid braced unicode escape in an identifier tail.
+    pub(crate) current_specifier_recovered_braced_unicode_escape_debris: bool,
     /// When recovery consumes a malformed arrow-body `}` directly, keep a small
     /// number of following module-closing braces in the token stream so outer
     /// list recovery can report them as stray braces.
@@ -299,6 +302,7 @@ impl ParserState {
             last_named_imports_consumed_closing_brace: false,
             last_named_imports_recovered_to_from: false,
             last_named_imports_had_structural_error: false,
+            current_specifier_recovered_braced_unicode_escape_debris: false,
             deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
             deferred_type_member_close_braces: 0,
@@ -343,6 +347,7 @@ impl ParserState {
         self.last_named_imports_consumed_closing_brace = false;
         self.last_named_imports_recovered_to_from = false;
         self.last_named_imports_had_structural_error = false;
+        self.current_specifier_recovered_braced_unicode_escape_debris = false;
         self.deferred_module_close_braces = 0;
         self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;
@@ -557,6 +562,49 @@ impl ParserState {
     pub(crate) fn next_token(&mut self) -> SyntaxKind {
         self.current_token = self.scanner.scan();
         self.current_token
+    }
+
+    /// Returns true when the current `Unknown` token is the leading backslash
+    /// of scanner debris for a braced unicode escape (`\u{...}`).
+    pub(crate) fn current_unknown_starts_braced_unicode_escape_debris(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::Unknown) || self.scanner.get_token_text_ref() != "\\" {
+            return false;
+        }
+
+        let unknown_end = self.token_end();
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+
+        self.next_token();
+        let saw_escape_u = self.token_pos() == unknown_end
+            && self.is_identifier_or_keyword()
+            && self.scanner.get_token_text_ref() == "u";
+        let u_end = self.token_end();
+
+        let result = if saw_escape_u {
+            self.next_token();
+            self.token_pos() == u_end && self.is_token(SyntaxKind::OpenBraceToken)
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
+    /// Consume the current invalid-character token and the adjacent `u` token
+    /// from braced unicode escape debris, leaving the parser at `{`.
+    pub(crate) fn consume_braced_unicode_escape_debris_after_unknown(&mut self) {
+        debug_assert!(self.current_unknown_starts_braced_unicode_escape_debris());
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+        );
+        self.next_token(); // consume `\`
+        if self.is_identifier_or_keyword() && self.scanner.get_token_text_ref() == "u" {
+            self.next_token(); // consume `u`, leaving `{`
+        }
     }
 
     /// Consume a keyword token, checking for TS1260 (keywords cannot contain escape characters).

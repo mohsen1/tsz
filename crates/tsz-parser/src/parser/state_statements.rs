@@ -2334,6 +2334,15 @@ impl ParserState {
                 // the initializer start, instead of bubbling out as TS1005 ';'
                 // from parse_semicolon.
                 if self.is_token(SyntaxKind::Unknown) {
+                    if self.current_unknown_starts_braced_unicode_escape_debris() {
+                        self.consume_braced_unicode_escape_debris_after_unknown();
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        continue;
+                    }
+
                     let snapshot = self.scanner.save_state();
                     let current = self.current_token;
                     let unknown_text = self.scanner.get_token_text();
