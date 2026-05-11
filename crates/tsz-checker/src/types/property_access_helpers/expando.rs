@@ -390,17 +390,6 @@ impl<'a> CheckerState<'a> {
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
 
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().delegate_cross_arena_calls,
-            );
-            // No cache fast-path on this delegate; every entry is a "miss".
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().delegate_cross_arena_misses,
-            );
-        }
-        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
-
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             arena,
             binder,

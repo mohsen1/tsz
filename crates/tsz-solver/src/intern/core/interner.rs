@@ -373,14 +373,7 @@ where
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    // T2.4 instrumentation: wrap the write-lock acquisition
-                    // so contention on the slice-interner's `items` vec lands
-                    // in the lock-wait histogram alongside the per-shard
-                    // TypeData writes. With `perf-counters-timing` OFF this
-                    // wrapper compiles to a direct closure call.
-                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
-                        inner.items.write().expect("interner items lock poisoned")
-                    });
+                    let mut vec = inner.items.write().expect("interner items lock poisoned");
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&temp_arc));
                     }
@@ -470,12 +463,7 @@ where
             Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    // T2.4 instrumentation: see the matching wrapper in
-                    // `ConcurrentSliceInterner::intern`. Same rationale,
-                    // same zero-cost-when-feature-off contract.
-                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
-                        inner.items.write().expect("interner items lock poisoned")
-                    });
+                    let mut vec = inner.items.write().expect("interner items lock poisoned");
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&value_arc));
                     }
@@ -1162,25 +1150,14 @@ impl TypeInterner {
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
                 {
-                    // T2.4 instrumentation: time the shard's write-lock
-                    // acquisitions. With `perf-counters-timing` ON, each
-                    // observation lands in the lock-wait histogram. With it
-                    // OFF (default) the wrapper compiles to a direct call —
-                    // no `Instant::now()`, no atomic touch.
-                    let mut vec =
-                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
-                            inner
-                                .index_to_key
-                                .write()
-                                .expect("interner index_to_key lock poisoned")
-                        });
-                    let mut ord =
-                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
-                            inner
-                                .alloc_order
-                                .write()
-                                .expect("interner alloc_order lock poisoned")
-                        });
+                    let mut vec = inner
+                        .index_to_key
+                        .write()
+                        .expect("interner index_to_key lock poisoned");
+                    let mut ord = inner
+                        .alloc_order
+                        .write()
+                        .expect("interner alloc_order lock poisoned");
                     let target_len = local_index as usize + 1;
                     if vec.len() < target_len {
                         vec.resize(target_len, TypeData::Error);

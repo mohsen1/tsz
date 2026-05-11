@@ -36,8 +36,8 @@ below as the starting point.
 | Area | Current state | Planning consequence |
 | --- | --- | --- |
 | Large fixture fallback | `scripts/bench/bench-vs-tsgo.sh` already gates the local `~/code/large-ts-repo` fallback behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1`. | T0.1 is verify/audit work, not a fresh implementation task. |
-| Diagnostics timing | `PhaseTimings` exists in `crates/tsz-cli/src/driver/core.rs`, and machine-readable diagnostics JSON is wired (#4945 / #4970) with sub-bucket phase splits (`config_discovery_ms`, `source_discovery_ms`, `module_resolution_ms`, `load_libs_ms`). | T0.2 done. Treat T0.2 follow-ups as bench-harness consumption (jq, not text scraping). |
-| Perf counters | `TSZ_PERF_COUNTERS` exists in `crates/tsz-common/src/perf_counters.rs`. All `WiredCounters` flags read `true` on main: `delegate_cross_arena`, `checker_construction`, `overlay_copy`, `interner_intern_calls`/`per_kind`, `resolver_lookup`/`fs_probes`, `compute_type_of_symbol`. The `delegate.calls`/`misses`/`cache_hits_cross_file` trio is wired at all 11 cross-arena construction sites (#5061/#5064/#5069/#5072). `interner_lock_wait` is feature-gated (`perf-counters-timing`); histogram data fills only under that build. | Treat default-release builds as counter-inert; expose JSON output only via perf-specific binaries / `cfg(feature)` gates. Next material wiring requires an attribution-mode bench run, not new code. |
+| Diagnostics timing | `PhaseTimings` exists in `crates/tsz-cli/src/driver/core.rs`, but machine-readable diagnostics JSON is not wired. | T0.2 remains mandatory. |
+| Perf counters | `TSZ_PERF_COUNTERS` exists in `crates/tsz-common/src/perf_counters.rs`, with partial checker/delegate/overlay/resolver/interner coverage. | Move usable counter output behind perf-specific builds; do not expose or execute it in default release artifacts. |
 | Program sharing | `ProgramContext` (renamed from `ProjectEnv` in PR 5B) exists in `crates/tsz-checker/src/context/mod.rs` and is built by `crates/tsz-cli/src/driver/check.rs`. It shares arenas, binders, lib contexts, resolved-module maps, skeleton-derived indices, and the shared `DefinitionStore`. | Continue refining `ProgramContext` rather than building a parallel program-level abstraction. |
 | Overlay inheritance | `CheckerContext::copy_symbol_file_targets_to_attributed` uses parent snapshots rather than deep overlay copies. | Rewrite the old "overlay duplication" root cause as child-checker construction and local cache cold starts. |
 | Cross-file queries | `crates/tsz-checker/src/state/type_analysis/cross_file.rs` already has direct/typed fast paths and per-reason counters while retaining child-checker fallback. | Continue this migration one reason per PR. |
@@ -59,15 +59,15 @@ measurement once available.
 
 | Work item | Status | Next action |
 | --- | --- | --- |
-| Gate local `large-ts-repo` fallback | Done | Audit completed: `LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"` at `scripts/bench/bench-vs-tsgo.sh:105` is the only local fixture fallback, and it is already gated behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` (lines 112-114). No other implicit local-fixture paths found. Fixture provenance in diagnostics JSON is the T0.2 piece (#4970). |
-| Perf-only diagnostics JSON | Done (#4945, #4970) | T0.2 shipped. `PhaseTimings` sub-buckets (`config_discovery_ms`, `source_discovery_ms`, `module_resolution_ms`, `load_libs_ms`) split in #4970. |
-| Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015/#5060/#5061/#5064/#5069/#5072) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` is now wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061), still gated on the `perf-counters-timing` cargo feature per §3. The `delegate.calls` / `delegate.misses` / `delegate.cache_hits_cross_file` trio is now wired at all 11 cross-arena child-checker construction sites: 4 in `cross_file.rs` (#5061 + #5064), 7 in non-cross_file paths (ExpandoProperty / CallableTruthiness / CallHelpers / ImportType — #5069 added `calls`, #5072 added `misses`). At every construction site `calls = misses + cache_hits_cross_file + cache_hits_lib` holds, making attribution-mode bench output self-consistent. Awaiting an attribution-mode bench run to gather contention data. |
+| Gate local `large-ts-repo` fallback | Done, verify | Audit for other implicit local fallbacks and record fixture provenance in JSON. |
+| Perf-only diagnostics JSON | Done (#4945) | T0.2 shipped. Follow-up: split `config_discovery`/`source_discovery`/`module_resolution`/`load_libs` in `PhaseTimings` (currently 0.0 in output). |
+| Perf-only counter JSON | Done (#4948) | T0.3 shipped. Follow-up: wire `interner.intern_calls`/`hits`/`misses`/`lock_wait_histogram_ns` and `resolver.is_file/is_dir/read_dir`. |
 | Fresh phase split | Done (2026-05-10) | See `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`. monorepo-003..006 cliff: check ≈ 85 %, parse_bind ≈ 12.5 %. `large-ts-repo` deferred (OOM / stack overflow on current `main`); re-measure after first T2.2 PR. |
 | Resolver/source-discovery fast path | **Deferred** | Resolver lookups ~1/file, package.json reads ~1/package on cliff. Not on the hot path. Revisit only after T2.2 lands. |
 | Checker lifetime split | **Promoted** | T0.4 shows `with_parent_cache_constructed = 1.28 × files`. Start T2.1 lifetime split before any generic pooling. |
-| Typed cross-file query migration | **Promoted** | T0.4 shows `delegate.cache_hits_cross_file = 0` on cliff fixtures (~1100 calls, 0 % hit). Caveat: that snapshot was taken before #5064, when the cache-hit counter was wired on only 1 of 4 cache-read sites — re-measure after the next attribution run before treating the 0 % figure as load-bearing for prioritisation. Highest-priority Tier 2 work regardless; migrate one `CheckerCreationReason` per PR. |
+| Typed cross-file query migration | **Promoted** | T0.4 shows `delegate.cache_hits_cross_file = 0` on cliff fixtures (~1100 calls, 0 % hit). Highest-priority Tier 2 work. Migrate one `CheckerCreationReason` per PR. |
 | Lib snapshot Phase 2/3 | Demoted | Revive only if lib construction/merge is measured as non-trivial. |
-| Interner redesign | **Blocked on contention measurement** | T0.4 shows interner volume is high (7 M string interns). `intern_calls`/`hits`/`misses` are wired (#4960/#4993/#5009); lock-wait increment sites are wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061). Next gate is an attribution-mode run with `--features tsz-common/perf-counters-timing` so the histogram fills. Only then decide whether T2.4 is needed. |
+| Interner redesign | **Blocked on instrumentation** | T0.4 shows interner volume is high (7 M string interns), but contention counters are unwired (`null`). Wire `intern_calls`/`hits`/`misses`/`lock_wait_histogram_ns` first; only then decide whether T2.4 is needed. |
 
 ---
 
@@ -210,16 +210,14 @@ No Tier 2 architecture PR starts until Tier 0 exits.
 
 ### T0.1 Fixture Provenance
 
-Status: **done** for the local fallback gate.
+Status: **done / verify** for the local fallback gate.
 
-- Audit complete: `LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"`
-  (`scripts/bench/bench-vs-tsgo.sh:105`) is the only local fixture
-  fallback, already gated behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1`
-  (lines 112-114). No other implicit local-fixture paths exist in the
-  bench script.
-- Fixture provenance is emitted into diagnostics JSON per #4970
-  (configured ref, actual checkout SHA, path, repo URL, local override
-  flag).
+Required follow-ups:
+
+- Audit `scripts/bench/bench-vs-tsgo.sh` for other implicit local fixture
+  fallbacks.
+- Emit fixture provenance into diagnostics JSON: configured ref, actual
+  checkout SHA, path used, repo URL, and whether local override was enabled.
 - PR descriptions may use local fixtures only when they explicitly say
   `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` was used and do not present that as
   canonical benchmark evidence.

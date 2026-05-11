@@ -1,34 +1,20 @@
-//! Helpers for the canonical cross-file query buckets.
+//! Helpers for the canonical `CROSS_FILE_QUERY_SYMBOL_TYPE` bucket.
 //!
 //! Centralises the gate + bucket lookup + sentinel-filtering pattern that
 //! showed up in five reader call sites and four writer call sites after
 //! PRs #1922, #1926, #1932, #1934, #1937, #1939, #1943, #1949. Each
 //! site re-derived the same key shape and reject rules; this module
 //! owns them once.
-//!
-//! Bucket discriminants route through the typed
-//! [`CrossFileQueryKind`](crate::state_type_analysis::cross_file::CrossFileQueryKind)
-//! enum. The storage layer keys cache entries by the enum's `as_storage_kind()`
-//! `u8` value, but no call site outside the storage boundary should handle
-//! bare `u8` discriminants. The helpers below are the primary typed entry
-//! points; a small number of call sites (such as `resolve_lazy` in
-//! `context/resolver.rs`) intentionally inline `get_resolved_cross_file_query`
-//! to preserve different sentinel-filtering semantics — `resolve_lazy`
-//! forwards `TypeId::UNKNOWN` so callers can distinguish "lazy reference
-//! resolved but symbol type is genuinely unknown" from "lazy reference not
-//! resolved" (`None`), while these helpers collapse `UNKNOWN` to `None` for
-//! the (more common) "treat as cache miss" semantics.
 
 use tsz_binder::SymbolId;
 
 use crate::query_boundaries::common::type_id_is_known_to_db;
-use crate::state_type_analysis::cross_file::CrossFileQueryKind;
 
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
     /// Look up a cached cross-file symbol-type via the canonical
-    /// `CrossFileQueryKind::SymbolType` bucket.
+    /// `CROSS_FILE_QUERY_SYMBOL_TYPE` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
@@ -44,7 +30,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -63,7 +49,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file symbol-type result in the canonical
-    /// `CrossFileQueryKind::SymbolType` bucket.
+    /// `CROSS_FILE_QUERY_SYMBOL_TYPE` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -88,7 +74,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -99,7 +85,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file interface-type via the canonical
-    /// `CrossFileQueryKind::InterfaceType` bucket.
+    /// `CROSS_FILE_QUERY_INTERFACE_TYPE` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off,
@@ -120,7 +106,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, _params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -139,7 +125,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file interface-type result in the canonical
-    /// `CrossFileQueryKind::InterfaceType` bucket.
+    /// `CROSS_FILE_QUERY_INTERFACE_TYPE` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -164,7 +150,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -175,9 +161,9 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file interface-member simple type via the
-    /// canonical `CrossFileQueryKind::InterfaceMemberSimpleType` bucket.
+    /// canonical `CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE` bucket.
     ///
-    /// Unlike the `SymbolType` / `InterfaceType` buckets (keyed by `sym_id`),
+    /// Unlike the `SYMBOL_TYPE` / `INTERFACE_TYPE` buckets (keyed by `sym_id`),
     /// this bucket is keyed by `(interface_idx, member_idx)` so a single
     /// interface's members each live under their own entry.
     ///
@@ -196,7 +182,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, _params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
             file_idx,
             interface_idx.0,
             member_idx.0,
@@ -215,7 +201,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file interface-member simple type result in the
-    /// canonical `CrossFileQueryKind::InterfaceMemberSimpleType` bucket.
+    /// canonical `CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -242,7 +228,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
             file_idx,
             interface_idx.0,
             member_idx.0,
@@ -253,7 +239,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file class-instance-type via the canonical
-    /// `CrossFileQueryKind::ClassInstanceType` bucket.
+    /// `CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`), or
@@ -277,7 +263,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
             file_idx,
             sym_id.0,
             0,
@@ -294,7 +280,6 @@ impl<'a> CheckerContext<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use super::CrossFileQueryKind;
     use crate::context::{CheckerContext, CheckerOptions};
     use tsz_binder::{BinderState, SymbolId};
     use tsz_parser::parser::{NodeArena, NodeIndex};
@@ -333,7 +318,7 @@ mod tests {
         ));
 
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
             7,
             11,
             0,
@@ -342,7 +327,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_TYPE,
             7,
             12,
             0,
@@ -351,7 +336,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
             7,
             21,
             22,
@@ -360,7 +345,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+            crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
             7,
             13,
             0,

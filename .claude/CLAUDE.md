@@ -172,25 +172,6 @@ For each change ask:
 - Filtered runs: `cargo nextest run -E 'test(pattern)'` or `cargo nextest run -- pattern`
 - Single crate: `cargo nextest run -p tsz_checker`
 
-## 19.6) Lint Hygiene For Doc Comments
-
-The workspace lints turn `clippy::doc_markdown` and `clippy::print_stderr`
-into hard errors. Both bite often enough to keep in mind upfront:
-
-- **Backtick CamelCase identifiers, file names, and dotted paths in doc
-  comments.** Bare `PerformanceDoc.md`, `MyType`, or `getrusage(RUSAGE_SELF)`
-  in `///` comments fails `clippy::doc_markdown`. Wrap the identifier in
-  backticks: `` `PerformanceDoc.md` ``. Inline code spans inside prose count
-  too — `\`docs/PERFORMANCE_PLAN.md\`` over plain `docs/PERFORMANCE_PLAN.md`.
-- **No `eprintln!` / `print!` to stderr.** `clippy::print_stderr` is denied.
-  Use `tracing::warn!` / `tracing::error!` / a structured logger. Tests can
-  use `eprintln!` only behind `#[cfg(test)]` (still preferred to avoid).
-- **No `dbg!` / `println!` to stdout** outside a deliberate user-facing CLI
-  surface — `clippy::print_stdout` is allowed today but `clippy::dbg_macro`
-  is denied; if you add a temporary `dbg!`, remove it before committing.
-- Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  locally before pushing. The pre-commit hook runs this; CI runs it too.
-
 ## 20) Skills (Operational)
 Available skills and triggers:
 - `architecture-guardrails`: detect forbidden architecture patterns.

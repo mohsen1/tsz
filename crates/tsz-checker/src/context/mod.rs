@@ -22,8 +22,6 @@ pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 mod constructors;
 mod core;
 mod cross_file_query;
-pub mod lifetime_shells;
-pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
 mod import_conflicts;
 mod parse_health;
