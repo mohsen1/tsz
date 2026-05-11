@@ -977,11 +977,17 @@ impl PerfCounters {
     /// mistake "not measured" for "didn't happen". A small `wired: false`
     /// table at the bottom of the dump lists which buckets are pending.
     pub fn dump_string() -> String {
-        let c = counters();
         if !enabled_fast() {
             return String::new();
         }
-        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        // Per `PERFORMANCE_PLAN.md` §3: "Text dumping and JSON dumping
+        // should format the same snapshot so they cannot drift." Take
+        // one snapshot here and format from the resulting value object
+        // — same atomic-read pass `write_json_to` uses for the JSON
+        // surface. A new counter added to `PerfCounterSnapshot` automatically
+        // becomes available to both surfaces; adding a counter only to the
+        // dump (or only to the JSON) is no longer possible.
+        let snap = Self::snapshot();
         format!(
             "\n=== TSZ_PERF_COUNTERS ===\n\
              Delegation (cross-arena symbol resolution):\n  \
@@ -1022,39 +1028,39 @@ impl PerfCounters {
              read_dir calls             {:>12}\n  \
              read_package_json calls    {:>12}\n  \
              candidate paths total      {:>12}\n",
-            load(&c.delegate_cross_arena_calls),
-            load(&c.delegate_cross_arena_cache_hits_lib),
-            load(&c.delegate_cross_arena_cache_hits_cross_file),
-            load(&c.delegate_cross_arena_misses),
-            load(&c.delegate_max_recursion_depth),
-            load(&c.checker_state_constructed),
-            load(&c.checker_state_with_parent_cache_constructed),
-            load(&c.file_session_resets),
-            load(&c.copy_symbol_file_targets_calls),
-            load(&c.copy_symbol_file_targets_entries_total),
-            load(&c.copy_symbol_file_targets_entries_max),
-            load(&c.copy_symbol_file_targets_len_ge_1k),
-            load(&c.copy_symbol_file_targets_len_ge_10k),
-            load(&c.copy_symbol_file_targets_len_ge_100k),
-            load(&c.copy_symbol_file_targets_len_ge_1m),
-            load(&c.compute_type_of_symbol_calls),
-            load(&c.compute_type_of_symbol_cache_hits),
-            load(&c.interner_intern_calls),
-            load(&c.interner_intern_hits),
-            load(&c.interner_intern_misses),
-            load(&c.interner_string_intern_calls),
-            load(&c.interner_type_list_intern_calls),
-            load(&c.interner_object_shape_intern_calls),
-            load(&c.interner_function_shape_intern_calls),
-            load(&c.interner_application_intern_calls),
-            load(&c.interner_conditional_intern_calls),
-            load(&c.interner_mapped_intern_calls),
-            load(&c.resolver_lookup_calls),
-            load(&c.resolver_is_file_calls),
-            load(&c.resolver_is_dir_calls),
-            load(&c.resolver_read_dir_calls),
-            load(&c.resolver_read_package_json_calls),
-            load(&c.resolver_candidate_paths_total),
+            snap.delegate.calls,
+            snap.delegate.cache_hits_lib,
+            snap.delegate.cache_hits_cross_file,
+            snap.delegate.misses,
+            snap.delegate.max_recursion_depth,
+            snap.checker.state_constructed,
+            snap.checker.with_parent_cache_constructed,
+            snap.checker.file_session_resets,
+            snap.overlay.copy_calls,
+            snap.overlay.entries_total,
+            snap.overlay.entries_max,
+            snap.overlay.len_ge_1k,
+            snap.overlay.len_ge_10k,
+            snap.overlay.len_ge_100k,
+            snap.overlay.len_ge_1m,
+            snap.checker.compute_type_of_symbol_calls,
+            snap.checker.compute_type_of_symbol_cache_hits,
+            snap.interner.intern_calls.unwrap_or(0),
+            snap.interner.intern_hits.unwrap_or(0),
+            snap.interner.intern_misses.unwrap_or(0),
+            snap.interner.string_intern_calls,
+            snap.interner.type_list_intern_calls,
+            snap.interner.object_shape_intern_calls,
+            snap.interner.function_shape_intern_calls,
+            snap.interner.application_intern_calls,
+            snap.interner.conditional_intern_calls,
+            snap.interner.mapped_intern_calls,
+            snap.resolver.lookup_calls,
+            snap.resolver.is_file_calls.unwrap_or(0),
+            snap.resolver.is_dir_calls.unwrap_or(0),
+            snap.resolver.read_dir_calls.unwrap_or(0),
+            snap.resolver.package_json_reads,
+            snap.resolver.candidate_paths_total,
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()

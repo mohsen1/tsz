@@ -2290,10 +2290,12 @@ fn collect_no_check_file_diagnostics(
 /// The split between construction and per-file configuration is the
 /// seam `PERFORMANCE_PLAN.md` §6 T2.1.B's sequential session-reuse
 /// path will plug into: construct the `CheckerContext` once, then
-/// repeatedly call `configure_checker_per_file()` + `check_source_file()`
-/// + `reset_for_next_file()` rather than constructing a fresh
-/// `CheckerState` per file. This commit only does the extraction; the
-/// reuse loop itself is a separate sub-PR.
+/// repeatedly call this helper, `check_source_file()`, and
+/// `reset_for_next_file()` rather than constructing a fresh
+/// `CheckerState` per file.
+///
+/// This commit only does the extraction; the reuse loop itself is a
+/// separate sub-PR.
 ///
 /// Pure refactor: the field assignments and their derivations are
 /// byte-for-byte identical to the inline version, so default behavior
