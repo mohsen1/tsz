@@ -589,11 +589,26 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = SOURCE_FILE_LEN_OVERFLOW_MESSAGE)]
     fn test_source_file_length_conversion_panics_for_overflow() {
         let overflow_len = u32::MAX as usize + 1;
         assert!(overflow_len > u32::MAX as usize);
-        source_file_len_bytes_as_u32(overflow_len);
+        let panic = std::panic::catch_unwind(|| source_file_len_bytes_as_u32(overflow_len))
+            .expect_err("oversized source file length must panic before truncating");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("panic payload should be a string");
+
+        assert!(
+            message.contains(SOURCE_FILE_LEN_OVERFLOW_MESSAGE),
+            "panic message `{message}` should contain `{SOURCE_FILE_LEN_OVERFLOW_MESSAGE}`"
+        );
+    }
+
+    #[test]
+    fn test_source_file_length_conversion_accepts_u32_max() {
+        assert_eq!(source_file_len_bytes_as_u32(u32::MAX as usize), u32::MAX);
     }
 
     #[test]
