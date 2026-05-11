@@ -323,12 +323,6 @@ pub struct PerfCounters {
     pub delegate_cross_arena_cache_hits_lib: AtomicU64,
     pub delegate_cross_arena_cache_hits_cross_file: AtomicU64,
     pub delegate_cross_arena_misses: AtomicU64,
-    /// T2.2 cross-file type-parameter memo: hits and misses on the
-    /// `extract_type_params_from_decl` slow-path memoization. A hit means
-    /// the slow-path's `with_parent_cache_attributed(..., TypeEnvironmentCore)`
-    /// was elided.
-    pub cross_file_type_params_cache_hits: AtomicU64,
-    pub cross_file_type_params_cache_misses: AtomicU64,
     pub delegate_max_recursion_depth: AtomicU64,
     /// `DelegateCrossArenaSymbol` misses classified by how the target arena
     /// was found. This is a subset of `delegate_cross_arena_misses`.
@@ -415,8 +409,6 @@ impl PerfCounters {
             delegate_cross_arena_cache_hits_lib: AtomicU64::new(0),
             delegate_cross_arena_cache_hits_cross_file: AtomicU64::new(0),
             delegate_cross_arena_misses: AtomicU64::new(0),
-            cross_file_type_params_cache_hits: AtomicU64::new(0),
-            cross_file_type_params_cache_misses: AtomicU64::new(0),
             delegate_max_recursion_depth: AtomicU64::new(0),
             delegate_cross_arena_symbol_miss_by_source: [const { AtomicU64::new(0) };
                 CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT],
@@ -680,9 +672,9 @@ impl PerfCounters {
              total calls                {:>12}\n  \
              cache hits                 {:>12}\n\
              TypeInterner:\n  \
-             intern calls (total)       {:>12}\n  \
-             intern hits                {:>12}\n  \
-             intern misses              {:>12}\n  \
+             intern calls (total)             n/a  (not wired in this PR)\n  \
+             intern hits                      n/a  (not wired in this PR)\n  \
+             intern misses                    n/a  (not wired in this PR)\n  \
              string intern calls        {:>12}\n  \
              type-list intern calls     {:>12}\n  \
              object-shape intern calls  {:>12}\n  \
@@ -692,9 +684,9 @@ impl PerfCounters {
              mapped intern calls        {:>12}\n\
              Resolver:\n  \
              lookup calls               {:>12}\n  \
-             is_file calls              {:>12}\n  \
-             is_dir calls               {:>12}\n  \
-             read_dir calls             {:>12}\n  \
+             is_file calls                    n/a  (not wired in this PR)\n  \
+             is_dir calls                     n/a  (not wired in this PR)\n  \
+             read_dir calls                   n/a  (not wired in this PR)\n  \
              read_package_json calls    {:>12}\n  \
              candidate paths total      {:>12}\n",
             load(&c.delegate_cross_arena_calls),
@@ -713,9 +705,6 @@ impl PerfCounters {
             load(&c.copy_symbol_file_targets_len_ge_1m),
             load(&c.compute_type_of_symbol_calls),
             load(&c.compute_type_of_symbol_cache_hits),
-            load(&c.interner_intern_calls),
-            load(&c.interner_intern_hits),
-            load(&c.interner_intern_misses),
             load(&c.interner_string_intern_calls),
             load(&c.interner_type_list_intern_calls),
             load(&c.interner_object_shape_intern_calls),
@@ -724,9 +713,6 @@ impl PerfCounters {
             load(&c.interner_conditional_intern_calls),
             load(&c.interner_mapped_intern_calls),
             load(&c.resolver_lookup_calls),
-            load(&c.resolver_is_file_calls),
-            load(&c.resolver_is_dir_calls),
-            load(&c.resolver_read_dir_calls),
             load(&c.resolver_read_package_json_calls),
             load(&c.resolver_candidate_paths_total),
         ) + &Self::dump_cross_arena_symbol_miss_classification()
@@ -861,330 +847,5 @@ impl PerfCounters {
             out.push_str(&row);
         }
         out
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-//                      JSON snapshot (`PERFORMANCE_PLAN.md` §4.T0.3)
-// ─────────────────────────────────────────────────────────────────────────
-
-/// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
-/// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
-
-/// Frozen value-object view of the counter state. Built by
-/// [`PerfCounters::snapshot`]; serializable to JSON via serde.
-///
-/// Buckets that the producer code does not yet write are encoded as
-/// [`Option<u64>::None`] (serializing as `null`) and the matching
-/// [`WiredCounters`] field is `false`. That distinguishes "not measured"
-/// from "measured zero" — without that, a reviewer staring at `0`
-/// can't tell whether a counter site needs more wiring or is genuinely
-/// idle.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct PerfCounterSnapshot {
-    pub schema_version: u32,
-    /// `enabled_fast()` at snapshot time. When `false`, all counters are
-    /// either zero (atomic loads return their initial state) or `null`
-    /// (unwired buckets); the dump is included for schema stability so
-    /// the bench harness can rely on the same shape every run.
-    pub enabled: bool,
-    /// Mirrors `PerfDiagnosticsReport.mode`: `"timing"` when counters
-    /// are disabled, `"attribution"` when enabled.
-    pub mode: &'static str,
-    pub wired: WiredCounters,
-    pub delegate: DelegateCounters,
-    pub checker: CheckerCounters,
-    pub overlay: OverlayCounters,
-    pub resolver: ResolverCounters,
-    pub interner: InternerCounters,
-}
-
-/// Per-bucket "is this wired up to its producer?" flag. Lets the bench
-/// harness emit a clean follow-up list without parsing the whole
-/// snapshot.
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct WiredCounters {
-    pub delegate_cross_arena: bool,
-    pub checker_construction: bool,
-    pub overlay_copy: bool,
-    pub interner_intern_calls: bool,
-    pub interner_per_kind: bool,
-    pub resolver_lookup: bool,
-    pub resolver_fs_probes: bool,
-    pub compute_type_of_symbol: bool,
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct DelegateCounters {
-    pub calls: u64,
-    pub cache_hits_lib: u64,
-    pub cache_hits_cross_file: u64,
-    pub misses: u64,
-    pub max_recursion_depth: u64,
-    /// T2.2 typed-query memo: hits on the cross-file type-parameter cache.
-    pub cross_file_type_params_cache_hits: u64,
-    /// T2.2 typed-query memo: misses (where the slow path constructed a child checker).
-    pub cross_file_type_params_cache_misses: u64,
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct CheckerCounters {
-    pub state_constructed: u64,
-    pub with_parent_cache_constructed: u64,
-    pub compute_type_of_symbol_calls: u64,
-    pub compute_type_of_symbol_cache_hits: u64,
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct OverlayCounters {
-    pub copy_calls: u64,
-    pub entries_total: u64,
-    pub entries_max: u64,
-    pub len_ge_1k: u64,
-    pub len_ge_10k: u64,
-    pub len_ge_100k: u64,
-    pub len_ge_1m: u64,
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize)]
-pub struct ResolverCounters {
-    pub lookup_calls: u64,
-    /// Filesystem probe counts. `None` until a counting filesystem
-    /// wrapper lands (`PERFORMANCE_PLAN.md` §5).
-    pub is_file_calls: Option<u64>,
-    pub is_dir_calls: Option<u64>,
-    pub read_dir_calls: Option<u64>,
-    pub package_json_reads: u64,
-    pub candidate_paths_total: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct InternerCounters {
-    /// Total `intern` calls across kinds. `None` until the solver intern
-    /// site is updated to fan into a single counter.
-    pub intern_calls: Option<u64>,
-    pub intern_hits: Option<u64>,
-    pub intern_misses: Option<u64>,
-    pub string_intern_calls: u64,
-    pub type_list_intern_calls: u64,
-    pub object_shape_intern_calls: u64,
-    pub function_shape_intern_calls: u64,
-    pub application_intern_calls: u64,
-    pub conditional_intern_calls: u64,
-    pub mapped_intern_calls: u64,
-    /// Lock-wait histogram. `None` because the timing path is gated on
-    /// the `perf-counters-timing` feature (`PERFORMANCE_PLAN.md` §4.T0.3).
-    pub lock_wait_histogram_ns: Option<Vec<u64>>,
-}
-
-impl PerfCounters {
-    /// Load every atomic into a [`PerfCounterSnapshot`] in a single pass.
-    /// Cheap (one relaxed load per counter); both `dump_string` and
-    /// `write_json_to` should eventually share this path so they cannot
-    /// drift.
-    pub fn snapshot() -> PerfCounterSnapshot {
-        let c = counters();
-        let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
-        let enabled = enabled_fast();
-        PerfCounterSnapshot {
-            schema_version: PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION,
-            enabled,
-            mode: if enabled { "attribution" } else { "timing" },
-            wired: WiredCounters {
-                delegate_cross_arena: true,
-                checker_construction: true,
-                overlay_copy: true,
-                interner_intern_calls: true,
-                interner_per_kind: true,
-                resolver_lookup: true,
-                resolver_fs_probes: true,
-                compute_type_of_symbol: true,
-            },
-            delegate: DelegateCounters {
-                calls: load(&c.delegate_cross_arena_calls),
-                cache_hits_lib: load(&c.delegate_cross_arena_cache_hits_lib),
-                cache_hits_cross_file: load(&c.delegate_cross_arena_cache_hits_cross_file),
-                misses: load(&c.delegate_cross_arena_misses),
-                max_recursion_depth: load(&c.delegate_max_recursion_depth),
-                cross_file_type_params_cache_hits: load(&c.cross_file_type_params_cache_hits),
-                cross_file_type_params_cache_misses: load(&c.cross_file_type_params_cache_misses),
-            },
-            checker: CheckerCounters {
-                state_constructed: load(&c.checker_state_constructed),
-                with_parent_cache_constructed: load(&c.checker_state_with_parent_cache_constructed),
-                compute_type_of_symbol_calls: load(&c.compute_type_of_symbol_calls),
-                compute_type_of_symbol_cache_hits: load(&c.compute_type_of_symbol_cache_hits),
-            },
-            overlay: OverlayCounters {
-                copy_calls: load(&c.copy_symbol_file_targets_calls),
-                entries_total: load(&c.copy_symbol_file_targets_entries_total),
-                entries_max: load(&c.copy_symbol_file_targets_entries_max),
-                len_ge_1k: load(&c.copy_symbol_file_targets_len_ge_1k),
-                len_ge_10k: load(&c.copy_symbol_file_targets_len_ge_10k),
-                len_ge_100k: load(&c.copy_symbol_file_targets_len_ge_100k),
-                len_ge_1m: load(&c.copy_symbol_file_targets_len_ge_1m),
-            },
-            resolver: ResolverCounters {
-                lookup_calls: load(&c.resolver_lookup_calls),
-                is_file_calls: Some(load(&c.resolver_is_file_calls)),
-                is_dir_calls: Some(load(&c.resolver_is_dir_calls)),
-                read_dir_calls: Some(load(&c.resolver_read_dir_calls)),
-                package_json_reads: load(&c.resolver_read_package_json_calls),
-                candidate_paths_total: load(&c.resolver_candidate_paths_total),
-            },
-            interner: InternerCounters {
-                intern_calls: Some(load(&c.interner_intern_calls)),
-                intern_hits: Some(load(&c.interner_intern_hits)),
-                intern_misses: Some(load(&c.interner_intern_misses)),
-                string_intern_calls: load(&c.interner_string_intern_calls),
-                type_list_intern_calls: load(&c.interner_type_list_intern_calls),
-                object_shape_intern_calls: load(&c.interner_object_shape_intern_calls),
-                function_shape_intern_calls: load(&c.interner_function_shape_intern_calls),
-                application_intern_calls: load(&c.interner_application_intern_calls),
-                conditional_intern_calls: load(&c.interner_conditional_intern_calls),
-                mapped_intern_calls: load(&c.interner_mapped_intern_calls),
-                lock_wait_histogram_ns: None,
-            },
-        }
-    }
-
-    /// Serialize a [`PerfCounterSnapshot`] to `path` using an atomic
-    /// rename so a partial write can't poison the bench harness's `jq`
-    /// consumer.
-    pub fn write_json_to(path: &std::path::Path) -> std::io::Result<()> {
-        let snap = Self::snapshot();
-        let json = serde_json::to_string_pretty(&snap)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
-        std::fs::rename(&tmp, path)?;
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod json_tests {
-    use super::*;
-
-    #[test]
-    fn schema_version_is_one() {
-        // Bumping schema_version is a breaking change for the bench harness;
-        // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 1);
-    }
-
-    #[test]
-    fn snapshot_serializes_with_expected_top_level_keys() {
-        let snap = PerfCounters::snapshot();
-        let json = serde_json::to_value(&snap).expect("serializes");
-        for key in [
-            "schema_version",
-            "enabled",
-            "mode",
-            "wired",
-            "delegate",
-            "checker",
-            "overlay",
-            "resolver",
-            "interner",
-        ] {
-            assert!(json.get(key).is_some(), "missing top-level key: {key}");
-        }
-        assert_eq!(json["schema_version"], 1);
-    }
-
-    #[test]
-    fn unwired_buckets_serialize_as_null() {
-        // The plan requires `null` for unwired buckets so `0` is unambiguous.
-        // After resolver fs-probe wiring landed, `lock_wait_histogram_ns`
-        // is the only remaining unwired bucket on the snapshot surface.
-        let snap = PerfCounters::snapshot();
-        let json = serde_json::to_value(&snap).expect("serializes");
-        assert_eq!(
-            json["interner"]["lock_wait_histogram_ns"],
-            serde_json::Value::Null
-        );
-    }
-
-    #[test]
-    fn wired_resolver_fs_probe_buckets_serialize_as_numbers() {
-        // T0.3 follow-up: resolver `is_file`/`is_dir`/`read_dir` are wired
-        // through `count_is_file`/`count_is_dir`/`count_read_dir` thin
-        // wrappers in `crates/tsz-cli/src/driver/resolution.rs`. They
-        // must serialize as numbers (zero is fine in this test process)
-        // and the wired flag must agree.
-        let snap = PerfCounters::snapshot();
-        let json = serde_json::to_value(&snap).expect("serializes");
-        assert!(
-            json["resolver"]["is_file_calls"].is_number(),
-            "is_file_calls should be a number once wired, got: {}",
-            json["resolver"]["is_file_calls"]
-        );
-        assert!(json["resolver"]["is_dir_calls"].is_number());
-        assert!(json["resolver"]["read_dir_calls"].is_number());
-        assert_eq!(json["wired"]["resolver_fs_probes"], true);
-    }
-
-    #[test]
-    fn wired_intern_call_buckets_serialize_as_numbers() {
-        // T0.3 follow-up: intern_calls/hits/misses are now wired at the
-        // solver intern site. They must surface as numbers (zero is fine
-        // when the test process has not interned any user types) and the
-        // wired flag must agree.
-        let snap = PerfCounters::snapshot();
-        let json = serde_json::to_value(&snap).expect("serializes");
-        assert!(
-            json["interner"]["intern_calls"].is_number(),
-            "intern_calls should be a number once wired, got: {}",
-            json["interner"]["intern_calls"]
-        );
-        assert!(json["interner"]["intern_hits"].is_number());
-        assert!(json["interner"]["intern_misses"].is_number());
-        assert_eq!(json["wired"]["interner_intern_calls"], true);
-    }
-
-    #[test]
-    fn wired_keys_match_snapshot_struct_fields() {
-        // If a future PR adds a wired flag, it must also surface in the
-        // top-level snapshot, and vice versa. This keeps the schema and
-        // the wired map honest.
-        let snap = PerfCounters::snapshot();
-        let json = serde_json::to_value(&snap).expect("serializes");
-        let wired = json["wired"].as_object().expect("wired is an object");
-        // Cross-check: keys are stable across runs.
-        let expected_keys: std::collections::BTreeSet<&str> = [
-            "delegate_cross_arena",
-            "checker_construction",
-            "overlay_copy",
-            "interner_intern_calls",
-            "interner_per_kind",
-            "resolver_lookup",
-            "resolver_fs_probes",
-            "compute_type_of_symbol",
-        ]
-        .into_iter()
-        .collect();
-        let actual_keys: std::collections::BTreeSet<&str> =
-            wired.keys().map(String::as_str).collect();
-        assert_eq!(actual_keys, expected_keys);
-    }
-
-    #[test]
-    fn write_json_to_writes_valid_json_with_atomic_rename() {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("tsz-perf-counter-snap-{}.json", std::process::id()));
-        // Clean up beforehand if a stale file is sitting around.
-        let _ = std::fs::remove_file(&path);
-        PerfCounters::write_json_to(&path).expect("write succeeds");
-        let raw = std::fs::read_to_string(&path).expect("read back");
-        // Round-trip through serde to confirm structure.
-        let value: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-        assert_eq!(value["schema_version"], 1);
-        assert!(value["wired"].is_object());
-        // The atomic-rename `.json.tmp` should not be left behind.
-        let tmp = path.with_extension("json.tmp");
-        assert!(!tmp.exists(), "tmp file leaked: {tmp:?}");
-        let _ = std::fs::remove_file(&path);
     }
 }
