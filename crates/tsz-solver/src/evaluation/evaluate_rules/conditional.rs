@@ -1019,6 +1019,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut all_same = true;
         let mut first_result = TypeId::NONE;
 
+        // PERF: Pre-allocate the substitution memo outside the loop.
+        // Reusing the same HashMap (with clear() between uses) avoids
+        // O(members.len()) allocations for large union distributions.
+        let mut memo = FxHashMap::default();
+
         for &member in members {
             // Check if depth was exceeded during previous iterations
             if self.is_depth_exceeded() {
@@ -1028,7 +1033,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Substitute the specific member if true_type or false_type references the original check_type
             // This handles cases like: NonNullable<T> = T extends null ? never : T
             // When T = A | B, we need (A extends null ? never : A) | (B extends null ? never : B)
-            let mut memo = FxHashMap::default();
+            memo.clear();
             let substituted_extends_type =
                 self.substitute_exact_type(extends_type, original_check_type, member, &mut memo);
             memo.clear();
