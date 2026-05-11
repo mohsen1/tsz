@@ -372,6 +372,11 @@ type ParseParams = {
     async: boolean;
 };
 
+type Partial<T> = { [P in keyof T]?: T[P] };
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
 type ParseParamsNoData = Omit<ParseParams, "data">;
 type ParsePathComponent = string | number;
 
@@ -383,11 +388,12 @@ function test(params: Partial<ParseParamsNoData>) {
 "#,
     );
 
-    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
-    assert_eq!(
-        relevant.len(),
-        0,
+    assert!(
+        diags.is_empty(),
         "Expected `params.path || []` to keep path as `(string | number)[]` in argument position, got: {:?}",
-        relevant.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
     );
 }
