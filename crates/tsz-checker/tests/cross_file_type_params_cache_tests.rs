@@ -118,22 +118,17 @@ fn cache_stores_inner_option_so_negative_results_are_not_re_extracted() {
     // `None`. See `docs/plan/perf-runs/2026-05-11-attribution-lock-wait.md`.
     //
     // The actual value-shape contract is checked at the type level
-    // via this assertion: the inner type compiles iff the cache
-    // value is `Option<Vec<...>>`. If a future refactor accidentally
-    // drops the outer `Option`, this stops compiling.
-    fn _assert_cache_value_is_option<T>(
-        _: &crate::context::CrossFileTypeParamsCache,
-    ) -> Option<Option<Vec<tsz_solver::TypeParamInfo>>>
-    where
-        T: 'static,
-    {
-        // Construction-only — never executed.
-        None
-    }
+    // via this assertion: write a `None`, read it back, and require
+    // the read to type-check as `Option<Option<Vec<...>>>`. If a
+    // future refactor accidentally drops the outer `Option`, the
+    // `cache.insert(..., None)` call stops compiling.
     let cache: crate::context::CrossFileTypeParamsCache =
         std::sync::Arc::new(dashmap::DashMap::new());
-    let _: Option<Option<Vec<tsz_solver::TypeParamInfo>>> =
-        _assert_cache_value_is_option::<()>(&cache);
+    let key = (0u32, tsz_parser::parser::NodeIndex::NONE);
+    cache.insert(key, None);
+    let observed: Option<Option<Vec<tsz_solver::TypeParamInfo>>> =
+        cache.get(&key).map(|e| e.value().clone());
+    assert_eq!(observed, Some(None));
 }
 
 #[test]
