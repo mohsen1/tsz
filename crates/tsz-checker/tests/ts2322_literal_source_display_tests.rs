@@ -78,6 +78,34 @@ e = (false as any) as E | boolean;
 }
 
 #[test]
+fn ts2322_function_type_parameter_object_display_has_single_trailing_semicolon() {
+    let diagnostics = diagnostic_messages(
+        r#"
+class Base { foo!: string; }
+class Derived extends Base { bar!: string; }
+
+declare var a8: (x: (arg: Base) => Derived, y: (arg2: Base) => Derived) => (r: Base) => Derived;
+declare var b8: <T extends Base, U extends Derived>(x: (arg: T) => U, y: (arg2: { foo: number; }) => U) => (r: T) => U;
+a8 = b8;
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .expect("expected TS2322 for incompatible callback parameter object type");
+
+    assert!(
+        ts2322.1.contains("{ foo: number; }"),
+        "TS2322 should preserve a single object-type semicolon, got: {ts2322:?}",
+    );
+    assert!(
+        !ts2322.1.contains("number;;"),
+        "TS2322 must not duplicate object-type semicolons, got: {ts2322:?}",
+    );
+}
+
+#[test]
 fn ts2322_preserves_computed_unique_symbol_object_key_display() {
     let diagnostics = diagnostic_messages(
         r#"

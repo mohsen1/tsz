@@ -622,6 +622,9 @@ impl<'a> CheckerState<'a> {
         formatted = Self::normalize_annotation_literal_property_display_text(&formatted);
         if formatted.contains(':') {
             formatted = formatted.replace(" }", "; }");
+            while formatted.contains(";; }") {
+                formatted = formatted.replace(";; }", "; }");
+            }
         }
         formatted
     }
