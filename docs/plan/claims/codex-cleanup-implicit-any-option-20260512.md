@@ -1,9 +1,9 @@
-# [WIP] chore(checker): tidy implicit-any option checks
+# chore(checker): tidy implicit-any option checks
 
 - **Date**: 2026-05-11
 - **Branch**: `codex/cleanup-implicit-any-option-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5651
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -20,5 +20,5 @@ checker file.
 
 ## Verification
 
-- Planned: `cargo fmt --check`
-- Planned: `cargo nextest run -p tsz-checker implicit_any`
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker implicit_any` (117 passed, 7390 skipped)

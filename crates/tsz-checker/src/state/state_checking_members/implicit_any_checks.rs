@@ -193,7 +193,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let mut declarations = Vec::new();
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             declarations.push(symbol.value_declaration);
         }
         declarations.extend(symbol.declarations.iter().copied());
@@ -517,7 +517,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             let mut declarations = Vec::new();
-            if !symbol.value_declaration.is_none() {
+            if symbol.value_declaration.is_some() {
                 declarations.push(symbol.value_declaration);
             }
             declarations.extend(symbol.declarations.iter().copied());
@@ -565,7 +565,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let mut declarations = Vec::new();
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             declarations.push(symbol.value_declaration);
         }
         declarations.extend(symbol.declarations.iter().copied());
