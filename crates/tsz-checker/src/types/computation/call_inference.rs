@@ -1,5 +1,7 @@
 //! Generic-call inference and round-2 contextual typing helpers.
 
+mod return_context;
+
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
@@ -962,6 +964,30 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.collect_awaited_return_context_substitution_by_shape(
+            source,
+            target,
+            tracked_type_params,
+            substitution,
+            0,
+        ) {
+            return;
+        }
+
+        let awaited_source = self.evaluate_awaited_application_for_assignability(source);
+        if awaited_source != source {
+            self.collect_return_context_substitution(
+                awaited_source,
+                target,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
         // When target (expected return type) is a type param and source (actual return type)
         // is a concrete type, infer the type param from the source. This handles JSX
         // intra-expression inference like:
@@ -1102,6 +1128,22 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, source) {
+            self.collect_return_context_substitution(
+                inner,
+                target,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+        let source_evaluated_for_wrapper = self.evaluate_for_return_context_substitution(source);
+        if source_evaluated_for_wrapper != source
+            && let Some(inner) =
+                common::unwrap_readonly_or_noinfer(self.ctx.types, source_evaluated_for_wrapper)
+        {
             self.collect_return_context_substitution(
                 inner,
                 target,
