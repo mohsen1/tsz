@@ -1719,6 +1719,98 @@ mod json_tests {
         assert_eq!(actual_keys, expected_keys);
     }
 
+    /// Lock the field shape of each top-level snapshot section so an
+    /// accidental rename, addition, or removal is caught at test time
+    /// instead of by a downstream bench harness parsing the JSON.
+    /// `interner` is excluded because that section's field set is in
+    /// flight (e.g. #5128 adds `callable_shape_intern_calls`); the
+    /// invariant for it is owned by the JSON round-trip test plus the
+    /// counter-specific `wired_*_serialize_as_numbers` cases.
+    fn assert_section_keys(json: &serde_json::Value, section: &str, expected: &[&str]) {
+        let obj = json[section]
+            .as_object()
+            .unwrap_or_else(|| panic!("section `{section}` is not a JSON object"));
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = expected.iter().copied().collect();
+        assert_eq!(
+            actual, expected,
+            "section `{section}` field set drifted from the lock"
+        );
+    }
+
+    #[test]
+    fn delegate_section_field_shape() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert_section_keys(
+            &json,
+            "delegate",
+            &[
+                "calls",
+                "cache_hits_lib",
+                "cache_hits_cross_file",
+                "misses",
+                "max_recursion_depth",
+                "cross_file_type_params_cache_hits",
+                "cross_file_type_params_cache_misses",
+            ],
+        );
+    }
+
+    #[test]
+    fn checker_section_field_shape() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert_section_keys(
+            &json,
+            "checker",
+            &[
+                "state_constructed",
+                "with_parent_cache_constructed",
+                "file_session_resets",
+                "compute_type_of_symbol_calls",
+                "compute_type_of_symbol_cache_hits",
+            ],
+        );
+    }
+
+    #[test]
+    fn overlay_section_field_shape() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert_section_keys(
+            &json,
+            "overlay",
+            &[
+                "copy_calls",
+                "entries_total",
+                "entries_max",
+                "len_ge_1k",
+                "len_ge_10k",
+                "len_ge_100k",
+                "len_ge_1m",
+            ],
+        );
+    }
+
+    #[test]
+    fn resolver_section_field_shape() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert_section_keys(
+            &json,
+            "resolver",
+            &[
+                "lookup_calls",
+                "is_file_calls",
+                "is_dir_calls",
+                "read_dir_calls",
+                "package_json_reads",
+                "candidate_paths_total",
+            ],
+        );
+    }
+
     #[test]
     fn write_json_to_writes_valid_json_with_atomic_rename() {
         let dir = std::env::temp_dir();
