@@ -45,6 +45,9 @@ impl<'a> CheckerState<'a> {
             && Self::generic_alias_name_from_display(source_display) == Some(annotation_name)
             && Self::generic_alias_name_from_display(target_display) == Some(annotation_name)
         {
+            if source_display.contains(" & ") || source_display.contains('{') {
+                return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
+            }
             return Some(source_display.to_string());
         }
         if !source_display.contains(" extends ")
