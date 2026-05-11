@@ -789,13 +789,18 @@ export var _\u{102A7} = new Foo().\u{102A7};"#;
         diagnostic_codes::EXPECTED,
         diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
         diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
-        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
     ] {
         assert!(
             codes.contains(&expected),
             "expected diagnostic code {expected}, got {diags:?}"
         );
     }
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I
+        ),
+        "escaped astral declaration-tail recovery should not leak into TS2809 statement recovery, got {diags:?}"
+    );
     assert!(
         !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
         "invalid astral debris should prefer scanner-shaped recovery over TS1003, got {diags:?}"

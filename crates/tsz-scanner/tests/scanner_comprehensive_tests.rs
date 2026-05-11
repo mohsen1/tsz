@@ -952,6 +952,32 @@ mod identifier_scanning {
     }
 
     #[test]
+    fn unicode_escape_braced_astral_identifier_tail_recovers_as_debris_in_es5() {
+        let mut scanner = ScannerState::new("_\\u{102A7}".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES5);
+
+        assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_text(), "_");
+        assert_eq!(
+            scanner
+                .get_scanner_diagnostics()
+                .iter()
+                .map(|d| (d.code, d.pos))
+                .collect::<Vec<_>>(),
+            vec![(
+                tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                1
+            )]
+        );
+
+        assert_eq!(scanner.scan(), SyntaxKind::Unknown);
+        assert_eq!(scanner.get_token_text(), "\\");
+        assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_text(), "u");
+        assert_eq!(scanner.scan(), SyntaxKind::OpenBraceToken);
+    }
+
+    #[test]
     fn unicode_escape_combining_mark_not_identifier_start() {
         let mut scanner = ScannerState::new("\\u0345 = 1;".to_string(), true);
         let token = scanner.scan();
