@@ -2163,7 +2163,7 @@ fn test_outer_equal_conditional_evaluates_to_true_for_any_lhs() {
 /// Test that distributive conditional types work correctly over multi-member unions.
 ///
 /// This test exercises the `distribute_conditional` optimization where the memo
-/// HashMap is pre-allocated and reused across iterations.
+/// `HashMap` is pre-allocated and reused across iterations.
 #[test]
 fn test_distribution_over_multi_member_union() {
     // Create a 10-member string literal union and verify distribution works correctly.
@@ -2176,7 +2176,7 @@ fn test_distribution_over_multi_member_union() {
         .map(|i| interner.literal_string(&i.to_string()))
         .collect();
 
-    let union = interner.union(members.clone());
+    let union = interner.union(members);
     let yes = interner.literal_string("yes");
     let no = interner.literal_string("no");
 
