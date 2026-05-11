@@ -917,7 +917,6 @@ impl<'a> Printer<'a> {
                             var_name: var_name.clone(),
                             body: body_idx,
                             param: None,
-                            is_async: false,
                         },
                     );
                 }
@@ -929,7 +928,6 @@ impl<'a> Printer<'a> {
                             var_name: var_name.clone(),
                             body: body_idx,
                             param: accessor.setter_param,
-                            is_async: false,
                         },
                     );
                 }

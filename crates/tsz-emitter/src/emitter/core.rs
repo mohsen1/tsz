@@ -54,9 +54,6 @@ pub(crate) struct PrivateAccessorDef {
     pub body: NodeIndex,
     /// Optional setter parameter node index.
     pub param: Option<NodeIndex>,
-    /// Whether this is an async accessor.
-    #[allow(dead_code)]
-    pub is_async: bool,
 }
 
 /// How a class property name should be emitted in `ClassName.name = ...` assignments.
