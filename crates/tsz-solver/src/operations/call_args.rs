@@ -830,7 +830,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .any(|element| !element.rest)
             }
             Some(
-                TypeData::Application(_)
+                TypeData::TypeParameter(_)
+                | TypeData::Application(_)
                 | TypeData::Conditional(_)
                 | TypeData::Intersection(_)
                 | TypeData::Lazy(_)

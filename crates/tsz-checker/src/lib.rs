@@ -430,6 +430,9 @@ mod generic_callback_outer_context_tests;
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
+#[path = "tests/generic_rest_satisfies_anchor_tests.rs"]
+mod generic_rest_satisfies_anchor_tests;
+#[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]

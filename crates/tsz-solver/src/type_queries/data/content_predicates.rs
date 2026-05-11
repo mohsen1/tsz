@@ -375,7 +375,8 @@ pub fn rest_type_needs_aggregate_argument_check(db: &dyn TypeDatabase, type_id: 
                 || rest_type_needs_aggregate_argument_check(db, member)
         }),
         Some(
-            TypeData::Application(_)
+            TypeData::TypeParameter(_)
+            | TypeData::Application(_)
             | TypeData::Conditional(_)
             | TypeData::Intersection(_)
             | TypeData::Lazy(_)
