@@ -17934,6 +17934,47 @@ fn cli_removed_compiler_option_flags_emit_ts5102() {
 }
 
 #[test]
+fn cli_removed_compiler_option_flags_do_not_block_emit() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "export const ok: number = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--pretty",
+        "false",
+        "--typeRoots",
+        "./empty-types",
+        "--importsNotUsedAsValues",
+        "preserve",
+        "--preserveValueImports",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| d.code
+            == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION),
+        "expected TS5102 for removed CLI flags, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        base.join("main.js").exists(),
+        "direct CLI TS5102 should not stop JS emit"
+    );
+    assert!(
+        result
+            .emitted_files
+            .iter()
+            .any(|path| path.file_name().and_then(|name| name.to_str()) == Some("main.js")),
+        "main.js should be reported as emitted: {:#?}",
+        result.emitted_files
+    );
+}
+
+#[test]
 fn cli_invalid_ignore_deprecations_emits_ts5103() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
