@@ -67,6 +67,9 @@ impl<'a> CheckerState<'a> {
         seen.push(seen_key);
 
         if self.is_number_literal_union_for_display_order(type_id) {
+            if self.numeric_literal_union_origin_preserves_alias(type_id) {
+                return;
+            }
             let source_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, false);
             let canonical_order =
@@ -348,5 +351,13 @@ impl<'a> CheckerState<'a> {
 
     fn is_number_literal_union_for_display_order(&self, type_id: TypeId) -> bool {
         diagnostic_query::is_number_literal_union(self.ctx.types, type_id)
+    }
+
+    fn numeric_literal_union_origin_preserves_alias(&self, type_id: TypeId) -> bool {
+        diagnostic_query::numeric_literal_union_origin_preserves_alias(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            type_id,
+        )
     }
 }

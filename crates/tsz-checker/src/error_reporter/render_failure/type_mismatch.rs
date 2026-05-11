@@ -32,6 +32,13 @@ impl<'a> CheckerState<'a> {
             // (e.g., `Variants` from a parameter annotation), fall back to the
             // TypeFormatter which correctly displays literal union members.
             // This handles both widening and flow-narrowed type alias display.
+            let display_is_declared_identifier_source = self
+                .direct_diagnostic_source_expression(idx)
+                .or_else(|| self.assignment_source_expression(idx))
+                .and_then(|expr_idx| {
+                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+                })
+                .is_some_and(|declared_display| declared_display == display);
             if crate::query_boundaries::common::union_members(self.ctx.types, source).is_some_and(
                 |members| {
                     !members.is_empty()
@@ -44,6 +51,7 @@ impl<'a> CheckerState<'a> {
                 },
             ) && !crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
                 && !display.contains(" | ")
+                && !display_is_declared_identifier_source
             {
                 self.format_type_diagnostic(source)
             } else {
@@ -360,13 +368,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        source_str =
-            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        let source_from_annotation = if depth == 0 {
+            self.direct_diagnostic_source_expression(idx)
+                .or_else(|| self.assignment_source_expression(idx))
+                .and_then(|expr_idx| {
+                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+                })
+                .map(|display| {
+                    source_str = display;
+                })
+                .is_some()
+        } else {
+            false
+        };
+        if !source_from_annotation {
+            source_str = self
+                .canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        }
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
             if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
-                && let Some(display) = self.ts2739_alias_of_application_source_display_text(source)
+                && let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source)
             {
                 source_str = display;
             }
@@ -390,8 +413,11 @@ impl<'a> CheckerState<'a> {
                 source_str = direct_source;
                 target_str = direct_target;
             }
-            source_str = self
-                .canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+            if !source_from_annotation {
+                source_str = self.canonicalize_assignment_numeric_literal_union_display(
+                    source, target, source_str,
+                );
+            }
             target_str = self
                 .canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         }

@@ -416,26 +416,23 @@ function bar(objectish: Objectish<any>, indirectArrayish: IndirectArrayish<any>)
 }
         "#,
     );
-    let error_count = diagnostics
-        .iter()
-        .filter(|d| d.0 == 2322 || d.0 == 2740)
-        .count();
-    assert_eq!(
-        error_count, 2,
-        "Expected two assignability errors (one for objectish, one for indirectArrayish). \
-         Both are object types with index signatures assigned to any[].\n\
-         Actual diagnostics: {diagnostics:#?}"
-    );
     let missing_property_messages: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2740)
         .map(|(_, message)| message.as_str())
         .collect();
+    assert_eq!(
+        missing_property_messages.len(),
+        2,
+        "Expected two TS2740 diagnostics (one for objectish, one for indirectArrayish). \
+         The wrapper-alias case must not fall back to TS2322.\n\
+         Actual diagnostics: {diagnostics:#?}"
+    );
     assert!(
         missing_property_messages
             .iter()
-            .any(|message| message.contains("Type 'Objectish<any>' is missing")),
-        "Expected missing-property diagnostics to display the mapped body alias \
+            .all(|message| message.contains("Type 'Objectish<any>' is missing")),
+        "Expected all missing-property diagnostics to display the mapped body alias \
          rather than the wrapper alias. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(

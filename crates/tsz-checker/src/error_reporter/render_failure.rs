@@ -1873,27 +1873,6 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    pub(in crate::error_reporter) fn format_unfolded_ts2739_source_display(
-        &self,
-        unfolded: TypeId,
-    ) -> String {
-        let mut formatter = self
-            .ctx
-            .create_diagnostic_type_formatter()
-            .with_display_properties()
-            .with_skip_application_display_alias_chase()
-            .with_skip_application_alias_names();
-        formatter.format(unfolded).into_owned()
-    }
-
-    pub(in crate::error_reporter) fn ts2739_alias_of_application_source_display_text(
-        &self,
-        source: TypeId,
-    ) -> Option<String> {
-        self.ts2739_alias_of_application_source_display(source)
-            .map(|unfolded| self.format_unfolded_ts2739_source_display(unfolded))
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn render_missing_properties(
         &mut self,
