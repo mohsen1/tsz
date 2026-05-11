@@ -1850,13 +1850,7 @@ impl<'a> CheckerState<'a> {
         // evaluator preserved the raw alias application, keep assignability in
         // step with tsc's getAwaitedType without incorrectly treating
         // Awaited<Promise<T>> as Promise<T>.
-        if self.unwrap_promise_type(arg).is_none()
-            && self.extract_awaited_type_from_thenable(arg).is_none()
-        {
-            arg
-        } else {
-            type_id
-        }
+        arg
     }
 
     /// Check that `Generator<TYield, any, any>` (or `AsyncGenerator`) is assignable
