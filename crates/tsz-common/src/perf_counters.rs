@@ -923,6 +923,20 @@ pub fn record_resolver_read_package_json() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a root `CheckerState` construction. Called from each of the
+/// nine `CheckerState::new` / `with_*` constructors in
+/// `tsz-checker/src/state/state.rs`. Sibling to the other `record_*`
+/// helpers — gate once, look up `counters()` once, increment.
+#[inline]
+pub fn record_checker_state_constructed() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .checker_state_constructed
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
