@@ -1,6 +1,6 @@
 # Claim: objectRestNegative rest assignment source fingerprint
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: fix/object-rest-negative-source-fingerprint-20260512
 PR: TBD
