@@ -1766,6 +1766,7 @@ impl TypeInterner {
     }
 
     pub(in crate::intern) fn intern_callable_shape(&self, shape: CallableShape) -> CallableShapeId {
+        tsz_common::perf_counters::record_interner_callable_shape_intern_call();
         CallableShapeId(self.callable_shapes.intern(shape))
     }
 
