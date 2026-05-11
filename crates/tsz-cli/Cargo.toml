@@ -27,15 +27,6 @@ path = "src/bin/tsz_server/main.rs"
 name = "audit-unsoundness"
 path = "src/bin/audit_unsoundness.rs"
 
-[features]
-default = []
-# Perf-tools build: enables internal-only flags used by the bench harness.
-# - Adds `--diagnostics-json <path>` to `tsz` (PERFORMANCE_PLAN.md §4.T0.2).
-# - Future: `--perf-counters-json <path>` (T0.3).
-# Default release builds MUST NOT enable this; the flag is invisible in
-# `--help` and the runtime hooks compile out entirely.
-perf-tools = []
-
 [dependencies]
 tsz = { workspace = true }
 
