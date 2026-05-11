@@ -48,7 +48,8 @@ impl SourceFile {
     /// Create a new `SourceFile` from a file name and source text.
     pub fn new(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
-        let len = text.len() as u32;
+        let len = u32::try_from(text.len())
+            .expect("source file text length exceeds u32; large file support requires a larger span type");
         let text: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
             file_name: file_name.into(),
@@ -61,7 +62,8 @@ impl SourceFile {
     /// Create a `SourceFile` with pre-built line map.
     pub fn with_line_map(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
-        let len = text.len() as u32;
+        let len = u32::try_from(text.len())
+            .expect("source file text length exceeds u32; large file support requires a larger span type");
         let line_map = Some(LineMap::build(&text));
         let text: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
