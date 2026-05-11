@@ -262,6 +262,65 @@ function f<T>(x: T) {
 }
 
 #[test]
+fn in_operator_reports_ts2322_for_generic_union_rhs() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function f<T>(x: T | { a: string }) {
+  "k" in x;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2322 && message.contains("T | { a: string; }") }),
+        "Expected TS2322 for generic union `in` RHS, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for generic union `in` RHS, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_false_branch_generic_union_reports_ts2322_not_ts2638() {
+    // Mirrors the conditional builder pattern from
+    // conditionalTypeDoesntSpinForever.ts without copying the full fixture.
+    // The false branch of `&&` can have a flow type like
+    // `T | (T & Record<"a", unknown>)`; tsc still reports the nested `in`
+    // operand via TS2322 rather than TS2638.
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Builder<T> =
+  T extends { a: any, b: any } ? {} : {
+    has: (k: string | number | symbol) => k is keyof T
+  };
+
+const f = <T>(x: T): Builder<T> =>
+  ("a" in x && "b" in x ? {} : {
+    has: (k: string | number | symbol) => k in x
+  }) as Builder<T>;
+"#,
+    );
+
+    let in_rhs_object_assignability = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2322 && message.contains("'T'") && message.contains("'object'")
+        })
+        .count();
+    assert_eq!(
+        in_rhs_object_assignability, 2,
+        "Expected TS2322 for the condition RHS and nested false-branch RHS, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for false-branch generic union RHS, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn in_operator_reports_ts2638_for_truthiness_guarded_generic_rhs() {
     let diagnostics = tsz_checker::test_utils::check_source_code_messages(
         r#"
