@@ -1251,6 +1251,11 @@ impl<'a> CheckerState<'a> {
                 self.declared_type_annotation_text_for_expression(expr_idx)
             && annotation_text.contains('&')
             && !annotation_text.trim_start().starts_with("keyof ")
+            && self.should_prefer_declared_source_annotation_display(
+                expr_idx,
+                source,
+                &annotation_text,
+            )
         {
             source_str = self
                 .declared_intersection_annotation_display_for_expression(expr_idx)

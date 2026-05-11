@@ -1471,9 +1471,6 @@ impl TypeInterner {
             let needs_origin = self.union_origin_overrides_canonical_anon_object_sort(
                 current.as_ref(),
                 &origin_members,
-            ) || self.union_origin_overrides_canonical_number_literal_sort(
-                current.as_ref(),
-                &origin_members,
             ) || self
                 .union_origin_overrides_canonical_keyof_sort(current.as_ref(), &origin_members)
                 || self.union_origin_overrides_canonical_application_sort(
@@ -1554,33 +1551,6 @@ impl TypeInterner {
             return false;
         }
         current != origin
-    }
-
-    /// Decide whether storing the as-written origin is needed for a union
-    /// whose members are all number literals.
-    ///
-    /// The canonical comparator only special-cases the `0` literal and falls
-    /// back to allocation order for other number literals. Allocation order
-    /// is global and depends on which literals tsz happens to intern earlier
-    /// (e.g., from lib processing or unrelated code), so the canonical sort
-    /// can reorder source-written `0 | 1 | 2` into `0 | 2 | 1` even though
-    /// tsc preserves the as-written order. When the canonical sort changed
-    /// the order of a literal-only union, persist the origin so the printer
-    /// can render the source-written form.
-    fn union_origin_overrides_canonical_number_literal_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != origin.len() || current == origin {
-            return false;
-        }
-        current.iter().all(|&id| {
-            matches!(
-                self.lookup(id),
-                Some(TypeData::Literal(LiteralValue::Number(_)))
-            )
-        })
     }
 
     /// Decide whether storing the as-written origin is needed for a union that

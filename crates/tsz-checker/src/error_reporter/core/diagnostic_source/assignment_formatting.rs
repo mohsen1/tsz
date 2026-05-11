@@ -492,6 +492,11 @@ impl<'a> CheckerState<'a> {
                 .compute_ambiguous_conditional_display(eval_for_ambiguous)
                 .is_some();
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
+                && self.should_prefer_declared_source_annotation_display(
+                    expr_idx,
+                    expr_display_type,
+                    &display,
+                )
                 && !is_ambiguous_conditional_alias
                 && !display.starts_with("keyof ")
                 && !display.starts_with("typeof ")
