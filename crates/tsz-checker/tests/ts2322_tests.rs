@@ -5538,6 +5538,45 @@ t = [1, undefined, undefined];
 }
 
 #[test]
+fn tuple_source_display_widens_boolean_literals_past_fixed_target_slots() {
+    let source = r#"
+declare let target: [number, string];
+target = [1, "x", true];
+target = [1, "x", (false)];
+"#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        2,
+        "Expected both tuple overflow literals to emit TS2322, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| message.contains("Type '[number, string, boolean]'")),
+        "Expected overflow boolean literals to display as boolean, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| !message.contains("Type '[number, string, true]'")
+                && !message.contains("Type '[number, string, false]'")),
+        "Tuple overflow source display must not preserve uncontextualized boolean literals, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn exact_optional_tuple_source_display_preserves_boolean_literal_elements() {
     let source = r#"
 declare let t: [number, string?, boolean?];
