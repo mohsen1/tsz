@@ -103,3 +103,67 @@ function gg2(x: { [key: symbol]: string }, y: { [sym]: number }) {
         "TS2322 should not hide computed keys behind synthetic `__unique_` names, got: {ts2322:?}",
     );
 }
+
+#[test]
+fn ts2322_collapses_computed_string_expression_keys_to_index_signature() {
+    // When computed property names use string concatenation expressions like `""+"foo"`,
+    // tsc collapses them to a string index signature in diagnostics: `{ [x: string]: T }`.
+    let diagnostics = diagnostic_messages(
+        r#"
+interface I {
+    [s: string]: boolean;
+}
+var o: I = {
+    [""+"foo"]: "",
+    [""+"bar"]: 0
+}
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .expect("expected TS2322 for computed-key object assignability");
+
+    // Should show collapsed index signature, not raw expressions
+    assert!(
+        ts2322.1.contains("[x: string]:"),
+        "computed string-expression keys should collapse to `[x: string]: ...`, got: {ts2322:?}",
+    );
+    assert!(
+        !ts2322.1.contains(r#"[""+"foo"]"#),
+        "should not show raw expression like `[\"\"+'foo']`, got: {ts2322:?}",
+    );
+}
+
+#[test]
+fn ts2322_collapses_computed_number_expression_keys_to_index_signature() {
+    // When computed property names use unary plus like `+"foo"` (coercing to number),
+    // tsc collapses them to a number index signature: `{ [x: number]: T }`.
+    let diagnostics = diagnostic_messages(
+        r#"
+interface I {
+    [s: number]: boolean;
+}
+var o: I = {
+    [+"foo"]: "",
+    [+"bar"]: 0
+}
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .expect("expected TS2322 for computed-key object assignability");
+
+    // Should show collapsed number index signature
+    assert!(
+        ts2322.1.contains("[x: number]:"),
+        "computed number-expression keys should collapse to `[x: number]: ...`, got: {ts2322:?}",
+    );
+    assert!(
+        !ts2322.1.contains(r#"[+"foo"]"#),
+        "should not show raw expression like `[+\"foo\"]`, got: {ts2322:?}",
+    );
+}

@@ -1108,8 +1108,110 @@ impl<'a> CheckerState<'a> {
         let target_shape = target.and_then(|target| {
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)
         });
-        let mut parts = Vec::new();
+
+        // First pass: identify computed properties that would fall back to raw expression
+        // display (e.g., `[""+"foo"]`). tsc collapses these to index signatures.
+        let mut index_sig_value_types: Vec<TypeId> = Vec::new();
+        let mut index_sig_key_is_number = false;
+        let mut fallback_computed_indices: Vec<NodeIndex> = Vec::new();
+
         for child_idx in literal.elements.nodes.iter().copied() {
+            let child = self.ctx.arena.get(child_idx);
+            let name_idx = if let Some(prop) = child.and_then(|c| {
+                if c.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    self.ctx.arena.get_property_assignment(c)
+                } else {
+                    None
+                }
+            }) {
+                prop.name
+            } else if let Some(prop) = child.and_then(|c| {
+                if c.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    self.ctx.arena.get_shorthand_property(c)
+                } else {
+                    None
+                }
+            }) {
+                prop.name
+            } else {
+                continue;
+            };
+
+            let name_node = match self.ctx.arena.get(name_idx) {
+                Some(n) if n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME => n,
+                _ => continue,
+            };
+
+            // Check if this computed property would fall back to raw expression display
+            if self.get_member_name_display_text(name_idx).is_none() {
+                // Determine key type from the expression
+                if let Some(computed) = self.ctx.arena.get_computed_property(name_node) {
+                    let expr_node = self.ctx.arena.get(computed.expression);
+                    // Unary plus expression like `+""` produces number keys
+                    let is_number_key = expr_node.is_some_and(|n| {
+                        n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                            && self.ctx.arena.get_unary_expr(n).is_some_and(|p| {
+                                p.operator == tsz_scanner::SyntaxKind::PlusToken as u16
+                            })
+                    });
+                    if is_number_key {
+                        index_sig_key_is_number = true;
+                    }
+                    fallback_computed_indices.push(child_idx);
+                }
+            }
+        }
+
+        // Collect value types for fallback computed properties
+        for &child_idx in &fallback_computed_indices {
+            let child = self.ctx.arena.get(child_idx);
+            let value_idx = if let Some(prop) = child.and_then(|c| {
+                if c.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    self.ctx.arena.get_property_assignment(c)
+                } else {
+                    None
+                }
+            }) {
+                prop.initializer
+            } else {
+                continue;
+            };
+            let value_type = self.get_type_of_node(value_idx);
+            if value_type != TypeId::ERROR {
+                let widened = self.widen_type_for_display(value_type);
+                if !index_sig_value_types.contains(&widened) {
+                    index_sig_value_types.push(widened);
+                }
+            }
+        }
+
+        let mut parts = Vec::new();
+
+        // Add index signature if we have fallback computed properties
+        if !index_sig_value_types.is_empty() {
+            let key_kind = if index_sig_key_is_number {
+                "number"
+            } else {
+                "string"
+            };
+            let value_union = if index_sig_value_types.len() == 1 {
+                self.format_type_for_assignability_message(index_sig_value_types[0])
+            } else {
+                let union_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .union(index_sig_value_types.clone());
+                self.format_type_for_assignability_message(union_type)
+            };
+            parts.push(format!("[x: {key_kind}]: {value_union}"));
+        }
+
+        for child_idx in literal.elements.nodes.iter().copied() {
+            // Skip fallback computed properties - they're rendered as index signature
+            if fallback_computed_indices.contains(&child_idx) {
+                continue;
+            }
             let child = self.ctx.arena.get(child_idx)?;
             let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_property_assignment(child)?;
