@@ -21,9 +21,16 @@ use crate::lsp::position::{LineMap, Position, Range};
 use crate::span::Span;
 use std::sync::Arc;
 
+const SOURCE_FILE_LEN_OVERFLOW_MESSAGE: &str =
+    "source file text length exceeds u32; large file support requires a larger span type";
+
 // =============================================================================
 // SourceFile
 // =============================================================================
+
+fn source_file_len_bytes_as_u32(byte_len: usize) -> u32 {
+    u32::try_from(byte_len).expect(SOURCE_FILE_LEN_OVERFLOW_MESSAGE)
+}
 
 /// A source file that owns its text content and provides safe access.
 ///
@@ -48,8 +55,7 @@ impl SourceFile {
     /// Create a new `SourceFile` from a file name and source text.
     pub fn new(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
-        let len = u32::try_from(text.len())
-            .expect("source file text length exceeds u32; large file support requires a larger span type");
+        let len = source_file_len_bytes_as_u32(text.len());
         let text: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
             file_name: file_name.into(),
@@ -62,8 +68,7 @@ impl SourceFile {
     /// Create a `SourceFile` with pre-built line map.
     pub fn with_line_map(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
-        let len = u32::try_from(text.len())
-            .expect("source file text length exceeds u32; large file support requires a larger span type");
+        let len = source_file_len_bytes_as_u32(text.len());
         let line_map = Some(LineMap::build(&text));
         let text: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
@@ -581,6 +586,14 @@ mod tests {
     fn test_source_file_with_line_map() {
         let source = SourceFile::with_line_map("test.ts", "a\nb\nc");
         assert!(source.line_map.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = SOURCE_FILE_LEN_OVERFLOW_MESSAGE)]
+    fn test_source_file_length_conversion_panics_for_overflow() {
+        let overflow_len = u32::MAX as usize + 1;
+        assert!(overflow_len > u32::MAX as usize);
+        source_file_len_bytes_as_u32(overflow_len);
     }
 
     #[test]
