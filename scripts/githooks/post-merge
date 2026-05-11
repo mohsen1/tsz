@@ -8,4 +8,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
-"$ROOT_DIR/scripts/setup/reset-ts-submodule.sh"
+
+if [ "${TSZ_GIT_HOOK_RESET_TYPESCRIPT:-}" = "1" ]; then
+    "$ROOT_DIR/scripts/setup/reset-ts-submodule.sh"
+fi
