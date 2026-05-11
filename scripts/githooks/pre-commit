@@ -1,26 +1,40 @@
 #!/bin/bash
 #
-# Pre-commit hook for tsz — workspace-aware
+# Pre-commit hook for tsz — fast local gate
 #
-# Only tests crates affected by your changes. If you change files in
-# crates/tsz-scanner, it tests tsz-scanner + all dependents (parser,
-# binder, solver, checker, lowering, emitter, lsp) but NOT tsz-common.
+# Default mode is optimized for commit latency: format, lint directly changed
+# crates, run quick tests for directly changed crates, and leave broad
+# transitive/full-workspace coverage to CI or explicit strict local runs.
 #
 # Steps:
-#   0. Reset TypeScript submodule to pinned SHA
-#   0b. Block TypeScript submodule changes
+#   0. Block TypeScript submodule changes
+#   0b. Optionally reset TypeScript submodule when explicitly requested
 #   1. Detect changed crates
 #   3. cargo fmt -- check & auto-fix
-#   4. cargo clippy -- deny warnings (affected crates + CI parity commands)
-#   5. Run unit tests (only affected crates)
-#   6. Microbenchmark regression check (if solver/checker changed)
+#   4. cargo clippy -- deny warnings (selected crate scope)
+#   5. Run unit tests (selected crate scope)
+#   6. Microbenchmark regression check (disabled by default)
 #
 # Env vars:
 #   TSZ_SKIP_HOOKS=1         Skip the entire hook
 #   TSZ_SKIP_BENCH=1         Skip microbenchmark regression check
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
-#   TSZ_SKIP_LINT_PARITY=1   Skip CI parity lint commands
-#   TSZ_SKIP_WASM_LINT=1     Skip wasm32 lint gate
+#   TSZ_PRECOMMIT_FULL=1     Run strict legacy-style checks: cleanup,
+#                            transitive lint/tests, CI parity lint, wasm check
+#   TSZ_PRECOMMIT_CLEAN=1    Run target cleanup in fast mode
+#   TSZ_PRECOMMIT_CLIPPY_FIX=1
+#                            Run cargo clippy --fix before clippy verification
+#   TSZ_PRECOMMIT_CI_PARITY=1
+#                            Run full CI parity clippy in fast mode
+#   TSZ_PRECOMMIT_WASM=1     Run wasm32 warning gate in fast mode
+#   TSZ_PRECOMMIT_RESET_TYPESCRIPT=1
+#                            Reset/init TypeScript submodule before checking
+#   TSZ_PRECOMMIT_TEST_SCOPE=direct|affected|all
+#                            direct (default): changed crates only
+#                            affected: changed crates + transitive dependents
+#                            all: all workspace crates
+#   TSZ_SKIP_LINT_PARITY=1   Legacy: skip CI parity lint commands
+#   TSZ_SKIP_WASM_LINT=1     Legacy: skip wasm32 lint gate
 #   TSZ_SKIP_TESTS=1         Skip the test-compilation step (use when disk is
 #                            too constrained to build 200MB+ test binaries;
 #                            verify tests separately before using this flag)
@@ -42,14 +56,45 @@ SKIP_LINT_PARITY="${TSZ_SKIP_LINT_PARITY:-}"
 SKIP_WASM_LINT="${TSZ_SKIP_WASM_LINT:-}"
 SKIP_TESTS="${TSZ_SKIP_TESTS:-}"
 CLEAN_STALE_DAYS="${TSZ_CLEAN_STALE_DAYS:-7}"
+PRECOMMIT_FULL="${TSZ_PRECOMMIT_FULL:-}"
+PRECOMMIT_CLEAN="${TSZ_PRECOMMIT_CLEAN:-}"
+PRECOMMIT_CLIPPY_FIX="${TSZ_PRECOMMIT_CLIPPY_FIX:-}"
+PRECOMMIT_CI_PARITY="${TSZ_PRECOMMIT_CI_PARITY:-}"
+PRECOMMIT_WASM="${TSZ_PRECOMMIT_WASM:-}"
+PRECOMMIT_RESET_TYPESCRIPT="${TSZ_PRECOMMIT_RESET_TYPESCRIPT:-}"
+PRECOMMIT_TEST_SCOPE="${TSZ_PRECOMMIT_TEST_SCOPE:-direct}"
+
+if [ "$PRECOMMIT_FULL" = "1" ]; then
+    PRECOMMIT_CLEAN="${TSZ_PRECOMMIT_CLEAN:-1}"
+    PRECOMMIT_CLIPPY_FIX="${TSZ_PRECOMMIT_CLIPPY_FIX:-1}"
+    PRECOMMIT_CI_PARITY="${TSZ_PRECOMMIT_CI_PARITY:-1}"
+    PRECOMMIT_WASM="${TSZ_PRECOMMIT_WASM:-1}"
+    PRECOMMIT_TEST_SCOPE="${TSZ_PRECOMMIT_TEST_SCOPE:-affected}"
+fi
+
+if [ "${TSZ_TEST_ALL:-}" = "1" ]; then
+    PRECOMMIT_TEST_SCOPE="all"
+fi
+
+case "$PRECOMMIT_TEST_SCOPE" in
+    direct|affected|all) ;;
+    *)
+        echo "ERROR: TSZ_PRECOMMIT_TEST_SCOPE must be direct, affected, or all"
+        exit 1
+        ;;
+esac
+
+if [ "$SKIP_LINT_PARITY" = "1" ]; then
+    PRECOMMIT_CI_PARITY=0
+fi
+
+if [ "$SKIP_WASM_LINT" = "1" ]; then
+    PRECOMMIT_WASM=0
+fi
 
 echo "Pre-commit checks..."
 
-# ─── 0. Reset TypeScript submodule to pinned SHA ─────────────────────────────
-
-"$ROOT_DIR/scripts/setup/reset-ts-submodule.sh"
-
-# ─── 0b. Block TypeScript submodule changes ──────────────────────────────────
+# ─── 0. Block TypeScript submodule changes ───────────────────────────────────
 
 SUBMODULE_CHANGES=$(git diff --cached --name-only | grep '^TypeScript/' || true)
 if [ -n "$SUBMODULE_CHANGES" ]; then
@@ -78,6 +123,17 @@ if [ -n "$SUBMODULE_POINTER" ]; then
     exit 1
 fi
 
+# ─── 0b. Optional TypeScript submodule reset ──────────────────────────────────
+#
+# The TypeScript checkout is needed by conformance, emit, and fourslash suites,
+# not by pre-commit's Rust lint/test gate. Avoid initializing a fresh worktree's
+# large submodule just to make a commit.
+if [ "$PRECOMMIT_RESET_TYPESCRIPT" = "1" ]; then
+    "$ROOT_DIR/scripts/setup/reset-ts-submodule.sh"
+else
+    echo "TypeScript submodule reset skipped (set TSZ_PRECOMMIT_RESET_TYPESCRIPT=1 if needed)"
+fi
+
 # ─── Prerequisites ───────────────────────────────────────────────────────────
 
 if ! command -v cargo >/dev/null 2>&1; then
@@ -88,10 +144,11 @@ fi
 # Get changed files (include deletions/renames so removed Rust files still trigger checks)
 CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACMRD)
 CHANGED_RS=$(echo "$CHANGED_FILES" | grep '\.rs$' || true)
+CHANGED_CARGO_MANIFESTS=$(echo "$CHANGED_FILES" | grep -E '(^|/)Cargo\.toml$|^Cargo\.lock$' || true)
 
-# Nothing to do if no Rust files changed
-if [ -z "$CHANGED_RS" ]; then
-    echo "No Rust files changed, skipping checks."
+# Nothing to do if no Rust or Cargo manifests changed
+if [ -z "$CHANGED_RS" ] && [ -z "$CHANGED_CARGO_MANIFESTS" ]; then
+    echo "No Rust or Cargo manifest files changed, skipping Rust checks."
     exit 0
 fi
 
@@ -103,7 +160,10 @@ fi
 # If crate X changed, all crates that depend on X (transitively) need retesting.
 # Uses simple string variable as a set (bash 3.2 compatible, no associative arrays).
 
-AFFECTED=""  # space-separated list of affected crate names
+AFFECTED=""       # space-separated list of changed crates + transitive dependents
+DIRECT_CRATES=""  # space-separated list of crates directly touched by staged files
+ALL_WORKSPACE_CRATES="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-lowering tsz-emitter tsz-lsp tsz-core tsz-cli tsz-conformance tsz-wasm tsz-website"
+TOTAL_WORKSPACE_CRATES=$(echo $ALL_WORKSPACE_CRATES | wc -w | xargs)
 
 has_crate() { echo " $AFFECTED " | grep -q " $1 "; }
 add_crate() {
@@ -111,6 +171,15 @@ add_crate() {
         : # already present
     else
         AFFECTED="$AFFECTED $1"
+    fi
+}
+
+has_direct_crate() { echo " $DIRECT_CRATES " | grep -q " $1 "; }
+add_direct_crate() {
+    if has_direct_crate "$1"; then
+        : # already present
+    else
+        DIRECT_CRATES="$DIRECT_CRATES $1"
     fi
 }
 
@@ -143,6 +212,16 @@ add_with_dependents() {
             add_crate tsz-emitter ;;
         tsz-lsp)
             add_crate tsz-lsp ;;
+        tsz-core)
+            add_crate tsz-core ;;
+        tsz-cli)
+            add_crate tsz-cli ;;
+        tsz-conformance)
+            add_crate tsz-conformance ;;
+        tsz-wasm)
+            add_crate tsz-wasm ;;
+        tsz-website)
+            add_crate tsz-website ;;
     esac
 }
 
@@ -150,40 +229,63 @@ ROOT_CHANGED=false
 
 for file in $CHANGED_RS; do
     case "$file" in
-        crates/tsz-common/*)  add_with_dependents tsz-common ;;
-        crates/tsz-scanner/*) add_with_dependents tsz-scanner ;;
-        crates/tsz-parser/*)  add_with_dependents tsz-parser ;;
-        crates/tsz-binder/*)  add_with_dependents tsz-binder ;;
-        crates/tsz-solver/*)  add_with_dependents tsz-solver ;;
-        crates/tsz-checker/*) add_with_dependents tsz-checker ;;
-        crates/tsz-lowering/*) add_with_dependents tsz-lowering ;;
-        crates/tsz-emitter/*) add_with_dependents tsz-emitter ;;
-        crates/tsz-lsp/*)     add_with_dependents tsz-lsp ;;
+        crates/tsz-common/*)  add_direct_crate tsz-common; add_with_dependents tsz-common ;;
+        crates/tsz-scanner/*) add_direct_crate tsz-scanner; add_with_dependents tsz-scanner ;;
+        crates/tsz-parser/*)  add_direct_crate tsz-parser; add_with_dependents tsz-parser ;;
+        crates/tsz-binder/*)  add_direct_crate tsz-binder; add_with_dependents tsz-binder ;;
+        crates/tsz-solver/*)  add_direct_crate tsz-solver; add_with_dependents tsz-solver ;;
+        crates/tsz-checker/*) add_direct_crate tsz-checker; add_with_dependents tsz-checker ;;
+        crates/tsz-lowering/*) add_direct_crate tsz-lowering; add_with_dependents tsz-lowering ;;
+        crates/tsz-emitter/*) add_direct_crate tsz-emitter; add_with_dependents tsz-emitter ;;
+        crates/tsz-lsp/*)     add_direct_crate tsz-lsp; add_with_dependents tsz-lsp ;;
+        crates/tsz-core/*)    add_direct_crate tsz-core; add_with_dependents tsz-core ;;
+        crates/tsz-cli/*)     add_direct_crate tsz-cli; add_with_dependents tsz-cli ;;
+        crates/conformance/*) add_direct_crate tsz-conformance; add_with_dependents tsz-conformance ;;
+        crates/tsz-wasm/*)    add_direct_crate tsz-wasm; add_with_dependents tsz-wasm ;;
+        crates/tsz-website/*) add_direct_crate tsz-website; add_with_dependents tsz-website ;;
         src/*)                 ROOT_CHANGED=true ;;
     esac
 done
 
-# Cargo.toml changes affect everything
-CHANGED_TOML=$(echo "$CHANGED_FILES" | grep 'Cargo\.toml$' || true)
-if [ -n "$CHANGED_TOML" ]; then
-    ROOT_CHANGED=true
-fi
+for file in $CHANGED_CARGO_MANIFESTS; do
+    case "$file" in
+        crates/tsz-common/Cargo.toml)  add_direct_crate tsz-common; add_with_dependents tsz-common ;;
+        crates/tsz-scanner/Cargo.toml) add_direct_crate tsz-scanner; add_with_dependents tsz-scanner ;;
+        crates/tsz-parser/Cargo.toml)  add_direct_crate tsz-parser; add_with_dependents tsz-parser ;;
+        crates/tsz-binder/Cargo.toml)  add_direct_crate tsz-binder; add_with_dependents tsz-binder ;;
+        crates/tsz-solver/Cargo.toml)  add_direct_crate tsz-solver; add_with_dependents tsz-solver ;;
+        crates/tsz-checker/Cargo.toml) add_direct_crate tsz-checker; add_with_dependents tsz-checker ;;
+        crates/tsz-lowering/Cargo.toml) add_direct_crate tsz-lowering; add_with_dependents tsz-lowering ;;
+        crates/tsz-emitter/Cargo.toml) add_direct_crate tsz-emitter; add_with_dependents tsz-emitter ;;
+        crates/tsz-lsp/Cargo.toml)     add_direct_crate tsz-lsp; add_with_dependents tsz-lsp ;;
+        crates/tsz-core/Cargo.toml)    add_direct_crate tsz-core; add_with_dependents tsz-core ;;
+        crates/tsz-cli/Cargo.toml)     add_direct_crate tsz-cli; add_with_dependents tsz-cli ;;
+        crates/conformance/Cargo.toml) add_direct_crate tsz-conformance; add_with_dependents tsz-conformance ;;
+        crates/tsz-wasm/Cargo.toml)    add_direct_crate tsz-wasm; add_with_dependents tsz-wasm ;;
+        crates/tsz-website/Cargo.toml) add_direct_crate tsz-website; add_with_dependents tsz-website ;;
+        Cargo.toml|Cargo.lock)          ROOT_CHANGED=true ;;
+    esac
+done
 
-# Root or force-all: test everything
-if [ "$ROOT_CHANGED" = "true" ] || [ "${TSZ_TEST_ALL:-}" = "1" ]; then
-    AFFECTED="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-lowering tsz-emitter tsz-lsp"
+# Root changes can affect all workspace crates.
+if [ "$ROOT_CHANGED" = "true" ]; then
+    DIRECT_CRATES="$ALL_WORKSPACE_CRATES"
+    AFFECTED="$ALL_WORKSPACE_CRATES"
 fi
 
 # Normalize: trim leading/trailing whitespace
 AFFECTED=$(echo $AFFECTED | xargs)
+DIRECT_CRATES=$(echo $DIRECT_CRATES | xargs)
 
-if [ -z "$AFFECTED" ]; then
-    echo "No workspace crates affected, skipping tests."
+if [ -z "$AFFECTED" ] && [ -z "$DIRECT_CRATES" ]; then
+    echo "No core workspace crates affected, skipping Rust checks."
     exit 0
 fi
 
+NUM_DIRECT=$(echo $DIRECT_CRATES | wc -w | xargs)
 NUM_AFFECTED=$(echo $AFFECTED | wc -w | xargs)
-echo "  Affected crates: $AFFECTED ($NUM_AFFECTED/9)"
+echo "  Direct crates: ${DIRECT_CRATES:-none} ($NUM_DIRECT/$TOTAL_WORKSPACE_CRATES)"
+echo "  Transitive affected crates: ${AFFECTED:-none} ($NUM_AFFECTED/$TOTAL_WORKSPACE_CRATES)"
 
 # Root tests cover integration behavior across the core pipeline crates.
 ROOT_TEST_RELEVANT_CHANGED=false
@@ -194,7 +296,7 @@ fi
 
 # ─── 2. Clean stale target artifacts ─────────────────────────────────────────
 
-if [ "$SKIP_CLEAN" != "1" ]; then
+if [ "$SKIP_CLEAN" != "1" ] && [ "$PRECOMMIT_CLEAN" = "1" ]; then
     echo "1/5 Cleaning stale target artifacts..."
     TARGET_DIR="$ROOT_DIR/.target"
 
@@ -236,7 +338,7 @@ if [ "$SKIP_CLEAN" != "1" ]; then
         ! -name ".target" ! -name ".target-bench" \
         -mtime +"$CLEAN_STALE_DAYS" -prune -exec rm -rf {} + 2>/dev/null || true
 else
-    echo "1/5 Target cleanup skipped (TSZ_SKIP_CLEAN=1)"
+    echo "1/5 Target cleanup skipped (set TSZ_PRECOMMIT_CLEAN=1 or TSZ_PRECOMMIT_FULL=1 to run)"
 fi
 
 # ─── 3. cargo fmt ────────────────────────────────────────────────────────────
@@ -256,42 +358,52 @@ else
     echo "  Already formatted."
 fi
 
-# ─── 4. Clippy — deny all warnings (affected crates only) ────────────────────
+# ─── 4. Clippy — deny all warnings (selected crate scope) ────────────────────
 
-echo "3/5 Clippy (affected crates)..."
+if [ "$PRECOMMIT_FULL" = "1" ]; then
+    LINT_CRATES="$AFFECTED"
+    LINT_SCOPE="affected"
+    CLIPPY_TARGETS="${TSZ_PRECOMMIT_CLIPPY_TARGETS:---all-targets}"
+else
+    LINT_CRATES="$DIRECT_CRATES"
+    LINT_SCOPE="direct"
+    CLIPPY_TARGETS="${TSZ_PRECOMMIT_CLIPPY_TARGETS:---lib}"
+fi
+
+echo "3/5 Clippy ($LINT_SCOPE crates)..."
 
 # Build clippy args: -p crate1 -p crate2 ...
 CLIPPY_PKGS=""
-for crate in $AFFECTED; do
+for crate in $LINT_CRATES; do
     CLIPPY_PKGS="$CLIPPY_PKGS -p $crate"
 done
 
-# Match CI: check all targets (lib + tests + benches), not just --lib.
-# This catches lint errors that only appear in test code.
-# Note: root crate (tsz) is checked separately with --lib only because its
-# integration tests have many format-string warnings that are not actionable.
-CLIPPY_TARGETS="--all-targets"
+if [ -z "$CLIPPY_PKGS" ]; then
+    echo "  No lintable workspace crates changed."
+else
 
-# Try auto-fix first, then verify
-if ! cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
-    echo ""
-    echo "ERROR: Clippy found warnings/errors that could not be auto-fixed:"
-    echo ""
-    cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1 | tail -50
-    exit 1
+    if [ "$PRECOMMIT_CLIPPY_FIX" = "1" ]; then
+        if ! cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
+            echo ""
+            echo "ERROR: Clippy found warnings/errors that could not be auto-fixed:"
+            echo ""
+            cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1 | tail -50
+            exit 1
+        fi
+
+        # Re-stage any files clippy auto-fixed
+        for f in $CHANGED_RS; do
+            [ -f "$f" ] && git add "$f"
+        done
+    fi
+
+    CLIPPY_OUTPUT=$(cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1) || {
+        echo ""
+        echo "ERROR: Clippy warnings remain. Please fix manually:"
+        echo "$CLIPPY_OUTPUT" | tail -20
+        exit 1
+    }
 fi
-
-# Re-stage any files clippy auto-fixed
-for f in $CHANGED_RS; do
-    [ -f "$f" ] && git add "$f"
-done
-
-CLIPPY_OUTPUT=$(cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1) || {
-    echo ""
-    echo "ERROR: Clippy warnings remain after auto-fix. Please fix manually:"
-    echo "$CLIPPY_OUTPUT" | tail -20
-    exit 1
-}
 
 # Also lint root crate lib if root files changed (--lib only to avoid test fixture noise)
 if [ "$ROOT_CHANGED" = "true" ]; then
@@ -303,9 +415,7 @@ if [ "$ROOT_CHANGED" = "true" ]; then
     }
 fi
 
-if [ "$SKIP_LINT_PARITY" = "1" ]; then
-    echo "  CI lint parity checks skipped (TSZ_SKIP_LINT_PARITY=1)"
-else
+if [ "$PRECOMMIT_CI_PARITY" = "1" ]; then
     # Match CI lint commands exactly to prevent local-vs-CI drift.
     CI_CLIPPY_PKGS="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp"
     CI_CLIPPY_OUTPUT=$(cargo clippy $CI_CLIPPY_PKGS --all-targets -- -D warnings 2>&1) || {
@@ -321,14 +431,14 @@ else
         echo "$FULL_WS_CLIPPY_OUTPUT" | tail -30
         exit 1
     }
+else
+    echo "  CI lint parity skipped (set TSZ_PRECOMMIT_CI_PARITY=1 or TSZ_PRECOMMIT_FULL=1 to run)"
 fi
 echo "  Clippy passed (zero warnings)"
 
-# ─── 4.25. Rustc warnings gate (wasm32 target, affected crates) ─────────────
-if [ "$SKIP_WASM_LINT" = "1" ]; then
-    echo "  wasm32 lint gate skipped (TSZ_SKIP_WASM_LINT=1)"
-else
-    echo "3.25/5 Rustc warnings gate (wasm32, affected crates)..."
+# ─── 4.25. Rustc warnings gate (wasm32 target, selected crate scope) ─────────
+if [ "$PRECOMMIT_WASM" = "1" ]; then
+    echo "3.25/5 Rustc warnings gate (wasm32, $LINT_SCOPE crates)..."
     WASM_CHECK_OUTPUT=$(RUSTFLAGS="-D warnings" cargo check $CLIPPY_PKGS --target wasm32-unknown-unknown --lib 2>&1) || {
         echo ""
         echo "ERROR: wasm32 check failed (rustc warnings denied):"
@@ -336,30 +446,54 @@ else
         exit 1
     }
     echo "  wasm32 rustc warnings gate passed"
+else
+    echo "  wasm32 lint gate skipped (set TSZ_PRECOMMIT_WASM=1 or TSZ_PRECOMMIT_FULL=1 to run)"
 fi
 
 # ─── 4.5. Architecture guardrail (checker boundary) ──────────────────────────
-echo "3.5/5 Checker boundary guardrail..."
-./scripts/arch/check-checker-boundaries.sh
+ARCH_RELEVANT_CHANGED=false
+if echo "$CHANGED_FILES" | grep -Eq '^(crates/tsz-checker/|scripts/arch/|scripts/architecture-check\.sh)'; then
+    ARCH_RELEVANT_CHANGED=true
+fi
+
+if [ "$ARCH_RELEVANT_CHANGED" = "true" ] || [ "$PRECOMMIT_FULL" = "1" ]; then
+    echo "3.5/5 Checker boundary guardrail..."
+    ./scripts/arch/check-checker-boundaries.sh
+else
+    echo "3.5/5 Checker boundary guardrail skipped (checker/arch files unchanged)"
+fi
 
 # ─── Re-stage files modified by fmt / clippy auto-fix ─────────────────────────
 
 git add -u
 
-# ─── 5. Tests — only affected crates ─────────────────────────────────────────
+# ─── 5. Tests — selected crate scope ─────────────────────────────────────────
 
 if [ "$SKIP_TESTS" = "1" ]; then
     echo "4/5 Test-compilation skipped (TSZ_SKIP_TESTS=1) — verify tests separately"
 else
 
-echo "4/5 Running tests ($NUM_AFFECTED crate(s))..."
+case "$PRECOMMIT_TEST_SCOPE" in
+    direct) TEST_CRATES="$DIRECT_CRATES" ;;
+    affected) TEST_CRATES="$AFFECTED" ;;
+    all) TEST_CRATES="$ALL_WORKSPACE_CRATES" ;;
+esac
+
+TEST_CRATES=$(echo $TEST_CRATES | xargs)
+NUM_TEST_CRATES=$(echo $TEST_CRATES | wc -w | xargs)
+
+if [ -z "$TEST_CRATES" ]; then
+    echo "4/5 Tests skipped (no testable workspace crates changed)"
+else
+
+echo "4/5 Running tests ($NUM_TEST_CRATES crate(s), scope=$PRECOMMIT_TEST_SCOPE)..."
 
 # Build nextest filter expression: -E 'package(crate1) | package(crate2) ...'
 # Also build --package flags so nextest limits compilation to affected
 # crates only (without --package, nextest compiles the whole workspace).
 NEXTEST_FILTER=""
 NEXTEST_CARGO_PKGS=""
-for crate in $AFFECTED; do
+for crate in $TEST_CRATES; do
     if [ -z "$NEXTEST_FILTER" ]; then
         NEXTEST_FILTER="package($crate)"
     else
@@ -380,8 +514,8 @@ if [ "$ROOT_CHANGED" = "true" ]; then
     fi
 fi
 
-# Only include root tsz crate if root files or core crates changed.
-if [ "$ROOT_CHANGED" = "true" ] || [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; then
+# In strict mode, keep the old root integration coverage when pipeline crates changed.
+if [ "$PRECOMMIT_FULL" = "1" ] && { [ "$ROOT_CHANGED" = "true" ] || [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; }; then
     if ! echo "$NEXTEST_FILTER" | grep -q "package(tsz-core)"; then
         NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz-core)"
     fi
@@ -391,10 +525,8 @@ if [ "$ROOT_CHANGED" = "true" ] || [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; t
 fi
 
 if cargo nextest --version >/dev/null 2>&1; then
-    # CARGO_INCREMENTAL=0: avoid filling disk with incremental artifacts during
-    # pre-commit builds; the speed trade-off is acceptable for short-lived checks.
     # shellcheck disable=SC2086
-    TEST_OUTPUT=$(CARGO_INCREMENTAL=0 cargo nextest run --profile precommit --no-tests=pass $NEXTEST_CARGO_PKGS -E "$NEXTEST_FILTER" 2>&1) || {
+    TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass $NEXTEST_CARGO_PKGS -E "$NEXTEST_FILTER" 2>&1) || {
         echo "$TEST_OUTPUT" | tail -20
         echo "ERROR: Tests failed. Run 'cargo nextest run' for details."
         exit 1
@@ -403,10 +535,10 @@ if cargo nextest --version >/dev/null 2>&1; then
 else
     # Fallback to cargo test with package filters
     TEST_PKGS=""
-    for crate in $AFFECTED; do
+    for crate in $TEST_CRATES; do
         TEST_PKGS="$TEST_PKGS -p $crate"
     done
-    if [ "$ROOT_CHANGED" = "true" ] || [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; then
+    if [ "$ROOT_CHANGED" = "true" ] || { [ "$PRECOMMIT_FULL" = "1" ] && [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; }; then
         TEST_PKGS="$TEST_PKGS -p tsz-core"
     fi
     TEST_OUTPUT=$(cargo test $TEST_PKGS 2>&1) || {
@@ -416,6 +548,8 @@ else
     }
 fi
 echo "  Tests passed"
+
+fi # end empty TEST_CRATES
 
 fi # end TSZ_SKIP_TESTS
 
