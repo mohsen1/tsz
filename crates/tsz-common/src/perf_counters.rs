@@ -803,6 +803,25 @@ pub fn record_cross_file_type_params_cache_miss() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a cross-arena delegate cache hit on the per-file type-of-symbol
+/// table. Mirrors the [`record_cross_file_type_params_cache_hit`] shape:
+/// one gate, one `counters()` lookup, one atomic increment.
+///
+/// The matching `record_delegate_cross_arena_cache_hit_lib` helper is not
+/// added here because the only two lib-hit call sites (in `cross_file.rs`
+/// near `delegate_cross_arena_symbol_resolution`) already cache `counters()`
+/// in a local `perf` variable that's reused across multiple counter writes
+/// in the same block — those sites are already optimal as written.
+#[inline]
+pub fn record_delegate_cross_arena_cache_hit_cross_file() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .delegate_cross_arena_cache_hits_cross_file
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,

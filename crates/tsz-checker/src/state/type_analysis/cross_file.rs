@@ -1104,12 +1104,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
         {
-            if tsz_common::perf_counters::enabled_fast() {
-                tsz_common::perf_counters::inc(
-                    &tsz_common::perf_counters::counters()
-                        .delegate_cross_arena_cache_hits_cross_file,
-                );
-            }
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
             return Some((cached_type, cached_params));
         }
 
@@ -1253,12 +1248,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .cached_cross_file_interface_type(sym_id, file_idx as u32)
         {
-            if tsz_common::perf_counters::enabled_fast() {
-                tsz_common::perf_counters::inc(
-                    &tsz_common::perf_counters::counters()
-                        .delegate_cross_arena_cache_hits_cross_file,
-                );
-            }
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             self.ctx
                 .definition_store
@@ -1475,12 +1465,7 @@ impl<'a> CheckerState<'a> {
                     member_idx,
                     file_idx as u32,
                 ) {
-                    if tsz_common::perf_counters::enabled_fast() {
-                        tsz_common::perf_counters::inc(
-                            &tsz_common::perf_counters::counters()
-                                .delegate_cross_arena_cache_hits_cross_file,
-                        );
-                    }
+                    tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
                     results.insert(member_idx, cached_type);
                 } else {
                     misses.push(member_idx);
