@@ -1967,3 +1967,44 @@ fn static_block_await_arrow_candidates_recover_as_await_expressions() {
         "expected TS1109 at `=>` after bare `await`, got {diags:?}"
     );
 }
+
+#[test]
+fn comma_between_consecutive_function_overloads_recovers_at_statement_boundary() {
+    let source = r#"
+function f1(), function f1();
+function f2(), function f2() {}
+function f3() {}, function f3();
+
+class C {
+    m1(), m1();
+    m2(), m2() {}
+    m3() {}, m3();
+}
+"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+        ],
+        "expected comma recovery to match overloadConsecutiveness syntax diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED),
+        "comma recovery should not parse following overloads as malformed function expressions: {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "comma after a function body should recover as a statement-list separator, not an expression: {:?}",
+        parser.get_diagnostics()
+    );
+}

@@ -841,15 +841,10 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         printer.emit(root);
         let output = printer.get_output().to_string();
 
-        assert!(
-            output.contains(
-                "function f1() { }\n(function f1() { });\nfunction f2() { }\n(function f2() { });\nfunction f3() { }"
-            ),
-            "Recovered comma-separated function declarations should emit empty bodies in both declaration and expression recovery positions.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("    m1() { }\n    m2() { }\n    m2() { }\n    m3() { }"),
-            "Recovered comma-separated method declarations should emit empty bodies before comma separators.\nOutput:\n{output}"
+        assert_eq!(
+            output.trim_end(),
+            "\"use strict\";\nfunction f1() { }\nfunction f2() { }\nfunction f2() { }\nfunction f3() { }\nclass C {\n    m1() { }\n    m2() { }\n    m2() { }\n    m3() { }\n}",
+            "Recovered comma-separated overload declarations should emit tsc-aligned empty bodies.\nOutput:\n{output}"
         );
     }
 

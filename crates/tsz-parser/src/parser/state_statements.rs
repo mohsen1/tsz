@@ -23,6 +23,19 @@ use tsz_common::interner::Atom;
 use tsz_scanner::{SyntaxKind, keyword_text_len, token_is_keyword};
 
 impl ParserState {
+    fn recover_invalid_statement_list_comma(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::CommaToken) {
+            return false;
+        }
+
+        self.parse_error_at_current_token(
+            "Declaration or statement expected.",
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        );
+        self.next_token();
+        true
+    }
+
     fn look_ahead_is_invalid_shebang(&mut self) -> bool {
         if !self.is_token(SyntaxKind::HashToken) || self.token_pos() == 0 {
             return false;
@@ -453,6 +466,11 @@ impl ParserState {
                 });
                 prev_block_needs_post_equals_semi = needs_semi_after_equals;
                 statements.push(stmt);
+                if self.recover_invalid_statement_list_comma() {
+                    previous_statement_was_block = false;
+                    prev_block_needs_post_equals_semi = false;
+                    continue;
+                }
             }
 
             // Safety: if position didn't advance, force-skip the current token
@@ -647,6 +665,10 @@ impl ParserState {
                         || kind == syntax_kind_ext::WITH_STATEMENT
                 });
                 statements.push(stmt);
+                if self.recover_invalid_statement_list_comma() {
+                    previous_statement_was_block = false;
+                    continue;
+                }
             }
 
             // Safety: if position didn't advance, force-skip the current token
