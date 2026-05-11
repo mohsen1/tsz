@@ -824,6 +824,36 @@ pub fn record_cross_file_type_params_cache_miss() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record an entry to `get_type_of_symbol`'s computation path. Sits on a
+/// multi-million-call hot path (`state/type_analysis/computed/mod.rs`),
+/// so gating once before the `counters()` `OnceLock` deref is the load-
+/// bearing optimization — disabled builds pay one branch and one
+/// relaxed atomic load on `ENABLED_FAST`, not a deref.
+#[inline]
+pub fn record_compute_type_of_symbol_call() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .compute_type_of_symbol_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a cache hit on `get_type_of_symbol`'s `symbol_types` lookup.
+/// Used at two sites in `state/type_analysis/core.rs` (the provisional-
+/// type and the standard cached-type branches of the recursion guard).
+/// Compared against [`record_compute_type_of_symbol_call`] in attribution
+/// mode to characterize recomputation pressure.
+#[inline]
+pub fn record_compute_type_of_symbol_cache_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .compute_type_of_symbol_cache_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
