@@ -1,4 +1,4 @@
-# chore(emitter): remove dead ES5 member emitter paths
+# chore(emitter): remove dead ES5 member emitters
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/remove-dead-es5-member-emitters-20260512`
