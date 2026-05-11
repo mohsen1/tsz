@@ -671,11 +671,20 @@ pub const fn lock_wait_histogram_wired() -> bool {
 /// Record a `CheckerState::with_parent_cache` construction with attribution.
 /// Bumps both the global counter and the per-reason bucket so PR #1631's
 /// dump shows where the 17,329 constructions on subset3 come from.
+///
+/// Gate once at the top: when counters are disabled the helper returns
+/// without paying the `counters()` `OnceLock` deref. When enabled the
+/// two atomic increments are direct `fetch_add` calls (no per-call
+/// `enabled_fast()` re-check via `inc()`).
 #[inline]
 pub fn record_with_parent_cache(reason: CheckerCreationReason) {
+    if !enabled_fast() {
+        return;
+    }
     let c = counters();
-    inc(&c.checker_state_with_parent_cache_constructed);
-    inc(&c.with_parent_cache_by_reason[reason.as_index()]);
+    c.checker_state_with_parent_cache_constructed
+        .fetch_add(1, Ordering::Relaxed);
+    c.with_parent_cache_by_reason[reason.as_index()].fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record an overlay copy with attribution: count + entries-copied +
@@ -686,48 +695,85 @@ pub fn record_with_parent_cache(reason: CheckerCreationReason) {
 ///
 /// Caller passes the parent overlay's len so we can attribute without
 /// holding a borrow across the copy.
+///
+/// Gate once at the top: when counters are disabled the helper returns
+/// without paying the `counters()` `OnceLock` deref. When enabled the
+/// 10+ atomic operations are direct `fetch_add`/`compare_exchange`
+/// calls instead of routing each through `inc()`/`add()`/`record_max()`
+/// (which each re-check `enabled_fast()`).
 #[inline]
 pub fn record_overlay_copy(reason: CheckerCreationReason, entries: u64) {
+    if !enabled_fast() {
+        return;
+    }
     let c = counters();
-    inc(&c.copy_symbol_file_targets_calls);
-    add(&c.copy_symbol_file_targets_entries_total, entries);
-    record_max(&c.copy_symbol_file_targets_entries_max, entries);
+    c.copy_symbol_file_targets_calls
+        .fetch_add(1, Ordering::Relaxed);
+    c.copy_symbol_file_targets_entries_total
+        .fetch_add(entries, Ordering::Relaxed);
+    record_max_inner(&c.copy_symbol_file_targets_entries_max, entries);
     if entries >= 1_000 {
-        inc(&c.copy_symbol_file_targets_len_ge_1k);
+        c.copy_symbol_file_targets_len_ge_1k
+            .fetch_add(1, Ordering::Relaxed);
     }
     if entries >= 10_000 {
-        inc(&c.copy_symbol_file_targets_len_ge_10k);
+        c.copy_symbol_file_targets_len_ge_10k
+            .fetch_add(1, Ordering::Relaxed);
     }
     if entries >= 100_000 {
-        inc(&c.copy_symbol_file_targets_len_ge_100k);
+        c.copy_symbol_file_targets_len_ge_100k
+            .fetch_add(1, Ordering::Relaxed);
     }
     if entries >= 1_000_000 {
-        inc(&c.copy_symbol_file_targets_len_ge_1m);
+        c.copy_symbol_file_targets_len_ge_1m
+            .fetch_add(1, Ordering::Relaxed);
     }
-    inc(&c.overlay_copy_calls_by_reason[reason.as_index()]);
-    add(
-        &c.overlay_copy_entries_by_reason[reason.as_index()],
-        entries,
-    );
-    record_max(
+    c.overlay_copy_calls_by_reason[reason.as_index()].fetch_add(1, Ordering::Relaxed);
+    c.overlay_copy_entries_by_reason[reason.as_index()].fetch_add(entries, Ordering::Relaxed);
+    record_max_inner(
         &c.overlay_copy_max_entries_by_reason[reason.as_index()],
         entries,
     );
 }
 
+/// `record_max` without the gate check — called from helpers that
+/// already gated at the top. Keeps the CAS-loop semantics of the public
+/// `record_max` while avoiding a redundant `enabled_fast()` read.
+#[inline]
+fn record_max_inner(counter: &AtomicU64, value: u64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    while value > current {
+        match counter.compare_exchange_weak(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+/// Record one cross-arena symbol miss with source/kind/target attribution.
+///
+/// Gate once at the top: when counters are disabled the helper returns
+/// without paying the `counters()` `OnceLock` deref. When enabled the
+/// three atomic increments are direct `fetch_add` calls (no per-call
+/// `enabled_fast()` re-check via `inc()`).
 #[inline]
 pub fn record_cross_arena_symbol_miss(
     source: CrossArenaSymbolMissSource,
     kind: CrossArenaSymbolMissKind,
     target_is_declaration_file: bool,
 ) {
+    if !enabled_fast() {
+        return;
+    }
     let c = counters();
-    inc(&c.delegate_cross_arena_symbol_miss_by_source[source.as_index()]);
-    inc(&c.delegate_cross_arena_symbol_miss_by_kind[kind.as_index()]);
+    c.delegate_cross_arena_symbol_miss_by_source[source.as_index()].fetch_add(1, Ordering::Relaxed);
+    c.delegate_cross_arena_symbol_miss_by_kind[kind.as_index()].fetch_add(1, Ordering::Relaxed);
     if target_is_declaration_file {
-        inc(&c.delegate_cross_arena_symbol_miss_target_declaration_file);
+        c.delegate_cross_arena_symbol_miss_target_declaration_file
+            .fetch_add(1, Ordering::Relaxed);
     } else {
-        inc(&c.delegate_cross_arena_symbol_miss_target_source_file);
+        c.delegate_cross_arena_symbol_miss_target_source_file
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
