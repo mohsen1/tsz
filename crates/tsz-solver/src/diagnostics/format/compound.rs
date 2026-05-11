@@ -299,31 +299,34 @@ impl<'a> TypeFormatter<'a> {
         false
     }
 
-    /// Format a type while stripping `undefined` from it.
-    /// Used for optional tuple elements where the `?` already implies optionality.
-    fn format_stripping_undefined(&mut self, type_id: TypeId) -> String {
-        if type_id == TypeId::UNDEFINED {
-            // Edge case: type is just `undefined` — display it as-is since
-            // there's nothing else to show.
-            return self.format(type_id).into_owned();
-        }
-        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
-            let members = self.interner.type_list(list_id);
-            let filtered: Vec<TypeId> = members
-                .iter()
-                .copied()
-                .filter(|&m| m != TypeId::UNDEFINED)
-                .collect();
-            if filtered.len() < members.len() {
-                // We stripped some undefined members
-                return match filtered.len() {
-                    0 => self.format(TypeId::NEVER).into_owned(),
-                    1 => self.format(filtered[0]).into_owned(),
-                    _ => self.format_union(&filtered),
-                };
+    fn format_optional_tuple_element_type(&mut self, type_id: TypeId, named: bool) -> String {
+        let formatted = self.format(type_id).into_owned();
+        let absorbs_undefined =
+            type_id == TypeId::UNDEFINED || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN;
+
+        if self.preserve_optional_property_surface_syntax {
+            if named {
+                return formatted;
             }
+            if !named && !absorbs_undefined && self.type_contains_undefined(type_id) {
+                return format!("({formatted})?");
+            }
+            return format!("{formatted}?");
         }
-        self.format(type_id).into_owned()
+
+        if named {
+            if self.type_contains_undefined(type_id) {
+                formatted
+            } else {
+                format!("{formatted} | undefined")
+            }
+        } else if absorbs_undefined {
+            format!("{formatted}?")
+        } else if self.type_contains_undefined(type_id) {
+            format!("({formatted})?")
+        } else {
+            format!("({formatted} | undefined)?")
+        }
     }
 
     pub(super) fn format_type_params(&mut self, type_params: &[TypeParamInfo]) -> String {
@@ -1667,15 +1670,7 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|e| {
                 if e.optional && !e.rest {
-                    // Match tsc behavior: optional tuple elements display as
-                    // `(type | undefined)?` with the full type including undefined
-                    // wrapped in parentheses and the `?` after the closing paren.
-                    let formatted = self.format(e.type_id).into_owned();
-                    if self.type_contains_undefined(e.type_id) {
-                        format!("({formatted})?")
-                    } else {
-                        format!("({formatted} | undefined)?")
-                    }
+                    self.format_optional_tuple_element_type(e.type_id, e.name.is_some())
                 } else {
                     self.format(e.type_id).into_owned()
                 }
@@ -1689,10 +1684,11 @@ impl<'a> TypeFormatter<'a> {
             .zip(disambiguated)
             .map(|(e, type_str)| {
                 let rest = if e.rest { "..." } else { "" };
-                // Rest elements are never printed with `?` in tsc.
-                // For optional elements, the `?` is already embedded in the
-                // parenthesized type string above (e.g., `(string | undefined)?`).
-                let optional = "";
+                let optional = if e.optional && !e.rest && e.name.is_some() {
+                    "?"
+                } else {
+                    ""
+                };
                 if let Some(name_atom) = e.name {
                     let name = self.atom(name_atom);
                     format!("{rest}{name}{optional}: {type_str}")
