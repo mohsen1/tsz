@@ -941,6 +941,104 @@ pub fn record_interner_application_intern_call() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record one `Path::is_file()` probe from the resolver fast path.
+/// Used by the `count_is_file` wrapper in `tsz-cli/src/driver/resolution.rs`,
+/// which bundles the syscall and the counter in one place. Gate once,
+/// deref `counters()` once, increment.
+#[inline]
+pub fn record_resolver_is_file() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_is_file_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one `Path::is_dir()` probe from the resolver fast path.
+/// Sibling to [`record_resolver_is_file`].
+#[inline]
+pub fn record_resolver_is_dir() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_is_dir_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one `std::fs::read_dir()` call from the resolver. Sibling to
+/// [`record_resolver_is_file`]. The cost of the syscall itself dwarfs
+/// the counter overhead — this helper is only structural cleanup.
+#[inline]
+pub fn record_resolver_read_dir() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_read_dir_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one candidate path examined during module resolution
+/// (path-mapping virtual roots and suffix-extension expansion).
+/// Lifted into a helper so the two emit sites in
+/// `tsz-cli/src/driver/resolution.rs` don't re-pay the `counters()`
+/// `OnceLock` deref.
+#[inline]
+pub fn record_resolver_candidate_path() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_candidate_paths_total
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record one uncached `package.json` read. Sits inside the resolver's
+/// `read_package_json_uncached`, which `large-ts-repo` profiles flag
+/// as the dominant resolver work — keeping the gate cheap matters even
+/// though the surrounding `read_to_string` is several orders of
+/// magnitude more expensive.
+#[inline]
+pub fn record_resolver_read_package_json() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .resolver_read_package_json_calls
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a root `CheckerState` construction. Called from each of the
+/// nine `CheckerState::new` / `with_*` constructors in
+/// `tsz-checker/src/state/state.rs`. Sibling to the other `record_*`
+/// helpers — gate once, look up `counters()` once, increment.
+#[inline]
+pub fn record_checker_state_constructed() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .checker_state_constructed
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record an invocation of `CheckerContext::reset_for_next_file()`. Bumps
+/// only on the sequential session-reuse path (T2.1.B). Sibling to the
+/// other `record_*` helpers — gate once, look up `counters()` once,
+/// increment. Compared against `checker_state_constructed` in
+/// attribution mode to detect reuse-vs-construct directly.
+#[inline]
+pub fn record_file_session_reset() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .file_session_resets
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 #[inline]
 pub fn record_direct_cross_file_interface_lowering_outcome(
     outcome: DirectCrossFileInterfaceLoweringOutcome,
@@ -966,11 +1064,17 @@ impl PerfCounters {
     /// mistake "not measured" for "didn't happen". A small `wired: false`
     /// table at the bottom of the dump lists which buckets are pending.
     pub fn dump_string() -> String {
-        let c = counters();
         if !enabled_fast() {
             return String::new();
         }
-        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        // Per `PERFORMANCE_PLAN.md` §3: "Text dumping and JSON dumping
+        // should format the same snapshot so they cannot drift." Take
+        // one snapshot here and format from the resulting value object
+        // — same atomic-read pass `write_json_to` uses for the JSON
+        // surface. A new counter added to `PerfCounterSnapshot` automatically
+        // becomes available to both surfaces; adding a counter only to the
+        // dump (or only to the JSON) is no longer possible.
+        let snap = Self::snapshot();
         format!(
             "\n=== TSZ_PERF_COUNTERS ===\n\
              Delegation (cross-arena symbol resolution):\n  \
@@ -1011,39 +1115,39 @@ impl PerfCounters {
              read_dir calls             {:>12}\n  \
              read_package_json calls    {:>12}\n  \
              candidate paths total      {:>12}\n",
-            load(&c.delegate_cross_arena_calls),
-            load(&c.delegate_cross_arena_cache_hits_lib),
-            load(&c.delegate_cross_arena_cache_hits_cross_file),
-            load(&c.delegate_cross_arena_misses),
-            load(&c.delegate_max_recursion_depth),
-            load(&c.checker_state_constructed),
-            load(&c.checker_state_with_parent_cache_constructed),
-            load(&c.file_session_resets),
-            load(&c.copy_symbol_file_targets_calls),
-            load(&c.copy_symbol_file_targets_entries_total),
-            load(&c.copy_symbol_file_targets_entries_max),
-            load(&c.copy_symbol_file_targets_len_ge_1k),
-            load(&c.copy_symbol_file_targets_len_ge_10k),
-            load(&c.copy_symbol_file_targets_len_ge_100k),
-            load(&c.copy_symbol_file_targets_len_ge_1m),
-            load(&c.compute_type_of_symbol_calls),
-            load(&c.compute_type_of_symbol_cache_hits),
-            load(&c.interner_intern_calls),
-            load(&c.interner_intern_hits),
-            load(&c.interner_intern_misses),
-            load(&c.interner_string_intern_calls),
-            load(&c.interner_type_list_intern_calls),
-            load(&c.interner_object_shape_intern_calls),
-            load(&c.interner_function_shape_intern_calls),
-            load(&c.interner_application_intern_calls),
-            load(&c.interner_conditional_intern_calls),
-            load(&c.interner_mapped_intern_calls),
-            load(&c.resolver_lookup_calls),
-            load(&c.resolver_is_file_calls),
-            load(&c.resolver_is_dir_calls),
-            load(&c.resolver_read_dir_calls),
-            load(&c.resolver_read_package_json_calls),
-            load(&c.resolver_candidate_paths_total),
+            snap.delegate.calls,
+            snap.delegate.cache_hits_lib,
+            snap.delegate.cache_hits_cross_file,
+            snap.delegate.misses,
+            snap.delegate.max_recursion_depth,
+            snap.checker.state_constructed,
+            snap.checker.with_parent_cache_constructed,
+            snap.checker.file_session_resets,
+            snap.overlay.copy_calls,
+            snap.overlay.entries_total,
+            snap.overlay.entries_max,
+            snap.overlay.len_ge_1k,
+            snap.overlay.len_ge_10k,
+            snap.overlay.len_ge_100k,
+            snap.overlay.len_ge_1m,
+            snap.checker.compute_type_of_symbol_calls,
+            snap.checker.compute_type_of_symbol_cache_hits,
+            snap.interner.intern_calls.unwrap_or(0),
+            snap.interner.intern_hits.unwrap_or(0),
+            snap.interner.intern_misses.unwrap_or(0),
+            snap.interner.string_intern_calls,
+            snap.interner.type_list_intern_calls,
+            snap.interner.object_shape_intern_calls,
+            snap.interner.function_shape_intern_calls,
+            snap.interner.application_intern_calls,
+            snap.interner.conditional_intern_calls,
+            snap.interner.mapped_intern_calls,
+            snap.resolver.lookup_calls,
+            snap.resolver.is_file_calls.unwrap_or(0),
+            snap.resolver.is_dir_calls.unwrap_or(0),
+            snap.resolver.read_dir_calls.unwrap_or(0),
+            snap.resolver.package_json_reads,
+            snap.resolver.candidate_paths_total,
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
