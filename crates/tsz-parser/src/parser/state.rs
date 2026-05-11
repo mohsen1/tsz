@@ -254,14 +254,14 @@ impl ParserState {
     #[must_use]
     pub(crate) fn u32_from_usize(&self, value: usize) -> u32 {
         let _ = self;
-        u32::try_from(value).expect("parser offsets must fit in u32")
+        u32::try_from(value).expect("parser offsets must fit in u32::MAX")
     }
 
     #[inline]
     #[must_use]
     pub(crate) fn u16_from_node_flags(&self, value: u32) -> u16 {
         let _ = self;
-        u16::try_from(value).expect("parser node flags must fit in u16")
+        u16::try_from(value).expect("parser node flags must fit in u16::MAX")
     }
 
     /// Create a new Parser for the given source text.
