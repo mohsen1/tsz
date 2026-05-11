@@ -206,8 +206,13 @@ pub struct ParserState {
     /// next non-block `}` should be treated as a stray statement-list token.
     pub(crate) non_block_close_brace_statement_errors_remaining: u8,
     /// Recovery has already consumed stray outer `}` tokens, so do not add a
-    /// final missing-`}` cascade at EOF for the abandoned container.
-    pub(crate) suppress_missing_close_brace_at_eof_once: bool,
+    /// final missing-`}` cascade at EOF for the abandoned statement-list
+    /// container. The stored depth scopes the suppression to that container,
+    /// so nested EOF close-brace expectations still report their own errors.
+    pub(crate) suppress_missing_close_brace_at_eof_statement_depth: Option<u32>,
+    /// Number of active block-like statement lists being parsed. Used only to
+    /// scope abandoned-container EOF close-brace suppression.
+    pub(crate) statement_list_depth: u32,
     /// Speculative async-arrow parsing consumed `=>` while recovering a malformed
     /// parameter list, so the async-arrow candidate must roll back.
     pub(crate) saw_arrow_parameter_recovery: bool,
@@ -314,7 +319,8 @@ impl ParserState {
             suppress_next_missing_close_paren_error_once: false,
             suppress_next_missing_class_close_brace_error_once: false,
             non_block_close_brace_statement_errors_remaining: 0,
-            suppress_missing_close_brace_at_eof_once: false,
+            suppress_missing_close_brace_at_eof_statement_depth: None,
+            statement_list_depth: 0,
             saw_arrow_parameter_recovery: false,
             pending_failed_async_arrow_colon_recovery: false,
             type_member_container_depth: 0,
@@ -359,7 +365,8 @@ impl ParserState {
         self.suppress_next_missing_close_paren_error_once = false;
         self.suppress_next_missing_class_close_brace_error_once = false;
         self.non_block_close_brace_statement_errors_remaining = 0;
-        self.suppress_missing_close_brace_at_eof_once = false;
+        self.suppress_missing_close_brace_at_eof_statement_depth = None;
+        self.statement_list_depth = 0;
         self.saw_arrow_parameter_recovery = false;
         self.pending_failed_async_arrow_colon_recovery = false;
         self.type_member_container_depth = 0;
@@ -1040,12 +1047,14 @@ impl ParserState {
                 return false;
             }
         }
-        if kind == SyntaxKind::CloseBraceToken
-            && self.suppress_missing_close_brace_at_eof_once
-            && self.is_token(SyntaxKind::EndOfFileToken)
-        {
-            self.suppress_missing_close_brace_at_eof_once = false;
-            return false;
+        if kind == SyntaxKind::CloseBraceToken && self.is_token(SyntaxKind::EndOfFileToken) {
+            let suppress_for_this_statement_list = self
+                .suppress_missing_close_brace_at_eof_statement_depth
+                .is_some_and(|depth| depth == self.statement_list_depth);
+            if suppress_for_this_statement_list {
+                self.suppress_missing_close_brace_at_eof_statement_depth = None;
+                return false;
+            }
         }
 
         if self.is_token(kind) {
