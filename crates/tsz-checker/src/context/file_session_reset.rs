@@ -211,4 +211,56 @@ mod tests {
         assert!(ctx.diagnostics.is_empty());
         assert_eq!(ctx.instantiation_depth.get(), 0);
     }
+
+    #[test]
+    fn reset_clears_all_recursion_depth_counters() {
+        // The reset helper resets five depth counters: four
+        // `RefCell<DepthCounter>` (call/circ_ref/overlap/recursion) plus
+        // one `Cell<u32>` (instantiation). The original "diagnostic
+        // buffers" test only exercises `instantiation_depth`. This test
+        // locks the semantics of the four RefCell-backed counters,
+        // including the sticky `exceeded` flag that a careless future
+        // refactor (e.g. clearing only `depth` and forgetting `exceeded`)
+        // would silently break — and a non-cleared `exceeded` would
+        // suppress legitimate TS2589-style depth errors in the next
+        // file checked on the reused context.
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut ctx = fresh_ctx(&arena, &binder, &types);
+
+        // Drive each counter past zero and set the sticky exceeded flag.
+        for depth_cell in [
+            &ctx.call_depth,
+            &ctx.circ_ref_depth,
+            &ctx.overlap_depth,
+            &ctx.recursion_depth,
+        ] {
+            let mut d = depth_cell.borrow_mut();
+            assert!(d.enter(), "enter should succeed under max_depth");
+            assert!(d.enter(), "second enter should succeed");
+            d.mark_exceeded();
+            assert_eq!(d.depth(), 2);
+            assert!(d.is_exceeded());
+        }
+        ctx.instantiation_depth.set(11);
+
+        ctx.reset_for_next_file();
+
+        for depth_cell in [
+            &ctx.call_depth,
+            &ctx.circ_ref_depth,
+            &ctx.overlap_depth,
+            &ctx.recursion_depth,
+        ] {
+            let d = depth_cell.borrow();
+            assert_eq!(d.depth(), 0, "depth not cleared on reset");
+            assert!(
+                !d.is_exceeded(),
+                "exceeded flag not cleared on reset — would silently \
+                 suppress real depth errors in the next file",
+            );
+        }
+        assert_eq!(ctx.instantiation_depth.get(), 0);
+    }
 }
