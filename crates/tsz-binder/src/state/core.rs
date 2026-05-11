@@ -916,8 +916,10 @@ impl BinderState {
         capacity: usize,
     ) {
         // Create new scope linked to current
-        let new_scope_id =
-            ScopeId(u32::try_from(self.scopes.len()).expect("persistent scope count exceeds u32"));
+        let new_scope_id = ScopeId(
+            u32::try_from(self.scopes.len())
+                .expect("persistent scope count exceeds u32::MAX"),
+        );
         let new_scope = if capacity > 0 {
             Scope::with_capacity(self.current_scope_id, kind, node, capacity)
         } else {
