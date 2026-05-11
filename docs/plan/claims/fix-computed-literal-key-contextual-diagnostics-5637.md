@@ -17,6 +17,8 @@ display outside the contextual assignment fingerprint path.
 ## Files Touched
 
 - `crates/tsz-checker/src/error_reporter/core/diagnostic_source.rs`
+- `crates/tsz-checker/src/error_reporter/core/diagnostic_source/contextual_index_display.rs`
+- `crates/tsz-checker/src/error_reporter/core/diagnostic_source/literal_surface.rs`
 - `crates/tsz-checker/tests/ts2322_literal_source_display_tests.rs`
 
 ## Verification
@@ -25,3 +27,5 @@ display outside the contextual assignment fingerprint path.
 - `cargo test -p tsz-checker --test ts2322_literal_source_display_tests` (5 passed, 1 ignored)
 - `scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter computedPropertyNamesContextualType --verbose` (20/20 passed)
 - `git diff --check`
+- CI follow-up: `cargo test -p tsz-core test_check_files_parallel_imported_value_wins_over_same_named_type_alias` (passed)
+- CI follow-up: `cargo test -p tsz-checker architecture_contract_tests_src::test_checker_file_size_ceiling` (passed)
