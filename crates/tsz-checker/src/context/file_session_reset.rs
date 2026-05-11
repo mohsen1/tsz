@@ -250,10 +250,61 @@ impl<'a> CheckerContext<'a> {
         file_idx: usize,
     ) {
         self.reset_for_next_file();
+        // SymbolId-keyed caches that the plan §6 line 513-519
+        // *claims* are "safe across files, assuming stable symbol
+        // identity". That claim is correct for **parent → child**
+        // checker construction within one session (the parent's
+        // already-populated cache is propagated to the child via
+        // `with_parent_cache` — the child sees the parent's resolved
+        // SymbolId(N) entries, and the SymbolId namespace is the
+        // parent's).
+        //
+        // The claim is **wrong for switching to a new binder**: each
+        // per-file `BinderState` allocates SymbolIds starting from 0
+        // (no `base_offset` in production binder construction). So
+        // `SymbolId(N)` in the prior file's binder refers to a
+        // different symbol than `SymbolId(N)` in the next file's
+        // binder. Holding the prior file's `symbol_types[N]` across
+        // the swap would return the prior file's TypeId for the next
+        // file's symbol — exactly the divergence observed in the
+        // T2.1.B driver wire-up PR (#5643) on monorepo-001 where
+        // the reuse path emitted 22% extra diagnostics for
+        // mismatched `Leaf<N>` references.
+        //
+        // Clear the SymbolId-keyed caches on every `switch_to_file`.
+        // The cost is a re-fetch of common symbols (`Array`,
+        // `Promise`, etc.) at the start of the next file's check,
+        // which is exactly the cost the default construction-per-file
+        // path also pays. The reuse path's win comes from amortising
+        // `apply_to`, `with_options_deferred_def_store`, and the
+        // shared `QueryCache` — not from carrying symbol_types across
+        // files.
+        self.symbol_types = crate::context::SymbolTypeCache::with_capacity(binder.symbols.len());
+        self.symbol_instance_types =
+            crate::context::SymbolTypeCache::with_capacity(binder.symbols.len());
+        self.enum_namespace_types.clear();
+        self.lib_delegation_cache.clear();
+        self.var_decl_types.clear();
+        // `lib_type_resolution_cache` is keyed by `String` (lib type
+        // names), which is program-stable, NOT file-local. Keep it.
+        // `shared_lib_type_cache` is `Arc`-shared at construction
+        // time; never overwritten by the reset.
         self.arena = arena;
         self.binder = binder;
         self.file_name = file_name;
         self.current_file_idx = file_idx;
+        // Re-warm SymbolId-keyed caches from the shared
+        // `DefinitionStore`. `ProgramContext::apply_to` calls this
+        // helper once at construction; we just emptied the caches
+        // it warmed, so we have to call it again to repopulate the
+        // entries the new file's check assumes are present (e.g.
+        // pre-resolved DefId→SymbolId mappings for cross-file
+        // references). Without this, the next file's check
+        // misses diagnostics for symbols whose `SymbolTypeCache`
+        // entry was populated upstream and is now gone — observed
+        // as ~16% missing diagnostics on monorepo-001 when the
+        // re-warm was forgotten.
+        self.warm_local_caches_from_shared_store();
     }
 }
 
