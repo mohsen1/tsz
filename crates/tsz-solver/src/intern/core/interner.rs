@@ -373,14 +373,7 @@ where
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    // T2.4 instrumentation: wrap the write-lock acquisition
-                    // so contention on the slice-interner's `items` vec lands
-                    // in the lock-wait histogram alongside the per-shard
-                    // TypeData writes. With `perf-counters-timing` OFF this
-                    // wrapper compiles to a direct closure call.
-                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
-                        inner.items.write().expect("interner items lock poisoned")
-                    });
+                    let mut vec = inner.items.write().expect("interner items lock poisoned");
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&temp_arc));
                     }
@@ -470,12 +463,7 @@ where
             Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    // T2.4 instrumentation: see the matching wrapper in
-                    // `ConcurrentSliceInterner::intern`. Same rationale,
-                    // same zero-cost-when-feature-off contract.
-                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
-                        inner.items.write().expect("interner items lock poisoned")
-                    });
+                    let mut vec = inner.items.write().expect("interner items lock poisoned");
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&value_arc));
                     }
