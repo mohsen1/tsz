@@ -9,6 +9,7 @@ use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_mess
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{ParamInfo, TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {
@@ -340,6 +341,76 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         changed.then(|| self.ctx.types.tuple(elements))
+    }
+
+    pub(crate) fn inline_literal_satisfies_has_permissive_target(
+        &mut self,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let satisfies_idx = if node.kind == syntax_kind_ext::SATISFIES_EXPRESSION {
+            idx
+        } else if matches!(
+            node.kind,
+            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        ) {
+            let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|info| info.parent) else {
+                return false;
+            };
+            let parent_idx = self.ctx.arena.skip_parenthesized(parent_idx);
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind != syntax_kind_ext::SATISFIES_EXPRESSION {
+                return false;
+            }
+            parent_idx
+        } else {
+            return false;
+        };
+        let Some(assertion) = self
+            .ctx
+            .arena
+            .get(satisfies_idx)
+            .and_then(|node| self.ctx.arena.get_type_assertion(node))
+        else {
+            return false;
+        };
+        let Some(inner_node) = self
+            .ctx
+            .arena
+            .get(self.ctx.arena.skip_parenthesized(assertion.expression))
+        else {
+            return false;
+        };
+        if !matches!(
+            inner_node.kind,
+            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        ) {
+            return false;
+        }
+        self.satisfies_target_is_permissive(assertion.type_node)
+    }
+
+    fn satisfies_target_is_permissive(&mut self, type_node: NodeIndex) -> bool {
+        let type_node = self.ctx.arena.skip_parenthesized(type_node);
+        if let Some(node) = self.ctx.arena.get(type_node)
+            && matches!(
+                node.kind,
+                k if k == SyntaxKind::UnknownKeyword as u16
+                    || k == SyntaxKind::AnyKeyword as u16
+                    || k == SyntaxKind::NeverKeyword as u16
+            )
+        {
+            return true;
+        }
+        matches!(
+            self.get_type_from_type_node(type_node),
+            TypeId::UNKNOWN | TypeId::ANY | TypeId::NEVER
+        )
     }
 
     fn expected_tuple_element_for_aggregate_actual(

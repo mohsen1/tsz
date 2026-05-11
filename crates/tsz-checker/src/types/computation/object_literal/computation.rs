@@ -1011,9 +1011,11 @@ impl<'a> CheckerState<'a> {
                                 n.kind == syntax_kind_ext::AS_EXPRESSION
                                     || n.kind == syntax_kind_ext::TYPE_ASSERTION
                             });
+                        let property_context_preserves_literal = property_context_type
+                            .is_some_and(|ct| !is_literal_permissive_context(ct));
                         let widening_eligible = !self.ctx.in_const_assertion
                             && !self.ctx.preserve_literal_types
-                            && property_context_type.is_none()
+                            && !property_context_preserves_literal
                             && !had_object_context
                             && !value_has_type_assertion;
                         let final_type = if widening_eligible {
@@ -1532,7 +1534,7 @@ impl<'a> CheckerState<'a> {
                         );
                         if !self.ctx.in_const_assertion
                             && !self.ctx.preserve_literal_types
-                            && property_context_type.is_none()
+                            && property_context_type.is_none_or(is_literal_permissive_context)
                             && !had_object_context
                         {
                             self.widen_literal_type(value_type)

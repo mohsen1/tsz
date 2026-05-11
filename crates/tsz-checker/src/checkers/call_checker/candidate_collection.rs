@@ -1089,6 +1089,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let rest_type = ctx.get_rest_parameter_type(effective_index)?;
+        if self.rest_type_is_declared_on_callable(callable_type, rest_type) {
+            return None;
+        }
         let needs_aggregate =
             crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
                 self.ctx.types,
@@ -1101,6 +1104,22 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         needs_aggregate.then_some(rest_type)
+    }
+
+    fn rest_type_is_declared_on_callable(&self, callable_type: TypeId, rest_type: TypeId) -> bool {
+        let rest_type =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, rest_type)
+                .unwrap_or(rest_type);
+        let Some(rest_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, rest_type)
+        else {
+            return false;
+        };
+        crate::query_boundaries::common::extract_contextual_type_params(
+            self.ctx.types,
+            callable_type,
+        )
+        .is_some_and(|params| params.iter().any(|param| param.name == rest_param.name))
     }
 
     fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {

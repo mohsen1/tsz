@@ -425,6 +425,11 @@ impl<'a> CheckerState<'a> {
                                                     .infer_result_satisfies_via_application_arg_constraints(
                                                         type_arg,
                                                         inst_constraint,
+                                                    )
+                                                || self
+                                                    .infer_result_satisfies_via_referenced_constraints(
+                                                        type_arg,
+                                                        inst_constraint,
                                                     );
 
                                             if !is_satisfied
@@ -780,6 +785,10 @@ impl<'a> CheckerState<'a> {
                                 || self.satisfies_array_like_constraint(
                                     base_for_check,
                                     inst_constraint,
+                                )
+                                || self.infer_result_satisfies_via_referenced_constraints(
+                                    type_arg,
+                                    inst_constraint,
                                 );
                             if !is_satisfied {
                                 // When the constraint is a function type (e.g., `(...args: any) => any`),
@@ -889,6 +898,10 @@ impl<'a> CheckerState<'a> {
                                             inst_constraint,
                                         )
                                     || self.infer_result_satisfies_via_application_arg_constraints(
+                                        type_arg,
+                                        inst_constraint,
+                                    )
+                                    || self.infer_result_satisfies_via_referenced_constraints(
                                         type_arg,
                                         inst_constraint,
                                     );
@@ -1269,7 +1282,11 @@ impl<'a> CheckerState<'a> {
                                 inst_constraint,
                             )
                             || self
-                                .satisfies_array_like_constraint(base_for_check, inst_constraint);
+                                .satisfies_array_like_constraint(base_for_check, inst_constraint)
+                            || self.infer_result_satisfies_via_referenced_constraints(
+                                type_arg,
+                                inst_constraint,
+                            );
                         if !is_satisfied {
                             // When the constraint is a function type, accept callable bases.
                             // The `Function` interface may be lowered as an Object type
