@@ -773,6 +773,27 @@ pub fn record_delegate_cross_arena_miss() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a cross-file cache hit during cross-arena delegation. Used at
+/// three sites in `state/type_analysis/cross_file.rs` where the
+/// `cached_cross_file_*_type` fast path returns before the slow
+/// child-checker construction would fire.
+///
+/// Mirrors [`record_delegate_cross_arena_miss`]: gate once, look up
+/// `counters()` once, increment the named per-outcome counter directly.
+/// Unlike the miss helper, only the cache-hit counter advances here — the
+/// `delegate_cross_arena_calls` bump happens earlier in the delegation
+/// entry point that already paid the `enabled_fast()` gate, so this hit
+/// helper must not also touch `calls` (it would double-count entries).
+#[inline]
+pub fn record_delegate_cross_arena_cache_hit_cross_file() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .delegate_cross_arena_cache_hits_cross_file
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a hit on the cross-file type-parameter extraction cache. Mirrors
 /// [`record_delegate_cross_arena_miss`]: gate-once and one `counters()`
 /// lookup, then increment exactly the per-outcome counter that names this
