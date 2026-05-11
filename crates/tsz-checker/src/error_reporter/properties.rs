@@ -945,6 +945,17 @@ impl<'a> CheckerState<'a> {
             return format!("typeof {}", ident.escaped_text);
         }
         let diagnostic_receiver = self.access_receiver_for_diagnostic_node(idx);
+        let is_direct_element_access_diagnostic = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            || self
+                .ctx
+                .arena
+                .node_info(idx)
+                .and_then(|info| self.ctx.arena.get(info.parent))
+                .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
         let is_element_access_receiver = self
             .ctx
             .arena
@@ -970,8 +981,9 @@ impl<'a> CheckerState<'a> {
             });
 
         if is_element_access_receiver {
-            if let Some(display) =
-                self.element_access_receiver_declared_element_display(idx, type_id)
+            if !is_direct_element_access_diagnostic
+                && let Some(display) =
+                    self.element_access_receiver_declared_element_display(idx, type_id)
             {
                 return display;
             }

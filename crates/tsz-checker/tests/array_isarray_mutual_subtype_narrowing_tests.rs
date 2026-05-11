@@ -21,7 +21,7 @@
 //! `Record<string, any>` spelling end-to-end (see
 //! `narrowingMutualSubtypes.ts`).
 
-use crate::test_utils::check_source_strict_messages as check_strict;
+use tsz_checker::test_utils::check_source_strict_messages as check_strict;
 
 /// `Array.isArray(R | R[]) && obj.length` else-branch indexing emits
 /// TS7053 referencing `any[] | { [x: string]: any; }` — the tsc-faithful
@@ -57,6 +57,40 @@ function f(obj: { [x: string]: any } | { [x: string]: any }[]) {
             !msg.contains("any; }[]"),
             "expected `{{ [x: string]: any; }}[]` to be absorbed by `any[]` after \
              mutual-subtype narrowing, got: {msg}"
+        );
+    }
+}
+
+#[test]
+fn logical_and_false_branch_preserves_alias_record_and_array_members() {
+    let source = r#"
+type Record<K extends string, T> = { [P in K]: T };
+function f(obj: Record<string, any> | Record<string, any>[]) {
+    if (Array.isArray(obj) && obj.length) {}
+    else {
+        for (let key in obj) {
+            obj[key];
+        }
+    }
+}
+"#;
+    let diags = check_strict(source);
+    let ts7053_messages: Vec<&String> = diags
+        .iter()
+        .filter_map(|(c, m)| (*c == 7053).then_some(m))
+        .collect();
+    assert!(
+        !ts7053_messages.is_empty(),
+        "expected TS7053, got: {diags:?}"
+    );
+    for msg in &ts7053_messages {
+        assert!(
+            msg.contains("any[]"),
+            "logical `&&` false-branch joins must preserve the array branch, got: {msg}"
+        );
+        assert!(
+            msg.contains("Record<string, any>"),
+            "logical `&&` false-branch joins must also preserve the alias record branch, got: {msg}"
         );
     }
 }
