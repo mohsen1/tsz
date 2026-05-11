@@ -1812,11 +1812,19 @@ impl<'a> CheckerState<'a> {
         }
         if def.type_params.is_empty() {
             // Non-generic wrapper alias path — recover the as-written
-            // Application form via display_alias. This exists only when the
-            // alias's body is a generic Application — for aliases of unions,
-            // intersections, object literals, or bare references, no
-            // display_alias is recorded so the alias name stays.
-            let app_origin = self.ctx.types.get_display_alias(source)?;
+            // Application form via display_alias when the source is already
+            // evaluated, or via the alias body when the source is still the
+            // lazy alias reference. This still only unfolds aliases whose body
+            // is a generic Application; unions, intersections, object literals,
+            // and bare references keep the wrapper alias.
+            let app_origin = self
+                .ctx
+                .types
+                .get_display_alias(source)
+                .filter(|&alias| {
+                    crate::query_boundaries::common::application_id(self.ctx.types, alias).is_some()
+                })
+                .or(def.body)?;
             let app_id =
                 crate::query_boundaries::common::application_id(self.ctx.types, app_origin)?;
             let app = self.ctx.types.type_application(app_id);

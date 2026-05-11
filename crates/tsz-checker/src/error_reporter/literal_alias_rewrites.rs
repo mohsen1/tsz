@@ -36,6 +36,29 @@ impl<'a> CheckerState<'a> {
     }
 
     fn source_is_generic_alias_application(&self, source: TypeId) -> bool {
+        if self
+            .ctx
+            .definition_store
+            .find_def_for_type(source)
+            .and_then(|def_id| self.ctx.definition_store.get(def_id))
+            .is_some_and(|def| {
+                def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty()
+            })
+        {
+            return false;
+        }
+        if self
+            .ctx
+            .types
+            .get_display_alias(source)
+            .and_then(|alias| crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias))
+            .and_then(|def_id| self.ctx.definition_store.get(def_id))
+            .is_some_and(|def| {
+                def.kind == tsz_solver::def::DefKind::TypeAlias && def.type_params.is_empty()
+            })
+        {
+            return false;
+        }
         let application = crate::query_boundaries::common::application_info(self.ctx.types, source)
             .or_else(|| {
                 let alias = self.ctx.types.get_display_alias(source)?;
