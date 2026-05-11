@@ -71,6 +71,23 @@ impl<'a> CheckerState<'a> {
             self.format_assignability_type_for_message(target, source)
         };
         if depth == 0 {
+            let source_enum_symbol = self.enum_symbol_from_enumish_type(source);
+            let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
+            if source_enum_symbol.is_some()
+                && target_enum_symbol.is_some()
+                && source_enum_symbol != target_enum_symbol
+            {
+                source_str = self.format_assignability_type_for_message(source, target);
+                target_str = self.format_assignability_type_for_message(target, source);
+            }
+            if let Some(expr_idx) = self
+                .assignment_source_expression(idx)
+                .or_else(|| self.direct_diagnostic_source_expression(idx))
+                && let Some(display) =
+                    self.declared_identifier_source_display(expr_idx, target, source)
+            {
+                source_str = display;
+            }
             if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
                 && let Some(display) = self.evaluated_literal_alias_source_display(source)
             {

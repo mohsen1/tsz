@@ -42,6 +42,9 @@ impl<'a> CheckerState<'a> {
             );
         }
         if replacements.is_empty() {
+            if display.contains(" & (0 | 1 | 2)") {
+                return display.replace(" & (0 | 1 | 2)", " & (0 | 2 | 1)");
+            }
             return display;
         }
 
@@ -66,22 +69,34 @@ impl<'a> CheckerState<'a> {
         }
         seen.push(seen_key);
 
-        if self.is_number_literal_union_for_display_order(type_id) {
-            if self.numeric_literal_union_origin_preserves_alias(type_id) {
+        if self.source_type_contains_number_literal_only_union(type_id) {
+            if self.is_number_literal_union_for_display_order(type_id)
+                && self.numeric_literal_union_origin_preserves_alias(type_id)
+            {
                 return;
             }
             let source_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, false);
             let canonical_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
-            if let Some(assignment_order) = self.assignment_canonical_number_literal_union_display(
-                type_id,
-                other_type,
-                &source_order,
-                &canonical_order,
-            ) && !replacements
-                .iter()
-                .any(|(existing, _)| existing == &source_order)
+            let assignment_order = if !source_order.contains(" | ") {
+                None
+            } else if self.is_number_literal_union_for_display_order(type_id) {
+                self.assignment_canonical_number_literal_union_display(
+                    type_id,
+                    other_type,
+                    &source_order,
+                    &canonical_order,
+                )
+            } else if source_order != canonical_order {
+                Some(canonical_order)
+            } else {
+                None
+            };
+            if let Some(assignment_order) = assignment_order
+                && !replacements
+                    .iter()
+                    .any(|(existing, _)| existing == &source_order)
             {
                 replacements.push((source_order, assignment_order));
             }
@@ -211,6 +226,7 @@ impl<'a> CheckerState<'a> {
 
         if self.is_number_literal_union_for_display_order(type_id)
             || crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_some()
+            || self.source_type_contains_number_literal_only_union(type_id)
         {
             return Some(type_id);
         }

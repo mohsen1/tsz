@@ -24,8 +24,8 @@ use crate::diagnostics::{
     get_message_template,
 };
 use crate::types::{
-    LiteralValue, MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, TypeData, TypeId,
-    TypeListId, TypeParamInfo,
+    MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -668,20 +668,6 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_ignore_union_origins(mut self) -> Self {
         self.ignore_union_origins = true;
         self
-    }
-
-    fn should_ignore_unflattened_number_literal_union_origin(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        current.len() == origin.len()
-            && current.iter().chain(origin.iter()).all(|&id| {
-                matches!(
-                    self.interner.lookup(id),
-                    Some(TypeData::Literal(LiteralValue::Number(_)))
-                )
-            })
     }
 
     /// Preserve optional parameter surface syntax when formatting type output.
@@ -1491,10 +1477,6 @@ impl<'a> TypeFormatter<'a> {
                 let members = self.interner.type_list(*members);
                 if !self.ignore_union_origins
                     && let Some(origin) = self.interner.get_union_origin(type_id)
-                    && !self.should_ignore_unflattened_number_literal_union_origin(
-                        members.as_ref(),
-                        origin.as_slice(),
-                    )
                 {
                     return self.format_union(origin.as_slice()).into();
                 }

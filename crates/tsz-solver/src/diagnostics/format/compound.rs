@@ -780,6 +780,22 @@ impl<'a> TypeFormatter<'a> {
             union_remainders.push(numeric_literal_parts[0]);
         }
 
+        union_remainders.sort_by(|&left, &right| {
+            let left_number = match self.interner.lookup(left) {
+                Some(TypeData::Literal(LiteralValue::Number(number))) => number,
+                _ => return std::cmp::Ordering::Equal,
+            };
+            let right_number = match self.interner.lookup(right) {
+                Some(TypeData::Literal(LiteralValue::Number(number))) => number,
+                _ => return std::cmp::Ordering::Equal,
+            };
+            let left_zero = left_number.0.to_bits() == 0.0f64.to_bits();
+            let right_zero = right_number.0.to_bits() == 0.0f64.to_bits();
+            right_zero
+                .cmp(&left_zero)
+                .then_with(|| right_number.0.total_cmp(&left_number.0))
+        });
+
         let common = common?;
         let common_display = common
             .iter()
@@ -787,7 +803,11 @@ impl<'a> TypeFormatter<'a> {
             .collect::<Vec<_>>()
             .join(" & ");
         let remainder_union = self.interner.union(union_remainders);
-        let remainder_display = self.format(remainder_union);
+        let remainder_display = match self.interner.lookup(remainder_union) {
+            Some(TypeData::Union(list_id)) => self
+                .format_ordered_union_members(self.interner.type_list(list_id).as_ref().to_vec()),
+            _ => self.format(remainder_union).into_owned(),
+        };
         Some(format!("{common_display} & ({remainder_display})"))
     }
 

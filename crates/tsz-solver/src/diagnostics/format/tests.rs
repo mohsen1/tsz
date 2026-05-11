@@ -362,7 +362,7 @@ fn format_number_literal_uses_scientific_notation_above_1e21() {
 }
 
 #[test]
-fn number_literal_union_uses_tsc_numeric_display_order() {
+fn number_literal_union_uses_tsc_allocation_order() {
     let db = TypeInterner::new();
     let one = db.literal_number(1.0);
     let minus_one = db.literal_number(-1.0);
@@ -372,7 +372,7 @@ fn number_literal_union_uses_tsc_numeric_display_order() {
     let union = db.union(vec![minus_one, zero, one, two]);
 
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union), "0 | 2 | 1 | -1");
+    assert_eq!(fmt.format(union), "0 | 1 | -1 | 2");
 }
 
 #[test]
@@ -4236,17 +4236,23 @@ fn store_union_origin_overrides_canonical_anon_object_sort() {
     assert_eq!(rendered, "{} | { a: number; }", "got: {rendered}");
 }
 
-// Locks the structural rule that an unflattened all-number-literal union does
-// not force its source-written order over the canonical numeric-literal union
-// ordering. The canonical comparator pins `0` first and orders other numeric
-// literals descending, matching tsc's diagnostic
-// surface for cases such as `T & (0 | 1 | 2)`.
+// Locks the structural rule that the source-written order of an all-number-
+// literal union survives the canonical sort, even when no flattening occurs
+// and there are no anonymous object members. The canonical comparator only
+// pins `0` first and falls back to allocation order for other number
+// literals, so without origin storage the printer can render
+// `0 | 1 | 2` as `0 | 2 | 1` (or any other alloc-order permutation) when
+// the literals were interned in a different order earlier in the run.
+//
+// This regression mirrors `inDoesNotOperateOnPrimitiveTypes.ts` line 64,
+// where tsc renders `T & (0 | 1 | 2)` but tsz had been rendering
+// `T & (0 | 2 | 1)`.
 #[test]
-fn store_union_origin_skips_unflattened_number_literal_union() {
+fn store_union_origin_preserves_source_order_for_number_literal_union() {
     let db = TypeInterner::new();
 
-    // Force a non-source allocation order. Numeric literal display still
-    // follows tsc's canonical order, not source text.
+    // Force a non-source allocation order: intern `2` before `1` so the
+    // canonical sort's alloc-order fallback puts `2` ahead of `1`.
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
     let zero = db.literal_number(0.0);
@@ -4256,50 +4262,37 @@ fn store_union_origin_skips_unflattened_number_literal_union() {
     let union_id = db.union(origin.clone());
 
     // Pre-condition: without an origin, the canonical sort produces
-    // `0 | 2 | 1`.
+    // `0 | 2 | 1` because alloc_order(2) < alloc_order(1).
     {
         let mut fmt = TypeFormatter::new(&db);
         assert_eq!(fmt.format(union_id), "0 | 2 | 1");
     }
 
-    // Store the origin. Length is unchanged (3 in / 3 out), so this is an
-    // unflattened literal-only union and must keep canonical display.
+    // Store the origin. Length is unchanged (3 in / 3 out) and there are no
+    // anonymous object members, so the existing anon-object guard would
+    // reject this. The number-literal guard must accept it.
     db.store_union_origin(union_id, origin);
 
-    assert!(
-        db.get_union_origin(union_id).is_none(),
-        "Origin must not be stored for unflattened number-literal-only unions"
-    );
-
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union_id), "0 | 2 | 1");
+    assert_eq!(fmt.format(union_id), "0 | 1 | 2");
 }
 
 #[test]
-fn formatter_preserves_flattened_alias_origin_for_number_literal_union() {
+fn formatter_can_ignore_union_origin_for_canonical_number_literal_display() {
     let db = TypeInterner::new();
-    let def_store = crate::def::DefinitionStore::new();
 
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
     let zero = db.literal_number(0.0);
-    let foo_body = db.union_literal_reduce(vec![zero, one, two]);
-    let foo_name = db.intern_string("Foo");
-    let foo_def = crate::def::DefinitionInfo::type_alias(foo_name, vec![], foo_body);
-    let foo_def_id = def_store.register(foo_def);
-    def_store.register_type_to_def(foo_body, foo_def_id);
-    let foo_lazy = db.lazy(foo_def_id);
+    let origin = vec![zero, one, two];
+    let union_id = db.union(origin.clone());
+    db.store_union_origin(union_id, origin);
 
-    let flattened = db.union_literal_reduce(vec![zero, one, two, TypeId::NULL]);
-    db.store_union_origin(flattened, vec![foo_lazy, TypeId::NULL]);
+    let mut source_order = TypeFormatter::new(&db);
+    assert_eq!(source_order.format(union_id), "0 | 1 | 2");
 
-    let mut structural = TypeFormatter::new(&db).with_def_store(&def_store);
-    assert_eq!(structural.format(flattened), "Foo | null");
-
-    let mut canonical = TypeFormatter::new(&db)
-        .with_def_store(&def_store)
-        .with_ignore_union_origins();
-    assert_eq!(canonical.format(flattened), "0 | 2 | 1 | null");
+    let mut canonical_order = TypeFormatter::new(&db).with_ignore_union_origins();
+    assert_eq!(canonical_order.format(union_id), "0 | 2 | 1");
 }
 
 // Negative case: a number-literal-only union whose canonical order already

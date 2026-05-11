@@ -11,7 +11,6 @@ mod type_query_alias;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -588,95 +587,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         annotation.contains('&') || !annotation.starts_with('{')
-    }
-
-    fn source_type_contains_number_literal_only_union(&self, ty: TypeId) -> bool {
-        let mut stack = vec![ty];
-        let mut seen = FxHashSet::default();
-
-        while let Some(current) = stack.pop() {
-            if !seen.insert(current) {
-                continue;
-            }
-
-            if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, current)
-            {
-                if self.union_members_are_number_literals_or_common_intersections(&members) {
-                    return true;
-                }
-                stack.extend(members);
-                continue;
-            }
-
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, current)
-            {
-                stack.extend(members);
-            }
-        }
-
-        false
-    }
-
-    fn union_members_are_number_literals_or_common_intersections(
-        &self,
-        members: &[TypeId],
-    ) -> bool {
-        if members.len() < 2 {
-            return false;
-        }
-
-        let mut expected_non_numeric_parts: Option<FxHashSet<TypeId>> = None;
-        for &member in members {
-            let Some(non_numeric_parts) =
-                self.number_literal_union_member_non_numeric_intersection_parts(member)
-            else {
-                return false;
-            };
-
-            if let Some(expected) = &expected_non_numeric_parts {
-                if *expected != non_numeric_parts {
-                    return false;
-                }
-            } else {
-                expected_non_numeric_parts = Some(non_numeric_parts);
-            }
-        }
-
-        true
-    }
-
-    fn number_literal_union_member_non_numeric_intersection_parts(
-        &self,
-        member: TypeId,
-    ) -> Option<FxHashSet<TypeId>> {
-        if matches!(
-            crate::query_boundaries::common::literal_value(self.ctx.types, member),
-            Some(crate::query_boundaries::common::LiteralValue::Number(_))
-        ) {
-            return Some(FxHashSet::default());
-        }
-
-        let intersection_members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, member)?;
-        let mut saw_number_literal = false;
-        let mut non_numeric_parts = FxHashSet::default();
-        for part in intersection_members {
-            if matches!(
-                crate::query_boundaries::common::literal_value(self.ctx.types, part),
-                Some(crate::query_boundaries::common::LiteralValue::Number(_))
-            ) {
-                if saw_number_literal {
-                    return None;
-                }
-                saw_number_literal = true;
-            } else {
-                non_numeric_parts.insert(part);
-            }
-        }
-
-        saw_number_literal.then_some(non_numeric_parts)
     }
 
     pub(in crate::error_reporter) fn format_declared_annotation_for_diagnostic(
@@ -1586,8 +1496,19 @@ impl<'a> CheckerState<'a> {
         if matches!(declared_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        if self.source_type_contains_number_literal_only_union(declared_type) {
-            return None;
+        if let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx) {
+            let declared_enum_symbol = self
+                .enum_symbol_from_enumish_type(declared_type)
+                .or_else(|| self.enum_symbol_from_enumish_type(expr_display_type));
+            let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
+            if declared_enum_symbol.is_some()
+                && declared_enum_symbol == target_enum_symbol
+                && !annotation_text.contains(" | ")
+                && !annotation_text.contains(" & ")
+                && !annotation_text.contains('<')
+            {
+                return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
+            }
         }
         let type_query_alias_def_id = self.declared_source_type_query_alias_def_id(expr_idx);
         let prefer_declared_display = if declared_type == TypeId::ANY
@@ -1801,7 +1722,13 @@ impl<'a> CheckerState<'a> {
         };
         let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
 
-        (prefer_declared_display && declared_display != expr_display).then_some(declared_display)
+        (prefer_declared_display && declared_display != expr_display).then(|| {
+            self.canonicalize_assignment_numeric_literal_union_display(
+                declared_type,
+                target,
+                declared_display,
+            )
+        })
     }
 
     pub(in crate::error_reporter) fn declared_numeric_literal_union_alias_source_display(

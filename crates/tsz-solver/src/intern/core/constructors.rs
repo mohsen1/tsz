@@ -550,18 +550,15 @@ impl TypeInterner {
                     TypeData::Literal(LiteralValue::Number(na)),
                     TypeData::Literal(LiteralValue::Number(nb)),
                 ) => {
+                    // TypeScript orders union members by type id, not numeric value.
+                    // Its checker creates the `0` literal eagerly (`zeroType`), while
+                    // other number literals keep first-use order.
                     let a_zero = na.0 == 0.0;
                     let b_zero = nb.0 == 0.0;
                     match (a_zero, b_zero) {
                         (true, false) => return Ordering::Less,
                         (false, true) => return Ordering::Greater,
-                        (true, true) => {}
-                        (false, false) => {
-                            let cmp = nb.0.total_cmp(&na.0);
-                            if cmp != Ordering::Equal {
-                                return cmp;
-                            }
-                        }
+                        _ => {}
                     }
                 }
                 (TypeData::Lazy(d1), TypeData::Lazy(d2))

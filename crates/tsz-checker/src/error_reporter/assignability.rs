@@ -1295,6 +1295,13 @@ impl<'a> CheckerState<'a> {
             source_from_annotation = true;
         }
         if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
+            && let Some(display) = self.declared_identifier_source_display(expr_idx, target, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
             && self.target_is_normalized_object_literal_union(target)
             && let Some(expr_idx) = expr_idx
             && let Some(object_display) =
@@ -1866,6 +1873,14 @@ impl<'a> CheckerState<'a> {
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
             let mut src_str = src_str;
             let mut tgt_str = tgt_str;
+            if let Some(expr_idx) = self
+                .assignment_source_expression(anchor_idx)
+                .or_else(|| self.direct_diagnostic_source_expression(anchor_idx))
+                && let Some(display) =
+                    self.declared_identifier_source_display(expr_idx, target, source)
+            {
+                src_str = display;
+            }
             if let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source) {
                 src_str = display;
             }

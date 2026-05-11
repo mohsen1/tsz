@@ -978,16 +978,15 @@ impl<'a> CheckerState<'a> {
         if self.target_preserves_literal_surface(other) {
             return self.format_type_diagnostic_for_assignability_display(ty);
         }
+        if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
+            return enum_name;
+        }
         if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
             && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, other)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
         {
             let widened = self.widen_type_for_display(ty);
             return self.format_type_for_assignability_message(widened);
-        }
-
-        if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
-            return enum_name;
         }
         if let Some(display) = self.constrained_variadic_tuple_parameter_display(ty, other) {
             return display;
@@ -1257,6 +1256,10 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let ty_sym = self.enum_symbol_from_enumish_type(ty)?;
         let other_sym = self.enum_symbol_from_enumish_type(other)?;
+        if ty_sym == other_sym {
+            return None;
+        }
+
         let ty_symbol = self.ctx.binder.get_symbol(ty_sym)?;
         let other_symbol = self.ctx.binder.get_symbol(other_sym)?;
 
