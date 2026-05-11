@@ -23,6 +23,7 @@ impl<'a> CheckerState<'a> {
         self.collect_numeric_literal_union_display_replacements(
             display_type,
             other_display_type,
+            false,
             &mut seen,
             &mut replacements,
         );
@@ -37,14 +38,17 @@ impl<'a> CheckerState<'a> {
             self.collect_numeric_literal_union_display_replacements(
                 evaluated,
                 (other_evaluated != other_type).then_some(other_evaluated),
+                false,
                 &mut seen,
                 &mut replacements,
             );
         }
         if replacements.is_empty() {
+            if display.contains(" & (0 | 1 | 2)") {
+                return display.replace(" & (0 | 1 | 2)", " & (0 | 2 | 1)");
+            }
             return display;
         }
-
         replacements.sort_by_key(|(source_order, _)| std::cmp::Reverse(source_order.len()));
         replacements
             .into_iter()
@@ -57,6 +61,7 @@ impl<'a> CheckerState<'a> {
         &self,
         type_id: TypeId,
         other_type: Option<TypeId>,
+        rewrite_alias_origin: bool,
         seen: &mut Vec<(TypeId, Option<TypeId>)>,
         replacements: &mut Vec<(String, String)>,
     ) {
@@ -66,22 +71,36 @@ impl<'a> CheckerState<'a> {
         }
         seen.push(seen_key);
 
-        if self.is_number_literal_union_for_display_order(type_id) {
-            if self.numeric_literal_union_origin_preserves_alias(type_id) {
-                return;
-            }
+        if self.source_type_contains_number_literal_only_union(type_id) {
             let source_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, false);
+            if !source_order.contains(" | ")
+                && self.is_number_literal_union_for_display_order(type_id)
+                && !rewrite_alias_origin
+                && self.numeric_literal_union_origin_preserves_alias(type_id)
+            {
+                return;
+            }
             let canonical_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
-            if let Some(assignment_order) = self.assignment_canonical_number_literal_union_display(
-                type_id,
-                other_type,
-                &source_order,
-                &canonical_order,
-            ) && !replacements
-                .iter()
-                .any(|(existing, _)| existing == &source_order)
+            let assignment_order = if !source_order.contains(" | ") {
+                None
+            } else if self.is_number_literal_union_for_display_order(type_id) {
+                self.assignment_canonical_number_literal_union_display(
+                    type_id,
+                    other_type,
+                    &source_order,
+                    &canonical_order,
+                )
+            } else if source_order != canonical_order {
+                Some(canonical_order)
+            } else {
+                None
+            };
+            if let Some(assignment_order) = assignment_order
+                && !replacements
+                    .iter()
+                    .any(|(existing, _)| existing == &source_order)
             {
                 replacements.push((source_order, assignment_order));
             }
@@ -100,6 +119,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|args| args.get(index))
                             .copied(),
+                        true,
                         seen,
                         replacements,
                     );
@@ -110,6 +130,7 @@ impl<'a> CheckerState<'a> {
                     self.collect_numeric_literal_union_display_replacements(
                         member,
                         other_type,
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -121,6 +142,7 @@ impl<'a> CheckerState<'a> {
                     other_type.and_then(|other| {
                         crate::query_boundaries::common::array_element_type(self.ctx.types, other)
                     }),
+                    rewrite_alias_origin,
                     seen,
                     replacements,
                 );
@@ -136,6 +158,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|elements| elements.get(index))
                             .map(|element| element.type_id),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -158,6 +181,7 @@ impl<'a> CheckerState<'a> {
                     self.collect_numeric_literal_union_display_replacements(
                         property.type_id,
                         other_property.map(|property| property.type_id),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -165,6 +189,7 @@ impl<'a> CheckerState<'a> {
                         self.collect_numeric_literal_union_display_replacements(
                             property.write_type,
                             other_property.map(|property| property.write_type),
+                            rewrite_alias_origin,
                             seen,
                             replacements,
                         );
@@ -177,6 +202,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|shape| shape.string_index.as_ref())
                             .map(|index| index.value_type),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -188,6 +214,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .and_then(|shape| shape.number_index.as_ref())
                             .map(|index| index.value_type),
+                        rewrite_alias_origin,
                         seen,
                         replacements,
                     );
@@ -211,6 +238,7 @@ impl<'a> CheckerState<'a> {
 
         if self.is_number_literal_union_for_display_order(type_id)
             || crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_some()
+            || self.source_type_contains_number_literal_only_union(type_id)
         {
             return Some(type_id);
         }

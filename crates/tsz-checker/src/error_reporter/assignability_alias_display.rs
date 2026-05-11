@@ -36,13 +36,23 @@ impl<'a> CheckerState<'a> {
         source_display: &str,
         target_display: &str,
     ) -> Option<String> {
-        if !source_display.contains(" extends ") && !source_display.contains("infer ") {
-            return None;
-        }
         let expr_idx = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))?;
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
+        if annotation_text.contains('<')
+            && let Some(annotation_name) = Self::generic_alias_name_from_display(&annotation_text)
+            && Self::generic_alias_name_from_display(source_display) == Some(annotation_name)
+            && Self::generic_alias_name_from_display(target_display) == Some(annotation_name)
+        {
+            return Some(source_display.to_string());
+        }
+        if !source_display.contains(" extends ")
+            && !source_display.contains("infer ")
+            && !source_display.contains("=>")
+        {
+            return None;
+        }
         Self::declared_generic_alias_annotation_matches_target_display(
             &annotation_text,
             target_display,
@@ -51,7 +61,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(in crate::error_reporter) fn rewrite_declared_generic_alias_source_in_ts2322_message(
-        &self,
+        &mut self,
         anchor_idx: NodeIndex,
         message: String,
     ) -> String {
@@ -65,13 +75,44 @@ impl<'a> CheckerState<'a> {
         let Some(target_display) = target_part.strip_suffix("'.") else {
             return message;
         };
-        let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
+        if let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
             anchor_idx,
             source_display,
             target_display,
-        ) else {
+        ) {
+            return format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_display, target_display],
+            );
+        }
+
+        let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+        else {
             return message;
         };
+        let Some(annotation_text) = self.declared_type_annotation_text_for_expression(expr_idx)
+        else {
+            return message;
+        };
+        if annotation_text == source_display
+            || annotation_text.trim_start().starts_with("typeof ")
+            || source_display.starts_with("import(")
+            || (source_display.contains('{') && !annotation_text.contains('{'))
+            || (!annotation_text.contains('<')
+                && source_display.contains('<')
+                && target_display.contains('<'))
+            || annotation_text.contains(" | ")
+            || annotation_text.contains(" & ")
+            || annotation_text.contains('<')
+            || annotation_text.contains('.')
+            || (source_display.contains("| undefined") && !annotation_text.contains("| undefined"))
+            || crate::error_reporter::assignability::display_is_literal_value(source_display)
+        {
+            return message;
+        }
+        let source_display = self.format_declared_annotation_for_diagnostic(&annotation_text);
         format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_display, target_display],

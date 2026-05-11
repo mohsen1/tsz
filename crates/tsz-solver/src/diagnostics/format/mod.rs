@@ -1474,12 +1474,12 @@ impl<'a> TypeFormatter<'a> {
                 // expand to T's body). The checker records the unflattened
                 // input member list as a side-table "origin"; consult it here
                 // before structural display.
+                let members = self.interner.type_list(*members);
                 if !self.ignore_union_origins
                     && let Some(origin) = self.interner.get_union_origin(type_id)
                 {
                     return self.format_union(origin.as_slice()).into();
                 }
-                let members = self.interner.type_list(*members);
                 self.format_union(members.as_ref()).into()
             }
             TypeData::Intersection(members) => {

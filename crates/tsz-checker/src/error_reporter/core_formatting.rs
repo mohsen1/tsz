@@ -978,16 +978,15 @@ impl<'a> CheckerState<'a> {
         if self.target_preserves_literal_surface(other) {
             return self.format_type_diagnostic_for_assignability_display(ty);
         }
+        if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
+            return enum_name;
+        }
         if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
             && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, other)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
         {
             let widened = self.widen_type_for_display(ty);
             return self.format_type_for_assignability_message(widened);
-        }
-
-        if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
-            return enum_name;
         }
         if let Some(display) = self.constrained_variadic_tuple_parameter_display(ty, other) {
             return display;
@@ -1185,11 +1184,14 @@ impl<'a> CheckerState<'a> {
 
         for member in members {
             let widened = self.widen_enum_member_type(member);
-            if let Some(name) = self.format_qualified_enum_name_for_message(widened) {
+            if let Some(enum_sym) = self.enum_symbol_from_enumish_type(widened)
+                && let Some(symbol) = self.ctx.binder.get_symbol(enum_sym)
+            {
+                let name = symbol.escaped_name.clone();
                 match collapsed_enum.as_ref() {
-                    Some(existing) if existing == &name => {}
+                    Some((existing_sym, _)) if *existing_sym == enum_sym => {}
                     None => {
-                        collapsed_enum = Some(name.clone());
+                        collapsed_enum = Some((enum_sym, name.clone()));
                         rendered.push(name);
                     }
                     Some(_) => return None,
@@ -1257,8 +1259,20 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let ty_sym = self.enum_symbol_from_enumish_type(ty)?;
         let other_sym = self.enum_symbol_from_enumish_type(other)?;
+        if ty_sym == other_sym {
+            return None;
+        }
+
         let ty_symbol = self.ctx.binder.get_symbol(ty_sym)?;
         let other_symbol = self.ctx.binder.get_symbol(other_sym)?;
+
+        if crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)
+            .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER))
+        {
+            return self.format_qualified_enum_name_for_message(ty);
+        }
 
         if ty_symbol.escaped_name != other_symbol.escaped_name {
             return Some(ty_symbol.escaped_name.clone());
@@ -1847,6 +1861,18 @@ impl<'a> CheckerState<'a> {
         }) {
             return None;
         }
+        if let Some(alias) = self.ctx.types.get_display_alias(ty)
+            && let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::def::DefKind::TypeAlias
+            && def.type_params.is_empty()
+        {
+            let name = self.ctx.types.resolve_atom_ref(def.name);
+            if name.contains('<') {
+                return Some(name.to_string());
+            }
+        }
 
         // For intersection types (e.g., typeof X & Function), expand to the full
         // type representation rather than using the alias name. This matches tsc's
@@ -1940,52 +1966,5 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
-    }
-
-    pub(in crate::error_reporter) fn evaluated_literal_alias_source_display(
-        &mut self,
-        declared_type: TypeId,
-    ) -> Option<String> {
-        let (_, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, declared_type)?;
-        let has_literal_arg = args
-            .iter()
-            .copied()
-            .any(|arg| self.contains_literal_display_candidate(arg));
-        if !has_literal_arg {
-            return None;
-        }
-
-        let evaluated = self.evaluate_type_for_assignability(declared_type);
-        if evaluated == declared_type || matches!(evaluated, TypeId::ERROR | TypeId::UNKNOWN) {
-            return None;
-        }
-
-        let is_literal = |state: &Self, ty| {
-            crate::query_boundaries::common::literal_value(state.ctx.types, ty).is_some()
-        };
-        let literal_only = if is_literal(self, evaluated) {
-            true
-        } else if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, evaluated)
-        {
-            !members.is_empty() && members.into_iter().all(|member| is_literal(self, member))
-        } else {
-            false
-        };
-
-        literal_only.then(|| self.format_type_for_assignability_message(evaluated))
-    }
-
-    fn contains_literal_display_candidate(&self, ty: TypeId) -> bool {
-        if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some() {
-            return true;
-        }
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
-            return members
-                .into_iter()
-                .any(|member| self.contains_literal_display_candidate(member));
-        }
-        false
     }
 }

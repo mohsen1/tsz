@@ -1006,10 +1006,7 @@ impl<'a> CheckerState<'a> {
             target_str = authoritative;
         }
 
-        // For non-generic type aliases whose evaluated form has a display_alias
-        // (i.e., the alias wraps a generic Application like `type Foo = Id<{...}>`),
-        // tsc shows the Application form in TS2322 messages. Replace the alias name
-        // with the display_alias-based formatter output.
+        // Non-generic aliases that wrap applications display the application.
         let rewrite_application_alias =
             |state: &Self, ty: TypeId, display: &str| -> Option<String> {
                 if display.contains('<') || display.contains('{') || display.contains('|') {
@@ -1022,10 +1019,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return None; // Keep concrete literal displays instead of repainting alias provenance.
                 }
-                // Only for types whose display_alias is an Application (were
-                // produced by Application eval). JSDoc typedef aliases store
-                // Lazy display aliases for exact-optional diagnostics and must
-                // not trigger this TS2322 application rewrite.
+                // JSDoc typedef lazy aliases must not trigger this rewrite.
                 let alias = state.ctx.types.get_display_alias(ty)?;
                 crate::query_boundaries::common::application_info(state.ctx.types, alias)?;
                 let mut formatter = state
@@ -1081,105 +1075,6 @@ impl<'a> CheckerState<'a> {
         target_str =
             self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         (source_str, target_str)
-    }
-
-    fn contextual_callable_application_target_display(
-        &mut self,
-        target: TypeId,
-        source: TypeId,
-        target_display: &str,
-    ) -> Option<String> {
-        // Reverse-mapped contextual targets can re-expand the pair display back
-        // to `Selector<S, T["editable"]>` even after assignability has an
-        // evaluated `Selector<any, {}>` application. Repaint only those indexed
-        // access displays, preserving ordinary explicit `Selector<any, ...>`
-        // annotations.
-        if !(target_display.contains('[') && target_display.contains(']')) {
-            return None;
-        }
-
-        let evaluated_target = self.evaluate_type_for_assignability(target);
-        let db = self.ctx.types;
-        let display_target =
-            if crate::query_boundaries::common::type_application(db, target).is_some() {
-                target
-            } else {
-                self.ctx.types.get_display_alias(target)?
-            };
-        let app_target =
-            if crate::query_boundaries::common::type_application(db, evaluated_target).is_some() {
-                evaluated_target
-            } else {
-                display_target
-            };
-        let app = crate::query_boundaries::common::type_application(db, app_target)?;
-        let target_shape =
-            crate::query_boundaries::common::function_shape_for_type(db, display_target)
-                .or_else(|| crate::query_boundaries::common::function_shape_for_type(db, target))
-                .or_else(|| {
-                    crate::query_boundaries::common::function_shape_for_type(db, evaluated_target)
-                })?;
-        let source_shape = crate::query_boundaries::common::function_shape_for_type(db, source)?;
-        if source_shape.params.len() <= target_shape.params.len() {
-            return None;
-        }
-
-        let mut changed = false;
-        let mut display_args = Vec::with_capacity(app.args.len());
-        for &arg in &app.args {
-            let replacement = target_shape
-                .params
-                .iter()
-                .zip(source_shape.params.iter())
-                .find_map(|(target_param, source_param)| {
-                    (target_param.type_id == arg
-                        || crate::query_boundaries::common::contains_type_by_id(
-                            db,
-                            target_param.type_id,
-                            arg,
-                        ))
-                    .then(|| {
-                        let source_param = crate::query_boundaries::common::widen_type_for_display(
-                            db,
-                            source_param.type_id,
-                        );
-                        if source_param == TypeId::ANY {
-                            TypeId::UNKNOWN
-                        } else {
-                            source_param
-                        }
-                    })
-                })
-                .or_else(|| {
-                    (target_shape.return_type == arg
-                        || crate::query_boundaries::common::contains_type_by_id(
-                            db,
-                            target_shape.return_type,
-                            arg,
-                        ))
-                    .then(|| {
-                        crate::query_boundaries::common::widen_type_for_display(
-                            db,
-                            source_shape.return_type,
-                        )
-                    })
-                })
-                .or_else(|| {
-                    crate::query_boundaries::common::contains_type_parameters(db, arg)
-                        .then_some(TypeId::UNKNOWN)
-                });
-
-            let display_arg = replacement.unwrap_or(arg);
-            changed |= display_arg != arg;
-            display_args.push(display_arg);
-        }
-
-        if !changed {
-            return None;
-        }
-
-        let display_app = self.ctx.types.factory().application(app.base, display_args);
-        Some(self.format_type_for_assignability_message(display_app))
     }
 
     pub(in crate::error_reporter) fn rewrite_standalone_literal_source_for_keyof_display(
@@ -1244,6 +1139,7 @@ impl<'a> CheckerState<'a> {
             source_str = self.format_assignability_type_for_message(widened, target);
         }
         let mut source_from_annotation = false;
+        let mut source_from_array_literal_tuple = false;
         if let Some(expr_idx) = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))
@@ -1251,6 +1147,11 @@ impl<'a> CheckerState<'a> {
                 self.declared_type_annotation_text_for_expression(expr_idx)
             && annotation_text.contains('&')
             && !annotation_text.trim_start().starts_with("keyof ")
+            && self.should_prefer_declared_source_annotation_display(
+                expr_idx,
+                source,
+                &annotation_text,
+            )
         {
             source_str = self
                 .declared_intersection_annotation_display_for_expression(expr_idx)
@@ -1283,8 +1184,24 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.assignment_source_expression(anchor_idx));
         if !source_from_annotation
             && let Some(expr_idx) = expr_idx
+            && let Some(display) = self.direct_type_query_primitive_source_display(expr_idx, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
             && let Some(display) =
                 self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
+            && !self.declared_identifier_has_literal_only_alias_source(expr_idx)
+            && let Some(display) = self.declared_identifier_source_display(expr_idx, target, source)
+            && self.declared_identifier_candidate_preserves_source_surface(&source_str, &display)
         {
             source_str = display;
             source_from_annotation = true;
@@ -1303,6 +1220,7 @@ impl<'a> CheckerState<'a> {
                 self.array_literal_tuple_source_type_display(expr_idx, source, target)
         {
             source_str = tuple_display;
+            source_from_array_literal_tuple = true;
         }
         if self
             .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
@@ -1331,7 +1249,7 @@ impl<'a> CheckerState<'a> {
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
         let mut source_str = source_str;
-        if !source_from_annotation {
+        if !source_from_annotation && !source_from_array_literal_tuple {
             source_str = self.apply_ts2739_nonliteral(source, source_str);
         }
         if target_str.trim() != "{}"
@@ -1746,14 +1664,8 @@ impl<'a> CheckerState<'a> {
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {
-                // For TS2739 (and the TS2741 single-missing variant), when
-                // the source is a non-generic type alias whose body is a
-                // generic Application (`type B = A<X1, X2, ...>`), tsc
-                // unfolds one level to display the application form
-                // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
-                // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
-                // line 91. Falls through to the normal source role formatter
-                // when no unfold candidate exists.
+                // TS2739/TS2741 unfold `type B = A<X>` sources to `A<X>`;
+                // otherwise fall through to normal source-role formatting.
                 let src_str = if let Some(display) =
                     self.ts2739_alias_of_application_source_display_text(source)
                 {
@@ -1861,7 +1773,33 @@ impl<'a> CheckerState<'a> {
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
             let mut src_str = src_str;
             let mut tgt_str = tgt_str;
-            if let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source) {
+            let source_is_direct_type_query_primitive = self
+                .direct_diagnostic_source_expression(anchor_idx)
+                .or_else(|| self.assignment_source_expression(anchor_idx))
+                .and_then(|expr_idx| {
+                    self.direct_type_query_primitive_source_display(expr_idx, source)
+                })
+                .is_some_and(|display| {
+                    if display != src_str {
+                        src_str = display;
+                    }
+                    true
+                });
+            let source_expr_idx = self
+                .assignment_source_expression(anchor_idx)
+                .or_else(|| self.direct_diagnostic_source_expression(anchor_idx));
+            if !source_is_direct_type_query_primitive
+                && let Some(expr_idx) = source_expr_idx
+                && !self.declared_identifier_has_literal_only_alias_source(expr_idx)
+                && let Some(display) =
+                    self.declared_identifier_source_display(expr_idx, target, source)
+                && self.declared_identifier_candidate_preserves_source_surface(&src_str, &display)
+            {
+                src_str = display;
+            }
+            if !source_is_direct_type_query_primitive
+                && let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source)
+            {
                 src_str = display;
             }
             if tgt_str.trim() != "{}"
@@ -1914,20 +1852,12 @@ impl<'a> CheckerState<'a> {
                 .zip(authoritative_tgt.as_ref())
                 .is_some_and(|(src, tgt)| src != tgt);
 
-            // The authoritative-name fallback below replaces a structural display
-            // (like `{ ... }`) with the type's nominal name (e.g. `Foo`).  When the
-            // display is already a concrete literal value — `4`, `"hello"`,
-            // `true` — that lookup wrongly repaints the source as an unrelated
-            // boxed/wrapper interface (TypeId-keyed `find_def_for_type` can hand
-            // back `Boolean`/`Number` for primitive sources).  Keep the literal.
+            // Do not repaint literal displays as boxed/wrapper interfaces via
+            // authoritative-name fallback.
             let display_is_literal_value = display_is_literal_value;
 
-            // TS2719 is reserved for two NOMINAL types that share a name but are
-            // structurally distinct (typically merged-declaration ambiguity).
-            // Literal-value displays — `"foo"`, `42`, `true`, etc. — never carry
-            // a nominal identity, so identical literal-value displays must mean
-            // identical types. Emitting TS2719 with `Type '"name"' is not
-            // assignable to type '"name"'` is misleading. Fall through to TS2322.
+            // Literal-value display pairs are not distinct nominal types; use
+            // the regular TS2322 path instead of TS2719.
             let pair_is_literal_value =
                 display_is_literal_value(&src_str) && display_is_literal_value(&tgt_str);
             let (message, code) = if src_str == tgt_str
@@ -1953,6 +1883,7 @@ impl<'a> CheckerState<'a> {
                     || src_str.starts_with("import(")
                     || src_str.starts_with('{')
                     || src_str.contains('<')
+                    || source_is_direct_type_query_primitive
                     || preserve_generic_nominal_pair
                     || display_is_literal_value(&src_str)
                 {
