@@ -323,6 +323,8 @@ pub struct PerfCounters {
     pub delegate_cross_arena_cache_hits_lib: AtomicU64,
     pub delegate_cross_arena_cache_hits_cross_file: AtomicU64,
     pub delegate_cross_arena_misses: AtomicU64,
+    pub cross_file_type_params_cache_hits: AtomicU64,
+    pub cross_file_type_params_cache_misses: AtomicU64,
     pub delegate_max_recursion_depth: AtomicU64,
     /// `DelegateCrossArenaSymbol` misses classified by how the target arena
     /// was found. This is a subset of `delegate_cross_arena_misses`.
@@ -409,6 +411,8 @@ impl PerfCounters {
             delegate_cross_arena_cache_hits_lib: AtomicU64::new(0),
             delegate_cross_arena_cache_hits_cross_file: AtomicU64::new(0),
             delegate_cross_arena_misses: AtomicU64::new(0),
+            cross_file_type_params_cache_hits: AtomicU64::new(0),
+            cross_file_type_params_cache_misses: AtomicU64::new(0),
             delegate_max_recursion_depth: AtomicU64::new(0),
             delegate_cross_arena_symbol_miss_by_source: [const { AtomicU64::new(0) };
                 CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT],
