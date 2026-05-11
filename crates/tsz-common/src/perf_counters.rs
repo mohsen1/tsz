@@ -377,6 +377,15 @@ pub struct PerfCounters {
     /// site. Total equals `checker_state_with_parent_cache_constructed`.
     pub with_parent_cache_by_reason: [AtomicU64; CHECKER_CREATION_REASON_COUNT],
 
+    // ─── checker file-session ────────────────────────────────────────────
+    /// Number of times `CheckerContext::reset_for_next_file()` has been
+    /// invoked. Zero on the default per-file checker construction path;
+    /// nonzero only on a sequential session-reuse path (T2.1.B).
+    /// Attribution-mode verification: in a reuse run the counter equals
+    /// `(files_checked - 1)` and `checker_state_constructed` falls by the
+    /// same amount versus the baseline construction-per-file path.
+    pub file_session_resets: AtomicU64,
+
     // ─── overlay copy ────────────────────────────────────────────────────
     pub copy_symbol_file_targets_calls: AtomicU64,
     pub copy_symbol_file_targets_entries_total: AtomicU64,
@@ -462,6 +471,7 @@ impl PerfCounters {
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
                 CHECKER_CREATION_REASON_COUNT],
+            file_session_resets: AtomicU64::new(0),
             copy_symbol_file_targets_calls: AtomicU64::new(0),
             copy_symbol_file_targets_entries_total: AtomicU64::new(0),
             copy_symbol_file_targets_entries_max: AtomicU64::new(0),
@@ -772,6 +782,7 @@ impl PerfCounters {
              Checker construction:\n  \
              CheckerState::new          {:>12}\n  \
              ::with_parent_cache        {:>12}\n  \
+             ::reset_for_next_file      {:>12}\n  \
              copy_symbol_file_targets   {:>12}\n  \
              overlay entries copied     {:>12}\n  \
              overlay entries (max)      {:>12}\n  \
@@ -807,6 +818,7 @@ impl PerfCounters {
             load(&c.delegate_max_recursion_depth),
             load(&c.checker_state_constructed),
             load(&c.checker_state_with_parent_cache_constructed),
+            load(&c.file_session_resets),
             load(&c.copy_symbol_file_targets_calls),
             load(&c.copy_symbol_file_targets_entries_total),
             load(&c.copy_symbol_file_targets_entries_max),
@@ -1036,6 +1048,11 @@ pub struct DelegateCounters {
 pub struct CheckerCounters {
     pub state_constructed: u64,
     pub with_parent_cache_constructed: u64,
+    /// `CheckerContext::reset_for_next_file()` invocations. Zero on the
+    /// default construction-per-file path, nonzero only on a sequential
+    /// session-reuse path (T2.1.B). Reuse vs. construct is the comparison
+    /// against `state_constructed`.
+    pub file_session_resets: u64,
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
 }
@@ -1118,6 +1135,7 @@ impl PerfCounters {
             checker: CheckerCounters {
                 state_constructed: load(&c.checker_state_constructed),
                 with_parent_cache_constructed: load(&c.checker_state_with_parent_cache_constructed),
+                file_session_resets: load(&c.file_session_resets),
                 compute_type_of_symbol_calls: load(&c.compute_type_of_symbol_calls),
                 compute_type_of_symbol_cache_hits: load(&c.compute_type_of_symbol_cache_hits),
             },
@@ -1270,6 +1288,23 @@ mod json_tests {
         assert!(json["interner"]["intern_hits"].is_number());
         assert!(json["interner"]["intern_misses"].is_number());
         assert_eq!(json["wired"]["interner_intern_calls"], true);
+    }
+
+    #[test]
+    fn file_session_resets_serializes_as_number() {
+        // The T2.1 file-session reset counter rides inside the existing
+        // `checker_construction` wired group, so adding it must not
+        // require a new `wired` flag — but it must surface as a number
+        // (not `null`) so attribution tooling can compare it against
+        // `state_constructed` to detect reuse-vs-construct directly.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert!(
+            json["checker"]["file_session_resets"].is_number(),
+            "file_session_resets should serialize as a number, got: {}",
+            json["checker"]["file_session_resets"]
+        );
+        assert_eq!(json["wired"]["checker_construction"], true);
     }
 
     #[test]

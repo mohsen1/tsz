@@ -83,6 +83,13 @@ impl CheckerContext<'_> {
     /// save/restore mechanism scoped to overload/generic checking;
     /// this reset is for *successful* file completion only.
     pub fn reset_for_next_file(&mut self) {
+        // Attribution counter: increments only on the sequential session-
+        // reuse path (T2.1.B). Zero on the default construction-per-file
+        // path, so reuse vs construct is observable from a single counter.
+        // Gated by `enabled_fast()` inside `inc`, so disabled runs pay
+        // only one relaxed atomic load + branch.
+        tsz_common::perf_counters::inc(&tsz_common::perf_counters::counters().file_session_resets);
+
         // Diagnostic buffers.
         self.diagnostics.clear();
         self.emitted_diagnostics.clear();
