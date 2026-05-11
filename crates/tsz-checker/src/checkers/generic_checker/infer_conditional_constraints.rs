@@ -136,6 +136,53 @@ impl<'a> CheckerState<'a> {
             || self.is_assignable_to(restricted, inst_constraint)
     }
 
+    /// Some aliases compute a constrained result through a conditional `infer`
+    /// nested below a mapped or indexed access, so their application arguments
+    /// are not enough to prove the result constraint directly. Recheck the
+    /// original type argument after replacing referenced type parameters with
+    /// their declared constraints, e.g. Redux-style `ActionFromReducers<R>`.
+    pub(super) fn infer_result_satisfies_via_referenced_constraints(
+        &mut self,
+        type_arg: TypeId,
+        inst_constraint: TypeId,
+    ) -> bool {
+        if !self.type_contains_infer_result_conditional(type_arg) {
+            return false;
+        }
+
+        let db = self.ctx.types.as_type_database();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut referenced =
+            crate::query_boundaries::common::collect_referenced_types(db, type_arg);
+        referenced.insert(type_arg);
+        for ty in referenced {
+            if query::is_infer_type(db, ty) {
+                continue;
+            }
+            let Some(name) = query::type_parameter_name(db, ty) else {
+                continue;
+            };
+            let constraint = query::get_type_parameter_constraint(db, ty)
+                .unwrap_or_else(|| query::base_constraint_of_type(db, ty));
+            if constraint != TypeId::UNKNOWN && constraint != TypeId::ANY && constraint != ty {
+                substitution.insert(name, constraint);
+            }
+        }
+        if substitution.is_empty() {
+            return false;
+        }
+
+        let restricted = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            type_arg,
+            &substitution,
+        );
+        let restricted = self.resolve_lazy_type(restricted);
+        let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
+        self.is_assignable_to(restricted_evaluated, inst_constraint)
+            || self.is_assignable_to(restricted, inst_constraint)
+    }
+
     pub(super) fn infer_result_satisfies_array_like_constraint(
         &mut self,
         cond_extends: TypeId,
@@ -216,6 +263,30 @@ impl<'a> CheckerState<'a> {
                 cond_false == TypeId::NEVER && query::is_infer_type(db, cond_true)
             },
         )
+    }
+
+    fn type_contains_infer_result_conditional(&mut self, type_id: TypeId) -> bool {
+        if self.type_or_references_include_infer_result_conditional(type_id) {
+            return true;
+        }
+
+        let resolved = self.resolve_lazy_type(type_id);
+        if resolved != type_id && self.type_or_references_include_infer_result_conditional(resolved)
+        {
+            return true;
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        evaluated != type_id && self.type_or_references_include_infer_result_conditional(evaluated)
+    }
+
+    fn type_or_references_include_infer_result_conditional(&self, type_id: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let mut referenced = crate::query_boundaries::common::collect_referenced_types(db, type_id);
+        referenced.insert(type_id);
+        referenced
+            .into_iter()
+            .any(|ty| self.type_is_infer_result_conditional(ty))
     }
 
     fn target_constraint_is_array_like(&mut self, target: TypeId) -> bool {

@@ -87,3 +87,33 @@ function test<U extends string[], V extends [number, number]>(u: U, v: V) {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn redux_style_infer_result_satisfies_action_constraint() {
+    let source = r#"
+type AnyAction = { type: string; payload?: any };
+type Reducer<S, A extends AnyAction> = (state: S | undefined, action: A) => S;
+type ReducersMapObject<S, A extends AnyAction> = {
+  [K in keyof S]: Reducer<S[K], A>;
+};
+type ExtractAction<R> = R extends Reducer<any, infer A> ? A : AnyAction;
+type ActionFromReducers<R> = { [K in keyof R]: ExtractAction<R[K]> }[keyof R];
+
+function combineReducers<R extends ReducersMapObject<any, AnyAction>>(
+  reducers: R
+): Reducer<any, ActionFromReducers<R>> {
+  return (state: any, action: ActionFromReducers<R>) => state;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert!(
+        ts2344.is_empty(),
+        "ActionFromReducers<R> should satisfy Reducer's action constraint through R's reducer-map constraint, got: {:?}",
+        ts2344
+            .iter()
+            .map(|d| (d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

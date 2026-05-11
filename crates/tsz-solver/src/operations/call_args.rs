@@ -1,5 +1,3 @@
-//! Argument checking, parameter analysis, and inference helpers for `CallEvaluator`.
-//!
 //! This module contains the argument-matching utilities used during function call
 //! resolution and generic inference:
 //! - Parameter/argument type checking (`check_argument_types`)
@@ -899,17 +897,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(type_id) else {
             return None;
         };
-        let elems = self.interner.tuple_list(elems_id);
-        let [elem] = &*elems else {
+        let [elem] = &*self.interner.tuple_list(elems_id) else {
             return None;
         };
-        if !elem.rest || elem.name.is_some() {
-            return None;
-        }
-        matches!(
-            self.interner.lookup(elem.type_id),
-            Some(TypeData::TypeParameter(_))
-        )
+        (elem.rest
+            && elem.name.is_none()
+            && matches!(
+                self.interner.lookup(elem.type_id),
+                Some(TypeData::TypeParameter(_))
+            ))
         .then_some(elem.type_id)
     }
 
