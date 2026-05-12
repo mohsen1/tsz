@@ -1,15 +1,14 @@
 //! Namespace type merging and re-export resolution for declaration merging.
 
 use crate::query_boundaries::class_type as query;
-use crate::state::CheckerState;
+use crate::state::{CheckerState, EnumKind};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
-use tsz_solver::Visibility;
+use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape, TypeId, Visibility};
 
 /// Maximum recursion depth for namespace export merging.
 ///
@@ -889,10 +888,32 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        self.ctx.types.object_with_flags_and_symbol(
-            properties,
-            tsz_solver::ObjectFlags::ENUM_NAMESPACE,
-            Some(tsz_binder::SymbolId(sym_id.0)),
-        )
+
+        let needs_reverse_map = matches!(
+            self.enum_kind(sym_id),
+            Some(EnumKind::Numeric) | Some(EnumKind::Mixed)
+        );
+
+        if needs_reverse_map {
+            let index_name = self.ctx.types.intern_string("index");
+            self.ctx.types.factory().object_with_index(ObjectShape {
+                flags: ObjectFlags::ENUM_NAMESPACE,
+                properties,
+                number_index: Some(IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type: TypeId::STRING,
+                    readonly: false,
+                    param_name: Some(index_name),
+                }),
+                symbol: Some(sym_id),
+                ..ObjectShape::default()
+            })
+        } else {
+            self.ctx.types.object_with_flags_and_symbol(
+                properties,
+                ObjectFlags::ENUM_NAMESPACE,
+                Some(sym_id),
+            )
+        }
     }
 }
