@@ -352,10 +352,45 @@ impl<'a> CheckerState<'a> {
             // array type is present (e.g., number[] | never[] → number[]).
             // For &&, no subtype reduction is applied, so undefined | never[] stays.
             if let Some(contextual) = contextual_type {
-                let resolved = self.resolve_type_for_property_access(contextual);
-                let resolved = self.resolve_lazy_type(resolved);
-                let resolved =
+                let mut resolved = self.evaluate_contextual_type(contextual);
+                resolved =
                     crate::query_boundaries::common::remove_nullish(self.ctx.types, resolved);
+                resolved = self.evaluate_type_with_env(resolved);
+                resolved = self.resolve_lazy_type(resolved);
+                resolved = self.evaluate_application_type(resolved);
+                if crate::query_boundaries::common::index_access_parts(self.ctx.types, resolved)
+                    .is_some()
+                {
+                    let evaluated = self.evaluate_type_for_assignability(resolved);
+                    if evaluated != TypeId::UNKNOWN {
+                        resolved = evaluated;
+                    }
+                }
+                if let Some((object_type, index_type)) =
+                    crate::query_boundaries::common::index_access_parts(self.ctx.types, resolved)
+                    && let Some(atom) =
+                        crate::query_boundaries::type_computation::access::literal_property_name(
+                            self.ctx.types,
+                            index_type,
+                        )
+                {
+                    let property_name = self.ctx.types.resolve_atom(atom);
+                    let property_type = self
+                        .contextual_object_literal_property_type(
+                            object_type,
+                            property_name.as_ref(),
+                        )
+                        .or_else(|| {
+                            self.ctx
+                                .types
+                                .contextual_property_type(object_type, property_name.as_ref())
+                        });
+                    if let Some(property_type) = property_type {
+                        resolved = property_type;
+                    }
+                }
+                resolved = self.resolve_index_access_base_constraint(resolved);
+                resolved = self.resolve_type_for_property_access(resolved);
                 if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
                 }

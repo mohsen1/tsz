@@ -1,4 +1,5 @@
-use crate::test_utils::check_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_default_lib_files};
 
 #[test]
 fn generic_promise_then_flattens_promise_return_from_callback() {
@@ -391,6 +392,47 @@ function test(params: Partial<ParseParamsNoData>) {
     assert!(
         diags.is_empty(),
         "Expected `params.path || []` to keep path as `(string | number)[]` in argument position, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn zod_issue_5030_defaults_path_with_lib_utility_aliases() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+
+    let diags = check_source_with_libs(
+        r#"
+type ParseParams = {
+    path: (string | number)[];
+    data: unknown;
+    errorMap: unknown;
+    async: boolean;
+};
+
+type ParseParamsNoData = Omit<ParseParams, "data">;
+type ParsePathComponent = string | number;
+
+declare function pathFromArray(arr: ParsePathComponent[]): unknown;
+
+function test(params: Partial<ParseParamsNoData>) {
+    pathFromArray(params.path || []);
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "Expected lib-backed `Partial<Omit<...>>` to contextually type `params.path || []`, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))

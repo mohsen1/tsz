@@ -25,6 +25,53 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
+    fn resolve_literal_index_access_property_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let (object_type, index_type) =
+            crate::query_boundaries::common::index_access_parts(self.ctx.types, type_id)?;
+        let atom = crate::query_boundaries::type_computation::access::literal_property_name(
+            self.ctx.types,
+            index_type,
+        )?;
+        let property_name = self.ctx.types.resolve_atom(atom);
+
+        self.contextual_object_literal_property_type(object_type, property_name.as_ref())
+            .or_else(|| {
+                self.ctx
+                    .types
+                    .contextual_property_type(object_type, property_name.as_ref())
+            })
+    }
+
+    fn reduce_literal_index_access_property_types(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(resolved) = self.resolve_literal_index_access_property_type(type_id) {
+            return resolved;
+        }
+
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+
+        let mut changed = false;
+        let reduced = members
+            .into_iter()
+            .map(|member| {
+                if let Some(resolved) = self.resolve_literal_index_access_property_type(member) {
+                    changed = true;
+                    resolved
+                } else {
+                    member
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if changed {
+            self.ctx.types.factory().union_preserve_members(reduced)
+        } else {
+            type_id
+        }
+    }
+
     fn global_function_interface_type_for_instanceof(&mut self) -> Option<TypeId> {
         let function_sym_id = self.ctx.binder.lib_symbol_ids.iter().find_map(|&sym_id| {
             self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
@@ -1414,6 +1461,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                let left_type = self.reduce_literal_index_access_property_types(left_type);
+                let right_type = self.reduce_literal_index_access_property_types(right_type);
                 let result = match evaluator.evaluate(left_type, right_type, "||") {
                     BinaryOpResult::Success(ty) => ty,
                     BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
@@ -1434,6 +1483,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                let left_type = self.reduce_literal_index_access_property_types(left_type);
+                let right_type = self.reduce_literal_index_access_property_types(right_type);
                 // Evaluate the left type to resolve type aliases (Applications)
                 // before splitting nullish parts. For example, `Maybe<T> = null | undefined | T`
                 // stored as an Application needs to be expanded so that the nullish split
