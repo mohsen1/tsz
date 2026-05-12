@@ -3,6 +3,11 @@ use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 use tsz_solver::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_completions_simple() {
@@ -10,8 +15,7 @@ fn test_completions_simple() {
     // const y = 2;
     // |  <- cursor here
     let source = "const x = 1;\nconst y = 2;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -45,8 +49,7 @@ fn test_completions_with_scope() {
     //   |  <- cursor here (should see both x and y)
     // }
     let source = "const x = 1;\nfunction foo() {\n  const y = 2;\n  \n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -83,8 +86,7 @@ fn test_completions_shadowing() {
     //   |  <- cursor here (should see inner x, not outer x)
     // }
     let source = "const x = 1;\nfunction foo() {\n  const x = 2;\n  \n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -115,8 +117,7 @@ fn test_completions_shadowing() {
 #[test]
 fn test_completions_member_object_literal() {
     let source = "const obj = { foo: 1, bar: \"hi\" };\nobj.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -148,8 +149,7 @@ fn test_completions_member_object_literal() {
 #[test]
 fn test_completions_member_string_literal() {
     let source = "const s = \"hello\";\ns.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -183,8 +183,7 @@ fn test_completions_member_string_literal() {
 #[test]
 fn test_completions_member_access_wins_over_prior_string_literal_context() {
     let source = "let x: string = 42;\n\nfunction greet(name: string): string {\n  return \"Hello, \" + name;\n}\n\ngreet(123);\n\ninterface User {\n  name: string;\n  age: number;\n}\n\nconst user: User = {\n  name: \"Alice\",\n  age: \"thirty\",\n};\n\nuser.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -229,8 +228,7 @@ fn test_completions_member_access_wins_over_prior_string_literal_context() {
 #[test]
 fn test_completions_contextual_string_literal_argument_keyof() {
     let source = "interface Events {\n  click: any;\n  drag: any;\n}\n\ndeclare function addListener<K extends keyof Events>(type: K, listener: (ev: Events[K]) => any): void;\n\naddListener(\"\");\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -273,8 +271,7 @@ fn test_completions_contextual_string_literal_argument_keyof() {
 #[test]
 fn test_completions_member_excludes_private_class_properties() {
     let source = "class N {\n  constructor(public x: number, public y: number, private z: string) {}\n}\nconst t = new N(0, 1, \"\");\nt.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -311,8 +308,7 @@ fn test_completions_member_excludes_private_class_properties() {
 fn test_completions_member_list_of_class_exact() {
     // Matches fourslash test memberListOfClass: f. should show only pubMeth and pubProp
     let source = "class C1 {\n   public pubMeth() { }\n   private privMeth() { }\n   public pubProp = 0;\n   private privProp = 0;\n}\nvar f = new C1();\nf.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -344,8 +340,7 @@ fn test_completions_member_list_of_class_exact() {
 #[test]
 fn test_completions_member_parameter_typeof_class_includes_static_and_namespace_members() {
     let source = "class C<T> {\n    static foo(x: number) { }\n    x: T;\n}\n\nnamespace C {\n    export function f(x: typeof C) {\n        x.\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -383,8 +378,7 @@ fn test_completions_member_parameter_typeof_class_includes_static_and_namespace_
 #[test]
 fn test_completions_member_parameter_typeof_class_after_dot() {
     let source = "class C<T> {\n    static foo(x: number) { }\n    x: T;\n}\n\nnamespace C {\n    export function f(x: typeof C) {\n        x.\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -423,8 +417,7 @@ fn test_completions_member_parameter_typeof_class_after_dot() {
 #[test]
 fn test_completions_includes_keywords() {
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -456,8 +449,7 @@ fn test_completions_includes_keywords() {
 #[test]
 fn test_completions_global_surface_matches_fourslash_globals() {
     let source = "Button";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -501,8 +493,7 @@ fn test_completions_global_surface_matches_fourslash_globals() {
 #[test]
 fn test_completions_global_entry_kinds_match_fourslash() {
     let source = "Table";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -533,8 +524,7 @@ fn test_completions_global_entry_kinds_match_fourslash() {
 fn test_completions_jsdoc_documentation() {
     // Test that JSDoc comments are included in completion items
     let source = "/** This is a test function */\nfunction foo() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -574,8 +564,7 @@ fn test_completions_sort_text_keywords_after_identifiers() {
     // Keywords should have higher sort_text than identifiers so they
     // appear later in the completion list, matching tsserver behaviour.
     let source = "const abc = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -602,8 +591,7 @@ fn test_completions_sort_text_keywords_after_identifiers() {
 fn test_completions_sort_text_present_on_all_items() {
     // Every completion item should have an explicit sort_text value set.
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -630,8 +618,7 @@ fn test_completions_function_has_snippet_insert_text() {
     // Function completions should have insert_text with snippet tab-stops
     // e.g. "foo($1)" so the cursor lands inside the parens.
     let source = "function greet(name: string) {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -665,8 +652,7 @@ fn test_completions_function_has_snippet_insert_text() {
 fn test_completions_variable_no_snippet() {
     // Variable completions should NOT have snippet insert_text.
     let source = "const value = 42;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -702,8 +688,7 @@ fn test_completions_variable_no_snippet() {
 fn test_completions_keyword_sort_text_value() {
     // All keyword completions should have sort_text == sort_priority::KEYWORD.
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -737,8 +722,7 @@ fn test_completions_keyword_sort_text_value() {
 fn test_completions_interface_kind() {
     // Interfaces should be reported as CompletionItemKind::Interface.
     let source = "interface Foo { x: number }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -768,8 +752,7 @@ fn test_completions_interface_kind() {
 fn test_completions_enum_kind() {
     // Enums should be reported as CompletionItemKind::Enum.
     let source = "enum Color { Red, Green, Blue }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -799,8 +782,7 @@ fn test_completions_enum_kind() {
 fn test_completions_type_alias_kind() {
     // Type aliases should be reported as CompletionItemKind::TypeAlias.
     let source = "type MyStr = string;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -830,8 +812,7 @@ fn test_completions_type_alias_kind() {
 fn test_completions_class_kind_preserved() {
     // Classes should still be reported as CompletionItemKind::Class.
     let source = "class Animal {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -861,8 +842,7 @@ fn test_completions_class_kind_preserved() {
 fn test_completions_member_sort_text() {
     // Member completions should all have sort_text set to the member priority.
     let source = "const obj = { foo: 1, bar: \"hi\" };\nobj.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -954,8 +934,7 @@ fn test_completions_default_sort_text_function() {
 fn test_completions_has_action_default_false() {
     // By default, completions should have has_action = false.
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -981,8 +960,7 @@ fn test_completions_source_default_none() {
     // By default, source and source_display should be None
     // (they are only set for auto-import completions from the Project layer).
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1080,8 +1058,7 @@ fn test_completions_items_sorted_by_sort_text_then_label() {
     // Items should be ordered first by sort_text, then alphabetically
     // by label within each sort_text group.
     let source = "const banana = 1;\nfunction apple() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1141,8 +1118,7 @@ fn make_completions_provider(
     LineMap,
     String,
 ) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.into_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(&arena, root);
@@ -1341,8 +1317,7 @@ fn test_completion_result_struct_global_completion() {
 #[test]
 fn test_completions_inside_class_body() {
     let source = "class Foo {\n  x = 1;\n  method() {\n    \n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1359,8 +1334,7 @@ fn test_completions_inside_class_body() {
 #[test]
 fn test_completions_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1374,8 +1348,7 @@ fn test_completions_empty_file() {
 #[test]
 fn test_completions_after_dot_with_multiple_properties() {
     let source = "const obj = { a: 1, b: 'hello', c: true };\nobj.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1401,8 +1374,7 @@ fn test_completions_after_dot_with_multiple_properties() {
 #[test]
 fn test_completions_in_for_loop() {
     let source = "const items = [1, 2, 3];\nfor (const item of items) {\n  \n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1429,8 +1401,7 @@ fn test_completions_in_for_loop() {
 #[test]
 fn test_completions_in_arrow_function() {
     let source = "const outer = 42;\nconst fn = (param: number) => {\n  \n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1450,8 +1421,7 @@ fn test_completions_in_arrow_function() {
 #[test]
 fn test_completions_in_nested_function() {
     let source = "const a = 1;\nfunction outer() {\n  const b = 2;\n  function inner() {\n    const c = 3;\n    \n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1474,8 +1444,7 @@ fn test_completions_in_nested_function() {
 #[test]
 fn test_completions_in_if_block() {
     let source = "const x = 1;\nif (true) {\n  const y = 2;\n  \n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1493,8 +1462,7 @@ fn test_completions_in_if_block() {
 #[test]
 fn test_completions_enum_members() {
     let source = "enum Color { Red, Green, Blue }\nColor.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1520,8 +1488,7 @@ fn test_completions_enum_members() {
 #[test]
 fn test_completions_interface_as_type() {
     let source = "interface Foo { bar: number; }\nlet x: ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1563,8 +1530,7 @@ fn test_completions_multiple_files_via_project() {
 #[test]
 fn test_completions_destructuring_context() {
     let source = "const obj = { foo: 1, bar: 2 };\nconst { } = obj;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1579,8 +1545,7 @@ fn test_completions_destructuring_context() {
 #[test]
 fn test_completions_switch_case() {
     let source = "const val = 1;\nswitch (val) {\n  case 1:\n    \n    break;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1600,8 +1565,7 @@ fn test_completions_switch_case() {
 #[test]
 fn test_completions_try_catch() {
     let source = "const x = 1;\ntry {\n  const y = 2;\n  \n} catch (e) {\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2028,8 +1992,7 @@ fn test_completions_import_meta_dot() {
 fn test_completions_with_strict_mode() {
     // Test the with_strict constructor
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2105,8 +2068,7 @@ fn test_completions_namespace_members() {
     // After namespace dot, should offer namespace members
     let source =
         "namespace MyNS {\n  export const val = 1;\n  export function greet() {}\n}\nMyNS.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2651,8 +2613,7 @@ fn test_completions_member_nested_object_dot() {
     // After `obj.inner.`, member resolution should return some completions
     // (may resolve to inner properties or parent-level members depending on type resolution)
     let source = "const obj = { inner: { deep: 42, flag: true } };\nobj.inner.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2686,8 +2647,7 @@ fn test_completions_member_nested_object_dot() {
 fn test_completions_member_method_on_object() {
     // Object with method should suggest method with Method kind
     let source = "const obj = { greet() { return 'hi'; } };\nobj.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2718,8 +2678,7 @@ fn test_completions_member_method_on_object() {
 fn test_completions_member_class_instance() {
     // Class instance member access should show public properties and methods
     let source = "class Point {\n  x: number = 0;\n  y: number = 0;\n  distance() { return 0; }\n}\nconst p = new Point();\np.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2958,8 +2917,7 @@ fn test_completions_no_completions_in_regex_literal() {
 fn test_completions_optional_chaining_member() {
     // After `?.`, should still offer member completions
     let source = "const obj = { foo: 1, bar: 'hello' };\nconst x: typeof obj | null = obj;\nx?.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2997,8 +2955,7 @@ fn test_completions_class_static_members_via_class_name() {
     // `ClassName.` should show static members
     let source =
         "class Util {\n  static helper() {}\n  static count = 0;\n  instance() {}\n}\nUtil.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3368,8 +3325,7 @@ fn test_completions_multiple_parameters_visible() {
 fn test_completions_enum_member_dot_access() {
     // After `EnumName.`, should show enum members
     let source = "enum Status { Active, Inactive, Pending }\nStatus.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3493,8 +3449,7 @@ fn test_completions_import_binding_kind_is_alias() {
 fn test_completions_multiline_object_literal_member() {
     // Object literal with properties across multiple lines
     let source = "const obj = {\n  name: 'test',\n  count: 42,\n  active: true\n};\nobj.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3594,8 +3549,7 @@ fn test_completions_completion_result_serialization() {
 fn test_completions_function_parameter_in_body() {
     // function f(myParam: number) { | }
     let source = "function f(myParam: number) {  }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3677,8 +3631,7 @@ fn test_completions_type_arg_non_generic_suppressed() {
     // Cursor inside the string literal type arg on a non-generic target
     // should return no completions.
     let source = "interface Foo {}\ntype Bar = {};\nlet x: Foo<\"\">;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3697,8 +3650,7 @@ fn test_completions_type_arg_non_generic_suppressed() {
 
     // Same for the type alias `Bar`.
     let source2 = "interface Foo {}\ntype Bar = {};\nlet y: Bar<\"\">;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source2.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source2);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3721,8 +3673,7 @@ fn test_completions_type_arg_generic_retained() {
     // Cursor inside the string literal type arg on a generic target should
     // NOT be suppressed by the non-generic gate.
     let source = "interface Foo<T> {}\nlet x: Foo<\"\">;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3749,8 +3700,7 @@ fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
     // text-based suppression so it skips trailing block comments.
     // Regression: `completionListAfterNumericLiteral.ts` fourslash test.
     let source = "0./** comment */";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
