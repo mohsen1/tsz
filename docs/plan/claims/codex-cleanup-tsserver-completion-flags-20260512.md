@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-tsserver-completion-flags-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5850
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -18,4 +18,4 @@ while making the default-false flag handling easier to scan.
 
 ## Verification
 
-- `cargo nextest run -p tsz-cli --bin tsz_server --no-fail-fast`
+- `cargo nextest run -p tsz-cli --bin tsz-server --no-fail-fast` (369 tests pass, 3 skipped)
