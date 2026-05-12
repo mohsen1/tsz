@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/variance-merged-decl-arenas-20260512`
-- **PR**: TBD
+- **PR**: #5726
 - **Status**: ready
 - **Workstream**: conformance
 
