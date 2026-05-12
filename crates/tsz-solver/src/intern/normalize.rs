@@ -883,8 +883,10 @@ impl TypeInterner {
                     Some(TypeData::TemplateLiteral(_))
                 )
             ) {
-                let mut checker = crate::relations::subtype::SubtypeChecker::new(self);
-                return checker.is_subtype_of(source, target);
+                // Union normalization must stay shallow. Full template-literal
+                // matching may evaluate and intern large intermediate unions,
+                // turning normalization into a project-scale hotspot.
+                return false;
             }
 
             // Check if target is a union containing a compatible primitive
@@ -1662,5 +1664,26 @@ impl TypeInterner {
 
         // Return the union of all intersections
         Some(self.union(intersection_results))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::TemplateSpan;
+
+    #[test]
+    fn shallow_subtype_skips_literal_to_template_literal_matching() {
+        let interner = TypeInterner::new();
+        let literal = interner.literal_string("foo-x");
+        let template = interner.template_literal(vec![
+            TemplateSpan::Text(interner.intern_string("foo-")),
+            TemplateSpan::Type(TypeId::STRING),
+        ]);
+
+        assert!(
+            !interner.is_subtype_shallow(literal, template),
+            "union normalization should not invoke full template-literal subtype matching"
+        );
     }
 }
