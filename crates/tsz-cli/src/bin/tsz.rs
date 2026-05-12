@@ -1460,11 +1460,10 @@ fn merge_output_only_options_from_tsconfig(args: &mut CliArgs, cwd: &std::path::
     let Ok(text) = std::fs::read_to_string(&path) else {
         return;
     };
-    // Tolerate JSONC: strip line/block comments before parsing. tsconfig
-    // permits both. We don't need the full extends chain here — only the
+    // Tolerate JSONC. We don't need the full extends chain here — only the
     // top-level compilerOptions block.
-    let stripped = strip_jsonc_minimal(&text);
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&stripped) else {
+    let normalized = tsz_cli::config::normalize_jsonc(&text);
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&normalized) else {
         return;
     };
     let Some(opts) = json.get("compilerOptions").and_then(|v| v.as_object()) else {
@@ -1487,58 +1486,6 @@ fn merge_output_only_options_from_tsconfig(args: &mut CliArgs, cwd: &std::path::
     take_bool("diagnostics", &mut args.diagnostics);
     take_bool("extendedDiagnostics", &mut args.extended_diagnostics);
     take_bool("traceResolution", &mut args.trace_resolution);
-}
-
-/// Strip line and block comments from JSONC. Single-pass; respects string
-/// literals. Sufficient for top-level tsconfig parsing.
-fn strip_jsonc_minimal(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    let mut in_string = false;
-    let mut string_quote = b'"';
-    while i < bytes.len() {
-        let b = bytes[i];
-        if in_string {
-            out.push(b as char);
-            if b == b'\\' && i + 1 < bytes.len() {
-                out.push(bytes[i + 1] as char);
-                i += 2;
-                continue;
-            }
-            if b == string_quote {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        if b == b'"' || b == b'\'' {
-            in_string = true;
-            string_quote = b;
-            out.push(b as char);
-            i += 1;
-            continue;
-        }
-        if b == b'/' && i + 1 < bytes.len() {
-            if bytes[i + 1] == b'/' {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            if bytes[i + 1] == b'*' {
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i += 2;
-                continue;
-            }
-        }
-        out.push(b as char);
-        i += 1;
-    }
-    out
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {

@@ -118,6 +118,36 @@ fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
 }
 
 #[test]
+fn tsconfig_output_only_flags_accept_jsonc_trailing_commas() {
+    let temp = TempDir::new("output_only_flags_jsonc").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+            // Output-only flags are read before the main config load.
+            "compilerOptions": {
+                "noEmit": true,
+                "listFiles": true,
+            },
+            "files": [
+                "src/a.ts",
+            ],
+        }"#,
+    );
+    write_file(&temp.path.join("src/a.ts"), "const a = 1;\n");
+
+    let Some((code, output)) = run_tsz_with_exit_code(&temp.path, &["--pretty", "false"]) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(code, 0, "tsz should compile JSONC tsconfig: {output}");
+    assert!(
+        output.contains("src/a.ts"),
+        "tsconfig listFiles flag should be honored from JSONC, got:\n{output}"
+    );
+}
+
+#[test]
 fn show_config_and_list_files_only_find_parent_tsconfig() {
     let temp = TempDir::new("special_modes_parent_tsconfig").expect("temp dir");
     write_file(&temp.path.join("p/a.ts"), "let parentConfigFile = 1;\n");
