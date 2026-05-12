@@ -46,5 +46,5 @@ PASS without regressing any of the four other `@link`-using conformance tests.
 - Unit: `cargo test -p tsz-emitter symlinked_nested_package_reference -- --nocapture` — 6 tests pass
 - Conformance: `scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter symbolLinkDeclarationEmitModuleNamesImportRef --verbose` — PASS
 - Conformance adjacency: `symlinkedWorkspaceDependenciesNoDirectLink`, `declarationEmitMonorepoBaseUrl`, and `declarationEmitCommonSourceDirectoryDoesNotContainAllFiles` — PASS
-- Full conformance on branch: 12569/12582 passed, 9 fingerprint-only; only code mismatch is `callsOnComplexSignatures.tsx` TS2786, covered by PR #5679 and not caused by this TS2883 change
+- Full conformance on branch after rebasing over PR #5679: 12570/12582 passed, 9 fingerprint-only, 0 code mismatches; net 12563 -> 12570 (+7)
 - Formatting/whitespace: `cargo fmt --all --check`, `git diff --check` — PASS
