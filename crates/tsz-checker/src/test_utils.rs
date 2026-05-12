@@ -22,8 +22,9 @@ pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> V
     check_source_with_file_is_esm(source, file_name, options, None)
 }
 
-/// Parse, bind, and type-check a source string with an explicit Node module
-/// file format classification.
+/// Parse, bind, and type-check a source string with no lib contexts, source
+/// file test pragmas enabled, and an explicit Node module file-format
+/// classification.
 pub fn check_source_with_file_is_esm(
     source: &str,
     file_name: &str,
