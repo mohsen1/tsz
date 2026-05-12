@@ -949,7 +949,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let mut innermost_body = module.body;
                     if !is_string_literal {
                         let mut body = module.body;
-                        while !body.is_none() {
+                        while body.is_some() {
                             let Some(body_node) = self.arena.get(body) else {
                                 break;
                             };
@@ -1716,7 +1716,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // Only named class expressions surface; anonymous
                     // ones are skipped (expected behavior per tsc).
                     if let Some(class) = provider.arena.get_class(node)
-                        && !class.name.is_none()
+                        && class.name.is_some()
                         && let Some(name) = provider.get_name(class.name)
                     {
                         let range = node_range(
@@ -2123,9 +2123,9 @@ impl<'a> DocumentSymbolProvider<'a> {
             for (name, is_fn, body, stmt_idx, descriptor, member_via_proto, kind_hint) in
                 &expando.members
             {
-                let children = if !body.is_none() {
+                let children = if body.is_some() {
                     self.collect_children_from_block(*body, Some(&sym.name))
-                } else if !descriptor.is_none() {
+                } else if descriptor.is_some() {
                     // defineProperty descriptor — walk its literal
                     // members so `get` / `set` show up as methods.
                     self.collect_object_literal_members(*descriptor, Some(&sym.name))
@@ -2137,7 +2137,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     MemberKindHint::None => {
                         if *is_fn {
                             SymbolKind::Function
-                        } else if !descriptor.is_none() {
+                        } else if descriptor.is_some() {
                             // `Object.defineProperty(X, 'y', …)` has no
                             // inferable kind at tsc — the entry renders
                             // with no kind field.
@@ -2619,7 +2619,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         // Named bindings: either `NAMESPACE_IMPORT` (for `* as ns`) or
         // `NAMED_IMPORTS` (for `{ a, b as B }`).
         let named_idx = clause.named_bindings;
-        if !named_idx.is_none()
+        if named_idx.is_some()
             && let Some(named_node) = self.arena.get(named_idx)
         {
             if named_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
