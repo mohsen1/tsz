@@ -78,9 +78,10 @@ mod members;
 
 use crate::context::transform::TransformContext;
 use crate::transforms::ir::{
-    IRCatchClause, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
+    IRCatchClause, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
 };
+use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
     collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
@@ -1680,11 +1681,17 @@ impl<'a> ES5ClassTransformer<'a> {
         self.current_static_class_alias =
             if self.static_members_need_class_alias(&class_data.members) {
                 Some(self.generate_temp_name())
+            } else if self
+                .auto_accessors
+                .iter()
+                .any(|accessor| accessor.is_static)
+            {
+                Some(generated_auto_accessor_name(1))
             } else {
                 None
             };
-        // Each entry: (Option<temp_name>, expr_idx) for the comma expression
-        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex)> = Vec::new();
+        // Each entry: (Option<temp_name>, expr_idx, member_idx) for the comma expression.
+        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -1749,24 +1756,49 @@ impl<'a> ES5ClassTransformer<'a> {
                 let is_side_effect_free =
                     Self::is_expr_side_effect_free(self.arena, computed.expression);
                 if !is_side_effect_free {
-                    computed_prop_entries.push((None, computed.expression));
+                    computed_prop_entries.push((None, computed.expression, member_idx));
                 }
             } else {
                 let temp = self.generate_temp_name();
                 self.computed_prop_temp_map
                     .insert(computed.expression, temp.clone());
-                computed_prop_entries.push((Some(temp), computed.expression));
+                computed_prop_entries.push((Some(temp), computed.expression, member_idx));
             }
         }
+        let consumed_computed_auto_accessor_entries: Vec<usize> =
+            if let Some(first_accessor) = self.first_computed_instance_auto_accessor() {
+                computed_prop_entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(entry_idx, (_, _, member_idx))| {
+                        (*member_idx == first_accessor.member_idx).then_some(entry_idx)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let consumed_computed_auto_accessor_temps: Vec<String> =
+            consumed_computed_auto_accessor_entries
+                .iter()
+                .filter_map(|entry_idx| computed_prop_entries[*entry_idx].0.clone())
+                .collect();
 
         let computed_prop_temp_decls: Vec<String> = computed_prop_entries
             .iter()
-            .filter_map(|(temp, _)| temp.clone())
+            .enumerate()
+            .filter_map(|(entry_idx, (temp, _, _))| {
+                (!consumed_computed_auto_accessor_entries.contains(&entry_idx))
+                    .then(|| temp.clone())
+                    .flatten()
+            })
             .collect();
         let mut computed_prop_init_entries = Vec::new();
         if !computed_prop_entries.is_empty() {
             let mut comma_parts: Vec<IRNode> = Vec::new();
-            for (temp_name, expr_idx) in &computed_prop_entries {
+            for (entry_idx, (temp_name, expr_idx, _)) in computed_prop_entries.iter().enumerate() {
+                if consumed_computed_auto_accessor_entries.contains(&entry_idx) {
+                    continue;
+                }
                 let expr_ir = self.convert_expression(*expr_idx);
                 if let Some(temp) = temp_name {
                     comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
@@ -1859,6 +1891,10 @@ impl<'a> ES5ClassTransformer<'a> {
             body.insert(0, IRNode::VarDeclList(var_decls));
         }
 
+        if self.auto_accessor_storage_decls_in_iife() {
+            self.emit_auto_accessor_storage_decls_and_static_inits(&mut body);
+        }
+
         // return ClassName;
         body.push(IRNode::ret(Some(IRNode::id(self.class_name.clone()))));
 
@@ -1875,11 +1911,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 weakmap_decls.push(set_var.clone());
             }
         }
+        let auto_accessor_decls_in_iife = self.auto_accessor_storage_decls_in_iife();
         for accessor in &self.auto_accessors {
-            if !accessor.is_static {
+            if !accessor.is_static && !auto_accessor_decls_in_iife {
                 weakmap_decls.push(accessor.weakmap_name.clone());
             }
         }
+        weakmap_decls.extend(consumed_computed_auto_accessor_temps);
 
         // WeakMap instantiations for instance fields
         let mut weakmap_inits: Vec<String> = self
@@ -1900,8 +1938,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+        let auto_accessor_instance_inits_in_computed_key =
+            self.first_computed_instance_auto_accessor().is_some();
         for accessor in &self.auto_accessors {
-            if !accessor.is_static {
+            if !accessor.is_static
+                && !auto_accessor_decls_in_iife
+                && !auto_accessor_instance_inits_in_computed_key
+            {
                 weakmap_inits.push(format!("{} = new WeakMap()", accessor.weakmap_name));
             }
         }
@@ -2571,27 +2614,130 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             }
 
-            // _Class_accessor_storage.set(this, void 0);
+            let value = accessor
+                .initializer
+                .map(|initializer| self.convert_expression(initializer))
+                .unwrap_or(IRNode::Undefined);
+
+            // _Class_accessor_storage.set(this, value);
             body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
                 weakmap_name: accessor.weakmap_name.clone().into(),
                 key: Box::new(key.clone()),
-                value: Box::new(IRNode::Undefined),
+                value: Box::new(value),
             }));
-
-            if let Some(initializer) = accessor.initializer {
-                body.push(IRNode::expr_stmt(IRNode::PrivateFieldSet {
-                    receiver: Box::new(key.clone()),
-                    weakmap_name: accessor.weakmap_name.clone().into(),
-                    value: Box::new(self.convert_expression(initializer)),
-                }));
-            }
         }
     }
 
     fn find_auto_accessor(&self, member_idx: NodeIndex) -> Option<&AutoAccessorFieldInfo> {
         self.auto_accessors
             .iter()
-            .find(|acc| acc.member_idx == member_idx && !acc.is_static)
+            .find(|acc| acc.member_idx == member_idx)
+    }
+
+    fn auto_accessor_storage_decls_in_iife(&self) -> bool {
+        self.auto_accessors
+            .iter()
+            .any(|accessor| accessor.is_static)
+    }
+
+    fn first_computed_instance_auto_accessor(&self) -> Option<&AutoAccessorFieldInfo> {
+        self.auto_accessors.iter().find(|accessor| {
+            if accessor.is_static {
+                return false;
+            }
+            self.auto_accessor_has_computed_name(accessor.member_idx)
+        })
+    }
+
+    fn auto_accessor_has_computed_name(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let Some(prop) = self.arena.get_property_decl(member_node) else {
+            return false;
+        };
+        self.arena
+            .get(prop.name)
+            .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
+    fn auto_accessor_instance_storage_inits_for_computed_key(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Vec<String> {
+        if self.first_computed_instance_auto_accessor().is_none()
+            || self
+                .first_computed_instance_auto_accessor()
+                .is_some_and(|accessor| accessor.member_idx != member_idx)
+        {
+            return Vec::new();
+        }
+
+        self.auto_accessors
+            .iter()
+            .filter(|accessor| !accessor.is_static)
+            .map(|accessor| format!("{} = new WeakMap()", accessor.weakmap_name))
+            .collect()
+    }
+
+    fn emit_auto_accessor_storage_decls_and_static_inits(&self, body: &mut Vec<IRNode>) {
+        let mut names = Vec::new();
+        if let Some(alias) = self.current_static_class_alias.as_ref() {
+            names.push(alias.clone());
+        }
+        names.extend(
+            self.auto_accessors
+                .iter()
+                .map(|accessor| accessor.weakmap_name.clone()),
+        );
+        if !names.is_empty() {
+            body.push(IRNode::VarDeclList(
+                names
+                    .into_iter()
+                    .map(|name| IRNode::VarDecl {
+                        name: name.into(),
+                        initializer: None,
+                    })
+                    .collect(),
+            ));
+        }
+
+        if let Some(alias) = self.current_static_class_alias.as_ref() {
+            body.push(IRNode::expr_stmt(IRNode::assign(
+                IRNode::id(alias.clone()),
+                IRNode::id(self.class_name.clone()),
+            )));
+        }
+
+        if self.first_computed_instance_auto_accessor().is_none() {
+            for accessor in &self.auto_accessors {
+                if accessor.is_static {
+                    continue;
+                }
+                body.push(IRNode::expr_stmt(IRNode::assign(
+                    IRNode::id(accessor.weakmap_name.clone()),
+                    IRNode::NewExpr {
+                        callee: Box::new(IRNode::id("WeakMap")),
+                        arguments: Vec::new(),
+                        explicit_arguments: true,
+                    },
+                )));
+            }
+        }
+
+        for accessor in &self.auto_accessors {
+            if !accessor.is_static {
+                continue;
+            }
+            let value = accessor
+                .initializer
+                .map(|initializer| self.convert_expression_static(initializer))
+                .unwrap_or(IRNode::Undefined);
+            body.push(IRNode::expr_stmt(IRNode::assign(
+                IRNode::id(accessor.weakmap_name.clone()),
+                IRNode::object(vec![IRProperty::init("value", value)]),
+            )));
+        }
     }
 
     fn build_auto_accessor_getter_function(&self, weakmap_name: &str) -> IRNode {
@@ -2601,6 +2747,25 @@ impl<'a> ES5ClassTransformer<'a> {
             body: vec![IRNode::ret(Some(IRNode::PrivateFieldGet {
                 receiver: Box::new(IRNode::this()),
                 weakmap_name: weakmap_name.to_string().into(),
+            }))],
+            is_expression_body: true,
+            body_source_range: None,
+        }
+    }
+
+    fn build_static_auto_accessor_getter_function(&self, weakmap_name: &str) -> IRNode {
+        let class_alias = self
+            .current_static_class_alias
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| self.class_name.clone());
+        IRNode::FunctionExpr {
+            name: None,
+            parameters: vec![],
+            body: vec![IRNode::ret(Some(IRNode::PrivateStaticFieldGet {
+                receiver: Box::new(IRNode::id(class_alias.clone())),
+                state: Box::new(IRNode::id(class_alias)),
+                storage_name: weakmap_name.to_string().into(),
             }))],
             is_expression_body: true,
             body_source_range: None,
@@ -2619,6 +2784,85 @@ impl<'a> ES5ClassTransformer<'a> {
             is_expression_body: true,
             body_source_range: None,
         }
+    }
+
+    fn build_static_auto_accessor_setter_function(&self, weakmap_name: &str) -> IRNode {
+        let class_alias = self
+            .current_static_class_alias
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| self.class_name.clone());
+        IRNode::FunctionExpr {
+            name: None,
+            parameters: vec![IRParam::new("value")],
+            body: vec![IRNode::expr_stmt(IRNode::PrivateStaticFieldSet {
+                receiver: Box::new(IRNode::id(class_alias.clone())),
+                state: Box::new(IRNode::id(class_alias)),
+                storage_name: weakmap_name.to_string().into(),
+                value: Box::new(IRNode::id("value")),
+            })],
+            is_expression_body: true,
+            body_source_range: None,
+        }
+    }
+
+    fn auto_accessor_getter_property_name(
+        &self,
+        name_idx: NodeIndex,
+        storage_inits: &[String],
+    ) -> IRMethodName {
+        if storage_inits.is_empty() {
+            return self.auto_accessor_setter_property_name(name_idx);
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return self.get_method_name_ir(name_idx);
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return self.get_method_name_ir(name_idx);
+        };
+
+        let expr = self.convert_computed_property_expression(computed.expression, true);
+        let expr_text = self.render_ir_expression(&expr);
+        let mut parts = storage_inits.to_vec();
+        if let Some(temp) = self.computed_prop_temp_map.get(&computed.expression) {
+            parts.push(format!("{temp} = {expr_text}"));
+        } else {
+            parts.push(expr_text);
+        }
+        IRMethodName::Computed(Box::new(IRNode::Raw(
+            format!("({})", parts.join(", ")).into(),
+        )))
+    }
+
+    fn auto_accessor_setter_property_name(&self, name_idx: NodeIndex) -> IRMethodName {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return self.get_method_name_ir(name_idx);
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if let Some(temp) = self.computed_prop_temp_map.get(&computed.expression) {
+            return IRMethodName::Computed(Box::new(IRNode::id(temp.clone())));
+        }
+        self.get_method_name_ir(name_idx)
+    }
+
+    fn render_ir_expression(&self, expr: &IRNode) -> String {
+        let mut printer = IRPrinter::with_arena(self.arena);
+        printer.set_target_es5(true);
+        if let Some(source_text) = self.source_text {
+            printer.set_source_text(source_text);
+        }
+        if let Some(transforms) = self.transforms.as_ref() {
+            printer.set_transforms(transforms.clone());
+        }
+        printer.emit(expr).to_string()
     }
 
     /// Emit a property initializer as an assignment or defineProperty.
@@ -3205,6 +3449,24 @@ fn collect_auto_accessor_fields(
         return accessors;
     };
 
+    let has_static_auto_accessor = class_data.members.nodes.iter().any(|&member_idx| {
+        let Some(member_node) = arena.get(member_idx) else {
+            return false;
+        };
+        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return false;
+        }
+        let Some(prop_data) = arena.get_property_decl(member_node) else {
+            return false;
+        };
+        arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+            && arena.is_static(&prop_data.modifiers)
+            && !arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+            && !arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+            && !is_private_identifier(arena, prop_data.name)
+    });
+    let mut generated_name_index = if has_static_auto_accessor { 1 } else { 0 };
+
     for &member_idx in &class_data.members.nodes {
         let Some(member_node) = arena.get(member_idx) else {
             continue;
@@ -3224,9 +3486,6 @@ fn collect_auto_accessor_fields(
         if is_private_identifier(arena, prop_data.name) {
             continue;
         }
-        if arena.is_static(&prop_data.modifiers) {
-            continue;
-        }
         let has_accessor = arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword);
         if !has_accessor {
             continue;
@@ -3234,14 +3493,18 @@ fn collect_auto_accessor_fields(
         let Some(name_node) = arena.get(prop_data.name) else {
             continue;
         };
-        if name_node.kind != SyntaxKind::Identifier as u16 {
-            continue;
-        }
-        let Some(name) = arena
-            .get_identifier(name_node)
-            .map(|id| id.escaped_text.clone())
-        else {
-            continue;
+        let name = if name_node.kind == SyntaxKind::Identifier as u16 {
+            let Some(name) = arena
+                .get_identifier(name_node)
+                .map(|id| id.escaped_text.clone())
+            else {
+                continue;
+            };
+            name
+        } else {
+            let name = generated_auto_accessor_name(generated_name_index);
+            generated_name_index += 1;
+            name
         };
 
         accessors.push(AutoAccessorFieldInfo {
@@ -3251,11 +3514,19 @@ fn collect_auto_accessor_fields(
                 .initializer
                 .is_some()
                 .then_some(prop_data.initializer),
-            is_static: false,
+            is_static: arena.is_static(&prop_data.modifiers),
         });
     }
 
     accessors
+}
+
+fn generated_auto_accessor_name(index: u32) -> String {
+    if index < 26 {
+        format!("_{}", (b'a' + index as u8) as char)
+    } else {
+        format!("_{}", index - 26)
+    }
 }
 
 fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {

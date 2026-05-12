@@ -23,6 +23,14 @@ RUNNER_BIN="$REPO_ROOT/.target/dist-fast/tsz-conformance"
 
 WORKERS=16
 
+# The checked-in TSC cache is generated against the pinned TypeScript
+# checkout's lib files. Point tsz at the same lib directory during
+# conformance runs so fingerprint comparisons use the same source
+# line/column mapping instead of the embedded stripped libs.
+if [ -z "${TSZ_LIB_DIR:-}" ] && [ -d "$REPO_ROOT/TypeScript/lib" ]; then
+    export TSZ_LIB_DIR="$REPO_ROOT/TypeScript/lib"
+fi
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

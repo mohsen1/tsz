@@ -278,6 +278,14 @@ impl<'a> CheckerState<'a> {
             return name.to_string();
         }
 
+        if let Some(keyof_alias) = self.ctx.types.get_display_alias(ty)
+            && let Some(keyof_inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, keyof_alias)
+            && let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner)
+        {
+            return format!("keyof {alias_name}");
+        }
+
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty)
         {
@@ -1163,63 +1171,7 @@ impl<'a> CheckerState<'a> {
                 .is_some()
     }
 
-    fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
-        if members.len() < 2 {
-            return None;
-        }
-
-        let enum_infos: Vec<_> = members
-            .iter()
-            .map(|&member| self.enum_union_member_display_info(member))
-            .collect();
-        let mut rendered = Vec::with_capacity(members.len());
-        let mut rendered_collapsed_enums = Vec::new();
-        let mut rendered_enum_member = false;
-        for (index, &member) in members.iter().enumerate() {
-            if let Some((enum_sym, enum_name, is_member)) = enum_infos[index].clone() {
-                rendered_enum_member = true;
-                let enum_count = enum_infos
-                    .iter()
-                    .filter(|info| {
-                        info.as_ref()
-                            .is_some_and(|(candidate, _, _)| *candidate == enum_sym)
-                    })
-                    .count();
-
-                if enum_count > 1 {
-                    if !rendered_collapsed_enums.contains(&enum_sym) {
-                        rendered_collapsed_enums.push(enum_sym);
-                        rendered.push(enum_name);
-                    }
-                } else if is_member {
-                    let member_name = self
-                        .format_enum_member_name_for_message(member)
-                        .unwrap_or(enum_name);
-                    rendered.push(member_name);
-                } else {
-                    rendered.push(enum_name);
-                }
-            } else {
-                rendered.push(self.format_type_for_assignability_message(member));
-            }
-        }
-
-        rendered_enum_member.then(|| rendered.join(" | "))
-    }
-
-    fn enum_union_member_display_info(
-        &mut self,
-        ty: TypeId,
-    ) -> Option<(tsz_binder::SymbolId, String, bool)> {
-        let is_member = self.format_enum_member_name_for_message(ty).is_some();
-        let widened = self.widen_enum_member_type(ty);
-        let enum_sym = self.enum_symbol_from_enumish_type(widened)?;
-        let symbol = self.ctx.binder.get_symbol(enum_sym)?;
-        Some((enum_sym, symbol.escaped_name.clone(), is_member))
-    }
-
-    fn format_enum_member_name_for_message(&mut self, ty: TypeId) -> Option<String> {
+    pub(super) fn format_enum_member_name_for_message(&mut self, ty: TypeId) -> Option<String> {
         let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -1229,7 +1181,7 @@ impl<'a> CheckerState<'a> {
         self.format_qualified_enum_name_for_message(ty)
     }
 
-    fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
+    pub(super) fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
         let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -1900,6 +1852,7 @@ impl<'a> CheckerState<'a> {
         if let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind != tsz_solver::def::DefKind::TypeAlias
+            && !is_union
         {
             return None;
         }

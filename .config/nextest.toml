@@ -54,7 +54,7 @@ test-threads = "num-cpus"
 status-level = "fail"
 
 [[profile.precommit.overrides]]
-filter = 'test(test_ts2536_with_lib_mismatched_keyof_source)'
+filter = 'test(test_ts2536_with_lib_mismatched_keyof_source) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
 # Long-running tests profile (for conformance tests)

@@ -1720,6 +1720,20 @@ impl<'a> IRPrinter<'a> {
                 self.write(weakmap_name);
                 self.write(", \"f\")");
             }
+            IRNode::PrivateStaticFieldGet {
+                receiver,
+                state,
+                storage_name,
+            } => {
+                self.write_helper("__classPrivateFieldGet");
+                self.write("(");
+                self.emit_node(receiver);
+                self.write(", ");
+                self.emit_node(state);
+                self.write(", \"f\", ");
+                self.write(storage_name);
+                self.write(")");
+            }
             IRNode::PrivateFieldSet {
                 receiver,
                 weakmap_name,
@@ -1733,6 +1747,23 @@ impl<'a> IRPrinter<'a> {
                 self.write(", ");
                 self.emit_node(value);
                 self.write(", \"f\")");
+            }
+            IRNode::PrivateStaticFieldSet {
+                receiver,
+                state,
+                storage_name,
+                value,
+            } => {
+                self.write_helper("__classPrivateFieldSet");
+                self.write("(");
+                self.emit_node(receiver);
+                self.write(", ");
+                self.emit_node(state);
+                self.write(", ");
+                self.emit_node(value);
+                self.write(", \"f\", ");
+                self.write(storage_name);
+                self.write(")");
             }
             IRNode::PrivateFieldIn { weakmap_name, obj } => {
                 self.write_helper("__classPrivateFieldIn");

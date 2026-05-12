@@ -1345,7 +1345,45 @@ impl CheckerState<'_> {
             }
         };
 
-        if let Some(base_idx) = self.get_base_class_idx(class_idx) {
+        let invalid_shadowed_base =
+            class
+                .heritage_clauses
+                .as_ref()
+                .is_some_and(|heritage_clauses| {
+                    heritage_clauses.nodes.iter().any(|&clause_idx| {
+                        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                            return false;
+                        };
+                        let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                            return false;
+                        };
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            return false;
+                        }
+                        let Some(&type_idx) = heritage.types.nodes.first() else {
+                            return false;
+                        };
+                        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                            return false;
+                        };
+                        let expr_idx = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            expr_type_args.expression
+                        } else {
+                            type_idx
+                        };
+                        self.resolve_heritage_symbol(expr_idx)
+                            .is_some_and(|base_sym_id| {
+                                self.heritage_expression_shadows_nonconstructable_lib_value(
+                                    expr_idx,
+                                    base_sym_id,
+                                )
+                            })
+                    })
+                });
+
+        if !invalid_shadowed_base && let Some(base_idx) = self.get_base_class_idx(class_idx) {
             if let Some(base_type) = self
                 .ctx
                 .class_instance_type_cache

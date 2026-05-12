@@ -8,6 +8,8 @@ pub mod commands;
 pub use tsz::config;
 pub mod driver;
 pub mod localization;
+#[cfg(feature = "perf-tools")]
+pub mod perf_json;
 pub mod project;
 pub mod reporting;
 pub use commands::args;

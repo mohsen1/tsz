@@ -30,70 +30,49 @@ type CollectedModuleSpecifier = (
 // keeps the diff one token per call and makes future swaps to a real
 // `CountingFs` trait (the eventual T2.0 wrapper) a one-place change.
 //
-// All three helpers are zero-cost when `TSZ_PERF_COUNTERS` is unset:
-// the `enabled_fast()` gate at the top of each wrapper short-circuits
-// before we deref `counters()` (an `OnceLock` lookup), so the disabled
-// path collapses to one cached-bool load + the underlying syscall.
-// Naively passing `&counters().X` to `inc()` would always evaluate the
-// `OnceLock` lookup as the argument; gating *here* avoids that.
+// The counter bumps themselves now live in `tsz_common::perf_counters`
+// as `record_resolver_*` helpers (sibling to the cross-arena / interner
+// helpers consolidated in #5097 / #5103 / #5112 / #5115 / #5118). Each
+// wrapper here keeps its file-local identity because it bundles the
+// counter with the underlying syscall — that's intentional grouping —
+// while the gate-and-deref pattern lives in one place.
 #[inline]
 fn count_is_file(path: &Path) -> bool {
-    if tsz_common::perf_counters::enabled_fast() {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().resolver_is_file_calls,
-        );
-    }
+    tsz_common::perf_counters::record_resolver_is_file();
     path.is_file()
 }
 
 #[inline]
 fn count_is_dir(path: &Path) -> bool {
-    if tsz_common::perf_counters::enabled_fast() {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().resolver_is_dir_calls,
-        );
-    }
+    tsz_common::perf_counters::record_resolver_is_dir();
     path.is_dir()
 }
 
 #[inline]
 fn count_read_dir(path: &Path) -> std::io::Result<std::fs::ReadDir> {
-    if tsz_common::perf_counters::enabled_fast() {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().resolver_read_dir_calls,
-        );
-    }
+    tsz_common::perf_counters::record_resolver_read_dir();
     std::fs::read_dir(path)
 }
 
-/// Bump `resolver_candidate_paths_total` once per invocation, gating on
-/// `enabled_fast()` so runs with perf counters disabled skip the
-/// `counters()` `OnceLock` deref entirely. Same shape as the fs-probe
-/// wrappers above; lifted into a helper so the two emit sites in this file
-/// (path-mapping virtual roots and suffix-extension expansion) don't re-pay
-/// the deref.
+/// Bump `resolver_candidate_paths_total` once per invocation. The
+/// `tsz_common::perf_counters::record_resolver_candidate_path` helper
+/// gates and dereferences once; this wrapper preserves the file-local
+/// `count_candidate_path` name so the two emit sites
+/// (path-mapping virtual roots and suffix-extension expansion) stay
+/// stable.
 #[inline]
 fn count_candidate_path() {
-    if tsz_common::perf_counters::enabled_fast() {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().resolver_candidate_paths_total,
-        );
-    }
+    tsz_common::perf_counters::record_resolver_candidate_path();
 }
 
-/// Bump `resolver_read_package_json_calls` once per uncached read with
-/// the same gate-then-deref pattern. This counter sits inside
-/// `read_package_json_uncached`, which `large-ts-repo` profiles flag as
-/// the dominant resolver work — keeping it gate-cheap matters even
-/// though the surrounding `read_to_string` is several orders of
-/// magnitude more expensive.
+/// Bump `resolver_read_package_json_calls` once per uncached read.
+/// Sits inside `read_package_json_uncached`, which `large-ts-repo`
+/// profiles flag as the dominant resolver work — keeping the gate
+/// cheap matters even though the surrounding `read_to_string` is
+/// several orders of magnitude more expensive.
 #[inline]
 fn count_read_package_json() {
-    if tsz_common::perf_counters::enabled_fast() {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().resolver_read_package_json_calls,
-        );
-    }
+    tsz_common::perf_counters::record_resolver_read_package_json();
 }
 
 #[derive(Default)]

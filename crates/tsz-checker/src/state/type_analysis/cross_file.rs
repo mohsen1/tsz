@@ -16,10 +16,49 @@ thread_local! {
     static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
-pub(crate) const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
-pub(crate) const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
-pub(crate) const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
-pub(crate) const CROSS_FILE_QUERY_SYMBOL_TYPE: u8 = 4;
+/// Typed identifier for the cross-file query bucket a cache lookup or write
+/// targets. Replaces the four `u8` constants that used to live here, matching
+/// the API shape proposed in `docs/plan/PERFORMANCE_PLAN.md` §7 ("Typed
+/// Cross-File Queries"):
+///
+/// > pub enum CrossFileQueryKind {
+/// >     SymbolType,
+/// >     ClassInstanceType,
+/// >     InterfaceType,
+/// >     InterfaceMemberSimpleType,
+/// > }
+///
+/// The discriminant values are the historical `u8` numbers already stored in
+/// `DefinitionStore` cache keys, so the enum remains `#[repr(u8)]`-compatible
+/// with the cache key layout via `as u8`.
+///
+/// Adding a new bucket: add the variant, give it a fresh `u8` discriminant,
+/// and ensure it doesn't collide with existing ones (the storage layer keys
+/// caches by `(u8, file_idx, primary, secondary, args_hash)` so
+/// re-purposing a discriminant would silently corrupt unrelated cache
+/// entries).
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(u8)]
+// Variant names mirror PERFORMANCE_PLAN.md §7 verbatim; the shared "Type"
+// suffix is part of the plan's API contract and must stay.
+#[allow(clippy::enum_variant_names)]
+pub(crate) enum CrossFileQueryKind {
+    InterfaceType = 1,
+    ClassInstanceType = 2,
+    InterfaceMemberSimpleType = 3,
+    SymbolType = 4,
+}
+
+impl CrossFileQueryKind {
+    /// Discriminant value used as the first component of
+    /// `DefinitionStore::resolved_cross_file_queries` cache keys. Stable —
+    /// changing this for an existing variant would invalidate every cached
+    /// entry under that discriminant.
+    #[inline]
+    pub(crate) const fn as_storage_kind(self) -> u8 {
+        self as u8
+    }
+}
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
@@ -639,9 +678,24 @@ impl<'a> CheckerState<'a> {
 
         if should_delegate {
             // PERF: count cross-arena delegation calls for the perf plan.
-            // See `docs/plan/PERFORMANCE_PLAN.md`.
-            let perf = tsz_common::perf_counters::counters();
-            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_calls);
+            // See `docs/plan/PERFORMANCE_PLAN.md`. Gate once with
+            // `enabled_fast()` and cache the resulting `&'static
+            // PerfCounters` pointer in `perf`. An enabled run pays the
+            // gate read plus one `counters()` `OnceLock<PerfCounters>`
+            // deref per delegate entry (vs. one per increment); a
+            // disabled run pays only the gate read and the subsequent
+            // `if let Some(p) = perf` checks are predictable branches
+            // on a local `None` that the optimizer folds away. Same
+            // pattern `TypeInterner::intern` uses for `pc`.
+            let perf = if tsz_common::perf_counters::enabled_fast() {
+                Some(tsz_common::perf_counters::counters())
+            } else {
+                None
+            };
+            if let Some(p) = perf {
+                p.delegate_cross_arena_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             // Track the running peak recursion depth via an RAII guard. Drop
             // decrements when this call returns / unwinds. Per
             // PERFORMANCE_PLAN.md §4.1.1 site #11.
@@ -653,7 +707,10 @@ impl<'a> CheckerState<'a> {
             if !needs_cross_file_delegation
                 && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
             {
-                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_lib);
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_lib
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.ctx.symbol_types.insert(sym_id, cached_type);
                 return Some((cached_type, Vec::new()));
             }
@@ -665,7 +722,10 @@ impl<'a> CheckerState<'a> {
                     cross_file_idx.unwrap_or(self.ctx.current_file_idx) as u32,
                 )
             {
-                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_cross_file);
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_cross_file
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.ctx.symbol_types.insert(sym_id, cached_type);
                 return Some((cached_type, cached_params));
             }
@@ -732,7 +792,10 @@ impl<'a> CheckerState<'a> {
 
             // Both caches and the alias shortcut missed → about to do real work
             // (boxed child checker construction + recursion).
-            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_misses);
+            if let Some(p) = perf {
+                p.delegate_cross_arena_misses
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let miss_source = if needs_cross_file_delegation {
                 CrossArenaSymbolMissSource::SymbolFileTarget
             } else {
@@ -1065,6 +1128,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
         {
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
             return Some((cached_type, cached_params));
         }
 
@@ -1097,6 +1161,18 @@ impl<'a> CheckerState<'a> {
                 .get_binder_for_arena(symbol_arena)
                 .unwrap_or(self.ctx.binder)
         };
+
+        // PERF: count cross-arena delegation calls and track recursion depth.
+        // Matches the symbol-resolution path; without this the per-reason
+        // child-checker construction counters covered the class-instance path
+        // but the aggregate `delegate_cross_arena_calls`/`max_recursion_depth`
+        // counters did not.
+        //
+        // Cache check above returned None → about to do real work, so this
+        // entry is a miss. Counts toward the `misses` denominator for
+        // cache-hit-rate metrics.
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
@@ -1134,7 +1210,7 @@ impl<'a> CheckerState<'a> {
             && *type_id != TypeId::ERROR
         {
             self.ctx.definition_store.cache_resolved_cross_file_query(
-                CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
+                CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
                 file_idx as u32,
                 sym_id.0,
                 0,
@@ -1196,6 +1272,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .cached_cross_file_interface_type(sym_id, file_idx as u32)
         {
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             self.ctx
                 .definition_store
@@ -1244,6 +1321,11 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        // PERF: see the matching block in `delegate_cross_arena_class_instance_type`.
+        // Cache check above returned None → about to do real work.
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
@@ -1407,6 +1489,7 @@ impl<'a> CheckerState<'a> {
                     member_idx,
                     file_idx as u32,
                 ) {
+                    tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
                     results.insert(member_idx, cached_type);
                 } else {
                     misses.push(member_idx);
@@ -1467,6 +1550,11 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        // PERF: see the matching block in `delegate_cross_arena_class_instance_type`.
+        // Cache check above returned None → about to do real work.
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             interface_arena,
@@ -1840,5 +1928,26 @@ impl<'a> CheckerState<'a> {
         }
 
         derived_type
+    }
+}
+
+#[cfg(test)]
+mod cross_file_query_kind_tests {
+    use super::CrossFileQueryKind;
+
+    /// Discriminants must be stable: the `DefinitionStore` cache keys store
+    /// these as `u8` and re-using a discriminant for a different variant
+    /// would silently corrupt unrelated cache entries. If you intentionally
+    /// re-number variants, also bump a cache-format version somewhere
+    /// downstream and clear the affected cache.
+    #[test]
+    fn discriminants_match_historical_constants() {
+        assert_eq!(CrossFileQueryKind::InterfaceType.as_storage_kind(), 1);
+        assert_eq!(CrossFileQueryKind::ClassInstanceType.as_storage_kind(), 2);
+        assert_eq!(
+            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            3
+        );
+        assert_eq!(CrossFileQueryKind::SymbolType.as_storage_kind(), 4);
     }
 }

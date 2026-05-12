@@ -59,6 +59,20 @@ v03 = [1, 'abc', 'def', true];
         ts2322.len(),
         ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text.contains("[number, string, string, boolean]")),
+        "Expected trailing boolean literal source display to widen against non-boolean suffix slot, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|d| !d.message_text.contains("[number, string, string, true]")),
+        "Trailing boolean literal should not stay literal against non-boolean suffix slot, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
 }
 
 /// Assigning an array literal with mismatched variadic element type to a
