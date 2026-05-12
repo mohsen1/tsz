@@ -304,6 +304,138 @@ fn switch_to_file_then_check_emits_only_the_new_file_diagnostics() {
     }
 }
 
+#[test]
+fn switch_to_file_yields_byte_identical_diagnostics_across_three_files() {
+    // Expanded variant of `..._intra_file_diagnostics` exercising:
+    //   - 3 files (forces 2 successive `switch_to_file` calls)
+    //   - Object-literal diagnostics that drive the elaboration
+    //     accumulator (`ObjectLiteralTracking`)
+    //   - Mixed diagnostic categories per file (literal mismatch +
+    //     missing-property + bad-arg)
+    //
+    // Locks the byte-identical invariant for the *cumulative* reset:
+    // after `switch_to_file` runs twice, the third file's diagnostics
+    // must still match the fresh-checker path. If any cleared cache is
+    // re-populated and pollutes subsequent files, this test fails.
+    // Each file uses distinct type names (`AlphaShape` / `BetaShape` /
+    // `GammaShape`) so the comparison isn't confounded by name collision
+    // pathologies like the scale-cliff fixture has.
+    let file_a = parse_and_bind(
+        "a.ts",
+        r#"
+        interface AlphaShape { x: number; y: string; }
+        const alpha: AlphaShape = { x: 1, y: 2 };
+        const bad: number = "wrong-alpha";
+        function takesNumber(n: number): number { return n; }
+        takesNumber("not-a-number");
+        "#,
+    );
+    let file_b = parse_and_bind(
+        "b.ts",
+        r#"
+        interface BetaShape { name: string; count: number; }
+        const beta: BetaShape = { name: 1, count: "two" };
+        const bad: boolean = 42;
+        function takesString(s: string): string { return s; }
+        takesString(99);
+        "#,
+    );
+    let file_c = parse_and_bind(
+        "c.ts",
+        r#"
+        interface GammaShape { active: boolean; total: number; }
+        const gamma: GammaShape = { active: "yes", total: false };
+        const bad: string = true;
+        function takesBoolean(b: boolean): boolean { return b; }
+        takesBoolean(0);
+        "#,
+    );
+
+    let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(vec![
+        Arc::clone(&file_a.arena),
+        Arc::clone(&file_b.arena),
+        Arc::clone(&file_c.arena),
+    ]);
+    let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(vec![
+        Arc::clone(&file_a.binder),
+        Arc::clone(&file_b.binder),
+        Arc::clone(&file_c.binder),
+    ]);
+    let opts = CheckerOptions::default();
+
+    // Path 1: fresh CheckerState per file (the default driver behavior).
+    let fresh_diags: Vec<Vec<Diagnostic>> = [&file_a, &file_b, &file_c]
+        .iter()
+        .enumerate()
+        .map(|(idx, parsed)| {
+            let types = TypeInterner::new();
+            let file_name = ["a.ts", "b.ts", "c.ts"][idx].to_string();
+            let mut checker = fresh_checker(
+                parsed,
+                &types,
+                file_name,
+                Arc::clone(&all_arenas),
+                Arc::clone(&all_binders),
+                idx,
+                opts.clone(),
+            );
+            checker.check_source_file(parsed.root);
+            checker.ctx.diagnostics.clone()
+        })
+        .collect();
+
+    // Path 2: one CheckerState, two successive `switch_to_file` calls.
+    let reused_diags: Vec<Vec<Diagnostic>> = {
+        let types = TypeInterner::new();
+        let mut checker = fresh_checker(
+            &file_a,
+            &types,
+            "a.ts".to_string(),
+            Arc::clone(&all_arenas),
+            Arc::clone(&all_binders),
+            0,
+            opts,
+        );
+        let mut out: Vec<Vec<Diagnostic>> = Vec::with_capacity(3);
+        checker.check_source_file(file_a.root);
+        out.push(checker.ctx.diagnostics.clone());
+
+        checker.ctx.switch_to_file(
+            file_b.arena.as_ref(),
+            file_b.binder.as_ref(),
+            "b.ts".to_string(),
+            1,
+        );
+        checker.check_source_file(file_b.root);
+        out.push(checker.ctx.diagnostics.clone());
+
+        checker.ctx.switch_to_file(
+            file_c.arena.as_ref(),
+            file_c.binder.as_ref(),
+            "c.ts".to_string(),
+            2,
+        );
+        checker.check_source_file(file_c.root);
+        out.push(checker.ctx.diagnostics.clone());
+
+        out
+    };
+
+    for (idx, name) in ["a.ts", "b.ts", "c.ts"].iter().enumerate() {
+        assert!(
+            !fresh_diags[idx].is_empty(),
+            "fresh-path {name} must emit at least one diagnostic — test must be load-bearing",
+        );
+        assert_eq!(
+            diagnostics_signature(&fresh_diags[idx]),
+            diagnostics_signature(&reused_diags[idx]),
+            "{name} diagnostics differ between fresh-per-file and switch_to_file paths\n  fresh: {:#?}\n  reused: {:#?}",
+            diagnostics_signature(&fresh_diags[idx]),
+            diagnostics_signature(&reused_diags[idx]),
+        );
+    }
+}
+
 // Compile-time check: the method signature requires both `arena` and
 // `binder` to share the `CheckerContext<'a>` lifetime `'a`. This catches a
 // future refactor that loosens the constraint and lets the caller pass
