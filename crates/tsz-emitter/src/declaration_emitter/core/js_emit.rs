@@ -1381,6 +1381,16 @@ impl<'a> DeclarationEmitter<'a> {
             props.sort_by_key(|prop| prop.declaration_order);
         }
 
+        // Skip properties that will also be emitted via secondary members
+        // (i.e. `module.exports.X = ...` assignments later in the file). The
+        // checker may augment the initializer's instance type with those
+        // expando properties — e.g. for `module.exports = new Foo();
+        // module.exports.additional = 20;` the instance type carries both
+        // `member` (from Foo) and `additional` (from the later assignment).
+        // Without this guard `emit_js_anonymous_module_exports_named_members`
+        // emits `additional` from the typed pass AND from the secondary pass,
+        // producing a duplicate `export const additional` declaration in the
+        // .d.ts.
         for prop in props {
             if prop.is_class_prototype || prop.name == interner.intern_string("constructor") {
                 continue;
@@ -1404,6 +1414,18 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .get(root_initializer)
             .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+        // Each `module.exports.X = Y` secondary statement is also registered
+        // in `js_deferred_value_export_statements` (via the CJS-named-export
+        // collector) and would be emitted a second time when the statement
+        // visitor reaches it. Remove those stmt indices from the deferred
+        // maps before emitting here, so the statement visitor skips them.
+        for (stmt_idx, _) in
+            self.js_module_exports_secondary_member_stmt_assignments(root_initializer)
+        {
+            self.js_deferred_value_export_statements.remove(&stmt_idx);
+            self.js_deferred_function_export_statements
+                .remove(&stmt_idx);
+        }
         for (name_idx, initializer) in
             self.js_module_exports_secondary_member_assignments(root_initializer)
         {
@@ -1431,15 +1453,81 @@ impl<'a> DeclarationEmitter<'a> {
             } else if !root_is_object_literal
                 && let Some(type_text) = self.js_synthetic_export_value_type_text(initializer)
             {
-                self.emit_js_named_export_value_member(
-                    name_idx,
-                    &type_text,
-                    self.js_synthetic_export_value_keyword(initializer),
-                );
+                // When the root export is a class instance / nameable value
+                // (`module.exports = new Foo()`), secondary `.X = Y` members
+                // share its CommonJS "structurally mutable" semantics. tsc
+                // emits these as `let`; `js_synthetic_export_value_keyword`
+                // would otherwise pick `const` for primitive-literal
+                // initializers and produce a spurious
+                // `export const additional: 20;` divergence.
+                self.emit_js_named_export_value_member(name_idx, &type_text, "let ");
             } else {
                 self.emit_js_synthetic_value_declaration(name_idx, initializer, true);
             }
         }
+    }
+
+    /// Like `js_module_exports_secondary_member_assignments` but also
+    /// returns each containing statement's `NodeIndex`. Used by the
+    /// secondary-member emitter to suppress the duplicate emission that
+    /// would otherwise occur when the statement visitor later reaches
+    /// these `module.exports.X = Y` statements with their own deferred
+    /// value export.
+    pub(in crate::declaration_emitter) fn js_module_exports_secondary_member_stmt_assignments(
+        &self,
+        root_initializer: NodeIndex,
+    ) -> Vec<(NodeIndex, NodeIndex)> {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return Vec::new();
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return Vec::new();
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return Vec::new();
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|stmt_idx| {
+                self.js_module_exports_assignment_initializer(*stmt_idx) != Some(root_initializer)
+            })
+            .filter_map(|stmt_idx| {
+                let stmt_node = self.arena.get(stmt_idx)?;
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    return None;
+                }
+                let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+                let expr_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+                let expr_node = self.arena.get(expr_idx)?;
+                if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                    return None;
+                }
+                let binary = self.arena.get_binary_expr(expr_node)?;
+                let lhs = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(binary.left);
+                let lhs_node = self.arena.get(lhs)?;
+                if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    return None;
+                }
+                let lhs_access = self.arena.get_access_expr(lhs_node)?;
+                let receiver = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+                if !self.is_module_exports_reference(receiver) {
+                    return None;
+                }
+                let (name_idx, _) =
+                    self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)?;
+                Some((stmt_idx, name_idx))
+            })
+            .collect()
     }
 
     pub(in crate::declaration_emitter) fn js_module_exports_secondary_member_assignments(
@@ -1786,12 +1874,15 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     "any".to_string()
                 };
-                let keyword = if prop.initializer.is_some() {
-                    self.js_synthetic_export_value_keyword(prop.initializer)
-                } else {
-                    "var "
-                };
-                self.emit_js_named_export_value_member(prop.name, &type_text, keyword);
+                // tsc emits class-instance fields exported through CommonJS
+                // (`module.exports = new Foo()`) as `let` — the binding is
+                // structurally mutable in CommonJS. Use `let ` regardless of
+                // initializer kind here (rather than routing through
+                // `js_synthetic_export_value_keyword`, which would return
+                // `const ` for primitive literals and produce
+                // `export const member: number;` where tsc emits
+                // `export let member: number;`).
+                self.emit_js_named_export_value_member(prop.name, &type_text, "let ");
                 emitted_any = true;
             }
         }
