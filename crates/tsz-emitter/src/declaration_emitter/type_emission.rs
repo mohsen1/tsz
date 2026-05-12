@@ -930,7 +930,13 @@ impl<'a> DeclarationEmitter<'a> {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(node) {
-                    self.write(&ident.escaped_text);
+                    if let Some(canonical_name) =
+                        self.canonical_named_import_name_for_alias(node_idx)
+                    {
+                        self.write(&canonical_name);
+                    } else {
+                        self.write(&ident.escaped_text);
+                    }
                 }
             }
             k if k == SyntaxKind::ThisKeyword as u16 => self.write("this"),

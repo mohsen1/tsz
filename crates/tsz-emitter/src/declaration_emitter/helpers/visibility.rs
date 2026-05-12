@@ -1094,7 +1094,125 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         };
 
+        if self.import_specifier_has_emitted_canonical_name(binder, used, specifier) {
+            return false;
+        }
+
         self.imported_name_is_used(binder, used, specifier.name)
+    }
+
+    fn import_specifier_has_emitted_canonical_name(
+        &self,
+        binder: &BinderState,
+        used: &rustc_hash::FxHashMap<SymbolId, super::super::usage_analyzer::UsageKind>,
+        specifier: &tsz_parser::parser::node::SpecifierData,
+    ) -> bool {
+        let Some(import_name) = self.canonical_named_import_name_for_alias(specifier.name) else {
+            return false;
+        };
+        let Some(&canonical_sym_id) = self.import_name_map.get(&import_name) else {
+            return false;
+        };
+
+        self.import_symbol_is_used(binder, used, canonical_sym_id)
+    }
+
+    pub(crate) fn canonical_named_import_name_for_alias(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let name_node = self.arena.get(name_idx)?;
+        let ident = self.arena.get_identifier(name_node)?;
+        let local_name = ident.escaped_text.as_str();
+        let sym_id = binder
+            .node_symbols
+            .get(&name_idx.0)
+            .copied()
+            .or_else(|| binder.file_locals.get(local_name))?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let import_module = symbol.import_module.as_deref()?;
+        let import_name = symbol.import_name.as_deref()?;
+
+        if import_name == "*"
+            || import_name == local_name
+            || self.import_name_map.get(import_name).copied() == Some(sym_id)
+        {
+            return None;
+        }
+
+        if !self.import_alias_has_sibling_canonical_specifier(sym_id, import_name) {
+            return None;
+        }
+
+        let canonical_sym_id = self.import_name_map.get(import_name).copied()?;
+        let canonical_symbol = binder.symbols.get(canonical_sym_id)?;
+        if canonical_symbol.escaped_name != import_name
+            || canonical_symbol.import_module.as_deref() != Some(import_module)
+        {
+            return None;
+        }
+
+        Some(import_name.to_string())
+    }
+
+    fn import_alias_has_sibling_canonical_specifier(
+        &self,
+        sym_id: SymbolId,
+        import_name: &str,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(alias_specifier_idx) = self.enclosing_import_specifier(decl_idx) else {
+                return false;
+            };
+            let Some(named_imports_idx) = self.arena.parent_of(alias_specifier_idx) else {
+                return false;
+            };
+            let Some(named_imports_node) = self.arena.get(named_imports_idx) else {
+                return false;
+            };
+            let Some(named_imports) = self.arena.get_named_imports(named_imports_node) else {
+                return false;
+            };
+
+            named_imports
+                .elements
+                .nodes
+                .iter()
+                .copied()
+                .any(|spec_idx| {
+                    if spec_idx == alias_specifier_idx {
+                        return false;
+                    }
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        return false;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        return false;
+                    };
+                    if specifier.property_name.is_some() {
+                        return false;
+                    }
+                    self.get_identifier_text(specifier.name).as_deref() == Some(import_name)
+                })
+        })
+    }
+
+    fn enclosing_import_specifier(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        loop {
+            let node = self.arena.get(idx)?;
+            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
+                return Some(idx);
+            }
+            idx = self.arena.parent_of(idx)?;
+        }
     }
 
     pub(in crate::declaration_emitter) fn imported_name_is_used(

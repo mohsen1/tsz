@@ -4268,6 +4268,34 @@ export default validate;
 }
 
 #[test]
+fn test_redundant_named_import_alias_extends_uses_canonical_name() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+import { Base, Base as Base2 } from "pkg";
+export class A extends Base {}
+export class B extends Base2 {}
+"#,
+    );
+
+    assert!(
+        output.contains("export declare class A extends Base"),
+        "Expected first class to keep canonical import name: {output}"
+    );
+    assert!(
+        output.contains("export declare class B extends Base"),
+        "Expected aliased class heritage to use canonical import name: {output}"
+    );
+    assert!(
+        output.contains("import { Base } from \"pkg\";"),
+        "Expected redundant named import alias to be elided: {output}"
+    );
+    assert!(
+        !output.contains("Base2"),
+        "Did not expect declaration output to reference redundant alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_export_default_class_is_hoisted_above_class_body() {
     // Same hoisting rule as above, but for class declarations. Uses the
     // usage-analysis variant so the class isn't pruned from the .d.ts.
