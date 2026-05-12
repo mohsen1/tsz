@@ -807,8 +807,7 @@ fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
 
 #[test]
 fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
-    let diagnostics = check_jsx_strict(
-        r#"
+    let source = r#"
         declare namespace JSX {
             interface Element { type: 'element'; }
             interface ElementClass { type: 'element-class'; }
@@ -823,13 +822,25 @@ fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
         declare const pick: boolean;
         const MixedComponent = pick ? FunctionComponent : ClassComponent;
         const elem = <MixedComponent />;
-        "#,
-    );
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<MixedComponent")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <MixedComponent");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'MixedComponent'"))
+        .expect(
+            "Union component with invalid function/class members should emit TS2786 at MixedComponent",
+        );
     assert!(
-        diagnostics
-            .iter()
-            .any(|diag| { diag.code == 2786 && diag.message_text.contains("'MixedComponent'") }),
+        ts2786.message_text.contains("'MixedComponent'"),
         "Union component with invalid function/class members should emit TS2786 at MixedComponent, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2786.start, expected_start,
+        "TS2786 should anchor at the MixedComponent JSX tag name, got: {diagnostics:?}"
     );
 }
 
