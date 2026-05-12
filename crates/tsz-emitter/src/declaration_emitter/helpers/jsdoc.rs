@@ -795,7 +795,6 @@ impl<'a> DeclarationEmitter<'a> {
             let prop_decl = params.iter().find(|decl| decl.name == qualified_name)?;
 
             let mut member = String::new();
-            member.push_str("    ");
             member.push_str(prop_name);
             if prop_decl.optional {
                 member.push('?');
@@ -809,7 +808,13 @@ impl<'a> DeclarationEmitter<'a> {
             members.push(member);
         }
 
-        (!members.is_empty()).then(|| format!("{{\n{}\n}}", members.join("\n")))
+        let member_indent = "    ".repeat((self.indent_level + 1) as usize);
+        let closing_indent = "    ".repeat(self.indent_level as usize);
+        let lines: Vec<String> = members
+            .into_iter()
+            .map(|member| format!("{member_indent}{member}"))
+            .collect();
+        (!lines.is_empty()).then(|| format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
     }
 
     pub(crate) fn jsdoc_satisfies_param_decl_for_parameter(

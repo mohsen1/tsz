@@ -1976,6 +1976,7 @@ fn test_js_commonjs_element_access_invalid_export_alias() {
         r#"
 function D() {}
 exports["D"] = D;
+/** alias comment should stay attached to the skipped source statement */
 exports["Does not work yet"] = D;
 "#,
     );
@@ -1987,6 +1988,10 @@ exports["Does not work yet"] = D;
     assert!(
         output.contains("export { D as _Does_not_work_yet };"),
         "Expected invalid element access export name to emit a sanitized alias: {output}"
+    );
+    assert!(
+        !output.contains("alias comment should stay attached"),
+        "Did not expect skipped alias statement comments to leak into output: {output}"
     );
 }
 

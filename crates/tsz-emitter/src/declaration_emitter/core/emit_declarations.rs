@@ -385,6 +385,9 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
                 self.emit_js_cjs_export_aliases();
                 continue;
             }
