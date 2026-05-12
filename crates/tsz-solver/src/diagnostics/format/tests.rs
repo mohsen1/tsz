@@ -1024,6 +1024,39 @@ fn format_object_with_readonly_string_index_signature() {
 }
 
 #[test]
+fn format_object_with_symbol_index_signature() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // Symbol index signatures are stored in the string_index field with key_type == SYMBOL.
+    // The printer must display `symbol` (not `string`) as the key type.
+    for param_name in [None, Some("key"), Some("sym")] {
+        let shape = crate::types::ObjectShape {
+            properties: vec![],
+            string_index: Some(crate::types::IndexSignature {
+                key_type: TypeId::SYMBOL,
+                value_type: TypeId::STRING,
+                readonly: false,
+                param_name: param_name.map(|n| db.intern_string(n)),
+            }),
+            number_index: None,
+            symbol: None,
+            flags: Default::default(),
+        };
+        let obj = db.object_with_index(shape);
+        let result = fmt.format(obj);
+        assert!(
+            result.contains("]: string") && result.contains(": symbol]"),
+            "Expected symbol index signature display (param={param_name:?}), got: {result}"
+        );
+        assert!(
+            !result.contains(": string]"),
+            "Must not display 'string' as the index key type for a symbol index sig (param={param_name:?}), got: {result}"
+        );
+    }
+}
+
+#[test]
 fn format_object_with_index_many_properties_truncated() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
