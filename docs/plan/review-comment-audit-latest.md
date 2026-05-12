@@ -2,12 +2,12 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 46
-- Potential important unresolved threads: 51
+- PRs excluded as already followed-up: 47
+- Potential important unresolved threads: 50
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 28
+- `crates/tsz-checker`: 27
 - `crates/tsz-emitter`: 10
 - `crates/tsz-solver`: 4
 - `docs`: 3
@@ -65,8 +65,6 @@
   - `target_element` is computed via `elements.get(element_position)`, which only works for fixed tuple slots. For target tuples with a `...rest` element, positions beyond `elements.len()` are still contextually typed by ...
 - [#5640](https://github.com/mohsen1/tsz/pull/5640) `crates/tsz-checker/src/error_reporter/core_formatting.rs:1189` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - `format_union_with_collapsed_enum_display` now pushes formatted enum member names into `rendered` but still returns `None` unless `collapsed_enum` is set. For unions composed entirely of enum members (the case this ch...
-- [#5660](https://github.com/mohsen1/tsz/pull/5660) `crates/tsz-checker/src/checkers/jsx/tests.rs:788` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The test name says TS2786 should be emitted **at** `MixedComponent`, but the assertion only checks the message text. To catch the fingerprint/anchor regression this PR is about, consider also asserting `diag.start` (a...
 - [#5663](https://github.com/mohsen1/tsz/pull/5663) `crates/tsz-solver/src/diagnostics/format/compound.rs:467` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - `should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it’s actually part of a ...
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) `crates/tsz-checker/src/state/variable_checking/core.rs:1193` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread

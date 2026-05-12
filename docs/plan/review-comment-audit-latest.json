@@ -39,6 +39,7 @@
     5114,
     5655,
     5658,
+    5660,
     5662,
     5666,
     5691,
@@ -53,7 +54,7 @@
     5901,
     5954
   ],
-  "candidate_count": 51,
+  "candidate_count": 50,
   "candidates": [
     {
       "pr_number": 4988,
@@ -270,23 +271,6 @@
       "line": 1189,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`format_union_with_collapsed_enum_display` now pushes formatted enum member names into `rendered` but still returns `None` unless `collapsed_enum` is set. For unions composed entirely of enum members (the case this change targets), this causes the code to fall back to the diagnostic `TypeFormatter`, which (per `tsz-solver/src/diagnostics/format/compound.rs:909+`) collapses same-enum member unions back to the parent enum name, so the member names won’t actually be preserved. Consider returning `Some(rendered.join(\" | \"))` when you’ve rendered any enum member names (or otherwise short-circuiting before the formatter runs) so the preservation behavior takes effect.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5660,
-      "pr_title": "fix(checker): align jsxComponentTypeErrors TS2786 fingerprint",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5660",
-      "merged_at": "2026-05-12T00:36:37Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQdrZ",
-      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
-      "line": 788,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The test name says TS2786 should be emitted **at** `MixedComponent`, but the assertion only checks the message text. To catch the fingerprint/anchor regression this PR is about, consider also asserting `diag.start` (and/or `length`) matches the `MixedComponent` tag name location (similar to other anchor-focused tests in this file).",
       "score": 4,
       "reasons": [
         "important-keyword",
