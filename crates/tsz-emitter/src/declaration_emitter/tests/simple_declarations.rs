@@ -2605,6 +2605,43 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_js_late_bound_function_reserved_alias_uses_keyword_name() {
+    let source = r#"
+function foo() {}
+foo.null = true;
+
+function bar() {}
+bar.normal = false;
+
+function baz() {}
+baz.class = true;
+baz.normal = false;
+"#;
+
+    let output = emit_js_dts_with_usage_analysis(source);
+    let expected = r#"declare function foo(): void;
+declare namespace foo {
+    let _null: boolean;
+    export { _null as null };
+}
+declare function bar(): void;
+declare namespace bar {
+    let normal: boolean;
+}
+declare function baz(): void;
+declare namespace baz {
+    let _class: boolean;
+    export { _class as class };
+    let normal_1: boolean;
+    export { normal_1 as normal };
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected JS reserved function expandos to use keyword aliases and avoid reused local names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_arrow_assignments_preserve_key_text_and_types() {
     let source = r#"
 const c = "C";
