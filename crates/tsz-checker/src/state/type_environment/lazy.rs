@@ -1443,6 +1443,10 @@ impl<'a> CheckerState<'a> {
                 // Consume fuel for enum resolution too
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
+                    break;
+                }
 
                 match self.resolve_enum_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
@@ -1482,18 +1486,20 @@ impl<'a> CheckerState<'a> {
                 // Consume fuel for type query resolution
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
+                    break;
+                }
 
-                // TypeQuery (`typeof X`) resolves to the VALUE type (constructor
-                // for classes), not the type-reference type (instance for classes).
-                // Using `get_type_of_symbol` returns the constructor/value type,
-                // while `type_reference_symbol_type` returns the instance type for
-                // classes — which would incorrectly overwrite the constructor type
-                // already in the TypeEnvironment.
-                let is_class = symbol.is_some_and(|s| s.has_any_flags(symbol_flags::CLASS));
-                let resolved = if is_class {
-                    self.get_type_of_symbol(sym_id)
+                let resolved = if symbol.as_ref().is_some_and(|s| {
+                    s.has_any_flags(symbol_flags::TYPE_ALIAS | symbol_flags::VARIABLE)
+                }) {
+                    let value_decl = symbol
+                        .map(|s| s.value_declaration)
+                        .unwrap_or(tsz_parser::NodeIndex::NONE);
+                    self.type_of_value_declaration_for_symbol(sym_id, value_decl)
                 } else {
-                    self.type_reference_symbol_type(sym_id)
+                    self.get_type_of_symbol(sym_id)
                 };
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
