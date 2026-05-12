@@ -1991,6 +1991,30 @@ exports["Does not work yet"] = D;
 }
 
 #[test]
+fn test_jsdoc_object_param_properties_type_destructured_parameter() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {object} opts
+ * @param {number} opts.a
+ * @param {number} [opts.b]
+ * @returns {number}
+ */
+function foo({ a, b }) {
+    return a + (b ?? 0);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo({ a, b }: {\n    a: number;\n    b?: number | undefined;\n}): number;"
+        ),
+        "Expected JSDoc object property tags to type the destructured parameter: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_skips_chained_void_zero_preinit() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
