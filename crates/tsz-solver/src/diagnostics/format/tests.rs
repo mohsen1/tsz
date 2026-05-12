@@ -912,6 +912,31 @@ fn format_object_with_string_index_signature() {
 }
 
 #[test]
+fn format_object_with_symbol_keyed_index_signature() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let shape = crate::types::ObjectShape {
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: Some(db.intern_string("key")),
+        }),
+        number_index: None,
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+    assert!(
+        result.contains("[key: symbol]: string"),
+        "Expected stored index key type to be displayed, got: {result}"
+    );
+}
+
+#[test]
 fn format_object_with_index_hides_duplicate_internal_default_alias() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

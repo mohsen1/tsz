@@ -1683,8 +1683,9 @@ impl<'a> CheckerState<'a> {
                 .param_name
                 .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_type = self.format_type(idx.key_type);
             parts.push(format!(
-                "[{key_name}: string]: {}",
+                "[{key_name}: {key_type}]: {}",
                 self.format_type(idx.value_type)
             ));
         }
@@ -1693,8 +1694,9 @@ impl<'a> CheckerState<'a> {
                 .param_name
                 .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_type = self.format_type(idx.key_type);
             parts.push(format!(
-                "[{key_name}: number]: {}",
+                "[{key_name}: {key_type}]: {}",
                 self.format_type(idx.value_type)
             ));
         }

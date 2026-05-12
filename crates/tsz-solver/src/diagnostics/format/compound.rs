@@ -537,9 +537,10 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let key_type = self.format(idx.key_type).into_owned();
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "{ro}[{key_name}: string]: {}",
+                "{ro}[{key_name}: {key_type}]: {}",
                 self.format_index_signature_value(idx.value_type)
             ));
         }
@@ -548,9 +549,10 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let key_type = self.format(idx.key_type).into_owned();
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "{ro}[{key_name}: number]: {}",
+                "{ro}[{key_name}: {key_type}]: {}",
                 self.format_index_signature_value(idx.value_type)
             ));
         }
@@ -1922,9 +1924,10 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let key_type = self.format(idx.key_type).into_owned();
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "{ro}[{key_name}: string]: {}",
+                "{ro}[{key_name}: {key_type}]: {}",
                 self.format(idx.value_type)
             ));
         }
@@ -1933,9 +1936,10 @@ impl<'a> TypeFormatter<'a> {
                 .param_name
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
+            let key_type = self.format(idx.key_type).into_owned();
             let ro = if idx.readonly { "readonly " } else { "" };
             parts.push(format!(
-                "{ro}[{key_name}: number]: {}",
+                "{ro}[{key_name}: {key_type}]: {}",
                 self.format(idx.value_type)
             ));
         }

@@ -306,16 +306,18 @@ impl<'a> CheckerState<'a> {
                 .param_name
                 .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_type = self.format_type_for_property_receiver_message(index.key_type);
             let value = self.format_type_for_property_receiver_message(index.value_type);
-            parts.push(format!("[{key_name}: string]: {value}"));
+            parts.push(format!("[{key_name}: {key_type}]: {value}"));
         }
         if let Some(index) = &shape.number_index {
             let key_name = index
                 .param_name
                 .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_type = self.format_type_for_property_receiver_message(index.key_type);
             let value = self.format_type_for_property_receiver_message(index.value_type);
-            parts.push(format!("[{key_name}: number]: {value}"));
+            parts.push(format!("[{key_name}: {key_type}]: {value}"));
         }
 
         Some(format!("{{ {}; }}", parts.join("; ")))

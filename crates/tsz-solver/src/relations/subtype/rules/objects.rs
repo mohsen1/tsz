@@ -743,6 +743,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .filter(|idx| idx.key_type != TypeId::SYMBOL)
         {
             Some(s_string_idx) => {
+                if (source.symbol.is_some() || target.symbol.is_some())
+                    && !self
+                        .check_subtype(t_string_idx.key_type, s_string_idx.key_type)
+                        .is_true()
+                {
+                    return SubtypeResult::False;
+                }
                 // Note: tsc does NOT enforce readonly on index signatures during
                 // assignability. A readonly source index IS assignable to a writable
                 // target index — readonly only prevents mutation through the reference.
