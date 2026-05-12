@@ -1575,6 +1575,23 @@ export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
 }
 
 #[test]
+fn fix_generic_call_infers_literal_from_option_property() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Kind = "one" | "two" | "three";
+declare function getInterfaceFromString<T extends Kind>(options?: { type?: T } & { type?: Kind }): T;
+
+const result = getInterfaceFromString({ type: "two" });
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: \"two\";"),
+        "expected generic call result to preserve inferred option literal: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"
