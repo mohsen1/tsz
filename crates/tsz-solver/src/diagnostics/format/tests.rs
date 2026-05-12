@@ -912,6 +912,37 @@ fn format_object_with_string_index_signature() {
 }
 
 #[test]
+fn format_object_with_symbol_index_signature_renders_symbol_key_type() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // Symbol index signatures are stored in string_index with key_type == TypeId::SYMBOL.
+    // The formatter must read key_type rather than hardcoding "string".
+    let shape = crate::types::ObjectShape {
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+    assert!(
+        result.contains("[x: symbol]: string"),
+        "Expected symbol index signature to render as '[x: symbol]', got: {result}"
+    );
+    assert!(
+        !result.contains("[x: string]"),
+        "Symbol index signature must not be rendered as '[x: string]', got: {result}"
+    );
+}
+
+#[test]
 fn format_object_with_index_hides_duplicate_internal_default_alias() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
