@@ -251,5 +251,4 @@ Close remaining high-signal parser review-audit threads by:
 - `cargo test -p tsz-checker --test intersection_index_signature_fingerprint_tests assignment_to_primitive_index_signature_preserves_anonymous_intersection_surface -- --nocapture`
 - `cargo test -p tsz-checker --lib recursive_conditional_alias_with_parameter_dependent_helper_args_no_definition_ts2589 -- --nocapture`
 - `cargo test -p tsz-checker --lib bounded_recursive_alias_with_indexed_type_parameter_arg_no_ts2589 -- --nocapture`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` is currently blocked by GitHub GraphQL rate-limit exhaustion until reset at `2026-05-12T21:09:52Z`.
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=82`)
