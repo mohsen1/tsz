@@ -1,8 +1,8 @@
 # fix(emitter): emit TS2883 for symlinked-monorepo nested-package inferred types
 
 - **Date**: 2026-04-30
-- **Branch**: `worktree-fix-ts2883-symbol-link-decl-emit-module-names`
-- **PR**: TBD
+- **Branch**: `fix/ts2883-symbol-link-import-ref-20260512`
+- **PR**: #5681
 - **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
@@ -43,3 +43,8 @@ PASS without regressing any of the four other `@link`-using conformance tests.
   failure on `main` before this change)
 - Unit: `cargo nextest run -p tsz-emitter --lib` — 1641 tests pass
   (5 new tests included)
+- Unit: `cargo test -p tsz-emitter symlinked_nested_package_reference -- --nocapture` — 6 tests pass
+- Conformance: `scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter symbolLinkDeclarationEmitModuleNamesImportRef --verbose` — PASS
+- Conformance adjacency: `symlinkedWorkspaceDependenciesNoDirectLink`, `declarationEmitMonorepoBaseUrl`, and `declarationEmitCommonSourceDirectoryDoesNotContainAllFiles` — PASS
+- Full conformance on branch after rebasing over PR #5679: 12570/12582 passed, 9 fingerprint-only, 0 code mismatches; net 12563 -> 12570 (+7)
+- Formatting/whitespace: `cargo fmt --all --check`, `git diff --check` — PASS
