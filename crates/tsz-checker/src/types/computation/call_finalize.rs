@@ -851,8 +851,7 @@ declare let data: { a: 1, b: "abc", c: true };
             .arena
             .nodes
             .iter()
-            .enumerate()
-            .find_map(|(_, node)| {
+            .find_map(|node| {
                 if node.kind != syntax_kind_ext::CALL_EXPRESSION {
                     return None;
                 }
