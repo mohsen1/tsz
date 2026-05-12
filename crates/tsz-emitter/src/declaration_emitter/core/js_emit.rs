@@ -637,6 +637,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let initializer = self.js_anonymous_module_exports_assignment_initializer(stmt_idx)?;
+        if self.is_js_function_initializer(initializer) {
+            return Some(initializer);
+        }
         self.js_synthetic_export_value_type_text(initializer)
             .map(|_| initializer)
     }
@@ -645,16 +648,20 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         initializer: NodeIndex,
     ) {
-        let Some(type_text) = self.js_synthetic_export_value_type_text(initializer) else {
-            return;
-        };
-
         let export_name = if self.reserved_names.contains("_exports") {
             self.generate_unique_name("_exports")
         } else {
             "_exports".to_string()
         };
         self.reserved_names.insert(export_name.clone());
+
+        if self.emit_js_anonymous_export_equals_function_declaration(initializer, &export_name) {
+            return;
+        }
+
+        let Some(type_text) = self.js_synthetic_export_value_type_text(initializer) else {
+            return;
+        };
 
         self.write_indent();
         self.write("declare ");
@@ -672,6 +679,101 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.emitted_scope_marker = true;
         self.emitted_module_indicator = true;
+    }
+
+    fn emit_js_anonymous_export_equals_function_declaration(
+        &mut self,
+        initializer: NodeIndex,
+        export_name: &str,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if !self.is_js_function_initializer(initializer) {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        let jsdoc_aliases = self.jsdoc_type_alias_decls_before_pos(init_node.pos);
+        if !jsdoc_aliases.is_empty() {
+            self.write_indent();
+            self.write("declare namespace ");
+            self.write(export_name);
+            self.write(" {");
+            self.write_line();
+            self.increase_indent();
+            self.write_indent();
+            self.write("export { ");
+            for (idx, alias) in jsdoc_aliases.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                self.write(&alias.name);
+            }
+            self.write(" };");
+            self.write_line();
+            self.decrease_indent();
+            self.write_indent();
+            self.write("}");
+            self.write_line();
+        }
+
+        let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        self.write_indent();
+        self.write("declare function ");
+        self.write(export_name);
+        self.write("(");
+        let saved_comment_idx = self.comment_emit_idx;
+        self.comment_emit_idx = self
+            .all_comments
+            .iter()
+            .position(|comment| comment.end > init_node.pos)
+            .unwrap_or(self.all_comments.len());
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.comment_emit_idx = saved_comment_idx;
+        self.write(")");
+
+        if func.type_annotation.is_some() {
+            self.write(": ");
+            self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_return_type_text)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                initializer,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write(": void");
+        } else {
+            self.write(": any");
+        }
+        self.write(";");
+        self.write_line();
+
+        self.write_indent();
+        self.write("export = ");
+        self.write(export_name);
+        self.write(";");
+        self.write_line();
+
+        for alias in jsdoc_aliases {
+            self.emit_rendered_jsdoc_type_alias(alias, false);
+        }
+
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
+        true
     }
 
     pub(in crate::declaration_emitter) fn emit_js_synthetic_function_declaration(

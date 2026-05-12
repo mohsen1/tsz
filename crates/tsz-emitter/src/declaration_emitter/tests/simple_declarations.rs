@@ -1639,6 +1639,37 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_function_with_typedef_members() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef Options
+ * @property {string} opt
+ */
+
+/**
+ * @param {Options} options
+ */
+module.exports = function loader(options) {}
+"#,
+    );
+
+    let expected = r#"declare namespace _exports {
+    export { Options };
+}
+declare function _exports(options: Options): void;
+export = _exports;
+type Options = {
+    opt: string;
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected export= function to retain local typedef namespace members: {output}"
+    );
+}
+
+#[test]
 fn test_export_equals_namespace_keeps_local_type_dependencies() {
     let source = r#"
 namespace X {
