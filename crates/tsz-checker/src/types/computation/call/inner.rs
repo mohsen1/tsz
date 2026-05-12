@@ -2840,6 +2840,21 @@ impl<'a> CheckerState<'a> {
                         result = CallResult::Success(instantiated_return);
                     }
                 }
+                if let CallResult::Success(current_return) = result
+                    && current_return != shape.return_type
+                    && common::contains_type_by_id(self.ctx.types, current_return, TypeId::UNKNOWN)
+                {
+                    let instantiated_return = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        shape.return_type,
+                        &return_context_substitution,
+                    );
+                    if instantiated_return != shape.return_type
+                        && self.is_assignable_to_with_env(instantiated_return, ctx_type)
+                    {
+                        result = CallResult::Success(instantiated_return);
+                    }
+                }
             }
         }
 
@@ -3024,6 +3039,10 @@ impl<'a> CheckerState<'a> {
                         .get_parameter_type_for_call(index, args.len())
                     });
                 if let Some(expected) = expected
+                    && !(expected == TypeId::NEVER
+                        && common::index_access_parts(self.ctx.types, actual).is_some_and(
+                            |(_, index)| common::contains_type_parameters(self.ctx.types, index),
+                        ))
                     && self
                         .checker_only_assignability_failure_reason(actual, expected)
                         .is_some()

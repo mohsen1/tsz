@@ -327,6 +327,9 @@ mod ts7006_broad_jsdoc_type_cast;
 #[path = "../tests/ts7006_iife_arg_implicit_any.rs"]
 mod ts7006_iife_arg_implicit_any;
 #[cfg(test)]
+#[path = "../tests/ts7030_undefined_union_return_tests.rs"]
+mod ts7030_undefined_union_return_tests;
+#[cfg(test)]
 #[path = "../tests/ts7036_tests.rs"]
 mod ts7036_tests;
 #[cfg(test)]
@@ -576,6 +579,9 @@ mod ts1170_computed_property_syntactic_form_tests;
 #[cfg(test)]
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
+#[cfg(test)]
+#[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
+mod ts2322_private_field_narrowing_write_tests;
 #[cfg(test)]
 #[path = "tests/ts2339_js_this_function_name_display_tests.rs"]
 mod ts2339_js_this_function_name_display_tests;

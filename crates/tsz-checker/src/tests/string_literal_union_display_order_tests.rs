@@ -70,3 +70,37 @@ c = takeReturnHello(c);
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn enum_member_union_alias_display_preserves_alias_name_in_ts2322() {
+    let diags = check_source_diagnostics(
+        r#"
+const enum Choice { Unknown, Yes, No }
+type YesNo = Choice.Yes | Choice.No;
+declare let b: YesNo;
+declare let c: Choice;
+b = c;
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    let msg = &ts2322[0].message_text;
+    assert!(
+        msg.contains("type 'YesNo'"),
+        "expected enum-member union alias name in TS2322 message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("Choice.Yes | Choice.No") && !msg.contains("Choice.No | Choice.Yes"),
+        "did not expect expanded enum-member union in TS2322 message, got: {msg}"
+    );
+}

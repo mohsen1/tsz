@@ -98,6 +98,27 @@ pub fn init_locale(locale_id: Option<&str>) {
     let _ = LOCALE.set(locale);
 }
 
+/// Return true when the locale argument matches TypeScript's accepted shape.
+pub fn is_valid_locale_shape(locale: &str) -> bool {
+    let mut parts = locale.split(['-', '_']);
+    let Some(language) = parts.next() else {
+        return false;
+    };
+
+    if !is_ascii_alpha_segment(language) {
+        return false;
+    }
+
+    match parts.next() {
+        None => true,
+        Some(territory) => is_ascii_alpha_segment(territory) && parts.next().is_none(),
+    }
+}
+
+fn is_ascii_alpha_segment(segment: &str) -> bool {
+    !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
 /// Get the current global locale.
 pub fn get_locale() -> &'static LocaleMessages {
     LOCALE.get_or_init(LocaleMessages::default)

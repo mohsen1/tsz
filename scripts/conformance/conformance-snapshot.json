@@ -1,20 +1,13 @@
 {
-  "timestamp": "2026-05-12T09:27:02Z",
-  "git_sha": "03945eb01462046166a690c055b35a7f24e7e994",
+  "timestamp": "2026-05-12T21:03:01Z",
+  "git_sha": "facc61669952bdb71ce4bc760f038348c6b73d8f",
   "summary": {
     "total_tests": 12582,
-    "passed": 12580,
-    "failed": 2,
+    "passed": 12581,
+    "failed": 1,
     "pass_rate": 100.0
   },
   "areas_by_pass_rate": [
-    {
-      "area": "classes",
-      "total": 16,
-      "passed": 15,
-      "failed": 1,
-      "pass_rate": 93.75
-    },
     {
       "area": "compiler",
       "total": 6520,
@@ -47,6 +40,13 @@
       "area": "async/es6",
       "total": 66,
       "passed": 66,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "classes",
+      "total": 16,
+      "passed": 16,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -720,15 +720,30 @@
   "not_implemented_codes": [],
   "partial_codes": [],
   "one_missing_zero_extra": [],
-  "one_extra_zero_missing": [],
-  "false_positive_codes": [],
+  "one_extra_zero_missing": [
+    {
+      "code": "TS2786",
+      "count": 1
+    }
+  ],
+  "false_positive_codes": [
+    {
+      "code": "TS2786",
+      "count": 1
+    }
+  ],
   "top_missing_codes": [],
-  "top_extra_codes": [],
+  "top_extra_codes": [
+    {
+      "code": "TS2786",
+      "count": 1
+    }
+  ],
   "categories": {
-    "false_positive": 0,
+    "false_positive": 1,
     "all_missing": 0,
     "wrong_code": 0,
-    "fingerprint_only": 2,
+    "fingerprint_only": 0,
     "same_code_count_drift": 0,
     "close_to_passing": 0
   }

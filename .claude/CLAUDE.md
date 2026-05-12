@@ -10,22 +10,29 @@
   status, metrics, sequencing, risks, active priorities, or invalidates a plan
   assumption. Do not create new roadmap files under `docs/plan/`; update the
   living roadmap instead.
-- To avoid duplicate work, roadmap-adjacent implementation MUST be claimed
-  before coding starts: create a branch, make a minimal claim under
-  `docs/plan/ROADMAP.md` -> `Active Implementation Claims`, then open a draft
-  PR with the GitHub label `WIP`. Use a title like `[WIP] <scope>: <intent>`.
-- Claim entry format: prefix with `**YYYY-MM-DD HH:MM:SS**` (UTC, current
-  wall-clock time). Each claim's unique second-precision timestamp gives a
-  natural sort order and reduces ROADMAP.md merge conflicts when multiple
-  agents claim work concurrently. Older entries without timestamps use
-  `00:00:00` as a placeholder.
+- To avoid duplicate work, roadmap-adjacent implementation should be visible
+  before coding starts: inspect open GitHub issues, draft PRs, and `WIP`
+  labels/titles for overlapping work. If no existing issue covers the task,
+  create or update a GitHub issue for the scope, mark it `WIP`, create a
+  branch, then open a draft PR with the GitHub label `WIP`. Use a title like
+  `[WIP] <scope>: <intent>`.
+- Do not add `[codex]` to PR titles. PR titles should follow the repository
+  convention, e.g. `fix(checker): ...`, `chore(lsp-tests): ...`, or `[WIP]
+  <scope>: <intent>` while the work is still WIP.
+- While working, keep the GitHub issue current with new facts, root-cause
+  discoveries, and scope changes. Other agents use those issue updates and
+  WIP PRs to decide whether their task duplicates active work.
 - Never merge WIP branches. A branch is WIP if its PR is draft, has the `WIP`
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
   verification, and roadmap status updates are complete.
-- DRY cleanup claims also live in `docs/plan/ROADMAP.md`. Keep DRY slices small,
-  behavior-preserving unless explicitly fixing a bug, and verify them with
-  `scripts/session/verify-all.sh` before removing WIP status.
+- Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
+  tests. Marking a PR ready for review triggers the heavy suites: conformance,
+  emit, fourslash, and WASM.
+- Do not babysit CI. Push the draft PR, note the run URL if useful, switch to
+  non-overlapping work, and come back later to inspect status or failures.
+- Keep DRY slices small and behavior-preserving unless explicitly fixing a bug.
+  Let CI perform compile, lint, unit, conformance, emit, and fourslash verification.
 
 ## 1) North Star
 - Solver-first.
@@ -207,123 +214,20 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
-## 20.25) Conformance Work — Entry Point
-- **Always use `ultrathink` at the start of every agent prompt.**
-- **Read `scripts/session/conformance-agent-prompt.md` first.** It is the single
-  source of truth for how to pick, diagnose, fix, test, and ship conformance work.
-- **Pick a random failure** with `scripts/session/quick-pick.sh` and work on
-  what it gives you. Do not reroll to avoid hard targets.
-- **DO NOT create a new picker script.** `scripts/session/quick-pick.sh`
-  (delegating to `scripts/session/pick.py`) is the canonical entry point.
-  If you think it lacks a feature, add a flag to `pick.py` — never fork a
-  new `random-*.sh` / `pick-*.sh` wrapper. PR #1957 had to delete 11
-  orphan session scripts that accumulated this way; do not start the
-  cycle again. See `scripts/session/conformance-agent-prompt.md` for the
-  full rationale and the list of past duplicates.
-- **Fix the root cause, not the symptom.** Multi-crate changes are expected.
-  Checker symptoms often have solver or boundary-helper root causes.
-- **Every fix ships with a unit test** in the owning crate (`tsz-solver`,
-  `tsz-checker`, etc.) plus no-regression verification on conformance.
-- **Every PR updates conformance snapshots** by running
-  `scripts/conformance/conformance.sh snapshot` and committing the refreshed
-  `scripts/conformance/conformance-snapshot.json`,
-  `scripts/conformance/conformance-detail.json`, and
-  `scripts/conformance/conformance-baseline.txt`.
-- **Architecture first.** Follow §3, §4, §11, §12, §22 of this file. Never
-  bypass `query_boundaries/assignability`; never pattern-match solver
-  internals from the checker.
-- **Open a pull request.** Never push directly to `main`.
-- **Do not bail.** If you understand the root cause, fix it. If the fix spans
-  solver + checker + boundary, make the fix.
+## 20.25) Conformance Maintenance
 
-## 20.26) ANTI-BAIL DIRECTIVE — read every conformance turn
+Conformance is currently at 100%. There is no session picker or conformance
+campaign loop. Treat conformance work as maintenance:
 
-The agent's job on conformance work is to **land a merged PR**, not to write
-research notes about why the work is hard. Every conformance task in this
-codebase is non-trivial — the easy ones are already merged. The remaining
-diff=1, fingerprint-only, and false-positive failures all touch deep solver,
-checker, or boundary code, and that is **expected**, not a reason to stop.
+- Do not create random-pick or session orchestration scripts.
+- Preserve 100% conformance when changing checker, solver, parser, binder,
+  emitter, transforms, compiler diagnostics, conformance harness code,
+  TypeScript baselines, or conformance snapshot files.
+- Use targeted local runs only for debugging. Let ready-for-review CI run the
+  full conformance suite.
+- Every behavior-changing fix still needs an owning-crate unit test.
 
-### Forbidden bail-outs
-
-The following are explicitly forbidden. If you catch yourself doing any of
-these, stop, re-read this section, and resume the original target.
-
-1. **"This requires deep solver/checker work, so I'll abandon and pick a
-   simpler test."** No. There is no "simpler" test in the current corpus.
-   Every remaining failure is multi-hour work. Pivoting just spends the
-   next two hours on a different multi-hour problem.
-2. **"I've narrowed the reproducer; the next agent can resume from here."**
-   No. *You* are the next agent. Implement the fix. Investigation that
-   doesn't ship is wasted budget.
-3. **"This is a known TS feature gap (e.g., type-predicate inference,
-   homomorphic mapped indexing, JSX runtime resolution) — out of scope
-   for a quick fix."** Nothing here is "out of scope". If tsc emits the
-   diagnostic, tsz must too. Implement the feature.
-4. **"Time-box exhausted, ending with research findings."** Time is not
-   the constraint — task convergence is. If your current trace has
-   localized the failure surface, push through. If it has not, take
-   another instrumentation pass; do not switch tests.
-5. **"The unit test harness has a limitation."** Then fix the harness.
-   This codebase already has multiple commits that adjust the test
-   harness as part of a larger checker fix.
-6. **"Each candidate I look at involves multiple-fingerprint diffs / XFAIL /
-   declaration merging / module resolution."** Yes. Pick one and fix all
-   of its diffs. A merged PR that flips one XFAIL is worth ten abandoned
-   investigations.
-
-### When you genuinely cannot proceed
-
-Two cases:
-
-- **You hit an architectural rule that forbids the obvious fix.** Read
-  §3, §4, §11, §12, §22, then route the fix through `query_boundaries`
-  or a solver query helper. The architecture rules tell you *where* to
-  fix, not *whether*.
-- **The fix would cross 5+ files in unrelated subsystems** (e.g.,
-  scanner + binder + emitter for a checker symptom). Even then, do the
-  fix — multi-crate PRs are normal. The roadmap explicitly lists them
-  as expected.
-
-### Convergence budget
-
-For a conformance fix:
-
-- **0–60 min**: reproduce, instrument, locate the failure surface.
-- **60–180 min**: implement the fix, including any required harness or
-  helper plumbing.
-- **180+ min**: keep going. The first good fix in a new area routinely
-  takes a full day. Subsequent fixes in the same area are 10× faster
-  because the instrumentation and mental model are already paid for.
-
-If the loop fires multiple times for the same task, **continue the same
-task each iteration**. Do not start fresh. Read the running plan or claim
-file for context and resume where the prior iteration left off.
-
-### What "shipping" means
-
-A conformance task is shipped when:
-
-1. The targeted test passes (`./scripts/conformance/conformance.sh run --filter <name>` shows `PASS` or `1/1 passed`).
-2. A unit test in the owning crate locks the new behavior.
-3. `cargo nextest run -p tsz-checker -p tsz-solver` is clean.
-4. A non-draft PR is open against `main` with the diff and the unit
-   test, branch pushed, CI started.
-
-Once step 4 lands, the task is **shipped from the agent's perspective**.
-Do not babysit CI, do not chase rebase, do not merge — the user handles
-the merge queue. The agent's loop should immediately move on to the
-next conformance task instead of camping on the prior PR's checks.
-
-If CI later goes red on a PR you opened, the user will surface the
-failure and you'll iterate on it then. Until that happens, the open PR
-is "done" for loop purposes.
-
-Research notes, draft/abandoned PRs, and "deferred" claim files do
-**not** count as shipped. A green local build + a single-test
-conformance pass + a non-draft PR pushed to `origin` does.
-
-## 20.27) Conformance Commit Gate — every commit must defend the delta
+## 20.26) Conformance Commit Gate — every commit must defend the delta
 
 The project has already reached 99% once. The reason it does not stay
 there is not lack of isolated fixes; it is unreviewed net-negative
@@ -337,7 +241,7 @@ code, TypeScript baselines, or conformance snapshot files.
 ### Required before each conformance-relevant commit
 
 1. Refresh or inspect the conformance snapshot for the exact tree being
-   committed. Use targeted runs while developing, but commit-time claims
+   committed. Use targeted runs while developing, but commit-time notes
    must be based on the committed snapshot files when they change.
 2. Compare against `main` and record:
    - total passed before/after and net pass delta,
@@ -392,10 +296,7 @@ of these campaigns.
 
 ### Quick reference
 ```bash
-# Pick one random failure (prints path + codes + a verbose-run command):
-scripts/session/quick-pick.sh
-
-# Offline research (never run the full suite for research):
+# Inspect current conformance snapshot:
 python3 scripts/conformance/query-conformance.py --dashboard
 
 # Verify a specific test:

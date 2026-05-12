@@ -691,6 +691,29 @@ export const useBox = () => {
 }
 
 #[test]
+fn test_generic_function_return_keeps_outer_type_param_over_later_alias() {
+    let output = emit_dts_with_binding(
+        r#"
+function makeBox<T>(value: T) {
+    return { value };
+}
+
+type Box<T> = ReturnType<typeof makeBox<T>>;
+type StringBox = Box<string>;
+"#,
+    );
+
+    assert!(
+        output.contains("declare function makeBox<T>(value: T): {\n    value: T;\n};"),
+        "Expected inferred object return to preserve the function type parameter: {output}"
+    );
+    assert!(
+        !output.contains("declare function makeBox<T>(value: T): Box<string>;"),
+        "Did not expect a later instantiated alias to replace the generic return: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"
@@ -3227,6 +3250,45 @@ module.exports = new Foo();
 }
 
 #[test]
+fn test_js_module_exports_new_expression_with_expando_emits_single_let_export() {
+    // Regression: `module.exports = new Foo(); module.exports.additional = X;`
+    // previously emitted `additional` TWICE — once via the secondary-member
+    // path (during `module.exports = new Foo()` emission) and again via the
+    // deferred value-export path (when the statement visitor later reached
+    // the `module.exports.additional = X` statement). Fix removes the
+    // statement from the deferred export maps before secondary emission so
+    // the visitor skips it. Also `export const` was emitted where tsc emits
+    // `export let` for CommonJS class-instance exports.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Foo {
+    static stat = 10;
+    member = 10;
+}
+module.exports = new Foo();
+module.exports.additional = 20;
+"#,
+    );
+    // The `additional` property must appear exactly once in the export
+    // surface. (`emit_js_dts_with_usage_analysis` may wrap output in
+    // additional preamble lines; the count of literal occurrences is the
+    // stable check.)
+    let occurrences = output.matches("additional").count();
+    assert_eq!(
+        occurrences, 1,
+        "Expected `additional` to appear exactly once in the .d.ts, got {occurrences}.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export let additional: 20;"),
+        "Expected `export let additional: 20;` (CommonJS class-instance exports use `let`): {output}"
+    );
+    assert!(
+        output.contains("export let member: number;"),
+        "Expected `export let member: number;` from class instance widening: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_object_literal_plus_secondary_promotes_named_exports() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -3312,7 +3374,7 @@ class ElementsArray extends Array {
 "#,
     );
 
-    let expected = "declare class ElementsArray extends Array<any> {\n    constructor();\n    constructor(arrayLength: number);\n    constructor(...items: any[]);\n}";
+    let expected = "declare class ElementsArray extends Array<any> {\n    constructor(arrayLength?: number);\n    constructor(arrayLength: number);\n    constructor(...items: any[]);\n}";
     assert!(
         output.contains(expected),
         "Expected bare JS Array subclasses to inherit Array constructor overloads: {output}"

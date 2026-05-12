@@ -12,9 +12,7 @@
 //! pair-disambiguation check (comparing `src_str == tgt_str`) never
 //! fired and the target was left unqualified.
 
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source_code_messages(source)
-}
+use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
 
 #[test]
 fn typeof_missing_namespace_value_member_reports_ts2339() {

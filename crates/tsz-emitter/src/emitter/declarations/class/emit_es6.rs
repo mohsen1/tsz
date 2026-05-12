@@ -337,7 +337,6 @@ impl<'a> Printer<'a> {
         let mut auto_accessor_instance_inits: Vec<(String, Option<NodeIndex>)> = Vec::new();
         let mut auto_accessor_static_inits: Vec<(String, Option<NodeIndex>)> = Vec::new();
         let mut auto_accessor_class_alias: Option<String> = None;
-        let mut next_auto_accessor_name_index = 0u32;
         let mut private_names_for_auto_accessors: Vec<String> = Vec::new();
         if lower_auto_accessors_to_private_fields {
             let mut nodes_to_visit: Vec<NodeIndex> = class.members.nodes.clone();
@@ -360,6 +359,11 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let mut next_auto_accessor_name_index = if lower_auto_accessors_to_weakmap {
+            self.next_auto_accessor_name_index
+        } else {
+            0
+        };
         let mut next_auto_accessor_name = || -> String {
             let name = if next_auto_accessor_name_index < 26 {
                 let offset = next_auto_accessor_name_index as u8;
@@ -473,6 +477,9 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        if lower_auto_accessors_to_weakmap {
+            self.next_auto_accessor_name_index = next_auto_accessor_name_index;
+        }
 
         if !auto_accessor_members.is_empty() && lower_auto_accessors_to_weakmap {
             // Hoist auto-accessor storage vars to the top of the scope,
@@ -491,6 +498,33 @@ impl<'a> Printer<'a> {
                 (*member_idx, (storage_name.clone(), *is_static))
             })
             .collect();
+        let auto_accessor_computed_storage_key_member = if lower_auto_accessors_to_weakmap {
+            auto_accessor_members.iter().find_map(
+                |(member_idx, _storage_name, _init, is_static)| {
+                    if *is_static {
+                        return None;
+                    }
+                    let member_node = self.arena.get(*member_idx)?;
+                    let prop = self.arena.get_property_decl(member_node)?;
+                    let name_node = self.arena.get(prop.name)?;
+                    (name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                        .then_some(*member_idx)
+                },
+            )
+        } else {
+            None
+        };
+        let auto_accessor_instance_storage_inits_in_computed_key: Vec<String> =
+            if auto_accessor_computed_storage_key_member.is_some() {
+                auto_accessor_instance_inits
+                    .iter()
+                    .map(|(storage_name, _)| format!("{storage_name} = new WeakMap()"))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        let emit_auto_accessor_instance_inits_after_class =
+            auto_accessor_instance_storage_inits_in_computed_key.is_empty();
 
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
@@ -1230,6 +1264,14 @@ impl<'a> Printer<'a> {
                 self.computed_prop_temp_map
                     .insert(computed.expression, format!("({})", comma_parts.join(", ")));
             }
+        }
+        if let Some(member_idx) = auto_accessor_computed_storage_key_member
+            && let Some(entry_idx) = computed_prop_entries
+                .iter()
+                .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+            && !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+        {
+            computed_prop_entries_consumed_by_member_name.push(entry_idx);
         }
 
         let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
@@ -2213,6 +2255,12 @@ impl<'a> Printer<'a> {
                 };
 
                 if let Some((storage_name, is_static)) = auto_accessor {
+                    let computed_storage_inits =
+                        if Some(member_idx) == auto_accessor_computed_storage_key_member {
+                            auto_accessor_instance_storage_inits_in_computed_key.as_slice()
+                        } else {
+                            &[]
+                        };
                     self.emit_auto_accessor_methods(
                         member_node,
                         &storage_name,
@@ -2224,6 +2272,7 @@ impl<'a> Printer<'a> {
                             property_end: property_end.unwrap_or(member_node.end),
                             omit_storage_initializer: hoisted_native_auto_accessor_members
                                 .contains(&member_idx),
+                            computed_storage_inits,
                         },
                     );
                 } else if hoisted_native_private_members.contains(&member_idx) {
@@ -3043,7 +3092,8 @@ impl<'a> Printer<'a> {
         // ...
         // _Class_prop_accessor_storage = new WeakMap();
         if lower_auto_accessors_to_weakmap
-            && (!auto_accessor_instance_inits.is_empty()
+            && ((emit_auto_accessor_instance_inits_after_class
+                && !auto_accessor_instance_inits.is_empty())
                 || !auto_accessor_static_inits.is_empty()
                 || auto_accessor_class_alias.is_some())
         {
@@ -3060,7 +3110,9 @@ impl<'a> Printer<'a> {
                 wrote_alias_line = true;
             }
 
-            if !auto_accessor_instance_inits.is_empty() {
+            if emit_auto_accessor_instance_inits_after_class
+                && !auto_accessor_instance_inits.is_empty()
+            {
                 if wrote_alias_line {
                     self.write(", ");
                 }
@@ -3079,6 +3131,9 @@ impl<'a> Printer<'a> {
                     self.write(";");
                     self.write_line();
                 }
+            } else if wrote_alias_line {
+                self.write(";");
+                self.write_line();
             }
 
             for (storage_name, init_idx) in &auto_accessor_static_inits {

@@ -212,6 +212,91 @@ fn special_modes_ignore_config_with_no_inputs_follow_no_input_behavior() {
     );
 }
 
+#[test]
+fn show_config_ignore_config_without_files_loads_discovered_tsconfig() {
+    let temp = TempDir::new("show_config_ignore_config_loads_tsconfig").expect("temp dir");
+    write_file(&temp.path.join("index.ts"), "const ok = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true},"include":["index.ts"]}"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--showConfig", "--ignoreConfig", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+
+    assert_eq!(code, 0, "showConfig should succeed: {output}");
+    assert!(
+        !output.contains("error TS5081"),
+        "showConfig must not report TS5081 when a tsconfig is discoverable: {output}"
+    );
+    assert!(
+        output.contains("\"noEmit\": true"),
+        "showConfig should load compilerOptions from tsconfig: {output}"
+    );
+    assert!(
+        output.contains("\"ignoreConfig\": true"),
+        "showConfig should include the CLI ignoreConfig option: {output}"
+    );
+    assert!(
+        output.contains("\"./index.ts\""),
+        "showConfig should include discovered project file: {output}"
+    );
+    assert!(
+        output.contains("\"include\": [") && output.contains("\"index.ts\""),
+        "showConfig should preserve include specs from tsconfig: {output}"
+    );
+}
+
+#[test]
+fn invalid_locale_with_explicit_file_reports_ts6048() {
+    let temp = TempDir::new("invalid_locale_explicit_file").expect("temp dir");
+    write_file(&temp.path.join("index.ts"), "const ok = 1;\n");
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--locale",
+            "does-not-exist",
+            "index.ts",
+            "--ignoreConfig",
+            "--pretty",
+            "false",
+        ],
+    )
+    .expect("tsz should run");
+
+    assert_eq!(code, 1, "invalid locale should exit 1: {output}");
+    assert_eq!(
+        output,
+        "error TS6048: Locale must be of the form <language> or <language>-<territory>. For example 'en' or 'ja-jp'.\n"
+    );
+}
+
+#[test]
+fn invalid_locale_with_discovered_config_reports_ts6048() {
+    let temp = TempDir::new("invalid_locale_discovered_config").expect("temp dir");
+    write_file(&temp.path.join("index.ts"), "const ok = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true},"files":["index.ts"]}"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--locale", "does-not-exist", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+
+    assert_eq!(code, 1, "invalid locale should exit 1: {output}");
+    assert_eq!(
+        output,
+        "error TS6048: Locale must be of the form <language> or <language>-<territory>. For example 'en' or 'ja-jp'.\n"
+    );
+}
+
 // --- Regression tests for issue #3580 ---
 //
 // `tsz --showConfig` must match tsc's tsconfig-discovery rules:

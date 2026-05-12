@@ -7,14 +7,6 @@
 //! - **Testing**: Types can be created and tested without a full Binder
 //! - **Caching**: `DefId` provides a stable key for Salsa memoization
 //!
-//! ## Migration Path
-//!
-//! The transition from `SymbolRef` to `DefId` happens incrementally:
-//!
-//! 1. `TypeData::Ref(SymbolRef)` remains for backward compatibility
-//! 2. New `TypeData::Lazy(DefId)` is added for migrated code
-//! 3. Eventually, `Ref(SymbolRef)` is removed entirely
-//!
 //! ## `DefId` Allocation Strategies
 //!
 //! | Mode | Strategy | Use Case |
@@ -1256,14 +1248,15 @@ impl DefinitionStore {
     }
 
     /// Find all `DefId`s registered under the given name.
-    ///
-    /// Returns `None` if no definitions exist with that name. Multiple
-    /// definitions may share a name (e.g., interface merging across files,
-    /// or same-named types in different modules).
-    ///
-    /// O(1) via `name_to_defs` index.
     pub fn find_defs_by_name(&self, name: Atom) -> Option<Vec<DefId>> {
         self.name_to_defs.get(&name).map(|r| r.clone())
+    }
+
+    pub fn all_type_alias_defs(&self) -> Vec<DefId> {
+        self.definitions
+            .iter()
+            .filter_map(|entry| (entry.value().kind == DefKind::TypeAlias).then_some(*entry.key()))
+            .collect()
     }
 
     /// Resolve heritage names to `DefId`s using an intern function for

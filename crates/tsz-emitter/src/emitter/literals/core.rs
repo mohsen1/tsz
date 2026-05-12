@@ -861,8 +861,10 @@ fn has_unterminated_codepoint_escape(text: &str) -> bool {
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
-    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
-        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    fn parse_test_source<S: Into<String>>(
+        source: S,
+    ) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.into());
         let root = parser.parse_source_file();
         (parser, root)
     }
@@ -952,7 +954,7 @@ mod tests {
         ]
         .join("\n");
 
-        let (parser, root) = parse_test_source(&source);
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.print(root);
         let output = printer.finish().code;

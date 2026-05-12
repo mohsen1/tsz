@@ -79,8 +79,7 @@ tsz/
 │   ├── conformance/       # Conformance test runner and analysis tools
 │   ├── setup/             # Setup and installation scripts
 │   ├── arch/              # Architecture boundary checking
-│   ├── bench/             # Benchmarking scripts
-│   └── session/           # Multi-agent campaign system
+│   └── bench/             # Benchmarking scripts
 └── .claude/               # AI assistant configuration
 ```
 
