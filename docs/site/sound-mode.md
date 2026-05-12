@@ -60,6 +60,10 @@ The first stable target is roughly:
 
 These names reflect the intended rollout shape, but they are still planned rather than fully wired today:
 
+Do not put these fields in `compilerOptions` yet. The normal tsc-compatible
+tsconfig path rejects `compilerOptions.sound*` today; this is a planned
+shape, not currently supported configuration.
+
 ```json
 {
   "compilerOptions": {

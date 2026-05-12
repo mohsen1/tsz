@@ -709,21 +709,23 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Apply compiler options from a bitmask flags value.
     ///
-    /// The flags correspond to `RelationCacheKey` bits:
+    /// Applies the `RelationCacheKey` bits that still have direct setters on
+    /// this legacy checker:
     /// - bit 0: `strict_null_checks`
     /// - bit 1: `strict_function_types`
     /// - bit 2: `exact_optional_property_types`
     /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance` (`strict_subtype_checking`)
-    /// - bit 5: `allow_void_return`
-    /// - bit 6: `allow_bivariant_rest`
-    /// - bit 7: `allow_bivariant_param_count`
-    /// - bit 8: `no_erase_generics`
-    /// - bit 9: `strict_subtype_checking`
-    /// - bit 10: `strict_any_propagation`
-    /// - bit 11: `in_callback_param_check`
-    /// - bit 12: `assume_related_on_cycle`
-    /// - bit 13: `allow_erased_generic_signature_retry`
+    /// - bit 4: `disable_method_bivariance`
+    /// - bit 5: `subtype.allow_void_return`
+    /// - bit 6: `subtype.allow_bivariant_rest`
+    /// - bit 7: `subtype.allow_bivariant_param_count`
+    /// - bit 13: `subtype.allow_erased_generic_signature_retry`
+    ///
+    /// Other `RelationFlags` bits intentionally are not applied here:
+    /// `NO_ERASE_GENERICS`, `STRICT_SUBTYPE_CHECKING`,
+    /// `STRICT_ANY_PROPAGATION`, `SKIP_WEAK_TYPE_CHECKS`,
+    /// `ASSUME_RELATED_ON_CYCLE`, and `IN_CALLBACK_PARAM_CHECK` are routed
+    /// through newer policy/query paths.
     ///
     /// This legacy helper only applies the subset that maps directly onto this
     /// checker instance. Higher-level relation query paths should prefer
