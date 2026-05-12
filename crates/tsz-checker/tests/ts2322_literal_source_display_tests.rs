@@ -132,7 +132,7 @@ var o: I = {
     );
     assert!(
         !ts2322.1.contains(r#"[""+"foo"]"#),
-        "should not show raw expression like `[\"\"+'foo']`, got: {ts2322:?}",
+        r#"should not show raw expression like `[""+"foo"]`, got: {ts2322:?}"#,
     );
 }
 
