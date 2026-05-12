@@ -134,6 +134,37 @@ export const y = x;
 }
 
 #[test]
+fn system_duplicate_import_temps_follow_source_order() {
+    let source = r#"import {A} from "f1";
+import {B} from "f2";
+import {C} from "f3";
+import {D} from "f2";
+import {E} from "f2";
+import {F} from "f1";
+
+console.log(A + B + C + D + E + F);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var f1_1, f2_1, f3_1, f2_2, f2_3, f1_2;"),
+        "System duplicate import temps should follow source order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_top_level_using_named_export_keeps_legacy_decorator_assignment_export() {
     let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
 
@@ -294,6 +325,56 @@ fn system_object_binding_initializer_assigns_hoisted_name() {
     assert!(
         output.contains("let { toFixed } = 1;"),
         "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_preserve_jsx_comments_survive_class_expression_wrapper() {
+    use crate::emitter::JsxEmit;
+
+    let source = r#"namespace JSX {}
+class Component {
+    render() {
+        return <div>
+            {/* missing */}
+            {null/* preserved */}
+        </div>;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            module_detection_force: true,
+            jsx: JsxEmit::Preserve,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Component;"),
+        "Erased JSX namespace should not be hoisted into the System wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var JSX"),
+        "Type-only namespace should remain erased in System output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("{/* missing */}"),
+        "Comment-only JSX expression should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("{null /* preserved */}"),
+        "Trailing JSX expression comment should be preserved with tsc spacing.\nOutput:\n{output}"
     );
 }
 

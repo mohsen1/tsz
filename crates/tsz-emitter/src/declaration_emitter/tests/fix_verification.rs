@@ -1575,6 +1575,44 @@ export const viaInlineArrow = (<T>(value: T) => value)("ok" as const);
 }
 
 #[test]
+fn fix_generic_call_infers_literal_from_option_property() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Kind = "one" | "two" | "three";
+declare function getInterfaceFromString<T extends Kind>(options?: { type?: T } & { type?: Kind }): T;
+
+const result = getInterfaceFromString({ type: "two" });
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: \"two\";"),
+        "expected generic call result to preserve inferred option literal: {output}"
+    );
+}
+
+#[test]
+fn fix_generic_call_option_literal_does_not_ignore_other_inference_sites() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Kind = "one" | "two" | "three";
+declare function getInterfaceFromString<T extends Kind>(options: { type?: T }, fallback: T): T;
+
+const result = getInterfaceFromString({ type: "two" }, "three");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: string;"),
+        "expected generic call result to fall back instead of narrowing from one argument: {output}"
+    );
+    assert!(
+        !output.contains(r#"declare const result: "two";"#),
+        "generic call result must not ignore the fallback argument inference site: {output}"
+    );
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"

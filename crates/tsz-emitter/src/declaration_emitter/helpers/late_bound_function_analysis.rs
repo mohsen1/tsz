@@ -108,10 +108,18 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn late_bound_synthetic_member_name(index: usize) -> String {
-        if index < 26 {
-            format!("_{}", (b'a' + index as u8) as char)
+        let mut counter = index;
+        if counter >= 8 {
+            counter += 1;
+        }
+        if counter >= 13 {
+            counter += 1;
+        }
+
+        if counter < 26 {
+            format!("_{}", (b'a' + counter as u8) as char)
         } else {
-            format!("_a{}", index - 25)
+            format!("_{}", counter - 26)
         }
     }
 
@@ -834,12 +842,17 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(";");
             self.write_line();
         }
-        for (local_name, exported_name) in export_aliases {
+        if !export_aliases.is_empty() {
             self.write_indent();
             self.write("export { ");
-            self.write(&local_name);
-            self.write(" as ");
-            self.write(&exported_name);
+            for (idx, (local_name, exported_name)) in export_aliases.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                self.write(local_name);
+                self.write(" as ");
+                self.write(exported_name);
+            }
             self.write(" };");
             self.write_line();
         }
