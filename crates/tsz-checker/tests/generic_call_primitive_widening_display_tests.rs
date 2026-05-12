@@ -24,9 +24,7 @@
 //! and `K`/`V`) to verify the rule is structural, not bound to a particular
 //! identifier — see `.claude/CLAUDE.md` §25.
 
-fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source_code_messages(source)
-}
+use tsz_checker::test_utils::check_source_code_messages as diagnostics;
 
 fn ts2345_messages(source: &str) -> Vec<String> {
     diagnostics(source)

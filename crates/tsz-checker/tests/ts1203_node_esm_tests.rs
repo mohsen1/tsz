@@ -6,6 +6,7 @@
 //! even when the --module option is node16/nodenext.
 
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_source_with_file_is_esm;
 use tsz_common::common::ModuleKind;
 
 fn get_codes(source: &str, module: ModuleKind, file_is_esm: Option<bool>) -> Vec<u32> {
@@ -34,27 +35,7 @@ fn get_diagnostics_with_file_name(
         ..CheckerOptions::default()
     };
 
-    let mut parser =
-        tsz_parser::parser::ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.ctx.file_is_esm = file_is_esm;
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.clone()
+    check_source_with_file_is_esm(source, file_name, options, file_is_esm)
 }
 
 const EXPORT_ASSIGNMENT_SRC: &str = "const a = {}; export = a;";

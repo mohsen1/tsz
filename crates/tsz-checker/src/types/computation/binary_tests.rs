@@ -1,4 +1,6 @@
-use crate::test_utils::{check_js_source_diagnostics, check_source_diagnostics};
+use crate::test_utils::{
+    check_js_source_diagnostics, check_source_diagnostics, check_source_with_libs, load_lib_files,
+};
 
 #[test]
 fn ts2839_strict_equality_object_literal() {
@@ -66,6 +68,57 @@ fn no_duplicate_ts2367_for_same_type_comparison() {
         !has_2367,
         "Should NOT emit TS2367 for number vs number comparison, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2367_for_distinct_symbol_for_const_results() {
+    let libs = load_lib_files(&["es5.d.ts", "es2015.symbol.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+const globalSym = Symbol.for("global.key");
+const sameGlobal = Symbol.for("global.key");
+if (globalSym === sameGlobal) {}
+"#,
+        "test.ts",
+        crate::context::CheckerOptions::default(),
+        &libs,
+    );
+    let ts2367: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        ts2367.len(),
+        1,
+        "Expected TS2367 for distinct Symbol.for const results, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+    let message = ts2367[0].message_text.as_str();
+    assert!(
+        message.contains("typeof globalSym") && message.contains("typeof sameGlobal"),
+        "Expected unique-symbol display names in TS2367 message, got: {message}"
+    );
+}
+
+#[test]
+fn no_ts2367_for_shadowed_symbol_for_const_results() {
+    let diags = check_source_diagnostics(
+        r#"
+const Symbol = { for(_key: string): symbol { return null as any; } };
+const globalSym = Symbol.for("global.key");
+const sameGlobal = Symbol.for("global.key");
+if (globalSym === sameGlobal) {}
+"#,
+    );
+    let has_ts2367 = diags.iter().any(|d| d.code == 2367);
+    assert!(
+        !has_ts2367,
+        "Expected local Symbol.for results to remain plain symbol-overlapping, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
     );
 }
 

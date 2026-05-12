@@ -418,42 +418,65 @@ fn jsx_sfc_returning_incompatible_type_emits_ts2786() {
 /// success must not suppress the return-type check.
 #[test]
 fn jsx_union_component_with_invalid_return_emits_ts2786() {
-    let diagnostics = check_jsx_codes(
-        r#"
+    let source = r#"
         declare namespace JSX {
             interface Element { type: 'element'; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
             interface IntrinsicElements { }
         }
         declare function BadFC(props: {}): { type: string };
-        declare class BadClass { render(): { type: string }; }
+        declare class BadClass {
+            props: {};
+            constructor(props: {});
+            render(): { type: string };
+        }
         declare var MixedComponent: typeof BadFC | typeof BadClass;
         <MixedComponent />;
-        "#,
-    );
-    assert!(
-        diagnostics.contains(&2786),
-        "Union component with invalid return types should emit TS2786, got: {diagnostics:?}"
+        "#;
+    let diagnostics = check_jsx(source);
+    let expected_start = source
+        .find("<MixedComponent")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <MixedComponent");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'MixedComponent'"))
+        .expect("Union component with invalid return types should emit TS2786 at MixedComponent");
+    assert_eq!(
+        ts2786.start, expected_start,
+        "TS2786 should anchor at the MixedComponent JSX tag name, got: {diagnostics:?}"
     );
 }
 
 /// TS2786 should NOT fire for a union where every member is a valid JSX component.
 #[test]
 fn jsx_union_component_all_valid_no_ts2786() {
-    let diagnostics = check_jsx_codes(
+    let diagnostics = check_jsx(
         r#"
         declare namespace JSX {
             interface Element { type: 'element'; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
             interface IntrinsicElements { }
         }
         declare function GoodFC(props: {}): JSX.Element;
-        declare class GoodClass { render(): JSX.Element; }
+        declare class GoodClass {
+            props: {};
+            constructor(props: {});
+            render(): JSX.Element;
+        }
         declare var ValidUnion: typeof GoodFC | typeof GoodClass;
         <ValidUnion />;
         "#,
     );
     assert!(
-        !diagnostics.contains(&2786),
+        !diagnostics.iter().any(|diag| diag.code == 2786),
         "Union component with all valid return types should not emit TS2786, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Union component with all valid return types should be diagnostic-free, got: {diagnostics:?}"
     );
 }
 
@@ -846,8 +869,7 @@ fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
 
 #[test]
 fn jsx_user_named_component_type_alias_union_still_checks_returns() {
-    let diagnostics = check_jsx_strict(
-        r#"
+    let source = r#"
         declare namespace JSX {
             interface Element { ok: true; }
             interface ElementClass { render(): Element; }
@@ -864,11 +886,19 @@ fn jsx_user_named_component_type_alias_union_still_checks_returns() {
             InvalidClassComponent<P> | InvalidFunctionComponent<P>;
         declare const Bad: ComponentType<{ p?: boolean }>;
         const elem = <Bad p={true} />;
-        "#,
-    );
-    assert!(
-        diagnostics.iter().any(|diag| diag.code == 2786),
-        "User-defined aliases named ComponentType must not bypass TS2786, got: {diagnostics:?}"
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<Bad")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <Bad");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'Bad'"))
+        .expect("User-defined ComponentType aliases should still emit TS2786 for invalid returns");
+    assert_eq!(
+        ts2786.start, expected_start,
+        "Expected TS2786 to anchor at the Bad JSX tag name, got: {diagnostics:?}"
     );
 }
 
@@ -915,6 +945,39 @@ fn jsx_react_component_type_union_does_not_emit_ts2786() {
     assert!(
         !diagnostics.iter().any(|diag| diag.code == 2786),
         "React.ComponentType unions with compatible class/function branches should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_element_class_requirements_are_not_reduced_to_render_only() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { ok: true; }
+            interface ElementClass { render(): Element; props: { required: true }; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare function GoodFC(props: { required: true }): JSX.Element;
+        declare class MissingPropsClass {
+            render(): JSX.Element;
+        }
+        declare const Mixed: typeof GoodFC | typeof MissingPropsClass;
+        const elem = <Mixed required={true} />;
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<Mixed")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <Mixed");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'Mixed'"))
+        .expect(
+            "Class branch missing JSX.ElementClass-required members should still trigger TS2786",
+        );
+    assert_eq!(
+        ts2786.start, expected_start,
+        "Expected TS2786 to anchor at the Mixed JSX tag name, got: {diagnostics:?}"
     );
 }
 

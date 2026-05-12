@@ -637,11 +637,9 @@ const fn11 = <Params>(
 ): Params => params;
 "#;
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
-    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
-    assert_eq!(
-        ts2322_errors.len(),
-        0,
-        "keyof Pick identity conditionals should be assignable to the original type parameter; got diagnostics: {:?}",
+    assert!(
+        diagnostics.is_empty(),
+        "keyof Pick identity conditionals should be assignable to the original type parameter with no extra diagnostics; got diagnostics: {:?}",
         diagnostics
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
