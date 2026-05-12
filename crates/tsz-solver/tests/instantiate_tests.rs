@@ -820,6 +820,100 @@ fn test_substitution_from_args_with_defaults() {
     assert_eq!(subst.get(u_name), Some(TypeId::NUMBER));
 }
 
+/// Regression for issue #5878. Default `V = T[]` (a compound type
+/// referencing a prior type parameter) must substitute T's binding
+/// before being used as V's effective type. Bare `U = T` already
+/// works (covered by `test_substitution_from_args_with_defaults`);
+/// this case exercises `Array<T>` specifically because the bug only
+/// manifests when the default wraps `T` in a compound `TypeData`.
+#[test]
+fn test_substitution_from_args_default_array_of_prior_param() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let v_name = interner.intern_string("V");
+
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let array_of_t = interner.array(t_type);
+
+    let type_params = vec![
+        TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        TypeParamInfo {
+            name: v_name,
+            constraint: None,
+            default: Some(array_of_t),
+            is_const: false,
+        },
+    ];
+
+    // Provide only T = number. V should default to Array<T>, which
+    // after substitution must become Array<number>.
+    let type_args = vec![TypeId::NUMBER];
+    let subst = TypeSubstitution::from_args(&interner, &type_params, &type_args);
+
+    assert_eq!(subst.get(t_name), Some(TypeId::NUMBER));
+    let expected = interner.array(TypeId::NUMBER);
+    assert_eq!(
+        subst.get(v_name),
+        Some(expected),
+        "V's default `T[]` must be substituted to `number[]`, got: {:?}",
+        subst.get(v_name),
+    );
+}
+
+/// Same structural rule as above, with different parameter names. Per
+/// CLAUDE.md §25, the fix must not depend on user-chosen identifier
+/// spellings.
+#[test]
+fn test_substitution_from_args_default_array_independent_of_param_names() {
+    let interner = TypeInterner::new();
+    let k_name = interner.intern_string("K");
+    let payload_name = interner.intern_string("Payload");
+
+    let k_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let array_of_k = interner.array(k_type);
+
+    let type_params = vec![
+        TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        TypeParamInfo {
+            name: payload_name,
+            constraint: None,
+            default: Some(array_of_k),
+            is_const: false,
+        },
+    ];
+
+    let type_args = vec![TypeId::STRING];
+    let subst = TypeSubstitution::from_args(&interner, &type_params, &type_args);
+
+    assert_eq!(subst.get(k_name), Some(TypeId::STRING));
+    let expected = interner.array(TypeId::STRING);
+    assert_eq!(
+        subst.get(payload_name),
+        Some(expected),
+        "Default Array<K> must substitute to Array<string> regardless of param names",
+    );
+}
+
 #[test]
 fn test_substitution_from_args_with_concrete_defaults() {
     let interner = TypeInterner::new();
