@@ -5794,6 +5794,38 @@ literalNumber = [42, undefined, 1];
 }
 
 #[test]
+fn variadic_tuple_source_display_maps_middle_positions_to_rest_before_suffix() {
+    let source = r#"
+declare let target: [number, ...boolean[], string];
+target = [1, true, false, true, false];
+"#;
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type '[number, true, false, true, false]'")),
+        "Expected variadic and trailing tuple slots to remain contextually mapped in source display, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| !message.contains("Type '[number, true, false, boolean, boolean]'")),
+        "Middle positions in variadic+suffix tuples must not map to trailing fixed suffix slots, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn non_exact_optional_tuple_elements_still_accept_present_undefined() {
     let source = r#"
 declare let t: [number, string?, boolean?];
