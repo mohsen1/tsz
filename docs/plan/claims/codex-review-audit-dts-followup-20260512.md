@@ -1,4 +1,4 @@
-# fix(audit): follow up missed-review threads (#5701, #5845, #5867)
+# fix(audit): follow up missed-review threads (#5701, #5845, #5867, #5694)
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/audit-followup-dts-20260512`
@@ -8,11 +8,12 @@
 
 ## Intent
 
-Close three declaration-emitter missed-review clusters from the last-500-PR audit:
+Close four declaration-emitter missed-review clusters from the last-500-PR audit:
 
 - `#5701` (JSDoc `@typedef ... default` alias collision with existing type names)
 - `#5845` (`export =` JS files misclassified as native ESM)
 - `#5867` (JS late-bound function namespace alias collisions and scope leakage)
+- `#5694` (JSDoc generic/reference parser edge cases in quotes and same-line tags)
 
 ## Changes
 
@@ -55,6 +56,18 @@ Close three declaration-emitter missed-review clusters from the last-500-PR audi
   - added a new regression proving collision fallback skips existing namespace
     member names (e.g. chooses `normal_2` when `normal_1` already exists).
 
+- review comments left on #5694:
+  - update generic-angle-bracket balancing to ignore `<`/`>` characters inside
+    quoted string literal segments (with escape handling), so valid references
+    like `Test<\"a>b\">` are preserved as name-like JSDoc types.
+  - update same-line JSDoc tag trimming to detect any whitespace (not just a
+    literal space) before `@`, so `@template ...\t@typedef ...` forms are
+    parsed cleanly.
+
+- regression coverage:
+  - added a regression for quoted `>` in generic string literal arguments.
+  - added a regression for tab-separated same-line `@template` + `@typedef`.
+
 ## Files Touched
 
 - `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs`
@@ -72,6 +85,10 @@ Close three declaration-emitter missed-review clusters from the last-500-PR audi
 - `cargo test -p tsz-emitter test_js_late_bound_function_reserved_alias_uses_keyword_name -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo test -p tsz-emitter test_js_late_bound_function_alias_generation_avoids_existing_namespace_members -- --nocapture`
+  - result: `1 passed; 0 failed`
+- `cargo test -p tsz-emitter test_js_variable_preserves_generic_jsdoc_type_reference_with_gt_in_string_literal -- --nocapture`
+  - result: `1 passed; 0 failed`
+- `cargo test -p tsz-emitter test_js_template_same_line_typedef_with_tab_separator_trims_following_tag -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo fmt --all`
   - result: success

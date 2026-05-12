@@ -1012,6 +1012,41 @@ const test = dibbity => dibbity
 }
 
 #[test]
+fn test_js_variable_preserves_generic_jsdoc_type_reference_with_gt_in_string_literal() {
+    let output = emit_js_dts(
+        r#"
+/** @type {Test<"a>b">} */
+const value = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: Test<\"a>b\">;"),
+        "Expected generic JSDoc @type references with quoted `>` characters to remain name-like and be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_js_template_same_line_typedef_with_tab_separator_trims_following_tag() {
+    let output = emit_js_dts(
+        r#"
+/** @template T	@typedef {T} Alias */
+/** @type {Alias<number>} */
+const value = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: Alias<number>;"),
+        "Expected tab-separated same-line @template/@typedef to preserve the generic alias reference: {output}"
+    );
+    assert!(
+        output.contains("type Alias<T> = T;"),
+        "Expected same-line @template with tab separator to emit clean template params: {output}"
+    );
+}
+
+#[test]
 fn test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference() {
     let output = emit_js_dts(
         r#"

@@ -278,8 +278,26 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn jsdoc_angle_brackets_are_balanced(text: &str) -> bool {
         let mut depth = 0usize;
+        let mut quoted: Option<char> = None;
+        let mut escaped = false;
         for ch in text.chars() {
+            if let Some(quote) = quoted {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == quote {
+                    quoted = None;
+                }
+                continue;
+            }
+
             match ch {
+                '\'' | '"' => quoted = Some(ch),
                 '<' => depth += 1,
                 '>' => {
                     if depth == 0 {
@@ -1553,9 +1571,20 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
-        text.find(" @")
-            .map(|idx| text[..idx].trim_end())
-            .unwrap_or(text)
+        let mut prev_was_whitespace = false;
+        for (idx, ch) in text.char_indices() {
+            if ch == '@'
+                && prev_was_whitespace
+                && text[idx + ch.len_utf8()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|next| next.is_ascii_alphabetic())
+            {
+                return text[..idx].trim_end();
+            }
+            prev_was_whitespace = ch.is_whitespace();
+        }
+        text
     }
 
     /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
