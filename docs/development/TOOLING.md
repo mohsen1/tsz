@@ -182,41 +182,11 @@ Use for: full conformance runs, `cargo test` (full suite), `cargo build --releas
 
 Resets the TypeScript submodule to the pinned commit SHA. Called automatically by the pre-commit hook.
 
-## Conformance Agent Workflow
-
-Agents (and Claude Code) working on conformance start from one entry point.
-
-### Key Scripts
-
-```bash
-# Health check before starting work
-scripts/session/healthcheck.sh
-
-# Pick ONE random conformance failure to fix (prints path + codes + run cmd)
-scripts/session/quick-pick.sh
-
-# Shared implementation for advanced picker modes
-scripts/session/pick.py --help
-
-# Run a single test with verbose fingerprint diff
-./scripts/conformance/conformance.sh run --filter "<name>" --verbose
-
-# Validate campaign branches and open pull requests (never pushes to main)
-scripts/session/integrate.sh --auto
-
-# Full verification pass (build + unit + conformance)
-scripts/session/verify-all.sh
-```
-
-See `scripts/session/conformance-agent-prompt.md` for the full agent prompt:
-how to pick, diagnose, fix with unit tests, and open a PR without bailing.
-
 ## Pre-commit Hook Details
 
-The pre-commit hook (`scripts/githooks/pre-commit`) defaults to a fast local
-gate. It formats the tree, lints directly changed workspace crates, runs tests
-for directly changed workspace crates, and skips TypeScript submodule reset and
-the slower CI-parity gates unless explicitly requested.
+The pre-commit hook (`scripts/githooks/pre-commit`) keeps local commits cheap.
+It blocks TypeScript submodule changes and formats staged Rust files. Build,
+lint, unit, conformance, emit, fourslash, and WASM verification run in CI.
 
 In fast mode it runs these checks in order:
 

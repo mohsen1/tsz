@@ -61,8 +61,7 @@ from lib.conformance_query import (
 
 # =============================================================================
 # Failure-category definitions (used by --campaign / --campaigns).
-# These are offline analysis buckets; the session-level campaign system
-# itself has been removed. See scripts/session/conformance-agent-prompt.md.
+# These are offline analysis buckets for inspecting snapshot drift.
 # =============================================================================
 
 CAMPAIGNS = {
