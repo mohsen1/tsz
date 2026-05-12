@@ -1200,7 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn decl_file_comment_positions_around_names_and_property_access() {
+    fn js_emit_comment_positions_around_names_and_property_access() {
         let output = emit_js(
             "function /*1*/makePoint(x: number) {}\nvar /*2*/point = makePoint(2);\nvar y = point./*3*/x;\n",
         );
