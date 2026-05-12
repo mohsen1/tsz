@@ -15,6 +15,34 @@ use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{PropertyInfo, RelationCacheKey, TypeId};
 
+fn assert_repeated_subtype_check_reuses_entries(
+    db: &QueryCache<'_>,
+    source: TypeId,
+    target: TypeId,
+    expected: bool,
+) -> usize {
+    assert_eq!(
+        db.is_subtype_of(source, target),
+        expected,
+        "first subtype check returned an unexpected result"
+    );
+    let entries_after_first = db.relation_cache_stats().subtype_entries;
+
+    assert_eq!(
+        db.is_subtype_of(source, target),
+        expected,
+        "repeated subtype check returned an unexpected result"
+    );
+    let entries_after_second = db.relation_cache_stats().subtype_entries;
+
+    assert_eq!(
+        entries_after_second, entries_after_first,
+        "repeated subtype check should reuse the existing cache entry"
+    );
+
+    entries_after_first
+}
+
 // =============================================================================
 // Cache Hit Tests
 // =============================================================================
@@ -30,24 +58,11 @@ fn cache_hit_after_positive_subtype_check() {
 
     let hello = interner.literal_string("hello");
 
-    // First check: "hello" <: string (true, requires structural check)
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let stats_after_first = db.relation_cache_stats();
-    let entries_after_first = stats_after_first.subtype_entries;
+    let entries_after_first =
+        assert_repeated_subtype_check_reuses_entries(&db, hello, TypeId::STRING, true);
     assert!(
         entries_after_first >= 1,
         "Cache should have at least 1 entry after first check"
-    );
-
-    // Second check: same pair should be a cache hit
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let stats_after_second = db.relation_cache_stats();
-    // Entry count should not grow on cache hit
-    assert_eq!(
-        stats_after_second.subtype_entries, entries_after_first,
-        "Cache entries should not grow on cache hit"
     );
 }
 
@@ -58,19 +73,7 @@ fn cache_hit_with_literal_types() {
 
     let hello = interner.literal_string("hello");
 
-    // "hello" <: string is true
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let entries_first = db.relation_cache_stats().subtype_entries;
-
-    // Repeated check should hit cache
-    assert!(db.is_subtype_of(hello, TypeId::STRING));
-
-    let entries_second = db.relation_cache_stats().subtype_entries;
-    assert_eq!(
-        entries_first, entries_second,
-        "Cache entry count should not grow on hit"
-    );
+    assert_repeated_subtype_check_reuses_entries(&db, hello, TypeId::STRING, true);
 }
 
 #[test]
@@ -88,14 +91,7 @@ fn cache_hit_with_object_types() {
     ]);
     let narrow_obj = interner.object(vec![PropertyInfo::new(name_atom, TypeId::STRING)]);
 
-    let result1 = db.is_subtype_of(wider_obj, narrow_obj);
-    let entries1 = db.relation_cache_stats().subtype_entries;
-
-    let result2 = db.is_subtype_of(wider_obj, narrow_obj);
-    let entries2 = db.relation_cache_stats().subtype_entries;
-
-    assert_eq!(result1, result2, "Results must be identical");
-    assert_eq!(entries1, entries2, "Cache should not grow on cache hit");
+    assert_repeated_subtype_check_reuses_entries(&db, wider_obj, narrow_obj, true);
 }
 
 // =============================================================================
@@ -156,18 +152,9 @@ fn negative_result_is_cached() {
     let db = QueryCache::new(&interner);
 
     // string </: number (false)
-    assert!(!db.is_subtype_of(TypeId::STRING, TypeId::NUMBER));
-    let entries1 = db.relation_cache_stats().subtype_entries;
-    assert!(entries1 >= 1, "Failed check should be cached");
-
-    // Repeat: should be cache hit
-    assert!(!db.is_subtype_of(TypeId::STRING, TypeId::NUMBER));
-    let entries2 = db.relation_cache_stats().subtype_entries;
-
-    assert_eq!(
-        entries1, entries2,
-        "Negative result cache hit should not grow entries"
-    );
+    let entries_after_first =
+        assert_repeated_subtype_check_reuses_entries(&db, TypeId::STRING, TypeId::NUMBER, false);
+    assert!(entries_after_first >= 1, "Failed check should be cached");
 }
 
 #[test]
@@ -185,16 +172,7 @@ fn negative_cache_with_object_types() {
         PropertyInfo::new(age_atom, TypeId::NUMBER),
     ]);
 
-    assert!(!db.is_subtype_of(source, target));
-    let entries1 = db.relation_cache_stats().subtype_entries;
-
-    assert!(!db.is_subtype_of(source, target));
-    let entries2 = db.relation_cache_stats().subtype_entries;
-
-    assert_eq!(
-        entries1, entries2,
-        "Negative object subtype result should be cached"
-    );
+    assert_repeated_subtype_check_reuses_entries(&db, source, target, false);
 }
 
 // =============================================================================
