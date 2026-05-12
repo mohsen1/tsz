@@ -245,3 +245,23 @@ flat2([1, ['a']]);
         );
     }
 }
+
+#[test]
+fn value_or_array_recursive_alias_accepts_nested_array_assignment() {
+    let source = r#"
+type ValueOrArray<T> = T | Array<ValueOrArray<T>>;
+
+const a0: ValueOrArray<number> = 1;
+const a1: ValueOrArray<number> = [1, [2, 3], [4, [5, [6, 7]]]];
+"#;
+    let diags = check(source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for compatible ValueOrArray assignment. Got: {ts2322:?}"
+    );
+}
