@@ -4,8 +4,8 @@
 - **Branch**: `codex/cleanup-ts2839-message-helper-20260513`
 - **Base**: `origin/main`
 - **Issue**: n/a
-- **PR**: tbd
-- **Status**: claim
+- **PR**: [#6081](https://github.com/mohsen1/tsz/pull/6081)
+- **Status**: ready
 - **Labels**: `DRY`, `checker-tests`
 
 ## Intent
