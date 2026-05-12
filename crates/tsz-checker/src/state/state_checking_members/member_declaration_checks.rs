@@ -521,6 +521,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.in_conditional_extends_depth += 1;
                     self.check_type_for_missing_names(cond.extends_type);
                     self.ctx.in_conditional_extends_depth -= 1;
+                    self.check_unique_symbol_in_conditional_extends(cond.extends_type);
 
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
@@ -1737,6 +1738,42 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+        }
+    }
+
+    fn check_unique_symbol_in_conditional_extends(&mut self, extends_type: NodeIndex) {
+        let mut type_idx = extends_type;
+        while let Some(node) = self.ctx.arena.get(type_idx)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            type_idx = wrapped.type_node;
+        }
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return;
+        };
+        if node.kind != syntax_kind_ext::TYPE_OPERATOR {
+            return;
+        }
+        let Some(op) = self.ctx.arena.get_type_operator(node) else {
+            return;
+        };
+        if op.operator == SyntaxKind::UniqueKeyword as u16
+            && self
+                .ctx
+                .arena
+                .get(op.type_node)
+                .and_then(|n| self.ctx.arena.get_type_ref(n))
+                .and_then(|r| self.ctx.arena.get(r.type_name))
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .is_some_and(|ident| ident.escaped_text == "symbol")
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                type_idx,
+                diagnostic_messages::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE,
+                diagnostic_codes::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE,
+            );
         }
     }
 

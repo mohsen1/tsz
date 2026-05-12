@@ -74,3 +74,27 @@ fn infer_with_constraint_in_extends_no_error() {
         "Should NOT emit TS1338 for constrained infer in extends clause"
     );
 }
+
+#[test]
+fn unique_symbol_in_conditional_extends_emits_ts1335() {
+    let source = r#"
+declare const mySymbol: unique symbol;
+type Check = typeof mySymbol extends unique symbol ? true : false;
+"#;
+    assert!(
+        has_error_with_code(source, 1335),
+        "Should emit TS1335 for unique symbol in conditional extends"
+    );
+}
+
+#[test]
+fn parenthesized_unique_symbol_in_conditional_extends_emits_ts1335() {
+    let source = r#"
+declare const mySymbol: unique symbol;
+type Check = typeof mySymbol extends (unique symbol) ? true : false;
+"#;
+    assert!(
+        has_error_with_code(source, 1335),
+        "Should emit TS1335 for parenthesized unique symbol in conditional extends"
+    );
+}
