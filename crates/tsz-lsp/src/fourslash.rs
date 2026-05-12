@@ -155,7 +155,7 @@ impl DefinitionResult {
 
     /// Assert there are exactly N definitions.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} definitions, got {count}");
         self
     }
@@ -232,14 +232,14 @@ impl ReferencesResult {
 
     /// Assert exactly N references.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} references, got {count}");
         self
     }
 
     /// Assert no references were found.
     pub fn expect_none(&self) {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, 0, "Expected no references, but found {count}");
     }
 }
@@ -698,13 +698,13 @@ impl DocumentHighlightResult {
 
     /// Assert no highlights were found.
     pub fn expect_none(&self) {
-        let count = self.highlights.as_ref().map(|h| h.len()).unwrap_or(0);
+        let count = self.highlights.as_ref().map_or(0, Vec::len);
         assert_eq!(count, 0, "Expected no highlights, but found {count}");
     }
 
     /// Assert exactly N highlights.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.highlights.as_ref().map(|h| h.len()).unwrap_or(0);
+        let count = self.highlights.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} highlights, got {count}");
         self
     }
@@ -823,7 +823,7 @@ impl CodeActionsResult {
 
     /// Assert no code actions.
     pub fn expect_none(&self) {
-        let count = self.actions.as_ref().map(|a| a.len()).unwrap_or(0);
+        let count = self.actions.as_ref().map_or(0, Vec::len);
         assert_eq!(count, 0, "Expected no code actions, but found {count}");
     }
 
@@ -1070,7 +1070,7 @@ impl ImplementationResult {
 
     /// Assert there are exactly N implementations.
     pub fn expect_count(&self, n: usize) -> &Self {
-        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        let count = self.locations.as_ref().map_or(0, Vec::len);
         assert_eq!(count, n, "Expected {n} implementations, got {count}");
         self
     }
