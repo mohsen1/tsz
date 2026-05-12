@@ -28,6 +28,22 @@ impl<'a> CheckerState<'a> {
         annotation_text.contains('<') && annotation_text.contains("any")
     }
 
+    pub(crate) fn generic_indexed_access_argument_surface(&self, type_id: TypeId) -> bool {
+        self.generic_indexed_access_argument_surface_inner(type_id)
+            || self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| self.generic_indexed_access_argument_surface_inner(alias))
+    }
+
+    fn generic_indexed_access_argument_surface_inner(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::contains_generic_indexed_access_surface(
+            self.ctx.types,
+            type_id,
+        )
+    }
+
     fn excess_property_target_score(&self, type_id: TypeId) -> (u8, usize) {
         match classify_for_excess_properties(self.ctx.types, type_id) {
             ExcessPropertiesKind::NotObject => (0, 0),
@@ -690,7 +706,6 @@ impl<'a> CheckerState<'a> {
             }
             return true;
         }
-
         // Build a RelationRequest for the Assign kind so the weak-union hint
         // can be collected alongside the failure reason.
         let request = {
@@ -1046,6 +1061,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if self.should_suppress_assignability_for_parse_recovery(arg_idx, arg_idx) {
+            return true;
+        }
+        if target == TypeId::NEVER && self.generic_indexed_access_argument_surface(source) {
             return true;
         }
         let checker_only_mismatch = self
