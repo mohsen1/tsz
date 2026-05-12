@@ -2,16 +2,16 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 44
-- Potential important unresolved threads: 57
+- PRs excluded as already followed-up: 46
+- Potential important unresolved threads: 51
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 30
-- `crates/tsz-emitter`: 12
-- `crates/tsz-solver`: 5
+- `crates/tsz-checker`: 28
+- `crates/tsz-emitter`: 10
+- `crates/tsz-solver`: 4
 - `docs`: 3
-- `crates/tsz-parser`: 2
+- `crates/tsz-parser`: 1
 - `crates/tsz-cli`: 2
 - `crates/tsz-binder`: 1
 - `scripts`: 1
@@ -19,8 +19,6 @@
 
 ## Top PRs By Candidate Count
 
-- [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
 - [#4993](https://github.com/mohsen1/tsz/pull/4993) docs(solver): clarify interner perf-counter cost summary: 2
 - [#5663](https://github.com/mohsen1/tsz/pull/5663) fix(checker): align recursiveFunctionTypes display fingerprints: 2
 - [#5693](https://github.com/mohsen1/tsz/pull/5693) fix(dts): emit js function type tag signatures: 2
@@ -103,12 +101,6 @@
   - Variance lookup here bypasses the QueryDatabase variance cache that `check_application_variance_assignability` just consulted/populated (it only checks declared variances, then recomputes). Consider looking up `self.c...
 - [#5092](https://github.com/mohsen1/tsz/pull/5092) `crates/tsz-checker/src/lib.rs:434` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The `#[cfg(test)]` attribute is duplicated around this module inclusion. It’s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep ...
-- [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs:97` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `property_name_to_key_type` treats symbol-named properties as string-literal keys unless the name is a synthetic `__unique_<id>` atom. This means well-known computed symbol keys like `[Symbol.iterator]` (which are mar...
-- [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-checker/src/state/type_resolution/symbol_types.rs:1136` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `precompute_computed_property_names` currently encodes every `unique symbol` computed name as a synthetic `"__unique_<id>"` atom. Elsewhere (e.g. `get_property_name_resolved`) unique symbols that are members of the gl...
-- [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-checker/src/state/type_resolution/symbol_types.rs:937` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `precompute_symbol_named_computed_property_names` re-traverses the same declarations as `precompute_computed_property_names` and recomputes `get_type_of_node` for each computed property expression. This duplicates pot...
 - [#5110](https://github.com/mohsen1/tsz/pull/5110) `crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs:389` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `get_type_of_node_with_request` already performs class-expression member checking in `dispatch.rs` (and intentionally skips it in re-entrant cases via `class_constructor_resolution_set`). Calling `check_direct_class_e...
 - [#5110](https://github.com/mohsen1/tsz/pull/5110) `crates/tsz-checker/src/types/queries/class.rs:1811` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -117,12 +109,6 @@
   - `declared_numeric_literal_union_alias_source_display` lookup chain is repeated here (and again later when computing `source_from_annotation`). Consider computing the declared-display once and reusing it to avoid dupli...
 - [#5647](https://github.com/mohsen1/tsz/pull/5647) `crates/tsz-cli/src/driver/core.rs:3865` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `is_removed_option_diagnostic_code` currently returns true for both TS5102 (removed option key) and TS5108 (removed option value like `target=ES3`). The function name suggests only "removed option" keys; consider rena...
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) `crates/tsz-parser/src/parser/state_statements.rs:3042` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `parse_function_declaration` now stores the recovered `=>` expression in `FunctionData.body` (and marks `equals_greater_than_token`). Downstream emitters still treat function-declaration bodies as blocks (e.g., they w...
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) `crates/tsz-emitter/src/transforms/namespace_es5_ir.rs:1252` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `IRNode::ExpressionStatement` printing currently only parenthesizes `FunctionExpr`, but the recovered arrow body can be any expression (notably an object literal like `{ a: 1 }`). Emitting that as a bare expression st...
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) `crates/tsz-emitter/src/emitter/declarations/namespace.rs:1985` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `emit_recovered_namespace_function_arrow_body` emits the recovered body via `emit_expression(...)` directly. That bypasses the expression-statement disambiguation logic (parenthesizing leading `{` / `function` / etc.)...
 - [#5657](https://github.com/mohsen1/tsz/pull/5657) `crates/tsz-checker/src/assignability/assignment_checker/destructuring.rs:444` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal “explain” path and can drop related-information elaborat...
 - [#5663](https://github.com/mohsen1/tsz/pull/5663) `crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs:2309` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

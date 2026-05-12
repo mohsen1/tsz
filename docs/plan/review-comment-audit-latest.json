@@ -35,7 +35,9 @@
     5094,
     5100,
     5102,
+    5104,
     5114,
+    5655,
     5658,
     5662,
     5666,
@@ -51,7 +53,7 @@
     5901,
     5954
   ],
-  "candidate_count": 57,
+  "candidate_count": 51,
   "candidates": [
     {
       "pr_number": 4988,
@@ -568,54 +570,6 @@
       ]
     },
     {
-      "pr_number": 5104,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5104",
-      "merged_at": "2026-05-11T09:52:50Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BCI1O",
-      "path": "crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs",
-      "line": 97,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`property_name_to_key_type` treats symbol-named properties as string-literal keys unless the name is a synthetic `__unique_<id>` atom. This means well-known computed symbol keys like `[Symbol.iterator]` (which are marked `is_symbol_named`) will currently contribute a *string* literal key to `keyof`, so `Extract<keyof T, string>` can incorrectly keep symbol keys. Consider mapping non-`__unique_` symbol-named properties to a non-string key type (e.g. `symbol`, or a `UniqueSymbol` when possible) rather than `literal_string_atom`.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5104,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5104",
-      "merged_at": "2026-05-11T09:52:50Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BCI1_",
-      "path": "crates/tsz-checker/src/state/type_resolution/symbol_types.rs",
-      "line": 1136,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`precompute_computed_property_names` currently encodes every `unique symbol` computed name as a synthetic `\"__unique_<id>\"` atom. Elsewhere (e.g. `get_property_name_resolved`) unique symbols that are members of the global `Symbol` object are canonicalized to `[Symbol.<name>]` to keep names stable across different syntactic forms. Without the same canonicalization here, computed names like `[observable]` where `observable: typeof Symbol.iterator` can lower to `__unique_<id>` and fail to match members lowered as `[Symbol.iterator]`. Consider reusing the same `[Symbol.<name>]` canonicalization when the `SymbolRef` resolves to a `Symbol.*` member.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5104,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5104",
-      "merged_at": "2026-05-11T09:52:50Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BCI2V",
-      "path": "crates/tsz-checker/src/state/type_resolution/symbol_types.rs",
-      "line": 937,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`precompute_symbol_named_computed_property_names` re-traverses the same declarations as `precompute_computed_property_names` and recomputes `get_type_of_node` for each computed property expression. This duplicates potentially expensive work during interface lowering. Consider folding symbol-named metadata into `precompute_computed_property_names` (e.g. returning both the name map and a symbol-named set/flag) to avoid a second full pass.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5110,
       "pr_title": "fix(checker): report class-expression field this misses",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5110",
@@ -674,54 +628,6 @@
       "line": 3865,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`is_removed_option_diagnostic_code` currently returns true for both TS5102 (removed option key) and TS5108 (removed option value like `target=ES3`). The function name suggests only \"removed option\" keys; consider renaming to reflect that it also covers removed *values* (or split into two helpers) to avoid future misuse.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5655,
-      "pr_title": "fix(emit): recover namespace function arrow bodies",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
-      "merged_at": "2026-05-11T23:56:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQNGG",
-      "path": "crates/tsz-parser/src/parser/state_statements.rs",
-      "line": 3042,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`parse_function_declaration` now stores the recovered `=>` expression in `FunctionData.body` (and marks `equals_greater_than_token`). Downstream emitters still treat function-declaration bodies as blocks (e.g., they write `function f(...) ` and then emit `body`), so a non-block body will lead to invalid JS output outside the namespace-special-cases added in this PR. Consider representing this recovery separately (e.g., a dedicated recovery field/kind), or ensure the general function-declaration emit path detects `=>`-recovery (via `equals_greater_than_token` and/or `body.kind != BLOCK`) and emits the expression as an expression statement (matching tsc) instead of emitting a function declaration.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5655,
-      "pr_title": "fix(emit): recover namespace function arrow bodies",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
-      "merged_at": "2026-05-11T23:56:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQNGN",
-      "path": "crates/tsz-emitter/src/transforms/namespace_es5_ir.rs",
-      "line": 1252,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`IRNode::ExpressionStatement` printing currently only parenthesizes `FunctionExpr`, but the recovered arrow body can be any expression (notably an object literal like `{ a: 1 }`). Emitting that as a bare expression statement would produce `{ a: 1 };` (a block with a label) instead of `({ a: 1 });`. Either wrap object-literal/function expressions in parentheses when constructing this IR node, or update the IR printer’s `ExpressionStatement` emission to apply the same disambiguation rules as the AST emitter.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5655,
-      "pr_title": "fix(emit): recover namespace function arrow bodies",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
-      "merged_at": "2026-05-11T23:56:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQNGV",
-      "path": "crates/tsz-emitter/src/emitter/declarations/namespace.rs",
-      "line": 1985,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`emit_recovered_namespace_function_arrow_body` emits the recovered body via `emit_expression(...)` directly. That bypasses the expression-statement disambiguation logic (parenthesizing leading `{` / `function` / etc.) used by `emit_expression_statement`, so cases like `function f() => { a: 1 }` would likely emit `{ a: 1 };` (parsed as a block) instead of an object-literal expression statement. Consider reusing the same paren/disambiguation rules as `emit_expression_statement` when printing the recovered expression in statement position.",
       "score": 1,
       "reasons": [
         "detailed-thread"
