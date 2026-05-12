@@ -522,6 +522,10 @@ pub struct Printer<'a> {
     /// initializer and should default to `void 0`.
     pub(crate) pending_auto_accessor_inits: Vec<(String, Option<NodeIndex>)>,
 
+    /// Counter for generated public auto-accessor backing names (`_a`, `_b`, ...).
+    /// TypeScript keeps this sequence file-scoped for ES2015+ class emit.
+    pub(crate) next_auto_accessor_name_index: u32,
+
     /// Temp names for assignment target values that need to be hoisted as `var _a, _b, ...;`.
     /// These are emitted on a separate declaration list before reference temps.
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
@@ -959,6 +963,7 @@ impl<'a> Printer<'a> {
             suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
             pending_auto_accessor_inits: Vec::new(),
+            next_auto_accessor_name_index: 0,
             hoisted_assignment_value_temps: Vec::new(),
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),

@@ -146,8 +146,16 @@ name = "ts2802_downlevel_iteration_tests"
 path = "tests/ts2802_downlevel_iteration_tests.rs"
 
 [[test]]
+name = "ts2871_always_nullish_tests"
+path = "tests/ts2871_always_nullish_tests.rs"
+
+[[test]]
 name = "ts1239_parameter_decorator_tests"
 path = "tests/ts1239_parameter_decorator_tests.rs"
+
+[[test]]
+name = "ts2636_method_bivariance_tests"
+path = "tests/ts2636_method_bivariance_tests.rs"
 
 [[test]]
 name = "ts6133_unused_type_params_tests"

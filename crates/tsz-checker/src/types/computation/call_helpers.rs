@@ -762,6 +762,10 @@ impl<'a> CheckerState<'a> {
             .get_binder_for_arena(target_arena)
             .unwrap_or(self.ctx.binder);
 
+        // No cache fast-path on this delegate; every entry is a miss.
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             target_arena,
             delegate_binder,
@@ -908,6 +912,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .get_binder_for_arena(decl_arena.as_ref())
             .unwrap_or(self.ctx.binder);
+        // No cache fast-path on this delegate; every entry is a miss.
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             decl_arena.as_ref(),
             delegate_binder,
@@ -1018,6 +1025,10 @@ impl<'a> CheckerState<'a> {
                     .map(|sf| sf.file_name.clone())
                     .unwrap_or_else(|| self.ctx.file_name.clone());
                 let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
+
+                // No cache fast-path on this delegate; every entry is a miss.
+                tsz_common::perf_counters::record_delegate_cross_arena_miss();
+                let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
                 let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                     decl_arena,

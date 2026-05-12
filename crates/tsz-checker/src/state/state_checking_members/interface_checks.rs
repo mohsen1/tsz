@@ -627,12 +627,28 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Method parameters are bivariant in tsc's variance model: they
+            // record as COVARIANT inside the visitor with `REJECTION_UNRELIABLE`
+            // set to mark the signal as not-pure. When T appears ONLY at
+            // method-bivariant positions, `REJECTION_UNRELIABLE` stays set after
+            // the visit; when T ALSO appears at a strict position (a non-method
+            // property, a direct callback, etc.), `strict_occurrence_seen`
+            // causes the flag to be cleared (`compute()` lines 307-309).
+            //
+            // tsc only emits TS2636 for reliable variance violations. So skip
+            // the rejection when `rejection_unreliable()` is set — that gates
+            // out the "purely method-bivariant" case (where `in T` and `out T`
+            // both ride along with bivariance and neither is genuinely
+            // contradicted) while still firing on real direct-position
+            // violations.
             let violation = if info.declared_out {
-                // `out T` (covariant): error if T appears contravariantly
+                // `out T` (covariant): error if T appears reliably contravariantly
                 actual_variance.contains(tsz_solver::type_handles::Variance::CONTRAVARIANT)
+                    && !actual_variance.rejection_unreliable()
             } else {
-                // `in T` (contravariant): error if T appears covariantly
+                // `in T` (contravariant): error if T appears reliably covariantly
                 actual_variance.contains(tsz_solver::type_handles::Variance::COVARIANT)
+                    && !actual_variance.rejection_unreliable()
             };
 
             if !violation {

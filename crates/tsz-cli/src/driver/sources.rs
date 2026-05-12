@@ -762,11 +762,7 @@ pub(super) fn read_source_files(
                         no_implicit_any: options.checker.no_implicit_any,
                         implied_classic_resolution: options.checker.implied_classic_resolution,
                     };
-                    if tsz_common::perf_counters::enabled_fast() {
-                        tsz_common::perf_counters::inc(
-                            &tsz_common::perf_counters::counters().resolver_lookup_calls,
-                        );
-                    }
+                    tsz_common::perf_counters::record_resolver_lookup_call();
                     let mut outcome = module_resolver
                         .lookup(
                             &request,
