@@ -143,6 +143,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_named_export_names = js_named_export_names;
         self.js_folded_named_export_statements = folded_named_exports;
         self.js_deferred_named_export_statements = deferred_named_exports;
+        self.js_deferred_local_export_enum_statements =
+            self.collect_js_local_export_enum_statements(source_file);
         let (local_export_aliases, skipped_local_export_aliases) =
             self.collect_js_local_export_aliases(source_file);
         self.js_local_export_aliases = local_export_aliases;
@@ -224,6 +226,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
         self.js_class_like_prototype_members = js_class_like.members;
         self.js_class_like_prototype_stmts = js_class_like.consumed_stmts;
+        let (js_class_define_property_accessors, js_class_define_property_accessor_stmts) =
+            self.collect_js_class_define_property_accessors(source_file);
+        self.js_class_define_property_accessors = js_class_define_property_accessors;
+        self.js_class_define_property_accessor_stmts = js_class_define_property_accessor_stmts;
         let js_static_method_augmentations =
             self.collect_js_class_static_method_augmentations(source_file);
         self.js_static_method_augmentation_statements = js_static_method_augmentations.statements;
@@ -382,6 +388,15 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {
+                if let Some(initializer) = self.js_module_exports_assignment_initializer(stmt_idx) {
+                    self.emit_js_anonymous_module_exports_object_members(initializer);
+                }
+                continue;
+            }
+            if self
+                .js_deferred_local_export_enum_statements
+                .contains(&stmt_idx)
+            {
                 continue;
             }
             if self
@@ -429,6 +444,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_pending_jsdoc_callback_type_aliases(source_file);
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
         self.emit_js_require_property_import_aliases();
+        self.emit_deferred_js_local_export_enum_statements(source_file);
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();
         if !self.source_is_js_file
@@ -631,6 +647,13 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         if self.js_class_like_prototype_stmts.contains(&stmt_idx) {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self
+            .js_class_define_property_accessor_stmts
+            .contains(&stmt_idx)
+        {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -1501,6 +1524,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.source_is_js_file {
+            self.emit_js_class_define_property_accessors_for_name(class.name);
+        }
 
         self.decrease_indent();
         self.write_indent();

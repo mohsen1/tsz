@@ -1168,6 +1168,18 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_has_satisfies_tag(jsdoc: &str) -> bool {
+        jsdoc.lines().any(|raw_line| {
+            let line = raw_line.trim_start_matches('*').trim();
+            let Some(rest) = line.strip_prefix("@satisfies") else {
+                return false;
+            };
+            rest.chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
+        })
+    }
+
     fn jsdoc_contains_type_tag(jsdoc: &str) -> bool {
         jsdoc.lines().any(|raw_line| {
             let line = raw_line.trim_start_matches('*').trim();
@@ -1235,6 +1247,14 @@ impl<'a> DeclarationEmitter<'a> {
         let has_any_jsdoc = jsdoc.is_some();
         if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
             return false;
+        }
+
+        if self
+            .current_statement_jsdoc_chain
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_satisfies_tag(jsdoc))
+        {
+            self.suppress_current_statement_jsdoc_comments = true;
         }
 
         self.emit_pending_js_export_equals_for_name(decl_name);
@@ -1566,7 +1586,8 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn parse_jsdoc_property_type_alias(
         jsdoc: &str,
     ) -> Option<(String, String)> {
-        let (name, base_type) = Self::parse_jsdoc_typedef_alias(jsdoc)?;
+        let (name, base_type) = Self::parse_jsdoc_typedef_alias(jsdoc)
+            .or_else(|| Self::parse_jsdoc_name_only_typedef_alias(jsdoc))?;
         if name == "default" || !matches!(base_type.as_str(), "Object" | "object") {
             return None;
         }
@@ -1667,6 +1688,20 @@ impl<'a> DeclarationEmitter<'a> {
         Some((name, type_text))
     }
 
+    fn parse_jsdoc_name_only_typedef_alias(jsdoc: &str) -> Option<(String, String)> {
+        let normalized = Self::normalize_jsdoc_block(jsdoc);
+        let tag_pos = normalized.find("@typedef")?;
+        let rest = normalized[tag_pos + "@typedef".len()..].trim();
+        if rest.starts_with('{') {
+            return None;
+        }
+        let name = rest
+            .split_whitespace()
+            .next()
+            .filter(|name| !name.is_empty())?;
+        Some((name.to_string(), "Object".to_string()))
+    }
+
     pub(in crate::declaration_emitter) fn normalize_jsdoc_primitive_type_name(
         type_name: &str,
     ) -> String {
@@ -1729,19 +1764,23 @@ impl<'a> DeclarationEmitter<'a> {
         let type_params = Self::parse_jsdoc_template_params(jsdoc);
         let description_lines = Self::jsdoc_description_lines(jsdoc);
 
-        if let Some((name, type_text)) = Self::parse_jsdoc_typedef_alias(jsdoc) {
+        if Self::jsdoc_has_property_tags(jsdoc) {
+            let (name, type_text) = Self::parse_jsdoc_property_type_alias(jsdoc)?;
             if name == "default" {
                 return None;
             }
-            if Self::jsdoc_has_property_tags(jsdoc) {
-                let (name, type_text) = Self::parse_jsdoc_property_type_alias(jsdoc)?;
-                return Some(JsdocTypeAliasDecl {
-                    name,
-                    type_params,
-                    type_text,
-                    description_lines,
-                    render_verbatim: true,
-                });
+            return Some(JsdocTypeAliasDecl {
+                name,
+                type_params,
+                type_text,
+                description_lines,
+                render_verbatim: true,
+            });
+        }
+
+        if let Some((name, type_text)) = Self::parse_jsdoc_typedef_alias(jsdoc) {
+            if name == "default" {
+                return None;
             }
             return Some(JsdocTypeAliasDecl {
                 name,
@@ -1854,6 +1893,25 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_rendered_jsdoc_type_alias(decl, true);
             }
         }
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_type_alias_decls_before_pos(
+        &self,
+        pos: u32,
+    ) -> Vec<JsdocTypeAliasDecl> {
+        if !self.source_is_js_file {
+            return Vec::new();
+        }
+        let Some(text) = self.source_file_text.as_deref() else {
+            return Vec::new();
+        };
+        self.all_comments
+            .iter()
+            .filter(|comment| comment.end <= pos)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .map(|comment| get_jsdoc_content(comment, text))
+            .filter_map(|jsdoc| Self::parse_jsdoc_type_alias_decl(&jsdoc))
+            .collect()
     }
 
     pub(crate) fn emit_jsdoc_callback_type_aliases_for_variable_statement(
