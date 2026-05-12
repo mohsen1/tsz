@@ -1087,6 +1087,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
