@@ -1,7 +1,8 @@
-# fix(checker): restore TS2883 for object-assigned default export
+# fix(conformance): restore TS2883 object-assigned default export
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/declaration-object-assigned-default-export-ts2883-20260512`
+- **PR**: #5836
 - **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
