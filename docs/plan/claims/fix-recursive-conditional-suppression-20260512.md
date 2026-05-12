@@ -2,7 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/recursive-conditional-suppression-20260512`
-- **Base**: `main`
+- **PR**: #5839
+- **Status**: ready
 - **Workstream**: conformance
 
 ## Intent
@@ -11,6 +12,11 @@ Remove the stale `recursiveConditionalTypes` production suppression debt entry
 after verifying the targeted conformance test now passes without known-failure
 handling. This leaves `mixinAccessModifiers` as the only live production
 suppression while #5756 tracks that WIP area.
+
+## Files Touched
+
+- `crates/conformance/src/runner.rs` (remove stale production suppression)
+- `docs/plan/claims/fix-recursive-conditional-suppression-20260512.md` (claim)
 
 ## Verification
 
