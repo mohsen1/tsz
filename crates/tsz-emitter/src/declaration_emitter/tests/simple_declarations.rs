@@ -1148,6 +1148,48 @@ function format(x) {
 }
 
 #[test]
+fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
+    let output = emit_js_dts(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/**
+ * @satisfies {(a: string, ...args: never) => void}
+ * @param {string} a
+ */
+export const fn2 = (a, b) => {};
+
+/** @satisfies {(uuid: string) => void} */
+export function fn3(uuid) {}
+"#,
+    );
+
+    assert!(
+        !output.contains("@satisfies {(uuid: string) => void} */\nexport function fn1"),
+        "Expected synthetic function-variable JSDoc @satisfies comment to be stripped: {output}"
+    );
+    assert!(
+        !output.contains("@satisfies {(a: string, ...args: never) => void}"),
+        "Expected multiline synthetic function-variable @satisfies comment to be stripped: {output}"
+    );
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to remain active: {output}"
+    );
+    assert!(
+        output.contains("export function fn2(a: string, b: never): void;"),
+        "Expected @param plus @satisfies inference to remain active: {output}"
+    );
+    assert!(
+        output.contains(
+            "/** @satisfies {(uuid: string) => void} */\nexport function fn3(uuid: any): void;"
+        ),
+        "Expected function declarations to preserve @satisfies comments: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"

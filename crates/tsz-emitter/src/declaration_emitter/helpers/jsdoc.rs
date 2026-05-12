@@ -1163,6 +1163,18 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_has_satisfies_tag(jsdoc: &str) -> bool {
+        jsdoc.lines().any(|raw_line| {
+            let line = raw_line.trim_start_matches('*').trim();
+            let Some(rest) = line.strip_prefix("@satisfies") else {
+                return false;
+            };
+            rest.chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
+        })
+    }
+
     pub(crate) fn emit_js_function_variable_declaration_if_possible(
         &mut self,
         decl_idx: NodeIndex,
@@ -1212,6 +1224,14 @@ impl<'a> DeclarationEmitter<'a> {
         let has_any_jsdoc = jsdoc.is_some();
         if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
             return false;
+        }
+
+        if self
+            .current_statement_jsdoc_chain
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_satisfies_tag(jsdoc))
+        {
+            self.suppress_current_statement_jsdoc_comments = true;
         }
 
         self.emit_pending_js_export_equals_for_name(decl_name);
