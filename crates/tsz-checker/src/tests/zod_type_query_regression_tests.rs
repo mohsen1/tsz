@@ -682,3 +682,82 @@ type ForceCycle = partialUtil.DeepPartial<ZodTypeAny>;
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn zod_error_field_initializer_this_keeps_accessors_and_base_members() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+
+    let diags = check_source_with_libs(
+        r#"
+type ZodIssue = { message: string };
+type ZodFormattedError<T> = { _errors: string[]; value?: T };
+
+export class ZodError<T = any> extends Error {
+  issues: ZodIssue[] = [];
+
+  get errors() {
+    return this.issues;
+  }
+
+  constructor(issues: ZodIssue[]) {
+    super();
+    this.name = "ZodError";
+    this.issues = issues;
+  }
+
+  format = (): ZodFormattedError<T> => {
+    const fieldErrors: ZodFormattedError<T> = { _errors: [] };
+    const processError = (error: ZodError) => {
+      error.errors;
+      error.message;
+      error.isEmpty;
+    };
+    processError(this);
+    return fieldErrors;
+  };
+
+  toString() {
+    return this.message;
+  }
+
+  get message() {
+    return JSON.stringify(this.issues, null, 2);
+  }
+
+  get isEmpty(): boolean {
+    return this.issues.length === 0;
+  }
+
+  addIssue = (sub: ZodIssue) => {
+    this.issues = [...this.issues, sub];
+  };
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    let structural_this_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| {
+            d.code == 2345
+                && (d.message_text.contains("name")
+                    || d.message_text.contains("errors")
+                    || d.message_text.contains("message")
+                    || d.message_text.contains("isEmpty"))
+        })
+        .collect();
+    assert!(
+        structural_this_errors.is_empty(),
+        "Expected class field initializer `this` to include accessor and inherited Error members, got: {:?}",
+        structural_this_errors
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

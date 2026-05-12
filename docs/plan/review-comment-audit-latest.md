@@ -2,16 +2,16 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 3
-- Potential important unresolved threads: 140
+- PRs excluded as already followed-up: 9
+- Potential important unresolved threads: 141
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 53
-- `crates/tsz-emitter`: 29
+- `crates/tsz-checker`: 50
+- `crates/tsz-emitter`: 34
 - `docs`: 23
 - `crates/tsz-parser`: 14
-- `crates/tsz-solver`: 10
+- `crates/tsz-solver`: 9
 - `scripts`: 6
 - `crates/tsz-cli`: 2
 - `crates/tsz-binder`: 1
@@ -22,9 +22,8 @@
 
 - [#4952](https://github.com/mohsen1/tsz/pull/4952) perf(docs): T0.4 attribution run + Tier 0 exit decision record: 11
 - [#5717](https://github.com/mohsen1/tsz/pull/5717) fix(emit): decorate system class exports: 5
-- [#5003](https://github.com/mohsen1/tsz/pull/5003) fix(checker): preserve unique symbol keys in keyof: 5
 - [#5089](https://github.com/mohsen1/tsz/pull/5089) fix(parser): guard u32/u16 conversion panics with better error messages: 4
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit `type X = any` aliases: 4
+- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
 - [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
 - [#4973](https://github.com/mohsen1/tsz/pull/4973) fix(checker): preserve object literal normalization diagnostics: 3
 - [#4992](https://github.com/mohsen1/tsz/pull/4992) fix(checker): harden explicit-any alias detection: 3
@@ -40,6 +39,7 @@
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
 - [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
 - [#5102](https://github.com/mohsen1/tsz/pull/5102) fix(parser): recover invalid arrow conditional tails: 2
+- [#4958](https://github.com/mohsen1/tsz/pull/4958) fix(parser): align reachability recovery diagnostics: 2
 
 ## Candidate Threads (Top 100 by score)
 
@@ -135,6 +135,8 @@
   - Same concern as the previous TS2322 test: asserting full message equality is likely to be brittle for TS2322 diagnostics. Prefer checking specific required substrings (e.g., that the source prints as an intersection a...
 - [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:26` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
   - This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform S...
+- [#5899](https://github.com/mohsen1/tsz/pull/5899) `crates/tsz-emitter/src/emitter/literals/core.rs:865` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
+  - `parse_test_source` takes `&str` and then immediately allocates via `source.to_string()`. In tests that already build a `String` (e.g. the joined `source` used later in this module), this introduces an extra clone/all...
 - [#5089](https://github.com/mohsen1/tsz/pull/5089) `crates/tsz-parser/src/parser/state.rs:265` score=2 reviewer=`copilot-pull-request-reviewer` reasons=action-language
   - As with the u32 helper, the phrase “must fit in u16::MAX” is awkward/ambiguous because `u16::MAX` is a single value. Consider “must be <= u16::MAX” and/or include the actual `value` that overflowed for easier debugging.
 - [#5102](https://github.com/mohsen1/tsz/pull/5102) `crates/tsz-parser/src/parser/state_declarations_exports.rs:2793` score=2 reviewer=`copilot-pull-request-reviewer` reasons=open-question,detailed-thread
@@ -199,16 +201,6 @@
   - `callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it’s invoked unconditionally, even when `depth !...
 - [#5001](https://github.com/mohsen1/tsz/pull/5001) `crates/tsz-solver/src/evaluation/evaluate.rs:1155` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `store_intermediate_application_display_alias` stores a *global* display_alias mapping from `instantiated` (an Application like `Inner<1>`) to `original_type_id` (e.g. `Outer<1>`). Because Application TypeIds are inte...
-- [#5003](https://github.com/mohsen1/tsz/pull/5003) `crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs:102` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `synthetic_property_name_atom_to_key_type` still treats any atom whose text starts with `__unique_` as a unique-symbol key. That defeats the goal of preserving user-authored/computed string keys like "__unique_1" in c...
-- [#5003](https://github.com/mohsen1/tsz/pull/5003) `crates/tsz-checker/src/types/interface_type.rs:265` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `is_symbol_named` is derived from `is_symbol_property_name`, which classifies computed names as symbol keys based on the *resolved name text* starting with `__unique_`. That will misclassify computed string keys like ...
-- [#5003](https://github.com/mohsen1/tsz/pull/5003) `crates/tsz-checker/src/types/interface_type.rs:301` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - Same issue for method signatures: using `is_symbol_property_name` (name-prefix based) can mark computed string keys that start with `__unique_` as symbol-named, reintroducing collisions with user-authored keys. `is_sy...
-- [#5003](https://github.com/mohsen1/tsz/pull/5003) `crates/tsz-checker/src/types/interface_type.rs:373` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - Same issue for accessors: `is_symbol_named` computed via `is_symbol_property_name` can incorrectly treat computed string keys like "__unique_1" as symbol-named due to the `__unique_` prefix check. Prefer checking the ...
-- [#5003](https://github.com/mohsen1/tsz/pull/5003) `crates/tsz-checker/src/state/type_resolution/symbol_types.rs:1148` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `precompute_symbol_named_computed_property_names` repeats the same declaration/member traversal and `get_type_of_node` work already done in `precompute_computed_property_names`. This adds an extra full pass over inter...
 - [#5004](https://github.com/mohsen1/tsz/pull/5004) `docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md:8` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The claim says there are "Five inline" perf-counter sites (and refers to "all five"), but the Sites list below enumerates 7 call sites. Please reconcile the count (either update the text to 7, or trim the list) to avo...
 - [#5009](https://github.com/mohsen1/tsz/pull/5009) `docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md:14` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -243,3 +235,11 @@
   - Variance lookup here bypasses the QueryDatabase variance cache that `check_application_variance_assignability` just consulted/populated (it only checks declared variances, then recomputes). Consider looking up `self.c...
 - [#5092](https://github.com/mohsen1/tsz/pull/5092) `crates/tsz-checker/src/lib.rs:434` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The `#[cfg(test)]` attribute is duplicated around this module inclusion. It’s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep ...
+- [#5094](https://github.com/mohsen1/tsz/pull/5094) `crates/tsz-parser/src/parser/state_declarations.rs:2943` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `consume_unknown_specifier_identifier_tail` stops when it detects `\u{...}` debris by consuming only `\` + `u` and leaving the parser positioned at `{`, relying on the caller to handle the rest of the braced escape. I...
+- [#5094](https://github.com/mohsen1/tsz/pull/5094) `crates/tsz-parser/src/parser/state.rs:170` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - New parser state (`current_specifier_recovered_braced_unicode_escape_debris`) is initialized in `new_with_language_version`, but `ParserState::reset()` doesn’t currently clear it. If a `ParserState` instance is reused...
+- [#5100](https://github.com/mohsen1/tsz/pull/5100) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:318` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `conditional_body_has_unresolved_computed_recursive_alias_ref` is now evaluated unconditionally for every type alias, even when `has_stable_recursive_ref` is false. This is an extra full AST walk compared to the previ...
+- [#5100](https://github.com/mohsen1/tsz/pull/5100) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:632` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - The new stability check only looks for identifiers in `type_parameter_scope` via `type_arg_nodes_contain_scoped_type_parameter_for_depth_check`, but `type_node_is_deferred_passthrough_for_depth_check` also treats encl...
