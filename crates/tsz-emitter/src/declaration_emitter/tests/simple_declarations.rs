@@ -5382,3 +5382,46 @@ function f2() {
         "Expected returned function expression signature to use attached @type JSDoc: {output}"
     );
 }
+
+#[test]
+fn test_js_reordered_accessor_comments_keep_backing_field_comment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const key = Symbol("key");
+
+export class C {
+    /**
+     * @protected
+     * @type {null | string}
+     */
+    [key] = null;
+
+    get value() {
+        return this[key];
+    }
+
+    /**
+     * @type {string}
+     */
+    set value(v) {
+        this[key] = v;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(" * @type {string}\n     */\n    set value(v: string | null);"),
+        "Expected setter to keep its own JSDoc and backing nullability: {output}"
+    );
+    assert!(
+        output.contains("get value(): string | null;"),
+        "Expected getter to reuse the setter/backing-field type: {output}"
+    );
+    assert!(
+        output.contains(
+            " * @protected\n     * @type {null | string}\n     */\n    protected [key]: null | string;"
+        ),
+        "Expected backing field JSDoc to stay attached to the deferred field: {output}"
+    );
+}
