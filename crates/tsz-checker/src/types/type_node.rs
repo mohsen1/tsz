@@ -15,8 +15,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-use tsz_solver::{TypeId, Visibility};
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -358,13 +359,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
+                    // Rest element (e.g., `...string[]` or `...T`)
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check_tuple_rest_type_node(wrapped.type_node, true);
-                        if let Some(spread_elements) = self.fixed_tuple_spread_elements(elem_type) {
-                            elements.extend(spread_elements);
-                            continue;
-                        }
-                        let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
+                        // Only track seen_rest for concrete array/tuple rest elements.
+                        // Variadic type parameter spreads (...T) don't count as "rest"
+                        // for TS1265/TS1266 purposes — they represent variadic tuples.
+                        let is_concrete_rest = self.is_array_or_tuple_type(elem_type)
                             || Self::ast_kind_is_obviously_array_or_tuple(
                                 self.ctx.arena,
                                 wrapped.type_node,
@@ -394,6 +395,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+                    // Named tuple element (e.g., `[x: number, y?: string, ...rest: boolean[]]`)
                     if let Some(data) = self.ctx.arena.get_named_tuple_member(elem_node) {
                         let elem_type =
                             self.check_tuple_rest_type_node(data.type_node, data.dot_dot_dot_token);
@@ -410,13 +412,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .map(|id_data| self.ctx.types.intern_string(&id_data.escaped_text));
 
                         if data.dot_dot_dot_token {
-                            if let Some(spread_elements) =
-                                self.fixed_tuple_spread_elements(elem_type)
-                            {
-                                elements.extend(spread_elements);
-                                continue;
-                            }
-                            let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
+                            let is_concrete_rest = self.is_array_or_tuple_type(elem_type)
                                 || Self::ast_kind_is_obviously_array_or_tuple(
                                     self.ctx.arena,
                                     data.type_node,
@@ -1823,8 +1819,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return false;
         }
-        self.get_property_name_resolved(name_idx)
-            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+
+        if self
+            .get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol."))
+        {
+            return true;
+        }
+
+        self.resolve_computed_property_symbol(computed.expression)
+            .is_some_and(|sym_id| self.symbol_refers_to_unique_symbol(sym_id))
     }
 
     fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
