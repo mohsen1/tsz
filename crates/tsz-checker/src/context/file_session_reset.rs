@@ -114,6 +114,20 @@ impl<'a> CheckerContext<'a> {
         self.daa_error_nodes.clear();
         self.deferred_ts2454_errors.clear();
         self.type_only_nodes.clear();
+        // Object-literal diagnostic elaboration state. All three
+        // fields are file-local: `property_diag_targets` and
+        // `contextual_targets` are `FxHashMap<NodeIndex, TypeId>`,
+        // and `partial_initializers` is a stack of in-progress
+        // object-literal initializers. Without clearing, the next
+        // file's TS2322/TS2345 elaboration loses the nested
+        // sub-messages ("Types of property 'X' are incompatible.")
+        // because the prior file's `contextual_targets` returns
+        // the wrong target type for the new file's identically-
+        // numbered nodes — observed as ~260 missing elaboration
+        // lines on monorepo-001 (#5643).
+        self.object_literal_tracking.property_diag_targets.clear();
+        self.object_literal_tracking.contextual_targets.clear();
+        self.object_literal_tracking.partial_initializers.clear();
         // `name_resolution_diagnostics.reported_nodes` holds the
         // `NodeIndex` set per file for TS2304/TS2552 dedup; clear it
         // alongside the counter.
