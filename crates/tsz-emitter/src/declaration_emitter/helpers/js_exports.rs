@@ -71,6 +71,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn js_commonjs_export_alias_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        if let Some(name) = self.js_commonjs_export_name_text(name_idx) {
+            return Some(name);
+        }
+
+        let name_node = self.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let literal = self.arena.get_literal(name_node)?;
+                let sanitized = crate::transforms::emit_utils::sanitize_module_name(&literal.text);
+                Some(format!("_{sanitized}"))
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::declaration_emitter) fn is_js_function_initializer(
         &self,
         node_idx: NodeIndex,
@@ -399,6 +417,52 @@ impl<'a> DeclarationEmitter<'a> {
         Some((lhs_access.name_or_argument, rhs))
     }
 
+    fn js_commonjs_named_export_alias_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let receiver_is_supported = self.is_exports_identifier_reference(receiver)
+            || self.is_module_exports_reference(receiver);
+        if !receiver_is_supported {
+            return None;
+        }
+        let export_name = self.js_commonjs_export_alias_name_text(lhs_access.name_or_argument)?;
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        Some((export_name, rhs))
+    }
+
     pub(in crate::declaration_emitter) fn js_anonymous_module_exports_named_members_initializer(
         &self,
         stmt_idx: NodeIndex,
@@ -636,12 +700,9 @@ impl<'a> DeclarationEmitter<'a> {
         let mut alias_map: FxHashMap<String, (String, Vec<NodeIndex>, usize)> =
             FxHashMap::default();
         for (order, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
-            if let Some((export_name_idx, rhs_idx)) =
-                self.js_commonjs_named_export_for_statement(stmt_idx)
+            if let Some((export_name, rhs_idx)) =
+                self.js_commonjs_named_export_alias_for_statement(stmt_idx)
             {
-                let Some(export_name) = self.js_commonjs_export_name_text(export_name_idx) else {
-                    continue;
-                };
                 let rhs_idx = self
                     .arena
                     .skip_parenthesized_and_assertions_and_comma(rhs_idx);
