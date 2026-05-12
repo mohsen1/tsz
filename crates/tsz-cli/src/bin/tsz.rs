@@ -64,7 +64,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
+fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     if let Some(locale_id) = args.locale.as_deref()
         && !locale::is_valid_locale_shape(locale_id)
     {
@@ -138,6 +138,19 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         println!("Version {TSC_VERSION}");
         println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
         std::process::exit(1);
+    }
+
+    // `tsz <dir>` should behave like `tsz --project <dir>` when no
+    // `--project` was supplied and the only positional arg is a directory.
+    // tsc treats this as a project root and loads the directory's
+    // tsconfig.json. Without this promotion we emit TS5112 ("tsconfig.json
+    // is present but will not be loaded …") because `<dir>` is classified
+    // as an explicit file input (#6002).
+    if args.project.is_none() && args.files.len() == 1 {
+        let candidate = cwd.join(&args.files[0]);
+        if candidate.is_dir() {
+            args.project = Some(args.files.remove(0));
+        }
     }
 
     // TS5042: Option 'project' cannot be mixed with source files on a command line.
