@@ -149,6 +149,33 @@ var x = a.foo().nonExistent;
 }
 
 #[test]
+fn class_expression_explicit_this_keeps_missing_property_diagnostic() {
+    let source = r#"
+const C = class C {
+    static getInstance() {
+        return new C();
+    }
+
+    method(this: C) {
+        return this.missing;
+    }
+};
+
+C.getInstance().method();
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected exactly one TS2339 for `this.missing` in class-expression method, got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Explicit `this: C` in class expressions should still report missing members, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_generic_this_index_assignment_in_class_method_has_no_false_ts2322() {
     let source = r#"
 class C1 {

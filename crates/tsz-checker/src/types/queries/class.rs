@@ -1782,7 +1782,10 @@ impl<'a> CheckerState<'a> {
                 if refers_to_current_class && !is_static {
                     // For instance methods with `this: CurrentClass`, use the cached instance type
                     // This ensures we get the fully-constructed class type with all properties
-                    if let Some(cached) = cached_instance_this {
+                    if let Some(cached) = cached_instance_this
+                        && cached != TypeId::ANY
+                        && cached != TypeId::ERROR
+                    {
                         return Some(cached);
                     }
                     if let Some(node) = self.ctx.arena.get(class_idx)
