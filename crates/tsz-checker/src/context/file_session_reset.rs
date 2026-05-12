@@ -301,6 +301,27 @@ impl<'a> CheckerContext<'a> {
         // the wrong file's symbol.
         self.symbol_to_def.borrow_mut().clear();
         self.def_to_symbol.borrow_mut().clear();
+        // String-keyed caches whose **values** carry per-file `SymbolId`
+        // or `DefId` references. The keys are program-stable identifier
+        // names (`"Leaf5"`, `"Promise"`), which made them look safe at
+        // first glance — but a String key with file-local values is
+        // still file-local in effect. Carrying entries across a
+        // `switch_to_file` makes `lookup_by_name("Leaf5")` return the
+        // prior file's binder SymbolIds, which decode against the new
+        // file's binder as unrelated symbols.
+        //
+        // This was the source of the residual TS2820 divergence in
+        // `#5643` after `#5683`'s SymbolId-keyed clears: monorepo-001
+        // emitted spelling suggestions like `"leaf-5" is not assignable
+        // to "leaf-4"` (flag-off) vs. `"leaf-4" → "leaf-2"` (flag-on)
+        // at the same source position — the inferred *target type*
+        // differed because `Leaf5` resolved through stale cached
+        // SymbolIds to a different file's interface shape.
+        self.symbol_name_candidates_cache.borrow_mut().clear();
+        self.lowering_entity_name_resolution_cache
+            .borrow_mut()
+            .clear();
+        self.namespace_exports_cache.borrow_mut().clear();
         // `def_type_params` and `def_no_type_params` are keyed by
         // globally-stable `DefId`. The values are program-stable
         // type-param info (interned `Atom` names, solver `TypeId`
