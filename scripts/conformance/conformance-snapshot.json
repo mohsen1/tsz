@@ -1,24 +1,31 @@
 {
-  "timestamp": "2026-05-12T09:27:02Z",
-  "git_sha": "03945eb01462046166a690c055b35a7f24e7e994",
+  "timestamp": "2026-05-12T15:05:44Z",
+  "git_sha": "117bb55a4c11a0544e76c4b0ecdd844300bac9d0",
   "summary": {
     "total_tests": 12582,
-    "passed": 12580,
-    "failed": 2,
+    "passed": 12576,
+    "failed": 6,
     "pass_rate": 100.0
   },
   "areas_by_pass_rate": [
     {
-      "area": "classes",
-      "total": 16,
-      "passed": 15,
+      "area": "types/literal",
+      "total": 44,
+      "passed": 42,
+      "failed": 2,
+      "pass_rate": 95.45
+    },
+    {
+      "area": "types/tuple",
+      "total": 34,
+      "passed": 33,
       "failed": 1,
-      "pass_rate": 93.75
+      "pass_rate": 97.06
     },
     {
       "area": "compiler",
-      "total": 6520,
-      "passed": 6519,
+      "total": 6519,
+      "passed": 6518,
       "failed": 1,
       "pass_rate": 99.98
     },
@@ -47,6 +54,13 @@
       "area": "async/es6",
       "total": 66,
       "passed": 66,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    {
+      "area": "classes",
+      "total": 16,
+      "passed": 16,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -604,13 +618,6 @@
       "pass_rate": 100.0
     },
     {
-      "area": "types/literal",
-      "total": 44,
-      "passed": 44,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
       "area": "types/mapped",
       "total": 26,
       "passed": 26,
@@ -681,13 +688,6 @@
       "pass_rate": 100.0
     },
     {
-      "area": "types/tuple",
-      "total": 34,
-      "passed": 34,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
       "area": "types/typeAliases",
       "total": 15,
       "passed": 15,
@@ -720,16 +720,26 @@
   "not_implemented_codes": [],
   "partial_codes": [],
   "one_missing_zero_extra": [],
-  "one_extra_zero_missing": [],
+  "one_extra_zero_missing": [
+    {
+      "code": "TS2309",
+      "count": 1
+    }
+  ],
   "false_positive_codes": [],
   "top_missing_codes": [],
-  "top_extra_codes": [],
+  "top_extra_codes": [
+    {
+      "code": "TS2309",
+      "count": 1
+    }
+  ],
   "categories": {
     "false_positive": 0,
     "all_missing": 0,
-    "wrong_code": 0,
-    "fingerprint_only": 2,
+    "wrong_code": 1,
+    "fingerprint_only": 4,
     "same_code_count_drift": 0,
-    "close_to_passing": 0
+    "close_to_passing": 1
   }
 }
