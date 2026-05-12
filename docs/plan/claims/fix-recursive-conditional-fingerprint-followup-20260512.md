@@ -1,0 +1,38 @@
+# fix(checker): align recursive conditional fingerprint drift
+
+- **Date**: 2026-05-12
+- **Branch**: `fix/recursive-conditional-fingerprint-followup-20260512`
+- **Base**: `main`
+- **PR**: TBD
+- **Status**: claim
+- **Issue**: #5579
+- **Workstream**: conformance
+
+## Intent
+
+Close the reopened `recursiveConditionalTypes.ts` fingerprint-only drift. The
+previous recursive conditional slice made the test pass at the time, but the
+issue was reopened because current `main` still emits the expected diagnostic
+codes with mismatched line, column, or message fingerprints.
+
+## Scope
+
+- Reproduce the current focused conformance delta for
+  `recursiveConditionalTypes`.
+- Fix the smallest checker/solver diagnostic-boundary root cause needed to
+  align fingerprints without changing unrelated recursive conditional
+  semantics.
+- Add or update focused regression coverage in the owning crate when the root
+  cause is isolated.
+
+## Verification Plan
+
+- `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`
+- Focused Rust regression test for the touched checker or solver path
+- `cargo fmt --all`
+- Broader checker/solver validation if the fix changes shared conditional,
+  tuple, indexed-access, or diagnostic display behavior
+
+## Progress
+
+- Claim created.
