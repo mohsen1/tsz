@@ -230,11 +230,11 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .map(|symbol| symbol.value_declaration)
-            .filter(|decl_idx| !decl_idx.is_none())
+            .filter(|decl_idx| decl_idx.is_some())
             .filter(|&decl_idx| self.ctx.arena.is_const_variable_declaration(decl_idx))
             .and_then(|decl_idx| self.ctx.arena.get(decl_idx))
             .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
-            .and_then(|decl| (!decl.initializer.is_none()).then_some(decl.initializer))
+            .and_then(|decl| decl.initializer.is_some().then_some(decl.initializer))
             .map(|initializer| {
                 self.estimate_array_literal_length(initializer, value_stack, depth + 1)
             })
