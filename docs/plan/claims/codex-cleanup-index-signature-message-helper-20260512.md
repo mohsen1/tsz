@@ -4,8 +4,8 @@
 - **Branch**: `codex/cleanup-index-signature-message-helper-20260512`
 - **Base**: `origin/main`
 - **Issue**: n/a
-- **PR**: tbd
-- **Status**: claim
+- **PR**: [#5965](https://github.com/mohsen1/tsz/pull/5965)
+- **Status**: ready
 - **Labels**: `DRY`, `checker-tests`
 
 ## Intent
