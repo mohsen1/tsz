@@ -206,6 +206,10 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
 
+        if Self::jsdoc_generic_name_like_type_reference(expr) {
+            return true;
+        }
+
         let Some(rest) = expr
             .strip_prefix("import(\"")
             .or_else(|| expr.strip_prefix("import('"))
@@ -229,6 +233,60 @@ impl<'a> DeclarationEmitter<'a> {
             && member_path
                 .chars()
                 .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+    }
+
+    fn jsdoc_generic_name_like_type_reference(expr: &str) -> bool {
+        let Some(open) = expr.find('<') else {
+            return false;
+        };
+        if !expr.ends_with('>') {
+            return false;
+        }
+
+        let base = expr[..open].trim();
+        if base.is_empty()
+            || !base
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+        {
+            return false;
+        }
+
+        let args = expr[open + 1..expr.len() - 1].trim();
+        !args.is_empty()
+            && args.chars().all(|ch| {
+                ch == '_'
+                    || ch == '$'
+                    || ch == '.'
+                    || ch == ','
+                    || ch == '<'
+                    || ch == '>'
+                    || ch == '['
+                    || ch == ']'
+                    || ch == ' '
+                    || ch == '\t'
+                    || ch == '\''
+                    || ch == '"'
+                    || ch.is_ascii_alphanumeric()
+            })
+            && Self::jsdoc_angle_brackets_are_balanced(args)
+    }
+
+    fn jsdoc_angle_brackets_are_balanced(text: &str) -> bool {
+        let mut depth = 0usize;
+        for ch in text.chars() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+        }
+        depth == 0
     }
 
     pub(crate) fn jsdoc_name_like_type_expr_for_pos(&self, pos: u32) -> Option<String> {
@@ -1138,7 +1196,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            let mut rest = rest.trim();
+            let mut rest = Self::trim_jsdoc_same_line_following_tags(rest.trim());
             if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
                 && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
             {
@@ -1170,6 +1228,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         params
+    }
+
+    fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
+        text.find(" @")
+            .map(|idx| text[..idx].trim_end())
+            .unwrap_or(text)
     }
 
     /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
