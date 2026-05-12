@@ -1110,7 +1110,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(import_name) = self.canonical_named_import_name_for_alias(specifier.name) else {
             return false;
         };
-        let Some(&canonical_sym_id) = self.import_name_map.get(&import_name) else {
+        let Some(&canonical_sym_id) = self.import_name_map.get(import_name) else {
             return false;
         };
 
@@ -1120,7 +1120,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn canonical_named_import_name_for_alias(
         &self,
         name_idx: NodeIndex,
-    ) -> Option<String> {
+    ) -> Option<&str> {
         let binder = self.binder?;
         let name_node = self.arena.get(name_idx)?;
         let ident = self.arena.get_identifier(name_node)?;
@@ -1153,7 +1153,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        Some(import_name.to_string())
+        Some(import_name)
     }
 
     fn import_alias_has_sibling_canonical_specifier(

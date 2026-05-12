@@ -130,6 +130,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(canonical_name) =
                         self.canonical_named_import_name_for_alias(node_idx)
                     {
+                        let canonical_name = canonical_name.to_owned();
                         self.write(&canonical_name);
                     } else {
                         self.write(&ident.escaped_text);
