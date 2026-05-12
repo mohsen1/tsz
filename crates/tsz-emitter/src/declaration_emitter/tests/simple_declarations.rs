@@ -2087,6 +2087,25 @@ var local = 123;
 }
 
 #[test]
+fn test_js_esm_syntax_ignores_commonjs_named_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const x = 0;
+module.exports.y = 0;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 0;"),
+        "Expected native ESM export to remain: {output}"
+    );
+    assert!(
+        !output.contains("export const y:"),
+        "Did not expect CommonJS assignment to become a named export in an ESM JS file: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_marks_same_name_function_exported() {
     let output = emit_js_dts(
         r#"
