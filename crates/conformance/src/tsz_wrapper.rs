@@ -1139,8 +1139,6 @@ const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
     "link",
     "noTypesAndSymbols",
     "fullEmitPaths",
-    "noCheck",
-    "nocheck",
     "reportDiagnostics",
     "captureSuggestions",
     "typeScriptVersion",
