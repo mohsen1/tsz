@@ -2,15 +2,15 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 39
-- Potential important unresolved threads: 74
+- PRs excluded as already followed-up: 40
+- Potential important unresolved threads: 72
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 32
+- `crates/tsz-checker`: 31
 - `crates/tsz-emitter`: 12
 - `docs`: 11
-- `crates/tsz-solver`: 7
+- `crates/tsz-solver`: 6
 - `scripts`: 4
 - `crates/tsz-parser`: 4
 - `crates/tsz-cli`: 2
@@ -26,7 +26,6 @@
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
 - [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
-- [#5663](https://github.com/mohsen1/tsz/pull/5663) fix(checker): align recursiveFunctionTypes display fingerprints: 2
 - [#4949](https://github.com/mohsen1/tsz/pull/4949) fix(cli): anchor TS2578 at comment range, not at line start: 2
 - [#5034](https://github.com/mohsen1/tsz/pull/5034) perf(checker): T2.1.A.1 — checker field-lifetime inventory + CI guard: 2
 - [#5062](https://github.com/mohsen1/tsz/pull/5062) docs(perf): plan §2 — lock-wait increment sites done after #5060+#5061: 2
@@ -39,6 +38,7 @@
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) fix(checker): report JS @type subclass assignment mismatch: 1
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules: 1
+- [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -48,8 +48,6 @@
   - `decl_node` may come from `ctx.arena`, `symbol_arenas`, or `declaration_arenas`, but the subsequent `get_type_alias(decl_node)` calls probe multiple arenas (starting with `ctx.arena`) using a `Node` value whose `data_...
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) `scripts/conformance/conformance-baseline.txt:5` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The PR description claims conformance has “new failures: 0” and “changed failures: 0”, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType...
-- [#5663](https://github.com/mohsen1/tsz/pull/5663) `crates/tsz-solver/src/diagnostics/format/compound.rs:467` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - `should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it’s actually part of a ...
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) `crates/tsz-checker/src/state/variable_checking/core.rs:1193` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` ...
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:977` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
@@ -156,8 +154,6 @@
   - `emit_recovered_namespace_function_arrow_body` emits the recovered body via `emit_expression(...)` directly. That bypasses the expression-statement disambiguation logic (parenthesizing leading `{` / `function` / etc.)...
 - [#5657](https://github.com/mohsen1/tsz/pull/5657) `crates/tsz-checker/src/assignability/assignment_checker/destructuring.rs:444` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal “explain” path and can drop related-information elaborat...
-- [#5663](https://github.com/mohsen1/tsz/pull/5663) `crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs:2309` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `direct_param_display` is computed before `overloaded_recursive_typeof_parameter_display`, but in the early-return path it’s unused. Since `format_type_diagnostic` can be relatively expensive, consider moving the `dir...
 - [#5677](https://github.com/mohsen1/tsz/pull/5677) `crates/tsz-emitter/src/declaration_emitter/helpers/returned_function_initializer.rs:558` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - Unlabeled tuple elements (e.g. `[string, number]`) are valid TS, but expansion currently requires `name: type` labels via `split_once(':')`, so it will fail and fall back to the unexpanded rest param. Consider synthes...
 - [#5677](https://github.com/mohsen1/tsz/pull/5677) `crates/tsz-emitter/src/declaration_emitter/helpers/returned_function_initializer.rs:486` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

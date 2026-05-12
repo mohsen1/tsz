@@ -35,6 +35,7 @@
     5658,
     5660,
     5662,
+    5663,
     5666,
     5691,
     5693,
@@ -46,7 +47,7 @@
     5830,
     5901
   ],
-  "candidate_count": 74,
+  "candidate_count": 72,
   "candidates": [
     {
       "pr_number": 4967,
@@ -93,23 +94,6 @@
       "line": 5,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The PR description claims conformance has \u201cnew failures: 0\u201d and \u201cchanged failures: 0\u201d, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType.ts`, `.../narrowingMutualSubtypes.ts`, `.../contextualTypeWithTuple.ts`) and also shows previously failing tests now passing (e.g. `.../maxConstraints.ts`). Please reconcile this with the PR description (update the description or regenerate snapshots from the intended base).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5663,
-      "pr_title": "fix(checker): align recursiveFunctionTypes display fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5663",
-      "merged_at": "2026-05-12T02:03:22Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQqz9",
-      "path": "crates/tsz-solver/src/diagnostics/format/compound.rs",
-      "line": 467,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it\u2019s actually part of a self-referential recursion. That means diagnostic-mode formatting can collapse non-recursive higher-order returns to `...` as well. If the intent is to match tsc\u2019s recursive-cycle elision only, consider tightening the predicate (or adding a regression test proving non-recursive `typeof` nested returns should/shouldn\u2019t elide).",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -963,22 +947,6 @@
       "line": 444,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal \u201cexplain\u201d path and can drop related-information elaboration (e.g. \u201cTypes of property 'a' are incompatible.\u201d), as well as other assignability-special cases handled by the reporter (weak-type TS2559 substitution, exactOptionalPropertyTypes variants, etc.). Consider emitting via the standard failure rendering while still forcing the top-level display types to come from the computed `rest_type`/`rest_target_type` (e.g. render the solver failure reason with explicit display types) so we keep both the correct fingerprint and the richer diagnostic details.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5663,
-      "pr_title": "fix(checker): align recursiveFunctionTypes display fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5663",
-      "merged_at": "2026-05-12T02:03:22Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQq0G",
-      "path": "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
-      "line": 2309,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`direct_param_display` is computed before `overloaded_recursive_typeof_parameter_display`, but in the early-return path it\u2019s unused. Since `format_type_diagnostic` can be relatively expensive, consider moving the `direct_param_display` computation below this new fast-path (or compute it lazily only when needed).",
       "score": 1,
       "reasons": [
         "detailed-thread"

@@ -2302,8 +2302,6 @@ impl<'a> CheckerState<'a> {
         arg_type: TypeId,
         arg_idx: NodeIndex,
     ) -> String {
-        let direct_param_display = self.format_type_diagnostic(param_type);
-
         if let Some(display) = self.overloaded_recursive_typeof_parameter_display(param_type) {
             return display;
         }
@@ -2326,6 +2324,7 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        let direct_param_display = self.format_type_diagnostic(param_type);
         if let Some(display) = self.contextual_generic_call_parameter_display(param_type, arg_idx)
             && (!display.starts_with('{') || direct_param_display.starts_with('{'))
         {
