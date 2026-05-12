@@ -1864,8 +1864,28 @@ impl<'a> Printer<'a> {
                                 } else {
                                     None
                                 };
-                            let export_names =
-                                recovered_anonymous_default_class_name.clone().map_or_else(
+                            let recovered_anonymous_default_function_name =
+                                if inner_kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                                    self.arena.get_function_at(inner_idx).and_then(|func| {
+                                        if func.name.is_none()
+                                            && (export.is_default_export
+                                                || self.arena.has_modifier(
+                                                    &func.modifiers,
+                                                    SyntaxKind::DefaultKeyword,
+                                                ))
+                                        {
+                                            Some(self.next_anonymous_default_export_name())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                } else {
+                                    None
+                                };
+                            let export_names = recovered_anonymous_default_class_name
+                                .clone()
+                                .or_else(|| recovered_anonymous_default_function_name.clone())
+                                .map_or_else(
                                     || self.get_export_names_from_clause(inner_idx),
                                     |name| vec![name],
                                 );
@@ -1892,6 +1912,9 @@ impl<'a> Printer<'a> {
                                 self.anonymous_default_export_name = Some(name.clone());
                             }
                             self.in_namespace_iife = true;
+                            if recovered_anonymous_default_function_name.is_some() {
+                                self.write("default ");
+                            }
                             self.emit(inner_idx);
                             self.in_namespace_iife = prev;
                             if recovered_anonymous_default_class_name.is_some() {
