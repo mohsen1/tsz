@@ -686,6 +686,17 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             sym_id
+        } else if let Some(sym_id) =
+            self.resolve_identifier_symbol_from_all_binders(base_name, |_, symbol| {
+                (symbol.flags
+                    & (symbol_flags::TYPE_ALIAS
+                        | symbol_flags::CLASS
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::ENUM))
+                    != 0
+            })
+        {
+            sym_id
         } else {
             let symbols = self.ctx.binder.get_symbols();
             symbols

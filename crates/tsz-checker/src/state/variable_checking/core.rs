@@ -1154,7 +1154,7 @@ impl<'a> CheckerState<'a> {
                             .node_types
                             .insert(var_decl.initializer.0, init_type);
                     }
-                    let (init_type_for_relation, remapped_mapped_initializer) = if checker
+                    let (mut init_type_for_relation, remapped_mapped_initializer) = if checker
                         .ctx
                         .arena
                         .get(var_decl.initializer)
@@ -1176,6 +1176,23 @@ impl<'a> CheckerState<'a> {
                     } else {
                         (checker.resolve_lazy_type(init_type), false)
                     };
+                    let jsdoc_new_expression_relation = jsdoc_declared_type.is_some()
+                        && var_decl.type_annotation.is_none()
+                        && checker
+                            .ctx
+                            .arena
+                            .get(var_decl.initializer)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION);
+                    if jsdoc_new_expression_relation {
+                        let raw_init_snap = checker.ctx.snapshot_diagnostics();
+                        checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
+                        let raw_init_type = checker.get_type_of_node_with_request(
+                            var_decl.initializer,
+                            &TypingRequest::NONE,
+                        );
+                        checker.ctx.rollback_diagnostics(&raw_init_snap);
+                        init_type_for_relation = checker.resolve_lazy_type(raw_init_type);
+                    }
                     if let Some(branch_ranges) = conditional_branch_ranges {
                         // Preserve non-assignability diagnostics from the branch expressions
                         // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
@@ -1405,7 +1422,18 @@ impl<'a> CheckerState<'a> {
                                             // assigned to a concrete callable target.
                                             // (e.g., (cb: (x: string, ...rest: T) => void) => void
                                             //   vs (cb: (...args: never) => void) => void)
-                                            if !checker
+                                            if jsdoc_new_expression_relation
+                                                && !checker.is_assignable_to(
+                                                    checked_init_type,
+                                                    declared_type,
+                                                )
+                                            {
+                                                checker.error_type_not_assignable_generic_at(
+                                                    checked_init_type,
+                                                    declared_type,
+                                                    decl_idx,
+                                                );
+                                            } else if !checker
                                                 .type_contains_invalid_mapped_key_type(declared_type)
                                             {
                                                 checker.ctx.skip_callable_type_param_suppression.set(true);
