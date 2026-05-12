@@ -1994,6 +1994,62 @@ impl<'a> CheckerState<'a> {
             self.ctx.resolve_import_target(module_name)
         }?;
         let arena = self.ctx.get_arena_for_file(target_idx as u32);
-        self.local_named_export_alias_for_import(arena, import_name)
+        let renamed = self.local_named_export_alias_for_import(arena, import_name)?;
+
+        // When the target module also re-exports `import_name` via `export * from "..."`,
+        // the original name is a valid export alongside the renamed alias. Suppress TS2460
+        // in that case — both names are valid import targets, matching tsc behaviour.
+        if self.is_exported_via_wildcard_reexport(target_idx, import_name) {
+            return None;
+        }
+
+        Some(renamed)
+    }
+
+    /// Returns true when any `export * from "..."` in the file at `file_idx` directly
+    /// exports `export_name` (checked one level deep, i.e. the immediate star sources).
+    fn is_exported_via_wildcard_reexport(&self, file_idx: usize, export_name: &str) -> bool {
+        let Some(file_binder) = self.ctx.get_binder_for_file(file_idx) else {
+            return false;
+        };
+        let file_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(file_name) = file_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.as_str())
+        else {
+            return false;
+        };
+        let Some(wildcard_sources) = self.ctx.wildcard_reexports_for_file(file_binder, file_name)
+        else {
+            return false;
+        };
+        for source_module in wildcard_sources {
+            let Some(source_idx) = self
+                .ctx
+                .resolve_import_target_from_file(file_idx, source_module)
+            else {
+                continue;
+            };
+            let Some(source_binder) = self.ctx.get_binder_for_file(source_idx) else {
+                continue;
+            };
+            let source_arena = self.ctx.get_arena_for_file(source_idx as u32);
+            let Some(source_file_name) = source_arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str())
+            else {
+                continue;
+            };
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(source_binder, source_file_name)
+                && exports.has(export_name)
+            {
+                return true;
+            }
+        }
+        false
     }
 }
