@@ -2004,8 +2004,12 @@ impl<'a> DeclarationEmitter<'a> {
 
                 // Emit all regular declarations together on one line
                 if !regular_decls.is_empty() {
+                    let suppress_namespace_proto_export = self.inside_non_ambient_namespace
+                        && regular_decls.iter().all(|(_, decl)| {
+                            self.get_identifier_text(decl.name).as_deref() == Some("__proto__")
+                        });
                     self.write_indent();
-                    if self.should_emit_export_keyword() {
+                    if self.should_emit_export_keyword() && !suppress_namespace_proto_export {
                         self.write("export ");
                     }
                     if self.should_emit_declare_keyword(true) {

@@ -2682,6 +2682,57 @@ Point2D.prototype = {
 }
 
 #[test]
+fn test_namespace_exported_proto_var_suppresses_private_interface_merge() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace m1 {
+    export var __proto__;
+    interface __proto__ {}
+
+    class C<T extends { __proto__: __proto__ }> { }
+}
+__proto__ = 0;
+m1.__proto__ = 0;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace m1 {\n    var __proto__: any;\n}"),
+        "Expected exported __proto__ var to stay as the namespace surface: {output}"
+    );
+    assert!(
+        !output.contains("interface __proto__"),
+        "Private merged __proto__ interface should not leak into the namespace d.ts: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Skipping the private interface should also avoid a namespace scope marker: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_exported_proto_interface_is_public_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace m1 {
+    export interface __proto__ {
+        value: string;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("interface __proto__"),
+        "Expected exported __proto__ interface to stay in namespace d.ts: {output}"
+    );
+    assert!(
+        output.contains("value: string;"),
+        "Expected exported __proto__ interface members to stay in namespace d.ts: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_getter_before_setter_preserves_both_accessors() {
     let output = emit_js_dts(
         r#"

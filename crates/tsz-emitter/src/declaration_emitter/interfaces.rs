@@ -30,6 +30,9 @@ impl<'a> DeclarationEmitter<'a> {
         if self.should_skip_ns_internal_member(&iface.modifiers, Some(iface_idx)) {
             return;
         }
+        if self.should_skip_namespace_proto_interface_merge(iface.name, is_exported) {
+            return;
+        }
 
         self.write_indent();
         if is_exported && self.should_emit_export_keyword() {
@@ -73,6 +76,16 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+    }
+
+    fn should_skip_namespace_proto_interface_merge(
+        &self,
+        name_idx: NodeIndex,
+        is_exported: bool,
+    ) -> bool {
+        self.inside_non_ambient_namespace
+            && !is_exported
+            && self.get_identifier_text(name_idx).as_deref() == Some("__proto__")
     }
 
     pub(crate) fn emit_interface_member(&mut self, member_idx: NodeIndex) {
