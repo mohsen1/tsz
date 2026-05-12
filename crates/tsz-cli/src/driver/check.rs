@@ -1073,24 +1073,13 @@ pub(super) fn collect_diagnostics(
         } else if !program.declared_modules.is_empty()
             || !program.shorthand_ambient_modules.is_empty()
         {
-            let mut exact: FxHashSet<String> = FxHashSet::default();
-            let mut patterns: Vec<String> = Vec::new();
-            for name in program
-                .declared_modules
-                .iter()
-                .chain(program.shorthand_ambient_modules.iter())
-            {
-                let normalized = name.trim_matches('"').trim_matches('\'');
-                if normalized.contains('*') {
-                    patterns.push(normalized.to_string());
-                } else {
-                    exact.insert(normalized.to_string());
-                }
-            }
-            patterns.sort();
-            patterns.dedup();
             Some(Arc::new(
-                tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                tsz::checker::context::GlobalDeclaredModules::from_module_names(
+                    program
+                        .declared_modules
+                        .iter()
+                        .chain(program.shorthand_ambient_modules.iter()),
+                ),
             ))
         } else {
             None
