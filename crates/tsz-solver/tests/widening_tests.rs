@@ -247,6 +247,113 @@ fn test_widen_readonly_property_preserved() {
     ));
 }
 
+#[test]
+fn test_widen_readonly_nested_object_widens_inner_literals() {
+    // `class C { readonly nested = { p: 1 } }`-style shape: the outer
+    // `nested` is readonly, but tsc widens the INNER `p: 1` to `number`.
+    // The readonly modifier only preserves primitive literals on its
+    // direct value, not literals nested inside compound types.
+    let interner = TypeInterner::new();
+    let inner_props = vec![PropertyInfo {
+        name: interner.intern_string("p"),
+        type_id: interner.literal_number(1.0),
+        write_type: interner.literal_number(1.0),
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }];
+    let inner_obj = interner.object(inner_props);
+
+    let outer_props = vec![PropertyInfo {
+        name: interner.intern_string("nested"),
+        type_id: inner_obj,
+        write_type: inner_obj,
+        optional: false,
+        readonly: true,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }];
+    let outer_obj = interner.object(outer_props);
+
+    let widened = widen_type(&interner, outer_obj);
+    let outer_shape = match interner.lookup(widened).unwrap() {
+        TypeData::Object(id) | TypeData::ObjectWithIndex(id) => interner.object_shape(id),
+        _ => panic!("Expected outer object"),
+    };
+    assert_eq!(outer_shape.properties.len(), 1);
+    assert!(
+        outer_shape.properties[0].readonly,
+        "outer 'nested' should still be readonly"
+    );
+    let inner_shape = match interner.lookup(outer_shape.properties[0].type_id).unwrap() {
+        TypeData::Object(id) | TypeData::ObjectWithIndex(id) => interner.object_shape(id),
+        _ => panic!("Expected inner object even on readonly parent"),
+    };
+    assert_eq!(
+        inner_shape.properties[0].type_id,
+        TypeId::NUMBER,
+        "inner 'p' must widen to number even when its parent property is readonly"
+    );
+}
+
+#[test]
+fn test_widen_readonly_array_widens_element_type() {
+    // `class C { readonly arr = [1, 2, 3] }`-style: the inner element
+    // literals widen even though the outer property is readonly.
+    let interner = TypeInterner::new();
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let lit3 = interner.literal_number(3.0);
+    let union = interner.union(vec![lit1, lit2, lit3]);
+    let arr = interner.intern(TypeData::Array(union));
+
+    let outer_props = vec![PropertyInfo {
+        name: interner.intern_string("arr"),
+        type_id: arr,
+        write_type: arr,
+        optional: false,
+        readonly: true,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }];
+    let outer_obj = interner.object(outer_props);
+
+    let widened = widen_type(&interner, outer_obj);
+    let outer_shape = match interner.lookup(widened).unwrap() {
+        TypeData::Object(id) | TypeData::ObjectWithIndex(id) => interner.object_shape(id),
+        _ => panic!("Expected outer object"),
+    };
+    assert!(outer_shape.properties[0].readonly);
+    let elem = match interner.lookup(outer_shape.properties[0].type_id).unwrap() {
+        TypeData::Array(e) => e,
+        _ => panic!("Expected array on readonly property"),
+    };
+    assert_eq!(
+        elem,
+        TypeId::NUMBER,
+        "array element widens to number even when the array property is readonly"
+    );
+}
+
 // ============================================================================
 // Additional widening helper coverage
 //
