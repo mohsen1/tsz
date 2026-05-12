@@ -57,3 +57,8 @@ Verification:
 - `cargo test -p tsz-checker --lib yield_star_return_type_tests::yield_star_allows_unknown_containing_next_type -- --nocapture` -> passed.
 - `cargo test -p tsz-checker --lib ts7030_undefined_union_return_tests -- --nocapture` -> 4 passed.
 - `cargo fmt --all -- --check` -> passed.
+- Integrated #6095's loop recheck unit unblocker into this branch so the
+  conformance restore can clear the shared unit gate as well.
+- `cargo test -p tsz-checker --test conformance_issues errors::private_members::test_loop_assignment_rechecks_property_access_rhs_after_fixed_point -- --exact --nocapture` -> passed.
+- `cargo test -p tsz-checker --test in_chain_narrows_unconstrained_type_param_tests -- --nocapture` -> 14 passed.
+- `scripts/conformance/conformance.sh run --filter valuesMergingAcrossModules` -> 1/1 passed.

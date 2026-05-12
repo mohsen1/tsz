@@ -167,13 +167,15 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // Mark any/unknown narrowed nodes so `get_type_of_node` won't apply a
-        // second round of flow narrowing to the narrowed result. Replaying the
-        // same condition over an already-refined unknown can over-narrow, e.g.
-        // `unknown` -> `object & Record<"foo", unknown>` -> `never` for an
-        // `in`-operator condition. Other declared types still need the second
-        // pass for loop fixed-point rechecks.
-        if matches!(declared_type, TypeId::ANY | TypeId::UNKNOWN)
+        // Mark cases where reapplying flow narrowing to the narrowed result is
+        // not stable. `any` has special narrowing semantics, and unknown/generic
+        // receivers narrowed by `in` can collapse to `never` if the same
+        // predicate is replayed over `object & Record<K, unknown>`. Keep
+        // concrete declared unions replayable so loop fixed-point rechecks can
+        // observe stabilized back-edge types.
+        if (declared_type == TypeId::ANY
+            || declared_type == TypeId::UNKNOWN
+            || generic_narrowing_shape)
             && narrowed_type != declared_type
             && narrowed_type != TypeId::ERROR
         {
