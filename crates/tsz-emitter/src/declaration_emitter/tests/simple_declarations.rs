@@ -948,6 +948,25 @@ const test = dibbity => dibbity
 }
 
 #[test]
+fn test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @type {Array.<number>} */
+const values = [];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const values: Array<number>;"),
+        "Expected legacy JSDoc dot-generic form to normalize to standard generic syntax: {output}"
+    );
+    assert!(
+        !output.contains(": Array.<number>;"),
+        "Did not expect invalid legacy dot-generic syntax in emitted type annotation: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -3154,6 +3173,29 @@ export class Factory {
     assert!(
         output.contains("static create<T>(value: T): T;"),
         "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_property_type_resolves_semicolon_typedef_alias() {
+    let output = emit_js_dts(
+        r#"
+export class Box {
+    /** @typedef {{ id: string }} Prop */
+    ;
+    /** @type {Prop} */
+    value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value: { id: string };"),
+        "Expected class property JSDoc @type alias to resolve from nearby semicolon-only typedef: {output}"
+    );
+    assert!(
+        !output.contains("value: Prop;"),
+        "Expected class property type to emit resolved typedef body, not unresolved alias name: {output}"
     );
 }
 

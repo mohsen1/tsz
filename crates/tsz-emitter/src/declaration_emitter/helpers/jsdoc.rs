@@ -248,6 +248,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let base = expr[..open].trim();
         if base.is_empty()
+            || base.ends_with('.')
             || !base
                 .chars()
                 .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
@@ -472,7 +473,8 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
-        let trimmed = type_expr.trim();
+        let normalized_legacy_generics = type_expr.trim().replace(".<", "<");
+        let trimmed = normalized_legacy_generics.as_str();
         if trimmed.is_empty() {
             return "any".to_string();
         }
