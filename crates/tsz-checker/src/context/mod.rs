@@ -40,7 +40,12 @@ mod strict_mode;
 mod symbol_file_targets;
 pub mod typing_request;
 pub use aliases::*;
-pub use lifetime_scopes::{FileSession, WorkerContext};
+// NOTE: `lifetime_scopes` is a stillborn parallel of `lifetime_shells` (see
+// PR #6022, merged as `[WIP]`). Its `FileSession` / `WorkerContext` collide
+// with the canonical types re-exported above and broke the wasm build with
+// E0252 (`WorkerContext` reimported here). Leave the module declared (its
+// internal self-test exercises the `WorkerContext` re-exported above) but
+// do not re-export the duplicates from here.
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
