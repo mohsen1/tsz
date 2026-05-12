@@ -205,11 +205,14 @@ impl<'a> CheckerState<'a> {
         segments: &[String],
     ) -> String {
         let display_name = self.import_type_display_name(module_specifier);
-        let base = if self.target_module_has_export_equals(module_specifier) {
-            format!("\"{display_name}\".export=")
-        } else {
-            format!("\"{display_name}\"")
-        };
+        // When there are resolved segments (we navigated through an export=
+        // binding to get here), omit the synthetic `.export=` hop from the
+        // display: tsc shows `"module".Bar` not `"module".export=.Bar`.
+        // The no-segments path (`import_type_namespace_name`) correctly
+        // retains `.export=` because the missing member lives directly on
+        // the export= object (e.g. `import("mod").Thing` where `mod` uses
+        // `module.exports = { ... }`).
+        let base = format!("\"{display_name}\"");
         if segments.is_empty() {
             base
         } else {

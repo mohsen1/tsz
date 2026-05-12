@@ -436,6 +436,9 @@ mod generic_rest_satisfies_anchor_tests;
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "../tests/import_type_namespace_export_equals_display_tests.rs"]
+mod import_type_namespace_export_equals_display_tests;
+#[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
