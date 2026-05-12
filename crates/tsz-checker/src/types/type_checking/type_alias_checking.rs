@@ -316,8 +316,11 @@ impl<'a> CheckerState<'a> {
                     alias.type_node,
                     alias_sid,
                 );
+            let has_recursive_wrapper_arg = !body_is_conditional
+                && self.type_reference_applies_alias_to_recursive_wrapper_arg(alias.type_node);
             if (has_stable_recursive_ref && body_refs.contains(&def_id))
                 || has_unresolved_computed_recursive_ref
+                || has_recursive_wrapper_arg
             {
                 // Collect type params that were pushed into scope above
                 let type_params: Vec<tsz_solver::TypeParamInfo> = alias
@@ -348,7 +351,7 @@ impl<'a> CheckerState<'a> {
                     .register_def_auto_params_in_envs(def_id, body_type, type_params);
 
                 // Evaluate with TS2589 detection flag
-                let depth_exceeded = has_stable_recursive_ref
+                let depth_exceeded = (has_stable_recursive_ref || has_recursive_wrapper_arg)
                     && self.evaluate_type_for_ts2589_check(body_type, def_id);
                 if depth_exceeded || has_unresolved_computed_recursive_ref {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -357,9 +360,12 @@ impl<'a> CheckerState<'a> {
                     // Conditional-type children are visited in
                     // check→extends→true→false order, so the last self-referential
                     // type reference in source order matches tsc's anchor.
-                    let anchor = self
-                        .find_last_recursive_alias_ref(alias.type_node, alias_sid)
-                        .unwrap_or(alias.type_node);
+                    let anchor = if has_recursive_wrapper_arg {
+                        alias.type_node
+                    } else {
+                        self.find_last_recursive_alias_ref(alias.type_node, alias_sid)
+                            .unwrap_or(alias.type_node)
+                    };
                     self.error_at_node(
                         anchor,
                         diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
@@ -569,6 +575,98 @@ impl<'a> CheckerState<'a> {
         let mut best: Option<(u32, NodeIndex)> = None;
         self.collect_recursive_alias_refs(body_idx, alias_sid, &mut best);
         best.map(|(_, idx)| idx)
+    }
+
+    fn type_reference_applies_alias_to_recursive_wrapper_arg(&self, body_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if !self.type_reference_names_conditional_type_alias(type_ref.type_name) {
+            return false;
+        }
+        let Some(args) = &type_ref.type_arguments else {
+            return false;
+        };
+        args.nodes
+            .iter()
+            .any(|&arg_idx| self.type_reference_is_recursive_wrapper_alias(arg_idx))
+    }
+
+    fn type_reference_names_conditional_type_alias(&self, type_name: NodeIndex) -> bool {
+        let Some(sym_ref) = self.resolve_type_symbol_for_lowering(type_name) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_ref)) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(alias.type_node)
+                .is_some_and(|body_node| body_node.kind == syntax_kind_ext::CONDITIONAL_TYPE)
+        })
+    }
+
+    fn type_reference_is_recursive_wrapper_alias(&self, type_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(sym_ref) = self.resolve_type_symbol_for_lowering(type_ref.type_name) else {
+            return false;
+        };
+        let alias_sid = tsz_binder::SymbolId(sym_ref);
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            let Some(body_node) = self.ctx.arena.get(alias.type_node) else {
+                return false;
+            };
+            if body_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            let Some(body_ref) = self.ctx.arena.get_type_ref(body_node) else {
+                return false;
+            };
+            let Some(body_args) = &body_ref.type_arguments else {
+                return false;
+            };
+            body_args.nodes.iter().any(|&arg_idx| {
+                let mut best = None;
+                self.collect_recursive_alias_refs(arg_idx, alias_sid, &mut best);
+                best.is_some()
+            })
+        })
     }
 
     fn collect_recursive_alias_refs(
