@@ -1231,7 +1231,25 @@ impl<'a> CheckerState<'a> {
                         index,
                         actual,
                     );
-                    if !suppress_weak && !elaborated {
+                    let resolved_reported_actual = self.resolve_lazy_type(reported_actual);
+                    let evaluated_reported_expected =
+                        self.evaluate_type_with_env(reported_expected);
+                    let suppress_correlated_index_access_never_mismatch = (reported_expected
+                        == TypeId::NEVER
+                        || evaluated_reported_expected == TypeId::NEVER)
+                        && common::index_access_parts(self.ctx.types, reported_actual)
+                            .or_else(|| {
+                                common::index_access_parts(self.ctx.types, resolved_reported_actual)
+                            })
+                            .is_some_and(|(_, index)| {
+                                common::contains_type_parameters(self.ctx.types, index)
+                                    || common::is_type_parameter_like(self.ctx.types, index)
+                                    || common::type_param_info(self.ctx.types, index).is_some()
+                            });
+                    if !suppress_weak
+                        && !elaborated
+                        && !suppress_correlated_index_access_never_mismatch
+                    {
                         let spread_rest_tuple_display = (!aggregate_rest_mismatch)
                             .then(|| {
                                 self.spread_rest_tuple_diagnostic_types(arg_idx, reported_expected)

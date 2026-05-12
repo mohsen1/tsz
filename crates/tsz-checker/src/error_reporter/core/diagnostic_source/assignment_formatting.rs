@@ -3,72 +3,16 @@
 //! Extracted from `error_reporter/core/diagnostic_source.rs` to keep that
 //! file under the LOC ceiling. Pure file-organization move; no logic changes.
 
+use super::literal_widening_helpers::{
+    literal_display_appropriate_for_undefined_null_target, simple_or_namespace_member_name,
+    target_accepts_literal_primitive_kind,
+};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::error_reporter) fn declared_identifier_candidate_preserves_source_surface(
-        &self,
-        existing: &str,
-        candidate: &str,
-    ) -> bool {
-        if existing == candidate {
-            return true;
-        }
-        if existing.contains("| undefined") && !candidate.contains("| undefined") {
-            return false;
-        }
-        if existing.contains("?:")
-            && candidate.contains("?:")
-            && existing.contains("| undefined") != candidate.contains("| undefined")
-        {
-            return false;
-        }
-        if (existing.contains("[K in ") || existing.contains("[P in "))
-            && !(candidate.contains("[K in ") || candidate.contains("[P in "))
-        {
-            return false;
-        }
-        true
-    }
-
-    pub(in crate::error_reporter) fn direct_type_query_primitive_source_display(
-        &mut self,
-        expr_idx: NodeIndex,
-        display_type: TypeId,
-    ) -> Option<String> {
-        let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
-        if !annotation_text.trim_start().starts_with("typeof ") {
-            return None;
-        }
-
-        let evaluated = if let Some(symbol_ref) =
-            crate::query_boundaries::common::type_query_symbol(self.ctx.types, display_type)
-        {
-            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
-            let value_decl = self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .map(|symbol| symbol.value_declaration)
-                .unwrap_or(NodeIndex::NONE);
-            self.type_of_value_declaration_for_symbol(sym_id, value_decl)
-        } else {
-            self.evaluate_type_for_assignability(display_type)
-        };
-        let widened = self.widen_type_for_display(evaluated);
-        if !crate::query_boundaries::common::is_primitive_type(self.ctx.types, widened)
-            || crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, widened)
-        {
-            return None;
-        }
-
-        Some(self.format_type_for_assignability_message(widened))
-    }
-
     pub(in crate::error_reporter) fn source_type_contains_number_literal_only_union(
         &self,
         ty: TypeId,
@@ -246,6 +190,28 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
             && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, target)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+        if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
+            && self.keyof_type_alias_body_display(target).is_some()
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+        if let Some(target_expr) = self.assignment_target_expression(anchor_idx)
+            && self
+                .keyof_type_alias_annotation_display_for_expression(target_expr)
+                .is_some()
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+        if let Some(annotation) = self.direct_assignment_target_annotation_text(anchor_idx)
+            && self
+                .keyof_type_alias_annotation_display(&annotation)
+                .is_some()
         {
             let widened = self.widen_type_for_display(source);
             return self.format_assignability_type_for_message(widened, target);
@@ -830,6 +796,9 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(display_target);
         }
+        if let Some(display) = self.keyof_type_alias_body_display(display_target) {
+            return display;
+        }
         if let Some(display) = self.static_schema_array_structural_display(display_target, source) {
             return display;
         }
@@ -837,6 +806,18 @@ impl<'a> CheckerState<'a> {
         let target_expr = self
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
+        if display_target == target
+            && let Some(display) =
+                self.keyof_type_alias_annotation_display_for_expression(target_expr)
+        {
+            return display;
+        }
+        if display_target == target
+            && let Some(annotation) = self.direct_assignment_target_annotation_text(anchor_idx)
+            && let Some(display) = self.keyof_type_alias_annotation_display(&annotation)
+        {
+            return display;
+        }
         if display_target == target
             && let Some(display) = self.direct_assignment_target_annotation_text(anchor_idx)
             && display.trim() == "{}"
@@ -1848,145 +1829,4 @@ impl<'a> CheckerState<'a> {
         literal_display_appropriate_for_undefined_null_target(self.ctx.types, target, &display)
             .then_some(display)
     }
-}
-
-fn simple_or_namespace_member_name(display: &str) -> Option<&str> {
-    if display.starts_with("typeof ")
-        || display.starts_with("import(")
-        || display.contains('<')
-        || display.contains('[')
-        || display.contains(' ')
-    {
-        return None;
-    }
-    let name = display.rsplit_once('.').map_or(display, |(_, short)| short);
-    let mut chars = name.chars();
-    let first = chars.next()?;
-    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
-        return None;
-    }
-    chars
-        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-        .then_some(name)
-}
-
-/// Whether `target` accepts a literal whose widened primitive kind is
-/// `source_primitive` for "literal-of-contextual-type" purposes. Mirrors
-/// `isLiteralOfContextualType` from TypeScript: returns true when any
-/// literal-typed member of the target shares the same primitive kind, or
-/// when the target is a structural literal-shaped type (template/symbol)
-/// compatible with the source's primitive kind.
-fn target_accepts_literal_primitive_kind(
-    db: &dyn tsz_solver::TypeDatabase,
-    target: TypeId,
-    source_primitive: TypeId,
-) -> bool {
-    target_accepts_literal_primitive_kind_inner(db, target, source_primitive, 0)
-}
-
-fn target_accepts_literal_primitive_kind_inner(
-    db: &dyn tsz_solver::TypeDatabase,
-    target: TypeId,
-    source_primitive: TypeId,
-    depth: u32,
-) -> bool {
-    use crate::query_boundaries::common;
-    // Recursion guard for self-referential aliases (e.g. `type T = string |
-    // Promise<T>`) and similarly deep unions/intersections. Returning `true`
-    // when we bail keeps the literal-display short-circuit's pre-existing
-    // behavior intact for unfamiliar shapes.
-    if depth > 32 {
-        return true;
-    }
-    if let Some(members) = common::union_members(db, target) {
-        return members.iter().any(|&m| {
-            target_accepts_literal_primitive_kind_inner(db, m, source_primitive, depth + 1)
-        });
-    }
-    if let Some(members) = common::intersection_members(db, target) {
-        return members.iter().any(|&m| {
-            target_accepts_literal_primitive_kind_inner(db, m, source_primitive, depth + 1)
-        });
-    }
-    if let Some(value) = common::literal_value(db, target) {
-        return value.primitive_type_id() == source_primitive;
-    }
-    if source_primitive == TypeId::STRING
-        && (common::is_template_literal_type(db, target)
-            || common::is_string_intrinsic_type(db, target))
-    {
-        return true;
-    }
-    if target == TypeId::UNDEFINED || target == TypeId::NULL {
-        // tsc preserves the AST literal display for `undefined`/`null` targets
-        // (e.g., `var u: typeof undefined = 1` → `Type '1' is not assignable`).
-        return true;
-    }
-    if target == TypeId::NEVER {
-        return true;
-    }
-    // For type parameters, lazy refs, and other non-literal shapes that are
-    // still classified as "literal-sensitive" (e.g. unique symbols), keep the
-    // AST literal display compatible by default. We only widen when the target
-    // is concretely a literal of a different primitive kind.
-    true
-}
-
-/// Mirror tsc's `getBaseTypeOfLiteralTypeForComparison` for TS2322 messages
-/// against `undefined` / `null` targets: the AST literal display is kept for
-/// boolean keyword sources (`true` / `false`) but a string / number / bigint
-/// literal source widens to its primitive base. Returns `true` when it is
-/// safe to keep the literal display, `false` when the caller should fall
-/// through to the type-formatter widening path.
-///
-/// Examples (target `undefined`):
-/// - source AST `true`            -> keep `true`           (returns true)
-/// - source AST `false`           -> keep `false`          (returns true)
-/// - source AST `1`               -> widen to `number`     (returns false)
-/// - source AST `"abc"`           -> widen to `string`     (returns false)
-/// - source AST `1n`              -> widen to `bigint`     (returns false)
-///
-/// For non-`undefined` / non-`null` targets the original literal-display
-/// behavior is preserved unchanged.
-fn literal_display_appropriate_for_undefined_null_target(
-    db: &dyn tsz_solver::TypeDatabase,
-    target: TypeId,
-    display: &str,
-) -> bool {
-    use crate::query_boundaries::common;
-    let target = common::evaluate_type(db, target);
-    if target != TypeId::UNDEFINED && target != TypeId::NULL {
-        return true;
-    }
-    // tsc preserves the source's literal surface for `undefined` / `null`
-    // targets — `Type '1' is not assignable to type 'undefined'`,
-    // `Type '""' is not assignable to type 'undefined'`, etc. Widening to
-    // `number` / `string` here loses the information about which exact
-    // value triggered the error. Accept any syntactic literal form
-    // (boolean keyword, string/template, signed numeric, bigint).
-    if matches!(display, "true" | "false") {
-        return true;
-    }
-    let trimmed = display.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let bytes = trimmed.as_bytes();
-    let first = bytes[0];
-    let last = bytes[bytes.len() - 1];
-    if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-        return true;
-    }
-    if first == b'`' && last == b'`' {
-        return true;
-    }
-    let numeric_start = first == b'-' || first == b'+' || first == b'.' || first.is_ascii_digit();
-    if numeric_start
-        && trimmed.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '+' || c == '_' || c == 'n'
-        })
-    {
-        return true;
-    }
-    false
 }

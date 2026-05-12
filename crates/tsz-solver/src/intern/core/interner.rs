@@ -363,7 +363,14 @@ where
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    let mut vec = inner.items.write().expect("interner items lock poisoned");
+                    // T2.4 instrumentation: wrap the write-lock acquisition
+                    // so contention on the slice-interner's `items` vec lands
+                    // in the lock-wait histogram alongside the per-shard
+                    // TypeData writes. With `perf-counters-timing` OFF this
+                    // wrapper compiles to a direct closure call.
+                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
+                        inner.items.write().expect("interner items lock poisoned")
+                    });
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&temp_arc));
                     }
@@ -453,7 +460,12 @@ where
             Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    let mut vec = inner.items.write().expect("interner items lock poisoned");
+                    // T2.4 instrumentation: see the matching wrapper in
+                    // `ConcurrentSliceInterner::intern`. Same rationale,
+                    // same zero-cost-when-feature-off contract.
+                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
+                        inner.items.write().expect("interner items lock poisoned")
+                    });
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&value_arc));
                     }
@@ -805,11 +817,7 @@ impl TypeInterner {
     /// This is used when constructing types with property names or string literals.
     #[inline]
     pub fn intern_string(&self, s: &str) -> Atom {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_string_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_string_intern_call();
         self.string_interner.intern(s)
     }
 
@@ -1140,14 +1148,25 @@ impl TypeInterner {
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
                 {
-                    let mut vec = inner
-                        .index_to_key
-                        .write()
-                        .expect("interner index_to_key lock poisoned");
-                    let mut ord = inner
-                        .alloc_order
-                        .write()
-                        .expect("interner alloc_order lock poisoned");
+                    // T2.4 instrumentation: time the shard's write-lock
+                    // acquisitions. With `perf-counters-timing` ON, each
+                    // observation lands in the lock-wait histogram. With it
+                    // OFF (default) the wrapper compiles to a direct call —
+                    // no `Instant::now()`, no atomic touch.
+                    let mut vec =
+                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                            inner
+                                .index_to_key
+                                .write()
+                                .expect("interner index_to_key lock poisoned")
+                        });
+                    let mut ord =
+                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                            inner
+                                .alloc_order
+                                .write()
+                                .expect("interner alloc_order lock poisoned")
+                        });
                     let target_len = local_index as usize + 1;
                     if vec.len() < target_len {
                         vec.resize(target_len, TypeData::Error);
@@ -1243,22 +1262,14 @@ impl TypeInterner {
     }
 
     pub(in crate::intern) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_type_list_intern_call();
         TypeListId(self.type_lists.intern(&members))
     }
 
     /// Intern a type list from a slice, avoiding Vec conversion when the caller
     /// already has a `SmallVec` or slice reference.
     pub(in crate::intern) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_type_list_intern_call();
         TypeListId(self.type_lists.intern(members))
     }
 
@@ -1271,11 +1282,7 @@ impl TypeInterner {
     }
 
     pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_object_shape_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_object_shape_intern_call();
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 
@@ -1755,15 +1762,12 @@ impl TypeInterner {
     }
 
     pub(super) fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_function_shape_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_function_shape_intern_call();
         FunctionShapeId(self.function_shapes.intern(shape))
     }
 
     pub(in crate::intern) fn intern_callable_shape(&self, shape: CallableShape) -> CallableShapeId {
+        tsz_common::perf_counters::record_interner_callable_shape_intern_call();
         CallableShapeId(self.callable_shapes.intern(shape))
     }
 
@@ -1771,29 +1775,17 @@ impl TypeInterner {
         &self,
         conditional: ConditionalType,
     ) -> ConditionalTypeId {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_conditional_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_conditional_intern_call();
         ConditionalTypeId(self.conditional_types.intern(conditional))
     }
 
     pub(super) fn intern_mapped_type(&self, mapped: MappedType) -> MappedTypeId {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_mapped_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_mapped_intern_call();
         MappedTypeId(self.mapped_types.intern(mapped))
     }
 
     pub(super) fn intern_application(&self, application: TypeApplication) -> TypeApplicationId {
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().interner_application_intern_calls,
-            );
-        }
+        tsz_common::perf_counters::record_interner_application_intern_call();
         TypeApplicationId(self.applications.intern(application))
     }
 
