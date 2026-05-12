@@ -1008,6 +1008,78 @@ const values = [];
 }
 
 #[test]
+fn test_js_jsdoc_array_empty_args_normalizes_to_any_array() {
+    // `Array.<>` (legacy JSDoc empty-args generic) should normalize to `any[]`
+    // in declaration emit, matching tsc. Without the fix it surfaces as
+    // `Array<>` which is not valid TypeScript.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Array.<>}
+ */
+function z() { return null; }
+"#,
+    );
+
+    assert!(
+        output.contains("any[]"),
+        "Expected `Array.<>` to normalize to `any[]`: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect invalid `Array<>` token in emitted type: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_array_empty_args_in_union() {
+    // The original conformance test exercises `(Array.<> | null)` as the return
+    // type — the parens, union, and empty-args generic all interact. Lock in
+    // that the result is `(any[] | null)`, not `(Array<> | null)`.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {(Array.<> | null)} list of devices
+ */
+function z() { return null; }
+"#,
+    );
+
+    assert!(
+        output.contains("any[] | null") || output.contains("(any[] | null)"),
+        "Expected `Array.<>` inside union to normalize: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect raw `Array<>` token: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_promise_empty_args_normalizes_to_promise_any() {
+    // `Promise.<>` (legacy empty-args form) mirrors the Array case — should
+    // normalize to `Promise<any>`, matching tsc and the bare-name fallback in
+    // `resolve_jsdoc_global_implicit_any_type`.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Promise.<>}
+ */
+function p() { return Promise.resolve(); }
+"#,
+    );
+
+    assert!(
+        output.contains("Promise<any>"),
+        "Expected `Promise.<>` to normalize to `Promise<any>`: {output}"
+    );
+    assert!(
+        !output.contains("Promise<>"),
+        "Did not expect invalid `Promise<>` token: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -1152,6 +1224,48 @@ const send = handlers => Promise.resolve(handlers);
     assert!(
         output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
         "Expected multiline JSDoc typedef alias to be emitted as a local type alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_before_export_equals_function_variable_is_emitted() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+module.exports = send;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let export_pos = output
+        .find("export = send;")
+        .expect("Expected CommonJS export-equals statement");
+    let function_pos = output
+        .find("declare function send(handlers: ResolveRejectMap): Promise<any>;")
+        .expect("Expected synthetic function declaration for send");
+    assert!(
+        export_pos < function_pos,
+        "Expected export= send to emit before the synthetic declaration in CommonJS mode: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected multiline JSDoc typedef alias to be emitted alongside export= send: {output}"
+    );
+    assert_eq!(
+        output.matches("export = send;").count(),
+        1,
+        "Did not expect duplicate export= send statements: {output}"
     );
 }
 
@@ -5399,6 +5513,39 @@ export class C {
             " * @protected\n     * @type {null | string}\n     */\n    protected [key]: null | string;"
         ),
         "Expected backing field JSDoc to stay attached to the deferred field: {output}"
+    );
+}
+
+#[test]
+fn test_js_setter_does_not_lift_nested_nullish_from_array_element_union() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const key = Symbol("key");
+
+export class C {
+    /**
+     * @protected
+     * @type {(null | string)[]}
+     */
+    [key] = [];
+
+    /**
+     * @type {string[]}
+     */
+    set value(v) {
+        this[key] = v;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("set value(v: string[]);"),
+        "Expected nested `(null | string)[]` backing type not to inject top-level null into setter type: {output}"
+    );
+    assert!(
+        !output.contains("set value(v: string[] | null);"),
+        "Did not expect nested element union nullability to be appended at top level: {output}"
     );
 }
 

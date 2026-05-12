@@ -1639,13 +1639,34 @@ impl<'a> CheckerState<'a> {
                             // TS1497: Check decorator expression grammar
                             self.check_grammar_decorator(decorator.expression);
 
-                            self.get_type_of_node(decorator.expression);
+                            let decorator_type = self.compute_type_of_node(decorator.expression);
 
                             // TS1308: Check for await expressions in decorator arguments.
                             // Decorator arguments are evaluated in the enclosing scope,
                             // not the decorated method's scope. An await in a non-async
                             // enclosing function should trigger TS1308.
                             self.check_await_expression(decorator.expression);
+
+                            // TS1239: Validate parameter decorator call signature.
+                            // The runtime invokes parameter decorators as
+                            // `decorator(target, key, parameterIndex)`. For
+                            // constructor parameters tsc passes `undefined` for
+                            // `key`; for method/accessor parameters tsc passes a
+                            // string (the method name). Decorators whose `key`
+                            // parameter type disagrees with the position are
+                            // rejected with TS1239. Only check under
+                            // `experimentalDecorators` since stage-3 decorators
+                            // (which use a different runtime ABI) are not yet a
+                            // supported configuration.
+                            if self.ctx.compiler_options.experimental_decorators {
+                                let is_constructor_parameter =
+                                    node.kind == syntax_kind_ext::CONSTRUCTOR;
+                                self.check_parameter_decorator_call_signature(
+                                    modifier_idx,
+                                    decorator_type,
+                                    is_constructor_parameter,
+                                );
+                            }
                         }
                     }
                 }

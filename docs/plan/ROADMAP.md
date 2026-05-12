@@ -740,11 +740,12 @@ Goal: keep Sound Mode honest, narrow, and compatible with the architecture while
 
 Current status:
 
-1. Sound Mode is partially implemented as a project-wide boolean.
+1. Sound Mode is partially implemented as a project-wide checker boolean exposed by the hidden CLI `--sound` flag and the playground / WASM `soundMode` input.
 2. Method bivariance tightening is live through relation policy.
 3. `any` handling is partial; top-level `any` remains too permissive for the target contract.
 4. Sticky freshness is currently active under sound mode but should be treated as pedantic, not part of the first stable core contract.
-5. Dedicated public TSZ sound diagnostics, code-aware suppressions, report-only behavior, and declaration-boundary projection are not yet complete.
+5. Normal tsconfig support is not wired; `compilerOptions.sound` is intentionally rejected today to preserve tsc-compatible config parsing while the public config shape is unsettled.
+6. Dedicated public TSZ sound diagnostics, code-aware suppressions, report-only behavior, and declaration-boundary projection are not yet complete.
 
 First stable target:
 
