@@ -884,15 +884,15 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let before_type = self.writer.len();
                         self.emit_type(param.type_annotation);
+                        let full = self.writer.get_output();
+                        let type_text = &full[before_type..];
                         if param.question_token
-                            && !self.type_annotation_semantically_includes_undefined(
-                                param.type_annotation,
-                            )
+                            && !self.emitted_type_text_semantically_includes_undefined(type_text)
+                            && !self
+                                .type_node_semantically_includes_undefined(param.type_annotation, 0)
                         {
                             // Only append `| undefined` if the type doesn't already
                             // include it (avoid `Type | undefined | undefined`).
-                            let full = self.writer.get_output();
-                            let type_text = &full[before_type..];
                             if !type_text.ends_with("| undefined")
                                 && !Self::type_text_has_undefined_branch(type_text)
                             {

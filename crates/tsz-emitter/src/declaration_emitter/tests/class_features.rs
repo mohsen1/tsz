@@ -139,7 +139,11 @@ fn test_optional_parameter_property_preserves_semantic_undefined_type_node() {
     type Map = {} & { [P in string]: any };
     type MapOrUndefined = Map | undefined | "dummy";
     export class C {
-        constructor(public value?: Exclude<MapOrUndefined, "dummy">) {}
+        constructor(
+            public value?: Exclude<MapOrUndefined, "dummy">,
+            public parenthesized?: (MapOrUndefined),
+            public unionUtility?: Exclude<MapOrUndefined, "dummy"> | "fallback",
+        ) {}
     }
     "#,
     );
@@ -149,12 +153,26 @@ fn test_optional_parameter_property_preserves_semantic_undefined_type_node() {
         "Expected parameter property to preserve utility type that already includes undefined: {output}"
     );
     assert!(
-        output.contains(r#"constructor(value?: Exclude<MapOrUndefined, "dummy">);"#),
+        output.contains(r#"constructor(value?: Exclude<MapOrUndefined, "dummy">"#),
         "Expected constructor parameter to preserve utility type that already includes undefined: {output}"
+    );
+    assert!(
+        output.contains(r#"parenthesized?: MapOrUndefined;"#)
+            || output.contains(r#"parenthesized?: (MapOrUndefined);"#),
+        "Expected parameter property to preserve parenthesized alias that already includes undefined: {output}"
+    );
+    assert!(
+        output.contains(r#"unionUtility?: Exclude<MapOrUndefined, "dummy"> | "fallback";"#),
+        "Expected parameter property to preserve union with utility branch that already includes undefined: {output}"
     );
     assert!(
         !output.contains(r#"Exclude<MapOrUndefined, "dummy"> | undefined"#),
         "Expected no duplicate undefined branch for semantic undefined type node: {output}"
+    );
+    assert!(
+        !output.contains(r#"MapOrUndefined | undefined"#)
+            && !output.contains(r#"(MapOrUndefined) | undefined"#),
+        "Expected no duplicate undefined branch for parenthesized alias: {output}"
     );
 }
 

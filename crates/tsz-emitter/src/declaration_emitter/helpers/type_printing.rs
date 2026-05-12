@@ -1201,21 +1201,42 @@ impl<'a> DeclarationEmitter<'a> {
         type_annotation.is_some()
             && (self
                 .emit_type_node_text(type_annotation)
-                .is_some_and(|type_text| {
-                    Self::type_text_has_undefined_branch(&type_text)
-                        || self.type_text_or_alias_includes_undefined(&type_text, 0)
-                })
+                .is_some_and(|type_text| self.type_text_or_alias_includes_undefined(&type_text, 0))
                 || self.type_node_semantically_includes_undefined(type_annotation, 0))
+    }
+
+    pub(in crate::declaration_emitter) fn emitted_type_text_semantically_includes_undefined(
+        &self,
+        type_text: &str,
+    ) -> bool {
+        self.type_text_or_alias_includes_undefined(type_text, 0)
     }
 
     fn type_text_or_alias_includes_undefined(&self, type_text: &str, depth: usize) -> bool {
         if depth > 8 {
             return false;
         }
-        let text = type_text.trim();
-        if Self::type_text_has_undefined_branch(text) {
+        let mut text = type_text.trim();
+        while let Some(inner) = Self::strip_balanced_outer_parens(text) {
+            text = inner.trim();
+        }
+
+        if text == "undefined" {
             return true;
         }
+
+        let union_indices = Self::top_level_byte_indices(text, b'|');
+        if !union_indices.is_empty() {
+            let mut start = 0usize;
+            for index in union_indices {
+                if self.type_text_or_alias_includes_undefined(&text[start..index], depth + 1) {
+                    return true;
+                }
+                start = index + 1;
+            }
+            return self.type_text_or_alias_includes_undefined(&text[start..], depth + 1);
+        }
+
         if let Some((name, args)) = Self::parse_utility_type_text(text) {
             return match name {
                 "Exclude" => {
@@ -1262,7 +1283,11 @@ impl<'a> DeclarationEmitter<'a> {
         Some((name, Self::split_top_level_commas(inner)))
     }
 
-    fn type_node_semantically_includes_undefined(&self, type_idx: NodeIndex, depth: usize) -> bool {
+    pub(in crate::declaration_emitter) fn type_node_semantically_includes_undefined(
+        &self,
+        type_idx: NodeIndex,
+        depth: usize,
+    ) -> bool {
         if depth > 8 {
             return false;
         }
