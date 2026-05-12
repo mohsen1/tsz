@@ -92,6 +92,10 @@ fn compile_test(
                     .or_insert(serde_json::Value::Bool(true));
             }
         }
+        if let serde_json::Value::Object(ref mut map) = compiler_options {
+            map.entry("skipLibCheck")
+                .or_insert(serde_json::Value::Bool(true));
+        }
         let tsconfig_content = serde_json::json!({
             "compilerOptions": compiler_options,
             "include": include,
@@ -824,6 +828,42 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
     assert!(
         parsed.get("exclude").is_none(),
         "explicit root-file tests should not exclude node_modules"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only() {
+    let filenames = vec![
+        (
+            "node_modules/pkg/index.d.ts".to_string(),
+            "export declare const x: number;".to_string(),
+        ),
+        (
+            "index.ts".to_string(),
+            "import { x } from 'pkg'; x;".to_string(),
+        ),
+    ];
+
+    let prepared =
+        prepare_test_dir("", &filenames, &HashMap::new(), None, &[], Some(&[2883])).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
+    let files = parsed["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|v| v.as_str()).collect();
+
+    assert!(file_values.contains(&"index.ts"));
+    assert!(
+        !file_values.contains(&"node_modules/pkg/index.d.ts"),
+        "TS2883 portability fixtures should resolve package declarations through imports, not root files"
+    );
+    assert!(
+        prepared
+            .temp_dir
+            .path()
+            .join("node_modules/pkg/index.d.ts")
+            .exists(),
+        "node_modules declaration should still be available on disk"
     );
 }
 
