@@ -691,7 +691,8 @@ function g<T>() {
     type NonIndex<T extends PropertyKey> = {} extends Record<T, any> ? never : T;
     type DistributiveNonIndex<T extends PropertyKey> = T extends unknown ? NonIndex<T> : never;
     type Remapped = { [K in keyof Orig as DistributiveNonIndex<K>]: any };
-    let x: keyof Remapped;
+    type Oops = keyof Remapped;
+    let x: Oops;
     x = "whatever";
 }
 "#,

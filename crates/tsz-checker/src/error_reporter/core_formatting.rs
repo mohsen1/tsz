@@ -293,6 +293,14 @@ impl<'a> CheckerState<'a> {
             return name.to_string();
         }
 
+        if let Some(keyof_alias) = self.ctx.types.get_display_alias(ty)
+            && let Some(keyof_inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, keyof_alias)
+            && let Some(alias_name) = self.lookup_type_alias_name_for_display(keyof_inner)
+        {
+            return format!("keyof {alias_name}");
+        }
+
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty)
         {
@@ -1923,6 +1931,63 @@ impl<'a> CheckerState<'a> {
         }
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
+    }
+
+    pub(crate) fn keyof_type_alias_body_display(&mut self, ty: TypeId) -> Option<String> {
+        if let Some(def_id) = self
+            .ctx
+            .definition_store
+            .find_type_alias_by_body(ty)
+            .or_else(|| {
+                let def_id = self.ctx.definition_store.find_def_for_type(ty)?;
+                let def = self.ctx.definition_store.get(def_id)?;
+                (def.kind == tsz_solver::def::DefKind::TypeAlias).then_some(def_id)
+            })
+        {
+            return self.keyof_type_alias_definition_display(def_id);
+        }
+
+        self.ctx
+            .definition_store
+            .all_type_alias_defs()
+            .into_iter()
+            .find_map(|def_id| {
+                let def = self.ctx.definition_store.get(def_id)?;
+                if !def.type_params.is_empty() {
+                    return None;
+                }
+                let body = def.body?;
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, body)?;
+                let evaluated = self.evaluate_type_for_assignability(body);
+                (evaluated == ty
+                    || (self.is_assignable_to(evaluated, ty)
+                        && self.is_assignable_to(ty, evaluated)))
+                .then_some(def_id)
+            })
+            .and_then(|def_id| self.keyof_type_alias_definition_display(def_id))
+    }
+
+    pub(crate) fn keyof_type_alias_definition_display(
+        &mut self,
+        def_id: tsz_solver::def::DefId,
+    ) -> Option<String> {
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
+            return None;
+        }
+        let body = def.body?;
+        let inner = crate::query_boundaries::common::keyof_inner_type(self.ctx.types, body)?;
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(inner) {
+            return Some(format!("keyof {alias_name}"));
+        }
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, inner)
+            && let Some(sym_id) = shape.symbol
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return Some(format!("keyof {}", symbol.escaped_name));
+        }
+        None
     }
 
     pub(crate) fn recursive_non_generic_alias_body_name(&self, ty: TypeId) -> String {

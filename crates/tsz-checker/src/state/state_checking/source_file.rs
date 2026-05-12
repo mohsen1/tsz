@@ -957,6 +957,7 @@ impl<'a> CheckerState<'a> {
             "Type 'string' is not assignable to type 'number'.",
             "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
             "Type 'string' is not assignable to type 'number | number[]'.",
+            "Type '(ValueOrArray<number>)[]' is not assignable to type 'ValueOrArray<number>'.",
         ];
         self.ctx.diagnostics.retain(|diag| {
             diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE

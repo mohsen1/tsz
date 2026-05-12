@@ -1266,6 +1266,18 @@ impl DefinitionStore {
         self.name_to_defs.get(&name).map(|r| r.clone())
     }
 
+    /// Return all type alias definitions.
+    ///
+    /// Intended for diagnostic fallback paths where the exact body index cannot
+    /// match because an alias body has already been evaluated to an equivalent
+    /// display type.
+    pub fn all_type_alias_defs(&self) -> Vec<DefId> {
+        self.definitions
+            .iter()
+            .filter_map(|entry| (entry.value().kind == DefKind::TypeAlias).then_some(*entry.key()))
+            .collect()
+    }
+
     /// Resolve heritage names to `DefId`s using an intern function for
     /// name comparison.
     ///

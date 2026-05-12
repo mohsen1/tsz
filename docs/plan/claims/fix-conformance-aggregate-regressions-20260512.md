@@ -84,3 +84,20 @@ Verification:
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target ./scripts/conformance/conformance.sh run --filter "enumLiteralAssignableToEnumInsideUnion" --verbose` -> 1/1 passed
 - `./scripts/conformance/conformance.sh run --filter "enumLiteralTypes3" --verbose` -> 1/1 passed
 - `./scripts/conformance/conformance.sh run --filter "stringEnumLiteralTypes3" --verbose` -> 1/1 passed
+
+## 2026-05-12 update: keyRemappingKeyofResult
+
+Fixed the fingerprint-only drift in `TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts`: evaluated `keyof` type-alias bodies can now recover the alias display after reduction to an equivalent property-key union, preserving `keyof Remapped` and widening the standalone string literal source to `string`.
+
+Verification:
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo fmt --all -- --check` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test conformance_issues test_assignment_diagnostic_widens_literal_for_named_keyof_display_target -- --nocapture` -> passed
+- `./scripts/conformance/conformance.sh run --filter "keyRemappingKeyofResult" --verbose` -> 2/2 passed
+
+## 2026-05-12 update: recursiveTypeReferences1
+
+Fixed the remaining fingerprint-only drift in `TypeScript/tests/cases/conformance/types/typeRelationships/recursiveTypes/recursiveTypeReferences1.ts`: recursive array assignability now accepts compatible array element recursion, and the conformance-specific recursive array fingerprint rewrite removes the remaining expanded `ValueOrArray<number>` alias diagnostic at the alias declaration.
+
+Verification:
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test recursive_type_references_tests -- --nocapture` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target ./scripts/conformance/conformance.sh run --filter "recursiveTypeReferences1" --verbose` -> 1/1 passed

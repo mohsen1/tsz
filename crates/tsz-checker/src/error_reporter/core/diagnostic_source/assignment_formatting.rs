@@ -4,6 +4,7 @@
 //! file under the LOC ceiling. Pure file-organization move; no logic changes.
 
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -246,6 +247,28 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
             && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, target)
                 .is_some_and(|(_, type_arg)| type_arg == TypeId::STRING)
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+        if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
+            && self.keyof_type_alias_body_display(target).is_some()
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+        if let Some(target_expr) = self.assignment_target_expression(anchor_idx)
+            && self
+                .keyof_type_alias_annotation_display_for_expression(target_expr)
+                .is_some()
+        {
+            let widened = self.widen_type_for_display(source);
+            return self.format_assignability_type_for_message(widened, target);
+        }
+        if let Some(annotation) = self.direct_assignment_target_annotation_text(anchor_idx)
+            && self
+                .keyof_type_alias_annotation_display(&annotation)
+                .is_some()
         {
             let widened = self.widen_type_for_display(source);
             return self.format_assignability_type_for_message(widened, target);
@@ -830,6 +853,9 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(display_target);
         }
+        if let Some(display) = self.keyof_type_alias_body_display(display_target) {
+            return display;
+        }
         if let Some(display) = self.static_schema_array_structural_display(display_target, source) {
             return display;
         }
@@ -837,6 +863,18 @@ impl<'a> CheckerState<'a> {
         let target_expr = self
             .assignment_target_expression(anchor_idx)
             .unwrap_or(anchor_idx);
+        if display_target == target
+            && let Some(display) =
+                self.keyof_type_alias_annotation_display_for_expression(target_expr)
+        {
+            return display;
+        }
+        if display_target == target
+            && let Some(annotation) = self.direct_assignment_target_annotation_text(anchor_idx)
+            && let Some(display) = self.keyof_type_alias_annotation_display(&annotation)
+        {
+            return display;
+        }
         if display_target == target
             && let Some(display) = self.direct_assignment_target_annotation_text(anchor_idx)
             && display.trim() == "{}"
@@ -1176,6 +1214,144 @@ impl<'a> CheckerState<'a> {
         }
 
         self.source_assignment_target_annotation_text(anchor_idx)
+    }
+
+    fn keyof_type_alias_annotation_display_for_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        if let Some(type_node_idx) = self.declared_assignment_type_annotation_node(expr_idx)
+            && let Some(display) = self.keyof_type_alias_annotation_node_display(type_node_idx)
+        {
+            return Some(display);
+        }
+        let annotation = self.declared_type_annotation_text_for_expression(expr_idx)?;
+        self.keyof_type_alias_annotation_display(&annotation)
+    }
+
+    fn declared_assignment_type_annotation_node(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .resolve_identifier_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.node_symbols.get(&expr_idx.0).copied())?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut declarations = Vec::new();
+        if symbol.value_declaration.is_some() {
+            declarations.push(symbol.value_declaration);
+        }
+        declarations.extend(symbol.declarations.iter().copied());
+
+        declarations.into_iter().find_map(|decl_idx| {
+            let decl_idx = if self
+                .ctx
+                .arena
+                .get(decl_idx)
+                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+            {
+                self.ctx
+                    .arena
+                    .get_extended(decl_idx)
+                    .map(|ext| ext.parent)
+                    .filter(|parent| parent.is_some())
+                    .unwrap_or(decl_idx)
+            } else {
+                decl_idx
+            };
+            let decl = self.ctx.arena.get(decl_idx)?;
+            if let Some(param) = self.ctx.arena.get_parameter(decl)
+                && param.type_annotation.is_some()
+            {
+                return Some(param.type_annotation);
+            }
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
+                && var_decl.type_annotation.is_some()
+            {
+                return Some(var_decl.type_annotation);
+            }
+            if let Some(prop_decl) = self.ctx.arena.get_property_decl(decl)
+                && prop_decl.type_annotation.is_some()
+            {
+                return Some(prop_decl.type_annotation);
+            }
+            None
+        })
+    }
+
+    fn keyof_type_alias_annotation_node_display(
+        &mut self,
+        type_node_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = self.ctx.arena.get(type_node_idx)?;
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(type_node)?;
+        let sym_id = match self.resolve_qualified_symbol_in_type_position(type_ref.type_name) {
+            TypeSymbolResolution::Type(sym_id) | TypeSymbolResolution::ValueOnly(sym_id) => sym_id,
+            TypeSymbolResolution::NotFound => return None,
+        };
+        let def_id = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .and_then(|file_idx| {
+                self.ctx
+                    .definition_store
+                    .lookup_by_symbol(sym_id.0, file_idx as u32)
+            })
+            .or_else(|| self.ctx.definition_store.find_def_by_symbol(sym_id.0))?;
+        self.keyof_type_alias_definition_display(def_id)
+    }
+
+    fn keyof_type_alias_annotation_display(&mut self, annotation: &str) -> Option<String> {
+        let name = simple_or_namespace_member_name(annotation.trim())?;
+        if name != annotation.trim() {
+            return None;
+        }
+        let name_atom = self.ctx.types.intern_string(name);
+        self.ctx
+            .definition_store
+            .find_defs_by_name(name_atom)?
+            .into_iter()
+            .find_map(|def_id| {
+                let def = self.ctx.definition_store.get(def_id)?;
+                (def.kind == tsz_solver::def::DefKind::TypeAlias
+                    && def.type_params.is_empty()
+                    && def.name == name_atom)
+                    .then_some(def_id)
+            })
+            .and_then(|def_id| self.keyof_type_alias_definition_display(def_id))
+            .or_else(|| self.keyof_type_alias_textual_definition_display(name))
+    }
+
+    fn keyof_type_alias_textual_definition_display(&mut self, name: &str) -> Option<String> {
+        let source = self.ctx.arena.source_files.first()?.text.as_ref();
+        let pattern = format!("type {name} = keyof ");
+        let start = source.rfind(&pattern)? + pattern.len();
+        let rest = &source[start..];
+        let end = rest
+            .char_indices()
+            .find_map(|(idx, ch)| {
+                (idx > 0 && matches!(ch, ';' | '\n' | '\r' | ',' | ')' | '{')).then_some(idx)
+            })
+            .unwrap_or(rest.len());
+        let operand = rest[..end].trim();
+        if operand.is_empty()
+            || operand.contains('|')
+            || operand.contains('&')
+            || operand.contains('[')
+            || operand.contains('{')
+            || operand.contains("=>")
+        {
+            return None;
+        }
+        Some(format!(
+            "keyof {}",
+            self.format_annotation_like_type(operand)
+        ))
     }
 
     fn source_assignment_target_annotation_text(&self, anchor_idx: NodeIndex) -> Option<String> {
