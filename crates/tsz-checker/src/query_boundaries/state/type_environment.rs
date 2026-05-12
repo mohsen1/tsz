@@ -3,8 +3,7 @@ use tsz_common::interner::Atom;
 use tsz_solver::{MappedTypeId, QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{
-    collect_enum_def_ids, collect_referenced_types, is_generic_type, lazy_def_id,
-    object_shape_for_type as object_shape,
+    is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
 };
 pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
@@ -29,6 +28,14 @@ pub(crate) fn application_info(
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
     tsz_solver::type_queries::get_application_info(db, type_id)
+}
+
+pub(crate) fn for_each_direct_referenced_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    f: impl FnMut(TypeId),
+) {
+    tsz_solver::visitor::for_each_child_by_id(db, type_id, f);
 }
 
 pub(crate) fn mapped_type_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<MappedTypeId> {
