@@ -1,7 +1,7 @@
 use super::super::super::core::PropertyNameEmit;
 use super::super::super::{Printer, ScriptTarget};
 use super::replace_identifier;
-use super::{AutoAccessorInfo, StaticFieldInit};
+use super::{AutoAccessorEmitOptions, AutoAccessorInfo, StaticFieldInit};
 use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
@@ -291,10 +291,46 @@ impl<'a> Printer<'a> {
         // - ES2022+ (except ESNext): emit native private storage + getter/setter.
         // - < ES2022: emit WeakMap-backed getter/setter pairs.
         let auto_accessor_target = self.ctx.options.target;
-        let lower_auto_accessors_to_private_fields = auto_accessor_target != ScriptTarget::ESNext
-            && (auto_accessor_target as u32) >= (ScriptTarget::ES2022 as u32);
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (tsz_common::ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let has_order_sensitive_instance_field_initializer = target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    return false;
+                }
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    return false;
+                };
+                prop.initializer.is_some()
+                    && self.class_property_initializer_has_equals(member_node, prop)
+                    && !self.has_effective_static_modifier_js(&prop.modifiers)
+                    && !self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                    && !self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                    && !self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                    && !is_private_identifier(self.arena, prop.name)
+            });
+        let auto_accessor_target_supports_native_private_fields = auto_accessor_target
+            == ScriptTarget::ESNext
+            || (auto_accessor_target as u32) >= (ScriptTarget::ES2022 as u32);
+        let lower_auto_accessors_to_private_fields =
+            auto_accessor_target_supports_native_private_fields
+                && (auto_accessor_target != ScriptTarget::ESNext
+                    || has_order_sensitive_instance_field_initializer);
         let lower_auto_accessors_to_weakmap = auto_accessor_target != ScriptTarget::ESNext
             && (auto_accessor_target as u32) < (ScriptTarget::ES2022 as u32);
+        let hoist_native_instance_order_inits = lower_auto_accessors_to_private_fields
+            && has_order_sensitive_instance_field_initializer
+            && !self.ctx.options.use_define_for_class_fields;
 
         let mut auto_accessor_members: Vec<AutoAccessorInfo> = Vec::new();
         let mut auto_accessor_instance_inits: Vec<(String, Option<NodeIndex>)> = Vec::new();
@@ -524,9 +560,6 @@ impl<'a> Printer<'a> {
             None
         };
 
-        let target_needs_field_lowering = (self.ctx.options.target as u32)
-            < (tsz_common::ScriptTarget::ES2022 as u32)
-            || !self.ctx.options.use_define_for_class_fields;
         let target_needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
 
@@ -1407,6 +1440,8 @@ impl<'a> Printer<'a> {
         // when the constructor appears before the property in source order.
         let mut field_inits: Vec<crate::emitter::core::FieldInit> = Vec::new();
         let mut static_field_inits: Vec<StaticFieldInit> = Vec::new();
+        let mut hoisted_native_private_members: Vec<NodeIndex> = Vec::new();
+        let mut hoisted_native_auto_accessor_members: Vec<NodeIndex> = Vec::new();
         if needs_class_field_lowering {
             let members = &class.members.nodes;
             for (member_i, &member_idx) in members.iter().enumerate() {
@@ -1430,10 +1465,7 @@ impl<'a> Printer<'a> {
                     }
                     if self
                         .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                        || self
-                            .arena
-                            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
                         || self
                             .arena
                             .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
@@ -1445,14 +1477,27 @@ impl<'a> Printer<'a> {
                     if !private_fields.is_empty() && is_private_identifier(self.arena, prop.name) {
                         continue;
                     }
-                    if !needs_private_field_lowering && is_private_identifier(self.arena, prop.name)
+                    let is_private_name = is_private_identifier(self.arena, prop.name);
+                    let is_auto_accessor = self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                    if !needs_private_field_lowering && is_private_name {
+                        if !hoist_native_instance_order_inits
+                            || self.has_effective_static_modifier_js(&prop.modifiers)
+                        {
+                            continue;
+                        }
+                    }
+                    if is_auto_accessor
+                        && (!hoist_native_instance_order_inits
+                            || self.has_effective_static_modifier_js(&prop.modifiers))
                     {
                         continue;
                     }
                     // If the property has a computed name with a hoisted temp, use the temp
                     // variable name. This takes priority over get_property_name_emit because
                     // the temp captures the expression value at class-evaluation time.
-                    let name_emit = if let Some(name_node) = self.arena.get(prop.name)
+                    let mut name_emit = if let Some(name_node) = self.arena.get(prop.name)
                         && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(computed) = self.arena.get_computed_property(name_node)
                         && let Some(temp) = self.computed_prop_temp_map.get(&computed.expression)
@@ -1461,6 +1506,20 @@ impl<'a> Printer<'a> {
                     } else {
                         self.get_property_name_emit(prop.name)
                     };
+                    if hoist_native_instance_order_inits && is_auto_accessor {
+                        if let Some((_, storage_name, _, _)) = auto_accessor_members
+                            .iter()
+                            .find(|(idx, _, _, _)| *idx == member_idx)
+                        {
+                            name_emit = Some(PropertyNameEmit::Dot(format!("#{storage_name}")));
+                            hoisted_native_auto_accessor_members.push(member_idx);
+                        }
+                    } else if hoist_native_instance_order_inits && is_private_name {
+                        if let Some(private_name) = get_private_field_name(self.arena, prop.name) {
+                            name_emit = Some(PropertyNameEmit::Dot(private_name));
+                            hoisted_native_private_members.push(member_idx);
+                        }
+                    }
                     let Some(name_emit) = name_emit else {
                         continue;
                     };
@@ -2159,11 +2218,23 @@ impl<'a> Printer<'a> {
                         member_node,
                         &storage_name,
                         is_static,
-                        auto_accessor_class_alias.as_deref(),
-                        lower_auto_accessors_to_private_fields,
-                        &class_name,
-                        property_end.unwrap_or(member_node.end),
+                        AutoAccessorEmitOptions {
+                            static_accessor_alias: auto_accessor_class_alias.as_deref(),
+                            lower_to_private_fields: lower_auto_accessors_to_private_fields,
+                            class_name: &class_name,
+                            property_end: property_end.unwrap_or(member_node.end),
+                            omit_storage_initializer: hoisted_native_auto_accessor_members
+                                .contains(&member_idx),
+                        },
                     );
+                } else if hoisted_native_private_members.contains(&member_idx) {
+                    if let Some(prop) = self.arena.get_property_decl(member_node) {
+                        self.emit_class_member_modifiers_js(&prop.modifiers);
+                        if let Some(private_name) = get_private_field_name(self.arena, prop.name) {
+                            self.write(&private_name);
+                        }
+                        self.write_semicolon();
+                    }
                 } else {
                     self.class_member_emit_depth = self.class_member_emit_depth.saturating_add(1);
                     self.emit(member_idx);

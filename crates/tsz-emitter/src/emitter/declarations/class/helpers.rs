@@ -1,4 +1,5 @@
 use super::super::super::Printer;
+use super::AutoAccessorEmitOptions;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -207,26 +208,23 @@ impl<'a> Printer<'a> {
         node: &Node,
         storage_name: &str,
         is_static: bool,
-        static_accessor_alias: Option<&str>,
-        lower_auto_accessor_to_private_fields: bool,
-        class_name: &str,
-        property_end: u32,
+        options: AutoAccessorEmitOptions<'_>,
     ) {
         let Some(prop) = self.arena.get_property_decl(node) else {
             return;
         };
-        let computed_name_temp = if lower_auto_accessor_to_private_fields {
+        let computed_name_temp = if options.lower_to_private_fields {
             self.auto_accessor_computed_name_temp(prop.name)
         } else {
             None
         };
 
-        if lower_auto_accessor_to_private_fields {
+        if options.lower_to_private_fields {
             if is_static {
                 self.write("static ");
                 self.write("#");
                 self.write(storage_name);
-                if prop.initializer.is_some() {
+                if prop.initializer.is_some() && !options.omit_storage_initializer {
                     self.write(" = ");
                     self.emit_expression(prop.initializer);
                 }
@@ -234,7 +232,7 @@ impl<'a> Printer<'a> {
             } else {
                 self.write("#");
                 self.write(storage_name);
-                if prop.initializer.is_some() {
+                if prop.initializer.is_some() && !options.omit_storage_initializer {
                     self.write(" = ");
                     self.emit_expression(prop.initializer);
                 }
@@ -249,10 +247,10 @@ impl<'a> Printer<'a> {
             self.emit_auto_accessor_name(prop.name, computed_name_temp.as_deref(), true);
             self.write("() { return ");
             if is_static {
-                self.write(if class_name.is_empty() {
+                self.write(if options.class_name.is_empty() {
                     "this"
                 } else {
-                    class_name
+                    options.class_name
                 });
                 self.write(".#");
                 self.write(storage_name.trim_start_matches('#'));
@@ -262,10 +260,10 @@ impl<'a> Printer<'a> {
                 self.write("set ");
                 self.emit_auto_accessor_name(prop.name, computed_name_temp.as_deref(), false);
                 self.write("(value) { ");
-                self.write(if class_name.is_empty() {
+                self.write(if options.class_name.is_empty() {
                     "this"
                 } else {
-                    class_name
+                    options.class_name
                 });
                 self.write(".#");
                 self.write(storage_name.trim_start_matches('#'));
@@ -283,10 +281,10 @@ impl<'a> Printer<'a> {
                 self.write(storage_name.trim_start_matches('#'));
                 self.write(" = value; }");
             }
-            self.emit_trailing_comments(property_end);
+            self.emit_trailing_comments(options.property_end);
             self.write_line();
         } else if is_static {
-            let Some(alias) = static_accessor_alias else {
+            let Some(alias) = options.static_accessor_alias else {
                 return;
             };
             self.write("static ");
@@ -301,7 +299,7 @@ impl<'a> Printer<'a> {
             self.write(", \"f\", ");
             self.write(storage_name);
             self.write("); }");
-            self.emit_trailing_comments(property_end);
+            self.emit_trailing_comments(options.property_end);
             self.write_line();
             self.write("static ");
             self.write("set ");
@@ -323,7 +321,7 @@ impl<'a> Printer<'a> {
             self.write("(this, ");
             self.write(storage_name);
             self.write(", \"f\"); }");
-            self.emit_trailing_comments(property_end);
+            self.emit_trailing_comments(options.property_end);
             self.write_line();
             self.write("set ");
             self.emit(prop.name);
