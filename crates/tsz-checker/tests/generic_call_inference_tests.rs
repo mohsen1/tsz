@@ -1734,6 +1734,21 @@ const result = create();
     );
 }
 
+#[test]
+fn contextual_return_instantiates_defaulted_generic_call_result() {
+    let source = r#"
+interface Box<T> { value: T | undefined }
+declare function make<O>(p: { value?: O }): Box<O>
+const x: Box<string> = make({})
+function f<T>(): Box<T> { return make({}) }
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Contextual generic return inference should instantiate the call result. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Callable shape sanitization with overloads ───────────────────────
 
 #[test]
