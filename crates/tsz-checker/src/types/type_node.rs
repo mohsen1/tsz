@@ -1,8 +1,4 @@
 //! Type Node Checking
-//!
-//! This module handles type resolution from AST type nodes.
-//! It follows the "Check Fast, Explain Slow" pattern where we first
-//! resolve types, then use the solver to explain any failures.
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
@@ -15,9 +11,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
-use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
+use tsz_solver::{TypeId, Visibility};
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -315,11 +310,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     continue;
                 };
 
-                // Check if this is an optional/rest type or a regular type
                 use tsz_parser::parser::syntax_kind_ext;
                 if elem_node.kind == syntax_kind_ext::OPTIONAL_TYPE {
-                    // Optional element (e.g., `string?`)
-                    // TS1266: An optional element cannot follow a rest element
                     if seen_rest {
                         self.ctx.error(
                             elem_node.pos,
@@ -330,10 +322,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                     seen_optional = true;
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
-                        // OPTIONAL_TYPE wrapping REST_TYPE represents the
-                        // (invalid) `[...T?]` form. tsc still parses and
-                        // displays it as `[...?T]`, so we mark the element as
-                        // both rest and optional and unwrap the inner type.
                         let (inner_idx, is_rest_optional) = if let Some(inner_node) =
                             self.ctx.arena.get(wrapped.type_node)
                             && inner_node.kind == syntax_kind_ext::REST_TYPE
@@ -359,19 +347,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
-                    // Rest element (e.g., `...string[]` or `...T`)
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check_tuple_rest_type_node(wrapped.type_node, true);
-                        // Only track seen_rest for concrete array/tuple rest elements.
-                        // Variadic type parameter spreads (...T) don't count as "rest"
-                        // for TS1265/TS1266 purposes — they represent variadic tuples.
-                        let is_concrete_rest = self.is_array_or_tuple_type(elem_type)
+                        if let Some(spread_elements) = self.fixed_tuple_spread_elements(elem_type) {
+                            elements.extend(spread_elements);
+                            continue;
+                        }
+                        let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
                             || Self::ast_kind_is_obviously_array_or_tuple(
                                 self.ctx.arena,
                                 wrapped.type_node,
                             );
                         if is_concrete_rest {
-                            // TS1265: A rest element cannot follow another rest element
                             if seen_rest {
                                 self.ctx.error(
                                     elem_node.pos,
@@ -395,7 +382,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
-                    // Named tuple element (e.g., `[x: number, y?: string, ...rest: boolean[]]`)
                     if let Some(data) = self.ctx.arena.get_named_tuple_member(elem_node) {
                         let elem_type =
                             self.check_tuple_rest_type_node(data.type_node, data.dot_dot_dot_token);
@@ -412,13 +398,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .map(|id_data| self.ctx.types.intern_string(&id_data.escaped_text));
 
                         if data.dot_dot_dot_token {
-                            let is_concrete_rest = self.is_array_or_tuple_type(elem_type)
+                            if let Some(spread_elements) =
+                                self.fixed_tuple_spread_elements(elem_type)
+                            {
+                                elements.extend(spread_elements);
+                                continue;
+                            }
+                            let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
                                 || Self::ast_kind_is_obviously_array_or_tuple(
                                     self.ctx.arena,
                                     data.type_node,
                                 );
                             if is_concrete_rest {
-                                // TS1265: A rest element cannot follow another rest element
                                 if seen_rest {
                                     self.ctx.error(
                                         elem_node.pos,
@@ -446,7 +437,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     crate::diagnostics::diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N,
                                 );
                             }
-                            // TS1266: An optional element cannot follow a rest element
                             if seen_rest {
                                 self.ctx.error(
                                     elem_node.pos,
