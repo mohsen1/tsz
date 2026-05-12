@@ -3,11 +3,7 @@
 //! When `infer U` appears multiple times in the same conditional type extends clause,
 //! all declarations with explicit constraints must have the same constraint type.
 
-use crate::test_utils::check_source_code_messages;
-
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source_code_messages(source)
-}
+use crate::test_utils::check_source_code_messages as get_diagnostics;
 
 fn count_errors_with_code(source: &str, code: u32) -> usize {
     get_diagnostics(source)

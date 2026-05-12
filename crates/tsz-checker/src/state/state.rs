@@ -141,16 +141,6 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 }
 
 impl<'a> CheckerState<'a> {
-    #[inline]
-    fn record_root_checker_construction() {
-        // PERF: per-file checker construction; gated to skip `counters()` deref when disabled at runtime.
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().checker_state_constructed,
-            );
-        }
-    }
-
     /// Create a new `CheckerState`.
     ///
     /// # Arguments
@@ -166,7 +156,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
@@ -198,7 +188,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::new_with_shared_def_store(
                 arena,
@@ -229,7 +219,7 @@ impl<'a> CheckerState<'a> {
         cache: crate::TypeCache,
         compiler_options: CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_cache(
                 arena,
@@ -651,7 +641,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_options(arena, binder, types, file_name, compiler_options),
         }
@@ -667,7 +657,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_options_deferred_def_store(
                 arena,
@@ -690,7 +680,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: &CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         let compiler_options = compiler_options.clone().apply_strict_defaults();
         CheckerState {
             ctx: CheckerContext::new_with_shared_def_store(
@@ -713,7 +703,7 @@ impl<'a> CheckerState<'a> {
         cache: crate::TypeCache,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_cache_and_options(
                 arena,
@@ -740,7 +730,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
-        Self::record_root_checker_construction();
+        tsz_common::perf_counters::record_checker_state_constructed();
         CheckerState {
             ctx: CheckerContext::with_cache_and_shared_def_store(
                 arena,

@@ -620,18 +620,42 @@ impl<'a> CheckerContext<'a> {
         ctx.enum_namespace_types = parent.enum_namespace_types.clone();
 
         ctx.lib_delegation_cache = parent.lib_delegation_cache.clone();
-        *ctx.namespace_member_resolution_cache.borrow_mut() =
-            parent.namespace_member_resolution_cache.borrow().clone();
-        *ctx.export_equals_named_cache.borrow_mut() =
-            parent.export_equals_named_cache.borrow().clone();
-        *ctx.nested_namespace_candidates_cache.borrow_mut() =
-            parent.nested_namespace_candidates_cache.borrow().clone();
+        // Skip the deep `HashMap::clone` for caches that are empty on the
+        // parent: `ctx` was just constructed via `Self::base(...)` so its
+        // matching cache is already an empty HashMap, and cloning an empty
+        // parent into it would be wasted allocation. On the scale-cliff
+        // fixtures, `with_parent_cache` fires 6,735 times per run — even a
+        // single saved allocation per call is meaningful, and these four
+        // caches are typically empty at construction time for the
+        // `TypeEnvironmentCore` / `AliasResolution` /
+        // `DelegateCrossArenaSymbol` child checkers that dominate the call
+        // graph (see #5632's `by_reason` data on monorepo-006).
+        {
+            let parent_cache = parent.namespace_member_resolution_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.namespace_member_resolution_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
+        {
+            let parent_cache = parent.export_equals_named_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.export_equals_named_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
+        {
+            let parent_cache = parent.nested_namespace_candidates_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.nested_namespace_candidates_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
         ctx.nested_namespace_candidates_cache_complete =
             Cell::new(parent.nested_namespace_candidates_cache_complete.get());
-        *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent
-            .lowering_entity_name_resolution_cache
-            .borrow()
-            .clone();
+        {
+            let parent_cache = parent.lowering_entity_name_resolution_cache.borrow();
+            if !parent_cache.is_empty() {
+                *ctx.lowering_entity_name_resolution_cache.borrow_mut() = parent_cache.clone();
+            }
+        }
         ctx.skip_lib_type_resolution = parent.skip_lib_type_resolution;
 
         // CRITICAL: Propagate in-progress set from parent to prevent re-entrant

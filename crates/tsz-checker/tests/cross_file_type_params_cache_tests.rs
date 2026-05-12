@@ -102,6 +102,27 @@ fn no_constraint_no_default_generic_takes_arena_only_fast_path() {
 }
 
 #[test]
+fn cache_stores_only_positive_type_param_results() {
+    // Negative extraction results are intentionally not cached. A
+    // `None` answer can be context-dependent, so memoizing it can
+    // suppress a later successful extraction for the same
+    // `(file_idx, decl_idx)` under a different query context.
+    //
+    // The actual value-shape contract is checked at the type level:
+    // the cache stores `Vec<TypeParamInfo>`, not
+    // `Option<Vec<TypeParamInfo>>`. If a future refactor reintroduces
+    // negative entries, this test should fail to compile until the
+    // correctness risk is re-audited.
+    let cache: crate::context::CrossFileTypeParamsCache =
+        std::sync::Arc::new(dashmap::DashMap::new());
+    let key = (0u32, tsz_parser::parser::NodeIndex::NONE);
+    cache.insert(key, Vec::<tsz_solver::TypeParamInfo>::new());
+    let observed: Option<Vec<tsz_solver::TypeParamInfo>> =
+        cache.get(&key).map(|e| e.value().clone());
+    assert_eq!(observed, Some(Vec::new()));
+}
+
+#[test]
 fn cache_field_is_optional_and_off_by_default() {
     // The plain `check_multi_file` helper does not install the
     // cache, so production-shape fallback (slow path constructs the

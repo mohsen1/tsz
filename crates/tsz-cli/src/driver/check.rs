@@ -93,6 +93,23 @@ fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
 
+#[cfg(test)]
+thread_local! {
+    static FILE_SESSION_REUSE_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn file_session_reuse_requested() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = FILE_SESSION_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some()
+}
+
+const FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE: usize = 8;
+
 fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
     importing_file
         .components()
@@ -1207,7 +1224,8 @@ pub(super) fn collect_diagnostics(
         program_module_exports: Some(program_module_exports),
         program_cross_file_node_symbols: Some(program_cross_file_node_symbols),
         program_alias_partners: Some(program_alias_partners),
-        cross_file_type_params_cache: Some(Arc::new(dashmap::DashMap::new())),
+        cross_file_type_params_cache: std::env::var_os("TSZ_CROSS_FILE_TYPE_PARAMS_CACHE")
+            .map(|_| Arc::new(dashmap::DashMap::new())),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.
@@ -1281,22 +1299,25 @@ pub(super) fn collect_diagnostics(
     } else {
         FxHashSet::default()
     };
-    let baseline_lib_datetimeformatpart_diagnostics =
-        if !options.no_check && !baseline_lib_datetimeformatpart_interfaces.is_empty() {
-            let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
-                program,
-                options,
-                checker_libs,
-                &baseline_lib_datetimeformatpart_interfaces,
-                &FxHashSet::default(),
-                &program_context,
-                &[2552],
-            );
-            diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
-            diagnostics
-        } else {
-            Vec::new()
-        };
+    let baseline_lib_datetimeformatpart_diagnostics = if !options.no_check
+        && !options.lib_is_default
+        && should_preserve_datetimeformatpart_spelling_baseline(checker_libs)
+        && !baseline_lib_datetimeformatpart_interfaces.is_empty()
+    {
+        let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
+            program,
+            options,
+            checker_libs,
+            &baseline_lib_datetimeformatpart_interfaces,
+            &FxHashSet::default(),
+            &program_context,
+            &[2552],
+        );
+        diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
+        diagnostics
+    } else {
+        Vec::new()
+    };
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
@@ -1435,7 +1456,65 @@ pub(super) fn collect_diagnostics(
             // diagnostics.
             let use_sequential_checking =
                 work_items.len() <= 32 || has_large_wildcard_barrel(program, &work_items);
-            if use_sequential_checking {
+            // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): when the
+            // `TSZ_FILE_SESSION_REUSE` env var is set, the sequential
+            // path constructs one `CheckerState` and re-targets it
+            // across files via `CheckerContext::switch_to_file`
+            // instead of constructing one per file. Gated on the
+            // sequential branch because the parallel branch needs
+            // per-thread state, which the reuse path doesn't model.
+            // `extract_type_cache=true` (set when `--emit` or
+            // `--declaration` is on) consumes the `CheckerState` per
+            // file via `extract_cache(self)`. The reuse path holds
+            // ONE `CheckerState` across the whole loop, so it can't
+            // call the consuming variant. Pinning `--noEmit` runs is
+            // exactly the bench/profiling scenario T2.1.B is built
+            // for, so this restriction matches the use case rather
+            // than narrowing it.
+            let use_file_session_reuse =
+                use_sequential_checking && !extract_type_cache && file_session_reuse_requested();
+            if use_file_session_reuse {
+                check_files_sequentially_with_reuse(
+                    &work_items,
+                    program,
+                    &compiler_options,
+                    &program_context,
+                    &resolved_modules_per_file,
+                    Arc::clone(&shared_lib_cache),
+                    shared_query_cache.as_ref(),
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    extract_type_cache,
+                    build_checker_binder,
+                )
+            } else if !use_sequential_checking
+                && !extract_type_cache
+                && file_session_reuse_requested()
+            {
+                tsz::parallel::ensure_rayon_global_pool();
+                check_files_in_parallel_chunks_with_reuse(
+                    &work_items,
+                    program,
+                    &compiler_options,
+                    &program_context,
+                    &resolved_modules_per_file,
+                    Arc::clone(&shared_lib_cache),
+                    shared_query_cache.as_ref(),
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    extract_type_cache,
+                    FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE,
+                    &build_checker_binder,
+                )
+            } else if use_sequential_checking {
                 work_items
                     .iter()
                     .map(|&file_idx| {
@@ -2271,6 +2350,81 @@ fn collect_no_check_file_diagnostics(
     )
 }
 
+/// Per-file `CheckerContext` configuration extracted from
+/// `check_file_for_parallel`. Sets the fields that vary across files in
+/// a program — file index, ESM-ness, resolved modules, and the seven
+/// parse-diagnostic-derived fields the checker reads to suppress or
+/// classify diagnostics in syntax-error files.
+///
+/// The split between construction and per-file configuration is the
+/// seam `PERFORMANCE_PLAN.md` §6 T2.1.B's sequential session-reuse
+/// path will plug into: construct the `CheckerContext` once, then
+/// repeatedly call this helper, `check_source_file()`, and
+/// `reset_for_next_file()` rather than constructing a fresh
+/// `CheckerState` per file.
+///
+/// This commit only does the extraction; the reuse loop itself is a
+/// separate sub-PR.
+///
+/// Pure refactor: the field assignments and their derivations are
+/// byte-for-byte identical to the inline version, so default behavior
+/// is unchanged.
+fn configure_checker_per_file<'a>(
+    ctx: &mut tsz::checker::context::CheckerContext<'a>,
+    file: &tsz::parallel::BoundFile,
+    file_idx: usize,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules: Arc<rustc_hash::FxHashSet<String>>,
+    program_has_real_syntax_errors: bool,
+) {
+    ctx.set_current_file_idx(file_idx);
+    ctx.file_is_esm = program_context
+        .file_is_esm_map
+        .get(&file.file_name)
+        .copied();
+    ctx.resolved_modules = Some(resolved_modules);
+    // TSC suppresses many semantic diagnostics across the whole program when any
+    // file has a real syntax parse error; mirror that behavior using the program-level
+    // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
+    ctx.has_parse_errors = program_has_real_syntax_errors;
+    // Exclude grammar checks that don't affect AST structure from
+    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
+    //   TS1009 - Trailing comma (checker grammar error in TSC)
+    //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
+    //   TS1185 - Merge conflict marker (not a real parse failure)
+    ctx.has_syntax_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| !is_non_suppressing_parse_error(d.code));
+    ctx.syntax_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| !is_non_suppressing_parse_error(d.code))
+        .map(|d| d.start)
+        .collect();
+    ctx.all_parse_error_positions = file.parse_diagnostics.iter().map(|d| d.start).collect();
+    ctx.nullable_type_parse_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
+        .map(|d| d.start)
+        .collect();
+    ctx.has_real_syntax_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_real_syntax_error(d.code));
+    ctx.has_structural_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_structural_parse_error(d.code));
+    ctx.real_syntax_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| is_real_syntax_error(d.code))
+        .map(|d| d.start)
+        .collect();
+}
+
 /// Result of checking a single file for the parallel checking path: diagnostics,
 /// optional `TypeCache` snapshot, per-file request counters, and solver
 /// query-cache / definition-store statistics aggregated by the caller.
@@ -2288,124 +2442,43 @@ pub(super) type CheckFileResult = (
 /// Each invocation creates its own `CheckerState` (with its own mutable context)
 /// and its own `QueryCache` (using `RefCell`/`Cell` for zero-overhead single-threaded caching).
 /// The `TypeInterner` is shared across threads via `DashMap` (thread-safe).
-pub(super) fn check_file_for_parallel<'a>(
-    context: CheckFileForParallelContext<'a>,
-) -> CheckFileResult {
-    let CheckFileForParallelContext {
-        file_idx,
-        binder,
-        program,
-        compiler_options,
-        program_context,
-        resolved_modules_per_file,
-        shared_lib_cache,
-        shared_query_cache,
-        no_check,
-        check_js,
-        explicit_check_js_false,
-        skip_lib_check,
-        program_has_real_syntax_errors,
-        program_has_unsupported_js_root,
-        extract_type_cache,
-    } = context;
-    let file = &program.files[file_idx];
-    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
-    if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (
-            Vec::new(),
-            None,
-            RequestCacheCounters::default(),
-            tsz_solver::QueryCacheStatistics::default(),
-            tsz_solver::StoreStatistics::default(),
-        );
-    }
-
-    // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
-    // For multi-file projects, use shared L2 cache to avoid redundant computation.
-    let query_cache = if let Some(shared) = shared_query_cache {
-        QueryCache::new_with_shared(&program.type_interner, shared)
-    } else {
-        QueryCache::new(&program.type_interner)
-    };
-
-    // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
-    // re-filtering the program-wide cross-file set per file. The bucketed
-    // version is built once in `collect_diagnostics` and shared via `Arc`.
-    // Per-file `Arc::clone` is a single atomic increment — no deep copy of
-    // the `FxHashSet<String>` contents. Saves ~120K string clones on the
-    // 6086-file large-ts-repo fixture.
-    let resolved_modules: Arc<FxHashSet<String>> = resolved_modules_per_file
-        .get(file_idx)
-        .cloned()
-        .unwrap_or_else(|| Arc::new(FxHashSet::default()));
-
-    // apply_to (below) installs the project-wide shared DefinitionStore and
-    // warms the per-file caches from it. Use the deferred constructor so we
-    // don't build a throwaway per-file store first — that work showed up in
-    // profiles as a non-trivial fraction of total CPU on large projects, all
-    // of it overwritten moments later.
-    let mut checker = CheckerState::with_options_deferred_def_store(
-        &file.arena,
-        &binder,
-        &query_cache,
-        file.file_name.clone(),
-        compiler_options,
-    );
-    checker.ctx.report_unresolved_imports = true;
-    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
-
-    // Apply all project-level shared state in one call. This installs the
-    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
-    program_context.apply_to(&mut checker.ctx);
-
-    // Per-file state that varies across files:
-    checker.ctx.set_current_file_idx(file_idx);
-    checker.ctx.file_is_esm = program_context
-        .file_is_esm_map
-        .get(&file.file_name)
-        .copied();
-    checker.ctx.resolved_modules = Some(resolved_modules);
-    // TSC suppresses many semantic diagnostics across the whole program when any
-    // file has a real syntax parse error; mirror that behavior using the program-level
-    // flag so that diagnostics like TS1361/TS1362 do not leak from syntax-error files.
-    checker.ctx.has_parse_errors = program_has_real_syntax_errors;
-    // Exclude grammar checks that don't affect AST structure from
-    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
-    //   TS1009 - Trailing comma (checker grammar error in TSC)
-    //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
-    //   TS1185 - Merge conflict marker (not a real parse failure)
-    checker.ctx.has_syntax_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| !is_non_suppressing_parse_error(d.code));
-    checker.ctx.syntax_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| !is_non_suppressing_parse_error(d.code))
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.all_parse_error_positions =
-        file.parse_diagnostics.iter().map(|d| d.start).collect();
-    checker.ctx.nullable_type_parse_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| (d.code == 17019 || d.code == 17020) && d.message.contains("'?'"))
-        .map(|d| d.start)
-        .collect();
-    checker.ctx.has_real_syntax_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_real_syntax_error(d.code));
-    checker.ctx.has_structural_parse_errors = file
-        .parse_diagnostics
-        .iter()
-        .any(|d| is_structural_parse_error(d.code));
-    checker.ctx.real_syntax_error_positions = file
-        .parse_diagnostics
-        .iter()
-        .filter(|d| is_real_syntax_error(d.code))
-        .map(|d| d.start)
-        .collect();
+/// Run `check_source_file` on a fully-configured `CheckerState`, then
+/// post-process and shape the resulting `Vec<Diagnostic>`.
+///
+/// Extracted from `check_file_for_parallel` so the T2.1.B sequential
+/// session-reuse path (`PERFORMANCE_PLAN.md` §6) can reuse the same
+/// per-file check pipeline against a `CheckerState` that's been
+/// re-targeted at the next file via `CheckerContext::switch_to_file`,
+/// instead of constructing a fresh checker per file.
+///
+/// **Pure refactor**: the body is byte-for-byte the post-
+/// `configure_checker_per_file` portion of `check_file_for_parallel`.
+/// Default behavior is unchanged because the same function is called
+/// in the same order with the same arguments.
+///
+/// Caller's contract:
+///
+/// - `checker` has been constructed for `file` and configured via
+///   `configure_checker_per_file` (or `switch_to_file` →
+///   `configure_checker_per_file`).
+/// - `program_context.apply_to(&mut checker.ctx)` has been called.
+/// - `checker.ctx.diagnostics` is drained at function entry — anything
+///   left over from a prior file is appended to this file's output.
+///   In practice this means callers reusing a `CheckerState` across
+///   files must have invoked `switch_to_file` (which drains
+///   diagnostics via `reset_for_next_file`) before this function.
+#[allow(clippy::too_many_arguments)]
+fn run_check_on_existing_checker<'a>(
+    checker: &mut CheckerState<'a>,
+    file: &tsz::parallel::BoundFile,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+) -> Vec<Diagnostic> {
     let filtered_parse_diagnostics =
         filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
     let is_js = is_js_file(Path::new(&file.file_name));
@@ -2505,6 +2578,102 @@ pub(super) fn check_file_for_parallel<'a>(
         );
     }
 
+    file_diagnostics
+}
+
+pub(super) fn check_file_for_parallel<'a>(
+    context: CheckFileForParallelContext<'a>,
+) -> CheckFileResult {
+    let CheckFileForParallelContext {
+        file_idx,
+        binder,
+        program,
+        compiler_options,
+        program_context,
+        resolved_modules_per_file,
+        shared_lib_cache,
+        shared_query_cache,
+        no_check,
+        check_js,
+        explicit_check_js_false,
+        skip_lib_check,
+        program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
+        extract_type_cache,
+    } = context;
+    let file = &program.files[file_idx];
+    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
+    if skip_lib_check && is_declaration_file(&file.file_name) {
+        return (
+            Vec::new(),
+            None,
+            RequestCacheCounters::default(),
+            tsz_solver::QueryCacheStatistics::default(),
+            tsz_solver::StoreStatistics::default(),
+        );
+    }
+
+    // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
+    // For multi-file projects, use shared L2 cache to avoid redundant computation.
+    let query_cache = if let Some(shared) = shared_query_cache {
+        QueryCache::new_with_shared(&program.type_interner, shared)
+    } else {
+        QueryCache::new(&program.type_interner)
+    };
+
+    // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
+    // re-filtering the program-wide cross-file set per file. The bucketed
+    // version is built once in `collect_diagnostics` and shared via `Arc`.
+    // Per-file `Arc::clone` is a single atomic increment — no deep copy of
+    // the `FxHashSet<String>` contents. Saves ~120K string clones on the
+    // 6086-file large-ts-repo fixture.
+    let resolved_modules: Arc<FxHashSet<String>> = resolved_modules_per_file
+        .get(file_idx)
+        .cloned()
+        .unwrap_or_else(|| Arc::new(FxHashSet::default()));
+
+    // apply_to (below) installs the project-wide shared DefinitionStore and
+    // warms the per-file caches from it. Use the deferred constructor so we
+    // don't build a throwaway per-file store first — that work showed up in
+    // profiles as a non-trivial fraction of total CPU on large projects, all
+    // of it overwritten moments later.
+    let mut checker = CheckerState::with_options_deferred_def_store(
+        &file.arena,
+        &binder,
+        &query_cache,
+        file.file_name.clone(),
+        compiler_options,
+    );
+    checker.ctx.report_unresolved_imports = true;
+    checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
+
+    // Apply all project-level shared state in one call. This installs the
+    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
+    program_context.apply_to(&mut checker.ctx);
+
+    // Per-file `CheckerContext` configuration. Extracted into a helper
+    // to seam construction from per-file configuration; T2.1.B's
+    // sequential session-reuse path will reuse this entry point.
+    configure_checker_per_file(
+        &mut checker.ctx,
+        file,
+        file_idx,
+        program_context,
+        resolved_modules,
+        program_has_real_syntax_errors,
+    );
+    let file_diagnostics = run_check_on_existing_checker(
+        &mut checker,
+        file,
+        compiler_options,
+        program_context,
+        no_check,
+        check_js,
+        explicit_check_js_false,
+        program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
+    );
+
     let checker_counters = checker.ctx.request_cache_counters;
     let qc_stats = query_cache.statistics();
     // Skip per-file DefinitionStore statistics: in the parallel path all
@@ -2525,6 +2694,259 @@ pub(super) fn check_file_for_parallel<'a>(
         qc_stats,
         ds_stats,
     )
+}
+
+/// Sequential session-reuse path for T2.1.B (`PERFORMANCE_PLAN.md` §6
+/// PR table item T2.1.B: "Add a sequential session-reuse path behind
+/// a flag").
+///
+/// Differences from the default `work_items.iter().map(check_file_for_parallel).collect()`
+/// path:
+///
+/// 1. **One `CheckerState` for the entire loop** (vs. one per file).
+///    Constructed lazily on the first non-skip-lib-check file so an
+///    all-declaration-file `work_items` doesn't pay setup cost.
+/// 2. **One `QueryCache` for the entire loop** (vs. one per file).
+///    The shared L2 path (`shared_query_cache`) already shared a
+///    cache across files when present; this path also reuses the
+///    primary `QueryCache` across files when `shared_query_cache` is
+///    `None`.
+/// 3. **`program_context.apply_to` runs once** (vs. once per file).
+///    The `apply_to` work — Arc-cloning shared program-level state
+///    into `ctx`, warming the local caches from the shared
+///    `DefinitionStore` — is identical across files and only
+///    needs to land once. Subsequent files inherit it through the
+///    same `ctx`.
+/// 4. **Pre-built `Vec<BinderState>`** holds every file's binder for
+///    the duration of the loop, satisfying `CheckerState`'s `&'a
+///    BinderState` lifetime requirement. The fresh-per-file path
+///    drops the binder at each iteration's end; this path holds
+///    them all so the next `switch_to_file` call has a valid
+///    `&BinderState` to swap to.
+///
+/// Per-file work that still happens N times:
+/// - `configure_checker_per_file` (file-local config: `file_idx`,
+///   `resolved_modules`, parse-error positions, etc.)
+/// - `CheckerContext::switch_to_file` (drains file-local caches,
+///   swaps `arena`/`binder`/`file_name`/`file_idx`)
+/// - The actual `check_source_file` work and diagnostic
+///   post-processing (via `run_check_on_existing_checker`)
+///
+/// Caller's contract: gated on `TSZ_FILE_SESSION_REUSE=1` env var.
+/// The flag-off default goes through `check_file_for_parallel` per
+/// file unchanged.
+///
+/// **Correctness gate**: this path must produce byte-identical
+/// diagnostics to the flag-off path under any conformance fixture,
+/// or it is wrong (`PERFORMANCE_PLAN.md` §6 T2.1.B `DoD` line). If a
+/// future change introduces a divergence, the responsible change is
+/// the one to fix, not the flag — the flag exists to *measure* the
+/// allocation savings, not to gate behavior changes.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn check_files_sequentially_with_reuse<F>(
+    work_items: &[usize],
+    program: &MergedProgram,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    shared_query_cache: Option<&tsz_solver::SharedQueryCache>,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    skip_lib_check: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+    extract_type_cache: bool,
+    build_checker_binder: F,
+) -> Vec<CheckFileResult>
+where
+    F: Fn(usize) -> tsz_binder::BinderState,
+{
+    // Pre-build every binder via the caller-provided closure. Each
+    // file's `CheckerContext::binder` is a `&'a BinderState`, so the
+    // binders must outlive the `CheckerState` we construct below;
+    // collecting into a `Vec` owned by this function satisfies that.
+    // The closure form lets the caller hold the module-resolution
+    // tables (`cached_module_specifiers`, `resolved_module_paths`,
+    // `merged_augmentations`) in its own scope without threading them
+    // through this function's signature.
+    let binders: Vec<tsz_binder::BinderState> = work_items
+        .iter()
+        .map(|&file_idx| build_checker_binder(file_idx))
+        .collect();
+
+    // One `QueryCache` for the whole loop. Mirrors the per-file
+    // construction in `check_file_for_parallel`, but built once.
+    let query_cache = if let Some(shared) = shared_query_cache {
+        QueryCache::new_with_shared(&program.type_interner, shared)
+    } else {
+        QueryCache::new(&program.type_interner)
+    };
+
+    let mut results: Vec<CheckFileResult> = Vec::with_capacity(work_items.len());
+    let mut checker: Option<CheckerState> = None;
+
+    for (loop_idx, &file_idx) in work_items.iter().enumerate() {
+        let file = &program.files[file_idx];
+
+        // skipLibCheck: skip type checking of declaration files. Same
+        // contract as `check_file_for_parallel`'s early-return; we
+        // emit an empty result and do *not* touch the shared
+        // `CheckerState` for this file.
+        if skip_lib_check && is_declaration_file(&file.file_name) {
+            results.push((
+                Vec::new(),
+                None,
+                RequestCacheCounters::default(),
+                tsz_solver::QueryCacheStatistics::default(),
+                tsz_solver::StoreStatistics::default(),
+            ));
+            continue;
+        }
+
+        let resolved_modules: Arc<rustc_hash::FxHashSet<String>> = resolved_modules_per_file
+            .get(file_idx)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(rustc_hash::FxHashSet::default()));
+
+        // Lazy construction on the first non-skipped file. After this,
+        // subsequent iterations use `switch_to_file` to re-target the
+        // same `CheckerState` at the next file.
+        if checker.is_none() {
+            let mut state = CheckerState::with_options_deferred_def_store(
+                &file.arena,
+                &binders[loop_idx],
+                &query_cache,
+                file.file_name.clone(),
+                compiler_options,
+            );
+            state.ctx.report_unresolved_imports = true;
+            state.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+            // `apply_to` is the expensive setup we're amortising:
+            // shared `DefinitionStore`, shared global indices,
+            // resolved-module maps, file-is-ESM map, etc. Running it
+            // once vs. N-times is the headline win for this path.
+            program_context.apply_to(&mut state.ctx);
+            checker = Some(state);
+        } else if let Some(ref mut state) = checker {
+            state.ctx.switch_to_file(
+                &file.arena,
+                &binders[loop_idx],
+                file.file_name.clone(),
+                file_idx,
+            );
+        }
+
+        let state = checker.as_mut().expect("checker constructed above");
+        configure_checker_per_file(
+            &mut state.ctx,
+            file,
+            file_idx,
+            program_context,
+            resolved_modules,
+            program_has_real_syntax_errors,
+        );
+
+        let file_diagnostics = run_check_on_existing_checker(
+            state,
+            file,
+            compiler_options,
+            program_context,
+            no_check,
+            check_js,
+            explicit_check_js_false,
+            program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
+        );
+
+        let checker_counters = state.ctx.request_cache_counters;
+        // `QueryCache::statistics()` is cumulative over the whole loop
+        // because we reuse the same cache. The aggregator merges per-
+        // file stats; emitting cumulative numbers N times would inflate
+        // them. Emit them once on the last iteration to keep the
+        // aggregator's invariant: sum of per-file QC stats == final
+        // cumulative QC stats.
+        let qc_stats = if loop_idx + 1 == work_items.len() {
+            query_cache.statistics()
+        } else {
+            tsz_solver::QueryCacheStatistics::default()
+        };
+        let ds_stats = tsz_solver::StoreStatistics::default();
+        // The reuse path is gated on `!extract_type_cache` at the
+        // call site; this loop never observes `extract_type_cache=true`,
+        // so we always emit `None` for the per-file `TypeCache` slot.
+        // See the call site in the sequential-branch dispatch for
+        // the rationale.
+        let type_cache = None;
+        let _ = extract_type_cache;
+
+        results.push((
+            file_diagnostics,
+            type_cache,
+            checker_counters,
+            qc_stats,
+            ds_stats,
+        ));
+    }
+
+    results
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn check_files_in_parallel_chunks_with_reuse<F>(
+    work_items: &[usize],
+    program: &MergedProgram,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    shared_query_cache: Option<&tsz_solver::SharedQueryCache>,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    skip_lib_check: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+    extract_type_cache: bool,
+    chunk_size: usize,
+    build_checker_binder: &F,
+) -> Vec<CheckFileResult>
+where
+    F: Fn(usize) -> tsz_binder::BinderState + Sync,
+{
+    use rayon::iter::ParallelIterator;
+    use rayon::slice::ParallelSlice;
+
+    debug_assert!(!extract_type_cache);
+    let chunk_size = chunk_size.max(1);
+    work_items
+        .par_chunks(chunk_size)
+        .map(|chunk| {
+            check_files_sequentially_with_reuse(
+                chunk,
+                program,
+                compiler_options,
+                program_context,
+                resolved_modules_per_file,
+                Arc::clone(&shared_lib_cache),
+                shared_query_cache,
+                no_check,
+                check_js,
+                explicit_check_js_false,
+                skip_lib_check,
+                program_has_real_syntax_errors,
+                program_has_unsupported_js_root,
+                extract_type_cache,
+                build_checker_binder,
+            )
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 struct CheckerLibFileCheckEnv<'a> {
@@ -3437,6 +3859,25 @@ fn baseline_lib_datetimeformatpart_spelling_interface_names(
     interfaces
 }
 
+fn should_preserve_datetimeformatpart_spelling_baseline(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_datetimeformatpart_spelling_baseline_trigger_lib)
+    })
+}
+
+fn is_datetimeformatpart_spelling_baseline_trigger_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.esnext.date.d.ts"
+            | "esnext.date.d.ts"
+            | "lib.esnext.temporal.d.ts"
+            | "esnext.temporal.d.ts"
+    )
+}
+
 fn is_datetimeformatpart_spelling_baseline_lib(file_name: &str) -> bool {
     matches!(
         file_name,
@@ -3663,6 +4104,27 @@ mod tests {
         .diagnostics
     }
 
+    struct FileSessionReuseOverrideGuard;
+
+    impl Drop for FileSessionReuseOverrideGuard {
+        fn drop(&mut self) {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(None));
+        }
+    }
+
+    fn collect_test_diagnostics_with_file_session_reuse(
+        files: &[(&str, &str)],
+        enabled: bool,
+    ) -> Vec<Diagnostic> {
+        FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(enabled)));
+        let _guard = FileSessionReuseOverrideGuard;
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            ..ResolvedCompilerOptions::default()
+        };
+        collect_test_diagnostics_with_options(files, &options, std::path::Path::new("/"))
+    }
+
     fn merged_program_from_owned_files(files: Vec<(String, String)>) -> MergedProgram {
         let bind_results: Vec<_> = files
             .into_iter()
@@ -3756,6 +4218,65 @@ mod tests {
             resolved.checker.module = ModuleKind::ES2015;
         }
         resolved
+    }
+
+    #[test]
+    fn file_session_reuse_preserves_multifile_diagnostics() {
+        let files = [
+            (
+                "a.ts",
+                "interface Alpha { kind: \"alpha\"; count: number }\nconst a: Alpha = { kind: \"alpha\", count: \"nope\" };\n",
+            ),
+            (
+                "b.ts",
+                "interface Beta { kind: \"beta\"; count: number }\nconst b: Beta = { kind: \"beta\", count: \"nope\" };\n",
+            ),
+            (
+                "c.ts",
+                "interface Gamma { kind: \"gamma\"; count: number }\nconst c: Gamma = { kind: \"gamma\", count: \"nope\" };\n",
+            ),
+        ];
+
+        let default_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, false);
+        let reused_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, true);
+
+        assert_eq!(
+            reused_diagnostics, default_diagnostics,
+            "file-session reuse must preserve byte-identical diagnostics"
+        );
+        assert!(
+            !default_diagnostics.is_empty(),
+            "fixture should exercise real checker diagnostics"
+        );
+    }
+
+    #[test]
+    fn file_session_reuse_preserves_parallel_multifile_diagnostics() {
+        let owned_files = (0..40)
+            .map(|idx| {
+                (
+                    format!("pkg{idx}/file{idx}.ts"),
+                    format!("export {{}};\nconst value{idx}: number = \"nope\";\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let files = owned_files
+            .iter()
+            .map(|(file_name, source)| (file_name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+
+        let default_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, false);
+        let reused_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, true);
+
+        assert_eq!(
+            reused_diagnostics, default_diagnostics,
+            "parallel file-session reuse must preserve byte-identical diagnostics"
+        );
+        assert_eq!(
+            default_diagnostics.len(),
+            owned_files.len(),
+            "fixture should produce one checker diagnostic per file"
+        );
     }
 
     #[test]
@@ -3856,16 +4377,26 @@ mod tests {
 
     #[test]
     fn collect_diagnostics_preserves_builtin_lib_ts2552_spelling_baseline() {
-        let checker_libs = checker_lib_set_for_test(&[(
-            "lib.esnext.intl.d.ts",
-            r#"
+        let checker_libs = checker_lib_set_for_test(&[
+            (
+                "lib.esnext.intl.d.ts",
+                r#"
 declare namespace Intl {
     interface DateTimeFormat {
         formatToParts(): DateTimeFormatPart[];
     }
 }
 "#,
-        )]);
+            ),
+            (
+                "lib.esnext.temporal.d.ts",
+                r#"
+declare namespace Temporal {
+    interface Instant {}
+}
+"#,
+            ),
+        ]);
 
         let diagnostics = collect_test_diagnostics_with_checker_libs(
             &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
@@ -3888,6 +4419,30 @@ declare namespace Intl {
             "expected DateTimeFormatPart spelling suggestion, got: {ts2552:?}"
         );
         assert_eq!(ts2552[0].file, "lib.esnext.intl.d.ts");
+    }
+
+    #[test]
+    fn collect_diagnostics_skips_builtin_lib_ts2552_without_temporal_trigger_lib() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.esnext.intl.d.ts",
+            r#"
+declare namespace Intl {
+    interface DateTimeFormat {
+        formatToParts(): DateTimeFormatPart[];
+    }
+}
+"#,
+        )]);
+
+        let diagnostics = collect_test_diagnostics_with_checker_libs(
+            &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
+            &checker_libs,
+        );
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2552),
+            "expected DateTimeFormatPart baseline to require Temporal/Date libs, got: {diagnostics:?}"
+        );
     }
 
     #[test]
