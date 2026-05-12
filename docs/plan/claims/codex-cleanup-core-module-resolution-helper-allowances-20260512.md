@@ -20,6 +20,6 @@ unnecessary lint noise.
 
 ## Verification
 
-- `cargo fmt -p tsz-core`
-- `cargo test -p tsz-core module_resolution_tests::`
-- `cargo clippy -p tsz-core --all-targets -- -D warnings`
+- `cargo fmt --check -p tsz-core` (passed)
+- `cargo nextest run -p tsz-core module_resolution_tests` (88 passed, 3072 skipped)
+- `cargo clippy -p tsz-core --all-targets -- -D warnings` (passed)
