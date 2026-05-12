@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/review-audit-batch3-20260512`
-- **PR**: TBD
+- **PR**: #5874
 - **Status**: ready
 - **Workstream**: review audit follow-ups
 
