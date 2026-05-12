@@ -597,7 +597,9 @@ impl<'a> CheckerState<'a> {
 
         let sym_id = self.resolve_identifier_symbol(idx)?;
         let stable_declarations = {
-            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            let symbol = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
             symbol
                 .stable_declarations
                 .iter()
@@ -618,6 +620,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if decl.type_annotation.is_some() {
+                if stable_location.has_file_idx()
+                    && stable_location.file_idx != self.ctx.current_file_idx as u32
+                {
+                    return Some(self.type_of_value_declaration_for_cross_file_symbol(
+                        sym_id,
+                        decl_idx,
+                        stable_location.file_idx as usize,
+                    ));
+                }
+                if !std::ptr::eq(arena, self.ctx.arena)
+                    && let Some(target_file_idx) = self.ctx.get_file_idx_for_arena(arena)
+                    && target_file_idx != self.ctx.current_file_idx
+                {
+                    return Some(self.type_of_value_declaration_for_cross_file_symbol(
+                        sym_id,
+                        decl_idx,
+                        target_file_idx,
+                    ));
+                }
                 return Some(self.type_of_value_declaration_for_symbol(sym_id, decl_idx));
             }
         }
@@ -756,5 +777,99 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use crate::module_resolution::build_module_resolution_maps;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::syntax_kind_ext;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn declared_type_of_identifier_argument_resolves_cross_file_stable_declaration() {
+        let files = [
+            (
+                "consumer.ts",
+                r#"
+declare function f<T>(...items: T[]): T;
+f(data, { a: 2 });
+"#,
+            ),
+            (
+                "shared.ts",
+                r#"
+declare let data: { a: 1, b: "abc", c: true };
+"#,
+            ),
+        ];
+
+        let mut arenas = Vec::with_capacity(files.len());
+        let mut binders = Vec::with_capacity(files.len());
+        let mut roots = Vec::with_capacity(files.len());
+        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+        for (file_idx, (name, source)) in files.iter().enumerate() {
+            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.set_file_idx(file_idx as u32);
+            binder.bind_source_file(parser.get_arena(), root);
+            arenas.push(Arc::new(parser.get_arena().clone()));
+            binders.push(Arc::new(binder));
+            roots.push(root);
+        }
+
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        let all_arenas = Arc::new(arenas);
+        let all_binders = Arc::new(binders);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[0].as_ref(),
+            all_binders[0].as_ref(),
+            &types,
+            file_names[0].clone(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(0);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+
+        checker.check_source_file(roots[0]);
+
+        let data_arg_idx = checker
+            .ctx
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(_, node)| {
+                if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                    return None;
+                }
+                let call = checker.ctx.arena.get_call_expr(node)?;
+                let callee_node = checker.ctx.arena.get(call.expression)?;
+                let callee_ident = checker.ctx.arena.get_identifier(callee_node)?;
+                if callee_ident.escaped_text != "f" {
+                    return None;
+                }
+                call.arguments.as_ref()?.nodes.first().copied()
+            })
+            .expect("expected to find f(data, ...) call in consumer.ts");
+
+        let declared = checker.declared_type_of_identifier_argument(data_arg_idx);
+        assert!(
+            declared.is_some(),
+            "cross-file typed identifier argument should resolve a declared type"
+        );
     }
 }
