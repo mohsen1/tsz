@@ -362,6 +362,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // Rest element (e.g., `...string[]` or `...T`)
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check_tuple_rest_type_node(wrapped.type_node, true);
+                        if let Some(spread_elements) = self.fixed_tuple_spread_elements(elem_type) {
+                            elements.extend(spread_elements);
+                            continue;
+                        }
                         let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
                             || Self::ast_kind_is_obviously_array_or_tuple(
                                 self.ctx.arena,
@@ -409,6 +413,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .map(|id_data| self.ctx.types.intern_string(&id_data.escaped_text));
 
                         if data.dot_dot_dot_token {
+                            if let Some(spread_elements) =
+                                self.fixed_tuple_spread_elements(elem_type)
+                            {
+                                elements.extend(spread_elements);
+                                continue;
+                            }
                             let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
                                 || Self::ast_kind_is_obviously_array_or_tuple(
                                     self.ctx.arena,

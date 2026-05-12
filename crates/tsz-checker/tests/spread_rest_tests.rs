@@ -1512,10 +1512,24 @@ type Spread = [...[1, 2], ...[3, 4]];
 const sp: Spread = [1, 2, 3, 4];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
     assert_eq!(
-        ts1265_count, 0,
-        "TS1265 must not fire when spreading fixed-length literal tuples, got {ts1265_count}: {diagnostics:?}"
+        diagnostics,
+        Vec::new(),
+        "Fixed-length literal tuple spreads should not produce diagnostics"
+    );
+}
+
+/// Readonly wrappers should not make fixed-length tuple spreads look variadic.
+#[test]
+fn test_ts1265_not_emitted_for_readonly_fixed_length_tuple_spreads() {
+    let source = r#"
+type Spread = [...readonly [1, 2], ...[3, 4]];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostics,
+        Vec::new(),
+        "Readonly fixed-length tuple spreads should not produce diagnostics"
     );
 }
 
@@ -1533,9 +1547,9 @@ type Triple = [...[1, 2], ...[3, 4], ...[5, 6]];
     );
 }
 
-/// A variadic spread (array) after a variadic spread still emits TS1265.
+/// A variadic spread (array) after a variable-length tuple spread still emits TS1265.
 #[test]
-fn test_ts1265_still_fires_for_array_after_fixed_tuple_containing_rest() {
+fn test_ts1265_still_fires_for_array_after_variable_length_tuple_spread() {
     let source = r#"
 type T = [...[string, ...number[]], ...boolean[]];
 "#;

@@ -709,10 +709,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Fixed-length tuples return `false`. Used by TS1265/TS1266 to decide whether a
     /// spread counts as a "rest" element for "rest after rest" / "optional after rest".
     pub(super) fn is_variadic_array_or_tuple(&self, type_id: tsz_solver::TypeId) -> bool {
+        let mut type_id = type_id;
+        while let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+        {
+            type_id = inner;
+        }
+
         crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
             || (crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
                 && crate::query_boundaries::common::get_fixed_tuple_length(self.ctx.types, type_id)
                     .is_none())
+    }
+
+    pub(super) fn fixed_tuple_spread_elements(
+        &self,
+        type_id: tsz_solver::TypeId,
+    ) -> Option<Vec<tsz_solver::TupleElement>> {
+        let mut type_id = type_id;
+        while let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+        {
+            type_id = inner;
+        }
+        crate::query_boundaries::common::get_fixed_tuple_length(self.ctx.types, type_id)?;
+        crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
     }
 
     /// If `idx` is a direct, unshadowed reference to the lib's `Array` /
