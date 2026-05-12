@@ -212,6 +212,44 @@ fn special_modes_ignore_config_with_no_inputs_follow_no_input_behavior() {
     );
 }
 
+#[test]
+fn show_config_ignore_config_without_files_loads_discovered_tsconfig() {
+    let temp = TempDir::new("show_config_ignore_config_loads_tsconfig").expect("temp dir");
+    write_file(&temp.path.join("index.ts"), "const ok = 1;\n");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true},"include":["index.ts"]}"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--showConfig", "--ignoreConfig", "--pretty", "false"],
+    )
+    .expect("tsz should run");
+
+    assert_eq!(code, 0, "showConfig should succeed: {output}");
+    assert!(
+        !output.contains("error TS5081"),
+        "showConfig must not report TS5081 when a tsconfig is discoverable: {output}"
+    );
+    assert!(
+        output.contains("\"noEmit\": true"),
+        "showConfig should load compilerOptions from tsconfig: {output}"
+    );
+    assert!(
+        output.contains("\"ignoreConfig\": true"),
+        "showConfig should include the CLI ignoreConfig option: {output}"
+    );
+    assert!(
+        output.contains("\"./index.ts\""),
+        "showConfig should include discovered project file: {output}"
+    );
+    assert!(
+        output.contains("\"include\": [") && output.contains("\"index.ts\""),
+        "showConfig should preserve include specs from tsconfig: {output}"
+    );
+}
+
 // --- Regression tests for issue #3580 ---
 //
 // `tsz --showConfig` must match tsc's tsconfig-discovery rules:
