@@ -17,6 +17,17 @@ use super::assignability::{
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
+    fn recursive_non_generic_alias_name_for_body(&self, type_id: TypeId) -> Option<String> {
+        let def_id =
+            crate::query_boundaries::recursive_alias::recursive_non_generic_type_alias_body_def(
+                self.ctx.types.as_type_database(),
+                &self.ctx.definition_store,
+                type_id,
+            )?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        Some(self.ctx.types.resolve_atom_ref(def.name).to_string())
+    }
+
     fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
         query_utils::is_object_intrinsic_type(self.ctx.types, type_id)
     }
@@ -1175,28 +1186,9 @@ impl<'a> CheckerState<'a> {
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
         if is_source_primitive {
-            // For recursive non-generic type aliases (e.g. `type Box2 = Box<Box2 | number>`),
-            // tsc preserves the alias name in TS2322 messages rather than expanding the body.
-            // `target_type` is the evaluated ObjType (body of the alias), so we check whether
-            // it is the registered body of a non-generic recursive alias.
-            let tgt_str = if let Some(def_id) = self
-                .ctx
-                .definition_store
-                .find_type_alias_by_body(target_type)
-                && crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
-                    self.ctx.types.as_type_database(),
-                    &self.ctx.definition_store,
-                    def_id,
-                ) {
-                let def = self
-                    .ctx
-                    .definition_store
-                    .get(def_id)
-                    .expect("def_id from find_type_alias_by_body must exist");
-                self.ctx.types.resolve_atom_ref(def.name).to_string()
-            } else {
-                self.format_type_diagnostic(target_type)
-            };
+            let tgt_str = self
+                .recursive_non_generic_alias_name_for_body(target_type)
+                .unwrap_or_else(|| self.format_type_diagnostic(target_type));
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&display_src_str, &tgt_str],
@@ -1929,28 +1921,9 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
         {
             let src_str = self.format_type_diagnostic(source_type);
-            // For recursive non-generic type aliases (e.g. `type Box2 = Box<Box2 | number>`),
-            // tsc preserves the alias name in TS2322 messages rather than expanding the body.
-            // The target_type here is the evaluated ObjType (body of the alias), so we check
-            // whether it is the registered body of a non-generic recursive alias.
-            let tgt_str = if let Some(def_id) = self
-                .ctx
-                .definition_store
-                .find_type_alias_by_body(target_type)
-                && crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
-                    self.ctx.types.as_type_database(),
-                    &self.ctx.definition_store,
-                    def_id,
-                ) {
-                let def = self
-                    .ctx
-                    .definition_store
-                    .get(def_id)
-                    .expect("def_id from find_type_alias_by_body must exist");
-                self.ctx.types.resolve_atom_ref(def.name).to_string()
-            } else {
-                self.format_type_diagnostic(target_type)
-            };
+            let tgt_str = self
+                .recursive_non_generic_alias_name_for_body(target_type)
+                .unwrap_or_else(|| self.format_type_diagnostic(target_type));
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],

@@ -11,39 +11,30 @@ use tsz_solver::TypeDatabase;
 use tsz_solver::TypeId;
 use tsz_solver::def::{DefId, DefKind, DefinitionStore};
 
-/// True when `type_id` is the registered body of a non-generic recursive type alias.
+/// Returns the non-generic recursive type alias whose registered body is
+/// `type_id`, if any.
 ///
 /// Handles cases like `type Box2 = Box<Box2 | number>` where the alias annotation
 /// `const x: Box2` resolves to the Application body type, NOT `Lazy(Box2_def)`.
 /// tsc preserves "Box2" in TS2322 messages; this helper exposes the structural
 /// rule so the checker can match that policy without hardcoding alias names.
-///
-/// The structural rule: when a non-generic type alias (no type parameters) has a
-/// body that recursively references the alias itself, the alias name must be shown
-/// in TS2322 messages rather than the expanded body.
-pub(crate) fn is_recursive_non_generic_type_alias_body(
+pub(crate) fn recursive_non_generic_type_alias_body_def(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
     type_id: TypeId,
-) -> bool {
+) -> Option<DefId> {
     // Find the alias whose body is registered as this exact type.
-    let Some(def_id) = def_store.find_type_alias_by_body(type_id) else {
-        return false;
-    };
-    let Some(def) = def_store.get(def_id) else {
-        return false;
-    };
+    let def_id = def_store.find_type_alias_by_body(type_id)?;
+    let def = def_store.get(def_id)?;
     // Only applies to non-generic type aliases; generic aliases (with type parameters)
     // are handled by is_recursive_type_alias_application which preserves "Alias<Args>".
     if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
-        return false;
+        return None;
     }
-    let Some(body) = def.body else {
-        return false;
-    };
+    let body = def.body?;
     // Verify the body recursively references the alias itself.
     let mut visited: FxHashSet<TypeId> = FxHashSet::default();
-    type_reaches_alias_def(db, body, def_id, &mut visited)
+    type_reaches_alias_def(db, body, def_id, &mut visited).then_some(def_id)
 }
 
 /// True when `def_id` refers to a non-generic `TypeAlias` whose body recursively
