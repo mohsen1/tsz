@@ -1,6 +1,6 @@
-//! Tests for TS2737: BigInt literals require --target ES2020 or higher.
+//! Tests for TS2737: `BigInt` literals require --target ES2020 or higher.
 //!
-//! When a BigInt literal (`1n`) appears in value position and the compilation
+//! When a `BigInt` literal (`1n`) appears in value position and the compilation
 //! target is below ES2020, TypeScript emits TS2737. This matches tsc behavior.
 
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
