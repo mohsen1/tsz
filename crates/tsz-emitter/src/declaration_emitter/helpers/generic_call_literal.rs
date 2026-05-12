@@ -132,7 +132,19 @@ impl<'a> DeclarationEmitter<'a> {
                     "type",
                     &return_type_param,
                 )
-                .then(|| self.object_literal_property_literal_type_text(arg_idx, "type"))
+                .then(|| {
+                    if arguments.nodes.len() > 1
+                        && return_type_parameter_appears_in_other_parameters(
+                            source_arena,
+                            func,
+                            param_idx,
+                            &return_type_param,
+                        )
+                    {
+                        return None;
+                    }
+                    self.object_literal_property_literal_type_text(arg_idx, "type")
+                })
                 .flatten()
             })
     }
@@ -246,6 +258,162 @@ fn parameter_type_has_property_type_parameter(
                     type_param_name,
                 )
             }),
+        _ => false,
+    }
+}
+
+fn return_type_parameter_appears_in_other_parameters(
+    source_arena: &NodeArena,
+    func: &FunctionData,
+    selected_param_idx: NodeIndex,
+    type_param_name: &str,
+) -> bool {
+    func.parameters
+        .nodes
+        .iter()
+        .copied()
+        .filter(|param_idx| *param_idx != selected_param_idx)
+        .any(|param_idx| {
+            source_arena
+                .get(param_idx)
+                .and_then(|node| source_arena.get_parameter(node))
+                .is_some_and(|param| {
+                    type_node_references_type_parameter(
+                        source_arena,
+                        param.type_annotation,
+                        type_param_name,
+                        0,
+                    )
+                })
+        })
+}
+
+fn type_node_references_type_parameter(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+    type_param_name: &str,
+    depth: u8,
+) -> bool {
+    if depth > 32 {
+        return false;
+    }
+    let Some(type_node) = source_arena.get(type_idx) else {
+        return false;
+    };
+    match type_node.kind {
+        k if k == SyntaxKind::Identifier as u16 => {
+            identifier_text(source_arena, type_idx).as_deref() == Some(type_param_name)
+        }
+        k if k == syntax_kind_ext::TYPE_REFERENCE => {
+            let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+                return false;
+            };
+            identifier_text(source_arena, type_ref.type_name).as_deref() == Some(type_param_name)
+                || type_ref.type_arguments.as_ref().is_some_and(|type_args| {
+                    type_args.nodes.iter().copied().any(|arg_idx| {
+                        type_node_references_type_parameter(
+                            source_arena,
+                            arg_idx,
+                            type_param_name,
+                            depth + 1,
+                        )
+                    })
+                })
+        }
+        k if k == syntax_kind_ext::TYPE_LITERAL => source_arena
+            .get_type_literal(type_node)
+            .is_some_and(|literal| {
+                literal.members.nodes.iter().copied().any(|member_idx| {
+                    let Some(member_node) = source_arena.get(member_idx) else {
+                        return false;
+                    };
+                    source_arena
+                        .get_signature(member_node)
+                        .is_some_and(|signature| {
+                            type_node_references_type_parameter(
+                                source_arena,
+                                signature.type_annotation,
+                                type_param_name,
+                                depth + 1,
+                            )
+                        })
+                })
+            }),
+        k if k == syntax_kind_ext::INTERSECTION_TYPE || k == syntax_kind_ext::UNION_TYPE => {
+            source_arena
+                .get_composite_type(type_node)
+                .is_some_and(|composite| {
+                    composite.types.nodes.iter().copied().any(|part_idx| {
+                        type_node_references_type_parameter(
+                            source_arena,
+                            part_idx,
+                            type_param_name,
+                            depth + 1,
+                        )
+                    })
+                })
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+            || k == syntax_kind_ext::OPTIONAL_TYPE
+            || k == syntax_kind_ext::REST_TYPE =>
+        {
+            source_arena
+                .get_wrapped_type(type_node)
+                .is_some_and(|wrapped| {
+                    type_node_references_type_parameter(
+                        source_arena,
+                        wrapped.type_node,
+                        type_param_name,
+                        depth + 1,
+                    )
+                })
+        }
+        k if k == syntax_kind_ext::ARRAY_TYPE => {
+            source_arena.get_array_type(type_node).is_some_and(|array| {
+                type_node_references_type_parameter(
+                    source_arena,
+                    array.element_type,
+                    type_param_name,
+                    depth + 1,
+                )
+            })
+        }
+        k if k == syntax_kind_ext::TUPLE_TYPE => {
+            source_arena.get_tuple_type(type_node).is_some_and(|tuple| {
+                tuple.elements.nodes.iter().copied().any(|element_idx| {
+                    type_node_references_type_parameter(
+                        source_arena,
+                        element_idx,
+                        type_param_name,
+                        depth + 1,
+                    )
+                })
+            })
+        }
+        k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+            source_arena
+                .get_function_type(type_node)
+                .is_some_and(|func_type| {
+                    type_node_references_type_parameter(
+                        source_arena,
+                        func_type.type_annotation,
+                        type_param_name,
+                        depth + 1,
+                    ) || func_type.parameters.nodes.iter().copied().any(|param_idx| {
+                        source_arena
+                            .get(param_idx)
+                            .and_then(|node| source_arena.get_parameter(node))
+                            .is_some_and(|param| {
+                                type_node_references_type_parameter(
+                                    source_arena,
+                                    param.type_annotation,
+                                    type_param_name,
+                                    depth + 1,
+                                )
+                            })
+                    })
+                })
+        }
         _ => false,
     }
 }
