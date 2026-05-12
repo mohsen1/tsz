@@ -115,8 +115,8 @@ impl<'a> Printer<'a> {
         let inside_module_wrapper = self.ctx.original_module_kind.is_some();
         self.all_comments = if !self.ctx.options.remove_comments {
             if let Some(text) = self.source_text {
-                tsz_common::comments::get_comment_ranges(text)
-                    .into_iter()
+                self.source_comment_ranges
+                    .iter()
                     .filter(|c| {
                         let content = c.get_text(text);
                         // When inside a module wrapper (AMD/UMD/System):
@@ -140,6 +140,7 @@ impl<'a> Printer<'a> {
                         }
                         true
                     })
+                    .cloned()
                     .collect()
             } else {
                 Vec::new()
