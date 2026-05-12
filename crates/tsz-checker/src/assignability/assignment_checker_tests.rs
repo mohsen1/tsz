@@ -8,7 +8,11 @@ use crate::query_boundaries::common::{
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use crate::test_utils::{check_js_source_diagnostics, check_source};
 use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 mod assignment_checker_typebox_tests;
 
@@ -130,8 +134,7 @@ fn function_shapes_for_named_bindings(
     source: &str,
     names: &[&str],
 ) -> Vec<Option<tsz_solver::FunctionShape>> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -165,8 +168,7 @@ fn normalized_function_shapes_for_named_bindings(
     source: &str,
     names: &[&str],
 ) -> Vec<Option<tsz_solver::FunctionShape>> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -198,8 +200,7 @@ fn normalized_function_shapes_for_named_bindings(
 }
 
 fn normalized_type_kinds_for_named_bindings(source: &str, names: &[&str]) -> Vec<&'static str> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1570,8 +1571,7 @@ fn solver_subtype_rejects_stricter_generic_constraints_directly() {
         declare let g: <T, S>(x: T, y: S) => void;
     "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1613,8 +1613,7 @@ fn boundary_assignability_rejects_stricter_generic_constraints() {
         declare let g: <T, S>(x: T, y: S) => void;
     "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
