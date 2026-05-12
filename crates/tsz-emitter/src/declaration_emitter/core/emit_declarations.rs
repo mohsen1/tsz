@@ -294,6 +294,7 @@ impl<'a> DeclarationEmitter<'a> {
         // reaches it because `emit_export_declaration` checks
         // `emitted_js_export_default_names`.
         if self.source_is_js_file && !self.js_export_default_names.is_empty() {
+            self.emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(source_file);
             self.emit_hoisted_js_export_default_statements(source_file);
         }
 
