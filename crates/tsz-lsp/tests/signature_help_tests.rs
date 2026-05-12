@@ -6,7 +6,7 @@ use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 use tsz_parser::syntax_kind_ext;
 use tsz_solver::TypeInterner;
-fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     (parser, root)
