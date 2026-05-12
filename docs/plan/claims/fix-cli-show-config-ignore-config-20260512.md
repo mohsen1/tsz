@@ -1,4 +1,4 @@
-# [WIP] fix(cli): honor showConfig with ignoreConfig
+# fix(cli): honor showConfig with ignoreConfig
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/cli-show-config-ignore-config-20260512`

@@ -607,6 +607,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            if self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && self
+                        .ctx
+                        .arena
+                        .get_literal_expr(node)
+                        .is_some_and(|literal| literal.elements.nodes.is_empty())
+            }) {
+                continue;
+            }
+
             let param_type_params = self.collect_type_param_names_for_context_overlap(param_type);
             if param_type_params
                 .iter()
