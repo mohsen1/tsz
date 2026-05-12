@@ -460,6 +460,10 @@ impl<'a> TypeFormatter<'a> {
             } else {
                 Cow::Owned(format!("{}{}", target_name, type_part.unwrap_or_default()))
             }
+        } else if self.diagnostic_mode
+            && self.should_elide_recursive_typeof_function_return(return_type)
+        {
+            Cow::Borrowed("...")
         } else if is_construct && return_type == TypeId::UNKNOWN {
             Cow::Borrowed("any")
         } else {
@@ -473,6 +477,55 @@ impl<'a> TypeFormatter<'a> {
             separator,
             return_str
         )
+    }
+
+    fn should_elide_recursive_typeof_function_return(&self, return_type: TypeId) -> bool {
+        match self.interner.lookup(return_type) {
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                self.type_is_or_contains_type_query(shape.return_type)
+                    || shape
+                        .params
+                        .iter()
+                        .any(|param| self.type_is_or_contains_type_query(param.type_id))
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape.call_signatures.iter().any(|sig| {
+                    self.type_is_or_contains_type_query(sig.return_type)
+                        || sig
+                            .params
+                            .iter()
+                            .any(|param| self.type_is_or_contains_type_query(param.type_id))
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn type_is_or_contains_type_query(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeQuery(_)) => true,
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                self.type_is_or_contains_type_query(shape.return_type)
+                    || shape
+                        .params
+                        .iter()
+                        .any(|param| self.type_is_or_contains_type_query(param.type_id))
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape.call_signatures.iter().any(|sig| {
+                    self.type_is_or_contains_type_query(sig.return_type)
+                        || sig
+                            .params
+                            .iter()
+                            .any(|param| self.type_is_or_contains_type_query(param.type_id))
+                })
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {

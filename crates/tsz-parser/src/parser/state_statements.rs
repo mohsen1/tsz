@@ -3025,6 +3025,7 @@ impl ParserState {
 
         // Push a new label scope for the function body
         self.push_label_scope();
+        let mut recovered_arrow_body = false;
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
@@ -3033,11 +3034,12 @@ impl ParserState {
                 "'{' or ';' expected.",
                 diagnostic_codes::OR_EXPECTED,
             );
-            // Skip past => and the expression for error recovery
+            // Skip past => and keep the expression for emit recovery.
             self.next_token();
-            let _expr = self.parse_expression();
+            let expr = self.parse_expression();
+            recovered_arrow_body = true;
             self.parse_optional(SyntaxKind::SemicolonToken);
-            NodeIndex::NONE
+            expr
         } else {
             // Consume the semicolon if present (overload signature).
             // Use can_parse_semicolon() which handles ASI: a preceding line break
@@ -3081,7 +3083,7 @@ impl ParserState {
                 parameters,
                 type_annotation,
                 body,
-                equals_greater_than_token: false,
+                equals_greater_than_token: recovered_arrow_body,
             },
         )
     }
@@ -3147,8 +3149,19 @@ impl ParserState {
         // Labels are function-scoped, so each function gets its own label namespace
         self.push_label_scope();
 
+        let mut recovered_arrow_body = false;
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
+        } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+            self.parse_error_at_current_token(
+                "'{' or ';' expected.",
+                diagnostic_codes::OR_EXPECTED,
+            );
+            self.next_token();
+            let expr = self.parse_expression();
+            recovered_arrow_body = true;
+            self.parse_optional(SyntaxKind::SemicolonToken);
+            expr
         } else {
             self.parse_optional(SyntaxKind::SemicolonToken);
             NodeIndex::NONE
@@ -3173,7 +3186,7 @@ impl ParserState {
                 parameters,
                 type_annotation,
                 body,
-                equals_greater_than_token: false,
+                equals_greater_than_token: recovered_arrow_body,
             },
         )
     }

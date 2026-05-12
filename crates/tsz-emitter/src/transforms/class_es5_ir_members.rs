@@ -723,6 +723,14 @@ impl<'a> ES5ClassTransformer<'a> {
                                 leading_comment: self.extract_leading_comment(member_node),
                             });
                         } else {
+                            if self
+                                .expression_contains_static_class_expression(prop_data.initializer)
+                            {
+                                deferred_static_prop_inits.push(IRNode::VarDecl {
+                                    name: self.generate_temp_name().into(),
+                                    initializer: None,
+                                });
+                            }
                             deferred_static_prop_inits
                                 .push(IRNode::expr_stmt(IRNode::assign(target, value)));
                         }
@@ -848,6 +856,33 @@ impl<'a> ES5ClassTransformer<'a> {
                     .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
                 && self.property_initializer_has_equals(member_node, prop_data)
         })
+    }
+
+    fn expression_contains_static_class_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            && let Some(class_data) = self.arena.get_class(node)
+        {
+            return self.has_static_property_initializer(&class_data.members);
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.expression_contains_static_class_expression(paren.expression);
+        }
+        if (node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::NON_NULL_EXPRESSION)
+            && let Some(assertion) = self.arena.get_type_assertion(node)
+        {
+            return self.expression_contains_static_class_expression(assertion.expression);
+        }
+
+        false
     }
 
     /// Check if any static property initializer or static block uses `this`.

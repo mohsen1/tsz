@@ -1109,6 +1109,56 @@ fn symlinked_nested_package_reference_fires_when_outer_package_is_not_consumer_a
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn symlinked_nested_package_reference_fires_even_when_canonical_package_is_reachable() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-ts2883-symlink-import-ref-{}",
+        std::process::id()
+    ));
+    let top_level_pkg = root.join("Folder/node_modules/styled-components");
+    let nested_node_modules = root.join("Folder/monorepo/package-a/node_modules");
+    let nested_pkg = nested_node_modules.join("styled-components");
+    let source_path = nested_pkg.join("typings/styled-components.d.ts");
+    let current_path = root.join("Folder/monorepo/core/index.ts");
+
+    std::fs::create_dir_all(top_level_pkg.join("typings")).expect("create top-level package");
+    std::fs::create_dir_all(&nested_node_modules).expect("create nested node_modules");
+    std::fs::create_dir_all(current_path.parent().unwrap()).expect("create consumer directory");
+    std::fs::write(
+        top_level_pkg.join("package.json"),
+        r#"{"name":"styled-components","typings":"typings/styled-components.d.ts"}"#,
+    )
+    .expect("write package.json");
+    std::fs::write(
+        top_level_pkg.join("typings/styled-components.d.ts"),
+        "export interface InterpolationValue {}",
+    )
+    .expect("write declaration");
+    std::os::unix::fs::symlink(&top_level_pkg, &nested_pkg).expect("create package symlink");
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+    let emitter = make_path_only_emitter(&parser);
+
+    let result = emitter.symlinked_nested_package_reference(
+        &source_path.to_string_lossy(),
+        "InterpolationValue",
+        &current_path.to_string_lossy(),
+    );
+
+    assert_eq!(
+        result,
+        Some((
+            "../package-a/node_modules/styled-components/typings/styled-components".to_string(),
+            "InterpolationValue".to_string(),
+        )),
+        "canonical reachability through a top-level symlink must not hide the syntactic nested package path"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn symlinked_nested_package_reference_independent_of_user_chosen_names() {
     // The fix must be structural: changing user-chosen package and type names

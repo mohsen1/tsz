@@ -1,7 +1,7 @@
 use super::config::{
-    JsxEmit, ModuleResolutionKind, default_lib_name_for_target, load_tsconfig, parse_tsconfig,
-    resolve_compiler_options, resolve_default_lib_files_from_dir, resolve_lib_files_from_dir,
-    resolve_lib_files_from_dir_with_options,
+    JsxEmit, ModuleResolutionKind, default_lib_name_for_target, default_module_kind_for_target,
+    load_tsconfig, parse_tsconfig, resolve_compiler_options, resolve_default_lib_files_from_dir,
+    resolve_lib_files_from_dir, resolve_lib_files_from_dir_with_options,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -169,7 +169,10 @@ fn resolve_compiler_options_defaults() {
     let resolved = resolve_compiler_options(None).expect("defaults should resolve");
 
     assert_eq!(resolved.printer.target, ScriptTarget::ES2024);
-    assert_eq!(resolved.printer.module, ModuleKind::None);
+    assert_eq!(
+        resolved.printer.module,
+        default_module_kind_for_target(resolved.printer.target, false)
+    );
     assert!(resolved.jsx.is_none());
     assert!(!resolved.lib_files.is_empty());
     assert!(resolved.lib_is_default);

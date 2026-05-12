@@ -418,8 +418,17 @@ impl<'a> Printer<'a> {
             // Emit all comments inside the brace pair so they don't drift into the
             // parent JSX element as trailing comments.
             self.increase_indent();
-            let (has_comment, last_comment_end, last_comment_has_newline) =
+            let (mut has_comment, last_comment_end, last_comment_has_newline) =
                 self.emit_comments_in_range(node.pos + 1, closing_brace_pos, false, true);
+            if !has_comment
+                && matches!(
+                    self.ctx.original_module_kind,
+                    Some(super::super::ModuleKind::System)
+                )
+            {
+                has_comment =
+                    self.emit_comments_in_range_untracked(node.pos + 1, closing_brace_pos, false);
+            }
             if has_comment && last_comment_has_newline {
                 // When the last comment had a trailing newline, the writer is at
                 // line-start and will use ensure_indent() for the closing `}`.
@@ -442,12 +451,30 @@ impl<'a> Printer<'a> {
             // Emit comments between `{` and the expression, such as `{
             // /* comment */ expr }` in JSX context.
             self.increase_indent();
-            self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, true);
+            let (emitted_leading, _, _) =
+                self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, true);
+            if !emitted_leading
+                && matches!(
+                    self.ctx.original_module_kind,
+                    Some(super::super::ModuleKind::System)
+                )
+            {
+                self.emit_comments_in_range_untracked(node.pos + 1, expr_node.pos, false);
+            }
             self.emit(expr.expression);
 
             // Emit comments between the expression and the closing brace.
             let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
-            self.emit_comments_in_range(expr_token_end, closing_brace_pos, true, false);
+            let (emitted_trailing, _, _) =
+                self.emit_comments_in_range(expr_token_end, closing_brace_pos, true, false);
+            if !emitted_trailing
+                && matches!(
+                    self.ctx.original_module_kind,
+                    Some(super::super::ModuleKind::System)
+                )
+            {
+                self.emit_comments_in_range_untracked(expr_token_end, closing_brace_pos, true);
+            }
             self.decrease_indent();
         }
         self.write("}");

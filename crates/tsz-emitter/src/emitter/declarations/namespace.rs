@@ -1822,6 +1822,16 @@ impl<'a> Printer<'a> {
                             // context — the declarations they reference are already
                             // bound to the namespace via `ns.X = X;` assignments.
                             // tsc elides these entirely.
+                        } else if inner_kind == syntax_kind_ext::FUNCTION_DECLARATION
+                            && self.emit_recovered_namespace_function_arrow_body(inner_idx)
+                        {
+                            let inner_upper = next_pos.unwrap_or(body_close_pos);
+                            let token_end =
+                                self.find_token_end_before_trivia(stmt_node.pos, inner_upper);
+                            self.emit_trailing_comments_before(token_end, body_close_pos);
+                            if !self.writer.is_at_line_start() {
+                                self.write_line();
+                            }
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let export_names = self.get_export_names_from_clause(inner_idx);
@@ -1902,6 +1912,14 @@ impl<'a> Printer<'a> {
                 } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                     // Nested namespace: recurse (emit_namespace_iife adds its own newline)
                     self.emit(stmt_idx);
+                } else if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    && self.emit_recovered_namespace_function_arrow_body(stmt_idx)
+                {
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
+                    self.emit_trailing_comments_before(token_end, body_close_pos);
+                    if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
                 } else {
                     // Regular statement - emit trailing comments on same line,
                     // but don't consume comments past the body's closing brace.
@@ -1949,6 +1967,22 @@ impl<'a> Printer<'a> {
             self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;
             self.namespace_current_class_fn_enum_names = prev_current_class_fn_enum;
         }
+    }
+
+    fn emit_recovered_namespace_function_arrow_body(&mut self, function_idx: NodeIndex) -> bool {
+        let Some(func) = self.arena.get_function_at(function_idx) else {
+            return false;
+        };
+        let Some(body_node) = self.arena.get(func.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return false;
+        }
+
+        self.emit_expression(func.body);
+        self.write_semicolon();
+        true
     }
 
     /// Check if a namespace import-alias target resolves to a runtime value.

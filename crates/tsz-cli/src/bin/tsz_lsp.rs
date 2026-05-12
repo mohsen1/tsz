@@ -169,10 +169,8 @@ struct LspServer {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct WorkspaceFolder {
     uri: String,
-    name: String,
 }
 
 impl LspServer {
@@ -229,29 +227,6 @@ impl LspServer {
                     "message": message,
                     "cancellable": false,
                 }
-            }),
-        });
-    }
-
-    /// Send a progress report notification.
-    #[allow(dead_code)]
-    fn report_progress(&mut self, token: &str, message: &str, percentage: Option<u32>) {
-        if !self.client_supports_progress {
-            return;
-        }
-        let mut value = serde_json::json!({
-            "kind": "report",
-            "message": message,
-        });
-        if let Some(pct) = percentage {
-            value["percentage"] = Value::from(pct);
-        }
-        self.pending_notifications.push(JsonRpcNotification {
-            jsonrpc: "2.0".to_string(),
-            method: "$/progress".to_string(),
-            params: serde_json::json!({
-                "token": token,
-                "value": value,
             }),
         });
     }
@@ -903,16 +878,10 @@ impl LspServer {
             if let Some(folders) = p.get("workspaceFolders").and_then(|f| f.as_array()) {
                 for folder in folders {
                     if let Some(uri) = folder.get("uri").and_then(|u| u.as_str()) {
-                        let name = folder
-                            .get("name")
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("")
-                            .to_string();
                         let folder_path = Self::uri_to_file_name(uri);
                         self.project.add_workspace_root(folder_path);
                         self.workspace_folders.push(WorkspaceFolder {
                             uri: uri.to_string(),
-                            name,
                         });
                     }
                 }
@@ -922,7 +891,6 @@ impl LspServer {
                 self.project.add_workspace_root(folder_path);
                 self.workspace_folders.push(WorkspaceFolder {
                     uri: root_uri.to_string(),
-                    name: "root".to_string(),
                 });
             }
 
@@ -1227,16 +1195,10 @@ impl LspServer {
             let mut new_roots = Vec::new();
             for folder in added {
                 if let Some(uri) = folder.get("uri").and_then(|u| u.as_str()) {
-                    let name = folder
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("")
-                        .to_string();
                     let path = Self::uri_to_file_name(uri);
                     self.project.add_workspace_root(path.clone());
                     self.workspace_folders.push(WorkspaceFolder {
                         uri: uri.to_string(),
-                        name,
                     });
                     new_roots.push(path.clone());
 

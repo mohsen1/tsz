@@ -2304,6 +2304,10 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         let direct_param_display = self.format_type_diagnostic(param_type);
 
+        if let Some(display) = self.overloaded_recursive_typeof_parameter_display(param_type) {
+            return display;
+        }
+
         if let Some(display) =
             self.constrained_variadic_tuple_parameter_display(param_type, arg_type)
         {
@@ -2474,6 +2478,34 @@ impl<'a> CheckerState<'a> {
         } else {
             fallback
         }
+    }
+
+    fn overloaded_recursive_typeof_parameter_display(
+        &mut self,
+        param_type: TypeId,
+    ) -> Option<String> {
+        if !query_common::is_type_query_type(self.ctx.types, param_type) {
+            return None;
+        }
+        let evaluated = self.evaluate_type_with_env(param_type);
+        if evaluated == param_type || evaluated == TypeId::ERROR {
+            return None;
+        }
+        let shape = query_common::callable_shape_for_type(self.ctx.types, evaluated)?;
+        if shape.call_signatures.len() <= 1
+            || !query_common::function_signature_has_typeof(self.ctx.types, evaluated)
+        {
+            return None;
+        }
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_diagnostic_mode()
+                .with_preserve_optional_parameter_surface_syntax(true)
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                );
+        Some(formatter.format(evaluated).into_owned())
     }
 
     fn materialize_finite_mapped_call_parameter_display_type(

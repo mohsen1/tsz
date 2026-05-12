@@ -1449,7 +1449,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(func_idx)
             .and_then(|node| self.ctx.arena.get_function(node))
-            .and_then(|func| (!func.body.is_none()).then_some(func.body))
+            .and_then(|func| func.body.is_some().then_some(func.body))
         else {
             return;
         };

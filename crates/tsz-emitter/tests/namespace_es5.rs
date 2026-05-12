@@ -78,6 +78,21 @@ fn test_namespace_with_function() {
     assert!(output.contains("M.foo = foo;"), "Should export foo");
 }
 
+#[test]
+fn test_namespace_recovers_malformed_function_arrow_body_expression() {
+    let output = emit_namespace(
+        "// @target: es2015\r\nnamespace M {\r\n    export namespace N {\r\n\texport function f(x:number)=>2*x;\r\n    }\r\n}\r\n",
+    );
+    assert!(
+        output.contains("2 * x;"),
+        "Malformed function arrow body should be emitted as a recovered statement. Got:\n{output}"
+    );
+    assert!(
+        !output.contains("function f"),
+        "Declaration-only malformed function should not emit a function declaration. Got:\n{output}"
+    );
+}
+
 // Note: test_declare_namespace_skipped is skipped because the parser
 // currently doesn't attach the `declare` modifier to namespace nodes.
 // This is a known parser limitation that should be fixed separately.

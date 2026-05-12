@@ -74,8 +74,7 @@ fn checker_lookup_resolution_mode(
 pub(super) struct CollectDiagnosticsResult {
     pub diagnostics: Vec<Diagnostic>,
     pub request_cache_counters: RequestCacheCounters,
-    /// Aggregate query-cache statistics from the sequential path's shared `QueryCache`.
-    /// `None` in the parallel path (each thread has its own short-lived cache).
+    /// Aggregate query-cache statistics from the selected checking path.
     pub query_cache_stats: Option<tsz_solver::QueryCacheStatistics>,
     /// Aggregate definition-store statistics (populated for `--extendedDiagnostics`).
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
@@ -1329,12 +1328,6 @@ pub(super) fn collect_diagnostics(
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
     //    dependency cascade for incremental invalidation.
 
-    // Accumulates query-cache statistics from whichever path is taken.
-    // Both branches unconditionally set this, so the initial value is never read.
-    #[allow(unused_assignments)]
-    let mut aggregated_qc_stats: Option<tsz_solver::QueryCacheStatistics> = None;
-    #[allow(unused_assignments)]
-    let mut aggregated_ds_stats: Option<tsz_solver::StoreStatistics> = None;
     let checker_lib_file_env = CheckerLibFileCheckEnv {
         program,
         options,
@@ -1347,7 +1340,7 @@ pub(super) fn collect_diagnostics(
         program_has_unsupported_js_root,
     };
 
-    if cache.is_none() {
+    let (query_cache_stats, aggregated_ds_stats) = if cache.is_none() {
         // --- PARALLEL PATH: No cache, check all files concurrently ---
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
@@ -1583,11 +1576,10 @@ pub(super) fn collect_diagnostics(
                 parallel_qc_stats.merge(&query_cache.statistics());
             }
         }
-        aggregated_qc_stats = Some(parallel_qc_stats);
         // PERF: `DefinitionStore::statistics()` walks every entry (and
         // `estimated_size_bytes()` walks again) — only worth paying for
         // when --diagnostics or --extendedDiagnostics is requested.
-        aggregated_ds_stats = if collect_compile_stats {
+        let aggregated_ds_stats = if collect_compile_stats {
             program_context
                 .shared_definition_store
                 .as_ref()
@@ -1596,6 +1588,7 @@ pub(super) fn collect_diagnostics(
         } else {
             None
         };
+        (Some(parallel_qc_stats), aggregated_ds_stats)
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         // Fallback used only when no shared_definition_store exists (e.g.,
@@ -1898,11 +1891,11 @@ pub(super) fn collect_diagnostics(
             }
         }
         // Sequential path: single shared QueryCache — capture stats after all files.
-        aggregated_qc_stats = Some(query_cache.statistics());
+        let query_cache_stats = Some(query_cache.statistics());
         // PERF: skip the shared DefinitionStore stats walk unless --diagnostics
         // / --extendedDiagnostics actually consumes them. Matches the parallel
         // path's gating above.
-        aggregated_ds_stats = if collect_compile_stats {
+        let aggregated_ds_stats = if collect_compile_stats {
             program_context
                 .shared_definition_store
                 .as_ref()
@@ -1911,7 +1904,8 @@ pub(super) fn collect_diagnostics(
         } else {
             None
         };
-    }
+        (query_cache_stats, aggregated_ds_stats)
+    };
 
     // Collect diagnostics from cache for all files
     // This includes both checked files (now in cache) and unchecked files (cached from previous run)
@@ -1953,12 +1947,6 @@ pub(super) fn collect_diagnostics(
         &file_is_esm_map,
     ));
     diagnostics.extend(baseline_lib_datetimeformatpart_diagnostics);
-
-    // Use the aggregated query-cache statistics. In the parallel path, these
-    // are merged from all per-file caches. In the sequential path, they come
-    // from the shared query_cache. Fall back to the top-level query_cache stats
-    // if neither path set the aggregated stats (shouldn't happen in practice).
-    let query_cache_stats = aggregated_qc_stats.or_else(|| Some(query_cache.statistics()));
 
     // Compute module dependency graph statistics for --extendedDiagnostics.
     // PERF: Skip the SCC computation entirely when the CLI won't print stats.
