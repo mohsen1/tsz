@@ -3,9 +3,8 @@
 - **Date**: 2026-05-12
 - **Branch**: `perf/t0.3-classification-json-2026-05-12`
 - **Base**: `perf/master`
-- **PR**: TBD (will be opened as draft against `perf/master` with the
-  `WIP` label, per `.claude/CLAUDE.md` §0)
-- **Status**: claim
+- **PR**: [#5843](https://github.com/mohsen1/tsz/pull/5843)
+- **Status**: ready
 - **Workstream**: `PERFORMANCE_PLAN.md` §4.T0.3 follow-up
 
 ## Intent
@@ -99,12 +98,16 @@ No checker / solver / emitter changes.
 
 ## Verification
 
-- `cargo check -p tsz-common -p tsz-cli`
-- `cargo nextest run -p tsz-common --lib -E 'test(/json_tests::/)'`
-- `cargo clippy -p tsz-common --all-targets -- -D warnings`
-- Manual smoke: build with `--features perf-tools`, run a small
-  fixture with `TSZ_PERF_COUNTERS=1 ... --perf-counters-json /tmp/pc.json`,
-  verify the new keys are present and populate.
+Pre-flip-to-ready (local, 2026-05-12):
+
+- `cargo check -p tsz-common -p tsz-cli` — clean (default + `--features perf-tools`).
+- `cargo nextest run -p tsz-common` — **437 / 437 pass** (including 19
+  `perf_counters::json_tests::*` tests, of which 6 are new in this PR).
+- `cargo nextest run -p tsz-checker --lib` — **3862 / 3862 pass**.
+- `cargo clippy -p tsz-common --all-targets -- -D warnings` — clean.
+- Pre-commit hook — all 5 stages pass.
+
+CI (post-ready-for-review): tracked on PR #5843.
 
 ## Risk / regression surface
 
