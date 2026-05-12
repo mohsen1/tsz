@@ -2855,12 +2855,33 @@ declare function baz(): void;
 declare namespace baz {
     let _class: boolean;
     export { _class as class };
-    let normal_1: boolean;
-    export { normal_1 as normal };
+    export let normal: boolean;
 }"#;
     assert!(
         output.contains(expected),
         "Expected JS reserved function expandos to use keyword aliases and avoid reused local names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_js_late_bound_function_alias_generation_avoids_existing_namespace_members() {
+    let source = r#"
+export const normal = 1;
+export function foo() {}
+foo.normal = false;
+foo.normal_1 = true;
+"#;
+
+    let output = emit_js_dts_with_usage_analysis(source);
+    let expected = r#"export function foo(): void;
+export namespace foo {
+    let normal_2: boolean;
+    export { normal_2 as normal };
+    let normal_1: boolean;
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected namespace alias generation to skip existing member names when resolving collisions: {output}"
     );
 }
 

@@ -1,4 +1,4 @@
-# fix(audit): follow up missed-review threads (#5701, #5845)
+# fix(audit): follow up missed-review threads (#5701, #5845, #5867)
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/audit-followup-dts-20260512`
@@ -8,10 +8,11 @@
 
 ## Intent
 
-Close two declaration-emitter missed-review clusters from the last-500-PR audit:
+Close three declaration-emitter missed-review clusters from the last-500-PR audit:
 
 - `#5701` (JSDoc `@typedef ... default` alias collision with existing type names)
 - `#5845` (`export =` JS files misclassified as native ESM)
+- `#5867` (JS late-bound function namespace alias collisions and scope leakage)
 
 ## Changes
 
@@ -39,10 +40,26 @@ Close two declaration-emitter missed-review clusters from the last-500-PR audit:
   - added a new regression proving `function foo; foo.label = ...; export = foo;`
     still emits merged namespace expando members under `export =`.
 
+- review comments left on #5867:
+  - stop reserving JS late-bound namespace local names in global
+    `reserved_names`; those names are namespace-scoped and should not force
+    unrelated top-level alias renames later in the file.
+  - harden collision alias generation for namespace members so synthetic names
+    are unique against both global reserved names and already-known namespace
+    member names.
+
+- regression coverage:
+  - updated the existing JS late-bound reserved-name test to assert that a
+    member name from one namespace no longer forces a synthetic rename in a
+    different namespace.
+  - added a new regression proving collision fallback skips existing namespace
+    member names (e.g. chooses `normal_2` when `normal_1` already exists).
+
 ## Files Touched
 
 - `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs`
 - `crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs`
+- `crates/tsz-emitter/src/declaration_emitter/helpers/late_bound_function_analysis.rs`
 - `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs`
 - `docs/plan/claims/codex-review-audit-dts-followup-20260512.md`
 
@@ -51,6 +68,10 @@ Close two declaration-emitter missed-review clusters from the last-500-PR audit:
 - `cargo test -p tsz-emitter test_js_default_typedef_after_default_identifier_export_uses_export_name -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo test -p tsz-emitter test_js_export_equals_keeps_commonjs_function_expando_namespace_members -- --nocapture`
+  - result: `1 passed; 0 failed`
+- `cargo test -p tsz-emitter test_js_late_bound_function_reserved_alias_uses_keyword_name -- --nocapture`
+  - result: `1 passed; 0 failed`
+- `cargo test -p tsz-emitter test_js_late_bound_function_alias_generation_avoids_existing_namespace_members -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo fmt --all`
   - result: success
