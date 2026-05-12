@@ -408,3 +408,88 @@ const eq = node?.kind === k;
          the sibling `interface Node0`; got TS2367: {diags:?}"
     );
 }
+
+/// Regression test for issue #5433:
+/// `import("./mod").Bar.Q` (nested segment, export= module) must produce
+/// `Namespace '"mod".Bar' has no exported member 'Q'.`
+/// NOT `Namespace '"mod".export=.Bar' has no exported member 'Q'.`
+///
+/// The `.export=` synthetic qualifier is correct at the top level (no
+/// segments: `import("./mod").Q`), but must be omitted when segments
+/// already traverse into the export= namespace.
+#[test]
+fn ts2694_import_type_nested_segment_omits_export_equals_in_namespace_display() {
+    let mod_source = r#"
+declare namespace ns {
+    namespace Bar {
+        function method(): void;
+    }
+}
+export = ns;
+"#;
+    // Accessing a missing member `Q` inside the nested `Bar` segment:
+    // `import("./mod").Bar.Q` where `Bar` exists but `Q` does not.
+    let test_source = r#"type X = import("./mod").Bar.Q;"#;
+
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[("mod.d.ts", mod_source), ("test.ts", test_source)],
+        "test.ts",
+        tsz_checker::context::CheckerOptions::default(),
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+
+    let ts2694: Vec<_> = diags.iter().filter(|(c, _)| *c == 2694).collect();
+    assert_eq!(
+        ts2694.len(),
+        1,
+        "expected exactly one TS2694 for missing `Q` in `import(\"./mod\").Bar.Q`; got: {diags:?}"
+    );
+    let msg = &ts2694[0].1;
+    assert!(
+        msg.contains("Namespace '\"mod\".Bar'"),
+        "TS2694 namespace should be '\"mod\".Bar', got: {msg:?}"
+    );
+    assert!(
+        !msg.contains(".export="),
+        "TS2694 namespace must not contain '.export=' for nested segment access, got: {msg:?}"
+    );
+}
+
+/// Counterpart: `import("./mod").Q` (no segments, export= module) must
+/// still include `.export=` in the namespace display — that is the
+/// existing tsc behaviour for a top-level missing member.
+#[test]
+fn ts2694_import_type_top_level_missing_keeps_export_equals_in_namespace_display() {
+    let mod_source = r#"
+declare namespace ns {
+    function method(): void;
+}
+export = ns;
+"#;
+    // Accessing a missing member `Q` at the top level of the export= module:
+    // `import("./mod").Q` where `Q` does not exist.
+    let test_source = r#"type X = import("./mod").Q;"#;
+
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[("mod.d.ts", mod_source), ("test.ts", test_source)],
+        "test.ts",
+        tsz_checker::context::CheckerOptions::default(),
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+
+    let ts2694: Vec<_> = diags.iter().filter(|(c, _)| *c == 2694).collect();
+    assert_eq!(
+        ts2694.len(),
+        1,
+        "expected exactly one TS2694 for missing `Q` in `import(\"./mod\").Q`; got: {diags:?}"
+    );
+    let msg = &ts2694[0].1;
+    assert!(
+        msg.contains("\"mod\".export="),
+        "TS2694 namespace for top-level missing member must include '.export=', got: {msg:?}"
+    );
+}

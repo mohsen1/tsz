@@ -30,6 +30,33 @@ impl<'a> CheckerState<'a> {
         annotation_name == target_name
     }
 
+    fn bare_type_parameter_annotation_for_assignment_identifier(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let annotation = self.declared_type_annotation_text_for_expression(expr_idx)?;
+        let annotation = annotation.trim();
+        if annotation.is_empty()
+            || !annotation
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE) {
+            return None;
+        }
+        let declared_type = self.get_type_of_symbol(sym_id);
+        crate::query_boundaries::common::is_type_parameter(self.ctx.types, declared_type)
+            .then(|| annotation.to_string())
+    }
+
     pub(in crate::error_reporter) fn declared_generic_alias_source_display_for_target_display(
         &self,
         anchor_idx: NodeIndex,
@@ -78,6 +105,26 @@ impl<'a> CheckerState<'a> {
         let Some(target_display) = target_part.strip_suffix("'.") else {
             return message;
         };
+        if let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            && let Some(source_display) =
+                self.bare_type_parameter_annotation_for_assignment_identifier(expr_idx)
+        {
+            return format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_display, target_display],
+            );
+        }
+        if let Some(expr_idx) = self.assignment_target_expression(anchor_idx)
+            && let Some(target_display) =
+                self.bare_type_parameter_annotation_for_assignment_identifier(expr_idx)
+        {
+            return format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[source_display, &target_display],
+            );
+        }
         if let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
             anchor_idx,
             source_display,

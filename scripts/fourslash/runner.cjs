@@ -1615,7 +1615,7 @@ function patchSessionClient(SessionClient, ts) {
             preferences,
         });
         const response = this.processResponse(request);
-        return response.body || [];
+        return this.convertChanges(response.body || [], args.fileName);
     };
 
     proto.getEditsForFileRename = function(oldFilePath, newFilePath, formatOptions, preferences) {

@@ -6681,6 +6681,46 @@ interface HTMLElement {
     }
 
     #[test]
+    fn default_lib_validation_keeps_select_option_index_compatible_after_html_element_merge() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+declare global {
+    interface ElementTagNameMap {
+        [index: number]: HTMLElement
+    }
+
+    interface HTMLElement {
+        [index: number]: HTMLElement;
+    }
+}
+
+export {};
+"#,
+        );
+
+        let lib_ts2430 = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            lib_ts2430
+                .iter()
+                .any(|diag| diag.message_text.contains("HTMLFormElement")),
+            "Expected the real HTMLFormElement numeric-index incompatibility, got: {diagnostics:?}"
+        );
+        assert!(
+            !lib_ts2430
+                .iter()
+                .any(|diag| diag.message_text.contains("HTMLSelectElement")),
+            "Did not expect HTMLSelectElement to fail: its option/group index values inherit HTMLElement. Got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn default_lib_validation_normalizes_cross_arena_method_members_after_global_merge() {
         let diagnostics = collect_es2015_default_lib_diagnostics(
             r#"
