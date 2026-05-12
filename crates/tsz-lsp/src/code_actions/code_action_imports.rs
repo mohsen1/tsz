@@ -76,21 +76,7 @@ fn compare_import_specifier_local_names(a: &str, b: &str, ignore_case: bool) -> 
 
     let a_folded = a.to_ascii_lowercase();
     let b_folded = b.to_ascii_lowercase();
-    let a_case_rank = if a.chars().next().is_some_and(|ch| ch.is_ascii_lowercase()) {
-        0
-    } else {
-        1
-    };
-    let b_case_rank = if b.chars().next().is_some_and(|ch| ch.is_ascii_lowercase()) {
-        0
-    } else {
-        1
-    };
-
-    a_folded
-        .cmp(&b_folded)
-        .then_with(|| a_case_rank.cmp(&b_case_rank))
-        .then_with(|| a.cmp(b))
+    a_folded.cmp(&b_folded)
 }
 
 fn module_specifier_match_for_merge(existing: &str, candidate: &str) -> bool {
@@ -1591,17 +1577,37 @@ impl<'a> CodeActionProvider<'a> {
             } else {
                 rendered.push_str(&format!("{import_name} as {local_name}"));
             }
-            entries.push((local_name.to_string(), rendered));
+            entries.push((specifier.is_type_only, local_name.to_string(), rendered));
         }
 
-        entries.sort_by(|(left, _), (right, _)| {
-            compare_import_specifier_local_names(left, right, self.organize_imports_ignore_case)
-        });
+        entries.sort_by(
+            |(left_is_type_only, left, _), (right_is_type_only, right, _)| {
+                let type_order = self.organize_imports_type_order.as_deref();
+                let left_group = match type_order {
+                    Some("last") if *left_is_type_only => 1,
+                    Some("first") if !*left_is_type_only => 1,
+                    _ => 0,
+                };
+                let right_group = match type_order {
+                    Some("last") if *right_is_type_only => 1,
+                    Some("first") if !*right_is_type_only => 1,
+                    _ => 0,
+                };
+                left_group.cmp(&right_group).then_with(|| {
+                    if !self.organize_imports_ignore_case {
+                        return left.cmp(right);
+                    }
+                    let left_folded = left.to_ascii_lowercase();
+                    let right_folded = right.to_ascii_lowercase();
+                    left_folded.cmp(&right_folded)
+                })
+            },
+        );
         let replacement = format!(
             " {} ",
             entries
                 .iter()
-                .map(|(_, rendered)| rendered.as_str())
+                .map(|(_, _, rendered)| rendered.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         );

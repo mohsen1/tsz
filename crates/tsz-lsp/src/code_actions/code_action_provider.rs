@@ -151,6 +151,7 @@ pub struct CodeActionProvider<'a> {
     pub(super) file_name: String,
     pub(super) source: &'a str,
     pub(super) organize_imports_ignore_case: bool,
+    pub(super) organize_imports_type_order: Option<String>,
     pub(super) new_line_override: Option<String>,
 }
 
@@ -170,6 +171,7 @@ impl<'a> CodeActionProvider<'a> {
             file_name,
             source,
             organize_imports_ignore_case: true,
+            organize_imports_type_order: None,
             new_line_override: None,
         }
     }
@@ -185,12 +187,18 @@ impl<'a> CodeActionProvider<'a> {
             file_name: ctx.file_name.to_string(),
             source: ctx.source_text,
             organize_imports_ignore_case: true,
+            organize_imports_type_order: None,
             new_line_override: None,
         }
     }
 
     pub const fn with_organize_imports_ignore_case(mut self, ignore_case: bool) -> Self {
         self.organize_imports_ignore_case = ignore_case;
+        self
+    }
+
+    pub fn with_organize_imports_type_order(mut self, type_order: Option<String>) -> Self {
+        self.organize_imports_type_order = type_order;
         self
     }
 

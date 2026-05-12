@@ -901,6 +901,64 @@ fn organize_imports_sort_and_combine_sorts_named_imports() {
 }
 
 #[test]
+fn organize_imports_honors_type_order_preference() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/organize-main.ts".to_string(),
+        "import { type A, type a, b, B } from \"foo\";\nconsole.log(a, b, A, B);\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "organizeImports",
+        serde_json::json!({
+            "scope": {
+                "type": "file",
+                "args": { "file": "/organize-main.ts" }
+            },
+            "preferences": {
+                "organizeImportsIgnoreCase": "auto",
+                "organizeImportsTypeOrder": "last"
+            }
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("organizeImports should return a body");
+    let changes = body[0]["textChanges"]
+        .as_array()
+        .expect("textChanges should be an array");
+    assert_eq!(changes.len(), 1, "expected one sorting edit, got {body:?}");
+    assert_eq!(changes[0]["newText"], " b, B, type A, type a ");
+
+    server.open_files.insert(
+        "/organize-main.ts".to_string(),
+        "import { type a, type A, b, B } from \"foo\";\nconsole.log(a, b, A, B);\n".to_string(),
+    );
+
+    let response = server.handle_tsserver_request(make_request(
+        "organizeImports",
+        serde_json::json!({
+            "scope": {
+                "type": "file",
+                "args": { "file": "/organize-main.ts" }
+            },
+            "preferences": {
+                "organizeImportsIgnoreCase": "auto",
+                "organizeImportsTypeOrder": "last"
+            }
+        }),
+    ));
+
+    assert!(response.success);
+    let body = response.body.expect("organizeImports should return a body");
+    let changes = body[0]["textChanges"]
+        .as_array()
+        .expect("textChanges should be an array");
+    assert_eq!(changes.len(), 1, "expected one sorting edit, got {body:?}");
+    assert_eq!(changes[0]["newText"], " b, B, type a, type A ");
+}
+
+#[test]
 fn test_synchronize_project_list_returns_empty_list() {
     let mut server = make_server();
     let response = server.handle_tsserver_request(make_request(

@@ -977,23 +977,42 @@ impl Server {
 
             let (arena, binder, root, content) = self.parse_and_bind_file(file)?;
 
+            let parse_organize_imports_ignore_case = |value: &serde_json::Value| {
+                value
+                    .as_bool()
+                    .or_else(|| value.as_str().and_then(|s| (s == "auto").then_some(true)))
+            };
             let organize_imports_ignore_case = request
                 .arguments
                 .get("preferences")
                 .and_then(|p| p.get("organizeImportsIgnoreCase"))
-                .and_then(serde_json::Value::as_bool)
+                .and_then(parse_organize_imports_ignore_case)
                 .or_else(|| {
                     request
                         .arguments
                         .get("organizeImportsIgnoreCase")
-                        .and_then(serde_json::Value::as_bool)
+                        .and_then(parse_organize_imports_ignore_case)
                 })
                 .unwrap_or(self.organize_imports_ignore_case);
+            let organize_imports_type_order = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("organizeImportsTypeOrder"))
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| {
+                    request
+                        .arguments
+                        .get("organizeImportsTypeOrder")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .map(ToOwned::to_owned)
+                .or_else(|| self.organize_imports_type_order.clone());
 
             let line_map = LineMap::build(&content);
             let provider =
                 CodeActionProvider::new(&arena, &binder, &line_map, file.to_string(), &content)
-                    .with_organize_imports_ignore_case(organize_imports_ignore_case);
+                    .with_organize_imports_ignore_case(organize_imports_ignore_case)
+                    .with_organize_imports_type_order(organize_imports_type_order);
 
             let action = provider.organize_imports(root)?;
 
