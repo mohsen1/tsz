@@ -1161,7 +1161,7 @@ fn collect_non_static_module_specifiers(
                     && is_dynamic_import_callee(arena, call.expression)
                     && let Some(args) = call.arguments.as_ref()
                     && let Some(&arg_idx) = args.nodes.first()
-                    && !arg_idx.is_none()
+                    && arg_idx.is_some()
                     && let Some(text) = arena.get_literal_text(arg_idx)
                 {
                     dynamic_imports.push((
