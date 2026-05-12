@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-30
 - **Branch**: `fix/ts2883-symbol-link-import-ref-20260512`
-- **PR**: TBD
+- **PR**: #5681
 - **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
