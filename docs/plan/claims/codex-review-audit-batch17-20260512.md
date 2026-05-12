@@ -54,6 +54,11 @@ initializer relation path performs an additional raw initializer re-check.
   - verified `conditional_body_has_unresolved_computed_recursive_alias_ref(...)`
     is now guarded by `body_is_conditional` in `type_alias_checking.rs`, so
     non-conditional aliases no longer pay/trigger that path.
+- review comments left on #4951:
+  - replaced O(n²) literal candidate de-duplication in
+    `generic_application_literal_expected_for_mismatch` with `FxHashSet`-based
+    seen tracking while preserving output order in `candidates`.
+  - behavior remains unchanged; this is a hot-path complexity reduction only.
 
 ## Files Touched
 
@@ -64,6 +69,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md` (verified current status token)
 - `crates/tsz-emitter/src/emitter/literals/core.rs`
 - `docs/plan/claims/codex-review-audit-batch17-20260512.md`
+- `crates/tsz-checker/src/types/computation/call_result.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
