@@ -45,7 +45,7 @@ enabled run pays the gate read plus one `counters()`
 `OnceLock<PerfCounters>` deref per `intern()` call (vs. one per
 increment). A disabled run pays only the gate read: subsequent
 `if let Some(c) = pc` checks are predictable branches on a local
-`None` that the optimizer folds into the no-op path.
+`None`, so the increment body is consistently skipped.
 ```
 
 No code changes. The cost story is unchanged; the comment is just
