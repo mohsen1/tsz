@@ -11,22 +11,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn is_react_jsx_component_alias_application(&self, type_id: TypeId) -> bool {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-            .or_else(|| {
-                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
-                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
-                })
-            });
-        let Some(app) = app else {
-            return false;
-        };
-        matches!(
-            self.format_type(app.base).as_str(),
-            "React.ComponentType" | "ComponentType" | "React.ReactType" | "ReactType"
-        )
-    }
-
     fn jsx_class_component_props_alias_hint(&self, instance_type: TypeId) -> Option<TypeId> {
         let app = crate::query_boundaries::common::type_application(self.ctx.types, instance_type)
             .or_else(|| {
@@ -719,6 +703,166 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn jsx_component_return_check_types(&mut self, component_type: TypeId) -> Vec<TypeId> {
+        let mut stack = vec![component_type];
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut types = Vec::new();
+
+        while let Some(type_id) = stack.pop() {
+            let resolved = if crate::query_boundaries::common::needs_evaluation_for_merge(
+                self.ctx.types,
+                type_id,
+            ) {
+                self.evaluate_type_with_env(type_id)
+            } else {
+                type_id
+            };
+            if !seen.insert(resolved) {
+                continue;
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+            {
+                stack.extend(members);
+            } else {
+                types.push(resolved);
+            }
+        }
+
+        types
+    }
+
+    fn jsx_instantiated_application_body_for_return_check(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+            .or_else(|| {
+                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                })
+            })?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
+        let (body_type, type_params) = {
+            let env = self.ctx.type_env.borrow();
+            (
+                tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types),
+                tsz_solver::TypeResolver::get_lazy_type_params(&*env, def_id).unwrap_or_default(),
+            )
+        };
+        let body_type = body_type?;
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &type_params,
+            &app.args,
+        );
+        Some(crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            body_type,
+            &substitution,
+        ))
+    }
+
+    fn jsx_property_type_for_return_check(
+        &mut self,
+        type_id: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let mut stack = vec![type_id];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(candidate) = stack.pop() {
+            if !seen.insert(candidate) {
+                continue;
+            }
+            match self.resolve_property_access_with_env(candidate, property_name) {
+                PropertyAccessResult::Success { type_id, .. } => return Some(type_id),
+                _ => {
+                    if let Some(alias) = self.ctx.types.get_display_alias(candidate) {
+                        stack.push(alias);
+                    }
+                    if let Some(instantiated) =
+                        self.jsx_instantiated_application_body_for_return_check(candidate)
+                    {
+                        stack.push(instantiated);
+                    }
+                    let evaluated = self.evaluate_type_with_env(candidate);
+                    if evaluated != candidate {
+                        stack.push(evaluated);
+                    }
+                    let lazy_resolved = self.resolve_lazy_type(candidate);
+                    if lazy_resolved != candidate {
+                        stack.push(lazy_resolved);
+                    }
+                    let property_resolved = self.resolve_type_for_property_access(candidate);
+                    if property_resolved != candidate {
+                        stack.push(property_resolved);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn jsx_callable_return_types_for_return_check(&mut self, type_id: TypeId) -> Vec<TypeId> {
+        let type_id =
+            if crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, type_id)
+            {
+                self.evaluate_type_with_env(type_id)
+            } else {
+                type_id
+            };
+        let mut returns = Vec::new();
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            && !shape.is_constructor
+        {
+            returns.push(self.evaluate_type_with_env(shape.return_type));
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::get_call_signatures(self.ctx.types, type_id)
+        {
+            returns.extend(
+                sigs.iter()
+                    .map(|sig| self.evaluate_type_with_env(sig.return_type)),
+            );
+        }
+        returns
+    }
+
+    fn jsx_construct_return_satisfies_element_class_render(
+        &mut self,
+        instance_type: TypeId,
+        element_class_type: TypeId,
+    ) -> bool {
+        let Some(source_render) = self.jsx_property_type_for_return_check(instance_type, "render")
+        else {
+            return false;
+        };
+        let Some(target_render) =
+            self.jsx_property_type_for_return_check(element_class_type, "render")
+        else {
+            return false;
+        };
+        if self.is_assignable_to(source_render, target_render) {
+            return true;
+        }
+
+        let source_returns = self.jsx_callable_return_types_for_return_check(source_render);
+        let target_returns = self.jsx_callable_return_types_for_return_check(target_render);
+        if source_returns.is_empty() || target_returns.is_empty() {
+            return false;
+        }
+
+        source_returns.iter().any(|&source_return| {
+            target_returns
+                .iter()
+                .any(|&target_return| self.is_assignable_to(source_return, target_return))
+        })
+    }
+
     /// TS2786: Check that a JSX component's return type is assignable to
     /// `JSX.Element` (SFC) or `JSX.ElementClass` (class component).
     pub(super) fn check_jsx_component_return_type(
@@ -779,27 +923,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let (types_to_check, is_union) = if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
-        {
-            (members, true)
-        } else {
-            (vec![component_type], false)
-        };
+        let types_to_check = self.jsx_component_return_check_types(component_type);
 
         let mut any_checked = false;
         let mut all_valid = true;
 
-        for &member_type in &types_to_check {
-            let raw_member_type = member_type;
-            let member_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
-                self.ctx.types,
-                member_type,
-            ) {
-                self.evaluate_type_with_env(member_type)
-            } else {
-                member_type
-            };
+        for member_type in types_to_check {
             if self.is_jsx_string_tag_type(member_type) {
                 continue;
             }
@@ -811,14 +940,6 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 member_type,
             ) {
-                continue;
-            }
-            if is_union
-                && self.is_react_jsx_component_alias_application(raw_member_type)
-                && self
-                    .get_jsx_props_type_for_component_member(member_type, None)
-                    .is_some()
-            {
                 continue;
             }
             let is_unresolved = |t: TypeId| -> bool {
@@ -937,6 +1058,10 @@ impl<'a> CheckerState<'a> {
                                 ret
                             };
                             self.is_assignable_to(check_ret, t)
+                                || (!is_call_sig
+                                    && self.jsx_construct_return_satisfies_element_class_render(
+                                        check_ret, t,
+                                    ))
                         })
                     });
                     if any_concrete {

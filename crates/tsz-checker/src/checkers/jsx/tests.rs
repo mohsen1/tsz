@@ -834,6 +834,34 @@ fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
 }
 
 #[test]
+fn jsx_user_named_component_type_alias_union_still_checks_returns() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element { ok: true; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        interface InvalidClassComponent<P = {}> {
+            new(props: P): { props: P; render(): { bad: true } };
+        }
+        interface InvalidFunctionComponent<P = {}> {
+            (props: P): { bad: true };
+        }
+        type ComponentType<P = {}> =
+            InvalidClassComponent<P> | InvalidFunctionComponent<P>;
+        declare const Bad: ComponentType<{ p?: boolean }>;
+        const elem = <Bad p={true} />;
+        "#,
+    );
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2786),
+        "User-defined aliases named ComponentType must not bypass TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_react_component_type_union_does_not_emit_ts2786() {
     let diagnostics = check_jsx_strict(
         r#"
