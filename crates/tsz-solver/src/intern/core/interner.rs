@@ -85,7 +85,7 @@ struct InternCacheEntry {
 
 /// Combined thread-local cache for both `lookup()` and `intern()` directions.
 ///
-/// Uses `Cell<[Entry; N]>` for interior mutability. Both entry types are
+/// Uses `Cell<[T; N]>` for interior mutability. Both cache entry types are
 /// `Copy`, so `Cell::as_array_of_cells()` gives us per-slot `get`/`set` that
 /// lowers to the same single load / single store as a raw pointer deref —
 /// with no `unsafe` and no manual `Send`/`Sync` impls. The cache is reached
