@@ -129,3 +129,89 @@ let arr = o as number[];
         "no TS2352 expected — `object` overlaps with array shapes. Got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Primitive ↔ constrained type parameter assertions (issue #5957)
+// ---------------------------------------------------------------------------
+// tsc's `comparableRelation` reduces a type parameter to its constraint before
+// checking primitive overlap. `number as T extends number` is valid because
+// `number` is comparable to `number` (the constraint).
+
+/// `x as T` where `T extends number` and `x: number` must NOT emit TS2352.
+/// The primitive type `number` overlaps with the constraint `number`.
+#[test]
+fn number_assert_to_number_constrained_typeparam_no_ts2352() {
+    for var_name in ["T", "K", "U"] {
+        let source = format!(
+            r#"function f<{var_name} extends number>(x: number): {var_name} {{
+    return x as {var_name};
+}}"#
+        );
+        let codes = check_strict(&source);
+        let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+        assert!(
+            ts2352.is_empty(),
+            "no TS2352 expected for `number as {var_name} extends number`. Got: {codes:?}"
+        );
+    }
+}
+
+/// `x as T` where `T extends string` and `x: string` must NOT emit TS2352.
+#[test]
+fn string_assert_to_string_constrained_typeparam_no_ts2352() {
+    let source = r#"function f<T extends string>(x: string): T {
+    return x as T;
+}"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected for `string as T extends string`. Got: {codes:?}"
+    );
+}
+
+/// `x as T` where `T extends boolean` and `x: boolean` must NOT emit TS2352.
+#[test]
+fn boolean_assert_to_boolean_constrained_typeparam_no_ts2352() {
+    let source = r#"function f<T extends boolean>(x: boolean): T {
+    return x as T;
+}"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected for `boolean as T extends boolean`. Got: {codes:?}"
+    );
+}
+
+/// The zero literal `0 as T extends number` (canonical issue repro) must NOT
+/// emit TS2352. tsc widens `0` to `number` for the expression type, which
+/// overlaps with the constraint `number`.
+#[test]
+fn zero_literal_assert_to_number_constrained_typeparam_no_ts2352() {
+    let source = r#"declare function reduce<T extends number>(f: (a: T, b: T) => T, init: T): T;
+function test<T extends number>(): T {
+    return 0 as T;
+}"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected for `0 as T extends number`. Got: {codes:?}"
+    );
+}
+
+/// Cross-primitive assertion (`string as T extends number`) MUST still emit
+/// TS2352. `string` does not overlap with the constraint `number`.
+#[test]
+fn cross_primitive_assert_to_number_constrained_typeparam_emits_ts2352() {
+    let source = r#"function bad<T extends number>(x: string): T {
+    return x as T;
+}"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        !ts2352.is_empty(),
+        "TS2352 expected — `string` does not overlap with `number` constraint. Got: {codes:?}"
+    );
+}

@@ -255,6 +255,17 @@ a:hover { text-decoration: underline; }
   color: var(--text-secondary);
 }
 
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0 0 2.25rem;
+}
+
+.hero-actions a {
+  font-weight: 600;
+}
+
 /* ── Code ── */
 code {
   font-family: var(--mono);
