@@ -335,6 +335,41 @@ impl<'a> CheckerContext<'a> {
         }
         None
     }
+
+    fn merged_interface_declared_type_param_variances(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<Arc<[Variance]>> {
+        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+
+        let mut merged: Option<Vec<Variance>> = None;
+        for decl_idx in symbol.all_declarations() {
+            let Some(node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            if self.arena.get_interface(node).is_none() {
+                continue;
+            }
+            let Some(variances) = self.declared_type_param_variances_for_node(decl_idx) else {
+                continue;
+            };
+
+            if let Some(existing) = &mut merged {
+                if existing.len() != variances.len() {
+                    continue;
+                }
+                for (slot, variance) in existing.iter_mut().zip(variances.iter()) {
+                    *slot |= *variance;
+                }
+            } else {
+                merged = Some(variances.iter().copied().collect());
+            }
+        }
+
+        merged.map(Arc::from)
+    }
 }
 
 /// Implement `TypeResolver` for `CheckerContext` to support Lazy type resolution.
@@ -364,7 +399,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn get_type_param_variance(&self, def_id: tsz_solver::DefId) -> Option<Arc<[Variance]>> {
         let sym_id = self.def_to_symbol_id(def_id)?;
         let symbol = self.binder.get_symbol(sym_id)?;
-        self.declared_type_param_variances_for_node(symbol.primary_declaration()?)
+        self.merged_interface_declared_type_param_variances(symbol)
+            .or_else(|| self.declared_type_param_variances_for_node(symbol.primary_declaration()?))
     }
 
     /// Resolve a `DefId` to its cached type.
