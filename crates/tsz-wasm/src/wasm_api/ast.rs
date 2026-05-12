@@ -5,7 +5,7 @@
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::parser::syntax_kind_ext;
-use tsz::parser::{NodeArena, NodeIndex};
+use tsz::parser::{NodeArena, NodeIndex, NodeList};
 use tsz::scanner::SyntaxKind;
 
 // Token kind constants (from SyntaxKind enum)
@@ -34,7 +34,7 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         // --- Source File ---
         k if k == syntax_kind_ext::SOURCE_FILE => {
             if let Some(sf) = arena.get_source_file(node) {
-                children.extend(sf.statements.nodes.iter().copied());
+                extend_child_list(&mut children, &sf.statements);
             }
         }
 
@@ -44,7 +44,7 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
             || k == syntax_kind_ext::CASE_BLOCK =>
         {
             if let Some(block) = arena.get_block(node) {
-                children.extend(block.statements.nodes.iter().copied());
+                extend_child_list(&mut children, &block.statements);
             }
         }
 
@@ -52,7 +52,7 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
             if let Some(mod_block) = arena.get_module_block(node)
                 && let Some(ref stmts) = mod_block.statements
             {
-                children.extend(stmts.nodes.iter().copied());
+                extend_child_list(&mut children, stmts);
             }
         }
 
@@ -63,57 +63,43 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         {
             if let Some(func) = arena.get_function(node) {
                 if let Some(ref modifiers) = func.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
-                if func.name.is_some() {
-                    children.push(func.name);
-                }
+                push_child(&mut children, func.name);
                 if let Some(ref type_params) = func.type_parameters {
-                    children.extend(type_params.nodes.iter().copied());
+                    extend_child_list(&mut children, type_params);
                 }
-                children.extend(func.parameters.nodes.iter().copied());
-                if func.type_annotation.is_some() {
-                    children.push(func.type_annotation);
-                }
-                if func.body.is_some() {
-                    children.push(func.body);
-                }
+                extend_child_list(&mut children, &func.parameters);
+                push_child(&mut children, func.type_annotation);
+                push_child(&mut children, func.body);
             }
         }
 
         k if k == syntax_kind_ext::METHOD_DECLARATION => {
             if let Some(method) = arena.get_method_decl(node) {
                 if let Some(ref modifiers) = method.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
-                if method.name.is_some() {
-                    children.push(method.name);
-                }
+                push_child(&mut children, method.name);
                 if let Some(ref type_params) = method.type_parameters {
-                    children.extend(type_params.nodes.iter().copied());
+                    extend_child_list(&mut children, type_params);
                 }
-                children.extend(method.parameters.nodes.iter().copied());
-                if method.type_annotation.is_some() {
-                    children.push(method.type_annotation);
-                }
-                if method.body.is_some() {
-                    children.push(method.body);
-                }
+                extend_child_list(&mut children, &method.parameters);
+                push_child(&mut children, method.type_annotation);
+                push_child(&mut children, method.body);
             }
         }
 
         k if k == syntax_kind_ext::CONSTRUCTOR => {
             if let Some(ctor) = arena.get_constructor(node) {
                 if let Some(ref modifiers) = ctor.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
                 if let Some(ref type_params) = ctor.type_parameters {
-                    children.extend(type_params.nodes.iter().copied());
+                    extend_child_list(&mut children, type_params);
                 }
-                children.extend(ctor.parameters.nodes.iter().copied());
-                if ctor.body.is_some() {
-                    children.push(ctor.body);
-                }
+                extend_child_list(&mut children, &ctor.parameters);
+                push_child(&mut children, ctor.body);
             }
         }
 
@@ -121,18 +107,16 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         k if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::CLASS_EXPRESSION => {
             if let Some(class) = arena.get_class(node) {
                 if let Some(ref modifiers) = class.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
-                if class.name.is_some() {
-                    children.push(class.name);
-                }
+                push_child(&mut children, class.name);
                 if let Some(ref type_params) = class.type_parameters {
-                    children.extend(type_params.nodes.iter().copied());
+                    extend_child_list(&mut children, type_params);
                 }
                 if let Some(ref heritage) = class.heritage_clauses {
-                    children.extend(heritage.nodes.iter().copied());
+                    extend_child_list(&mut children, heritage);
                 }
-                children.extend(class.members.nodes.iter().copied());
+                extend_child_list(&mut children, &class.members);
             }
         }
 
@@ -140,18 +124,16 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
             if let Some(iface) = arena.get_interface(node) {
                 if let Some(ref modifiers) = iface.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
-                if iface.name.is_some() {
-                    children.push(iface.name);
-                }
+                push_child(&mut children, iface.name);
                 if let Some(ref type_params) = iface.type_parameters {
-                    children.extend(type_params.nodes.iter().copied());
+                    extend_child_list(&mut children, type_params);
                 }
                 if let Some(ref heritage) = iface.heritage_clauses {
-                    children.extend(heritage.nodes.iter().copied());
+                    extend_child_list(&mut children, heritage);
                 }
-                children.extend(iface.members.nodes.iter().copied());
+                extend_child_list(&mut children, &iface.members);
             }
         }
 
@@ -159,17 +141,13 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
             if let Some(alias) = arena.get_type_alias(node) {
                 if let Some(ref modifiers) = alias.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
-                if alias.name.is_some() {
-                    children.push(alias.name);
-                }
+                push_child(&mut children, alias.name);
                 if let Some(ref type_params) = alias.type_parameters {
-                    children.extend(type_params.nodes.iter().copied());
+                    extend_child_list(&mut children, type_params);
                 }
-                if alias.type_node.is_some() {
-                    children.push(alias.type_node);
-                }
+                push_child(&mut children, alias.type_node);
             }
         }
 
@@ -178,21 +156,15 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
             || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST =>
         {
             if let Some(var) = arena.get_variable(node) {
-                children.extend(var.declarations.nodes.iter().copied());
+                extend_child_list(&mut children, &var.declarations);
             }
         }
 
         k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
             if let Some(decl) = arena.get_variable_declaration(node) {
-                if decl.name.is_some() {
-                    children.push(decl.name);
-                }
-                if decl.type_annotation.is_some() {
-                    children.push(decl.type_annotation);
-                }
-                if decl.initializer.is_some() {
-                    children.push(decl.initializer);
-                }
+                push_child(&mut children, decl.name);
+                push_child(&mut children, decl.type_annotation);
+                push_child(&mut children, decl.initializer);
             }
         }
 
@@ -200,17 +172,11 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         k if k == syntax_kind_ext::PARAMETER => {
             if let Some(param) = arena.get_parameter(node) {
                 if let Some(ref modifiers) = param.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
-                if param.name.is_some() {
-                    children.push(param.name);
-                }
-                if param.type_annotation.is_some() {
-                    children.push(param.type_annotation);
-                }
-                if param.initializer.is_some() {
-                    children.push(param.initializer);
-                }
+                push_child(&mut children, param.name);
+                push_child(&mut children, param.type_annotation);
+                push_child(&mut children, param.initializer);
             }
         }
 
@@ -218,42 +184,30 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
             if let Some(prop) = arena.get_property_decl(node) {
                 if let Some(ref modifiers) = prop.modifiers {
-                    children.extend(modifiers.nodes.iter().copied());
+                    extend_child_list(&mut children, modifiers);
                 }
-                if prop.name.is_some() {
-                    children.push(prop.name);
-                }
-                if prop.type_annotation.is_some() {
-                    children.push(prop.type_annotation);
-                }
-                if prop.initializer.is_some() {
-                    children.push(prop.initializer);
-                }
+                push_child(&mut children, prop.name);
+                push_child(&mut children, prop.type_annotation);
+                push_child(&mut children, prop.initializer);
             }
         }
 
         // --- Expressions ---
         k if k == syntax_kind_ext::BINARY_EXPRESSION => {
             if let Some(bin) = arena.get_binary_expr(node) {
-                if bin.left.is_some() {
-                    children.push(bin.left);
-                }
-                if bin.right.is_some() {
-                    children.push(bin.right);
-                }
+                push_child(&mut children, bin.left);
+                push_child(&mut children, bin.right);
             }
         }
 
         k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
             if let Some(call) = arena.get_call_expr(node) {
-                if call.expression.is_some() {
-                    children.push(call.expression);
-                }
+                push_child(&mut children, call.expression);
                 if let Some(ref type_args) = call.type_arguments {
-                    children.extend(type_args.nodes.iter().copied());
+                    extend_child_list(&mut children, type_args);
                 }
                 if let Some(ref args) = call.arguments {
-                    children.extend(args.nodes.iter().copied());
+                    extend_child_list(&mut children, args);
                 }
             }
         }
@@ -262,41 +216,25 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
             || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
         {
             if let Some(access) = arena.get_access_expr(node) {
-                if access.expression.is_some() {
-                    children.push(access.expression);
-                }
-                if access.name_or_argument.is_some() {
-                    children.push(access.name_or_argument);
-                }
+                push_child(&mut children, access.expression);
+                push_child(&mut children, access.name_or_argument);
             }
         }
 
         k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
             if let Some(cond) = arena.get_conditional_expr(node) {
-                if cond.condition.is_some() {
-                    children.push(cond.condition);
-                }
-                if cond.when_true.is_some() {
-                    children.push(cond.when_true);
-                }
-                if cond.when_false.is_some() {
-                    children.push(cond.when_false);
-                }
+                push_child(&mut children, cond.condition);
+                push_child(&mut children, cond.when_true);
+                push_child(&mut children, cond.when_false);
             }
         }
 
         // --- Statements ---
         k if k == syntax_kind_ext::IF_STATEMENT => {
             if let Some(if_stmt) = arena.get_if_statement(node) {
-                if if_stmt.expression.is_some() {
-                    children.push(if_stmt.expression);
-                }
-                if if_stmt.then_statement.is_some() {
-                    children.push(if_stmt.then_statement);
-                }
-                if if_stmt.else_statement.is_some() {
-                    children.push(if_stmt.else_statement);
-                }
+                push_child(&mut children, if_stmt.expression);
+                push_child(&mut children, if_stmt.then_statement);
+                push_child(&mut children, if_stmt.else_statement);
             }
         }
 
@@ -305,82 +243,54 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
             || k == syntax_kind_ext::DO_STATEMENT =>
         {
             if let Some(loop_data) = arena.get_loop(node) {
-                if loop_data.initializer.is_some() {
-                    children.push(loop_data.initializer);
-                }
-                if loop_data.condition.is_some() {
-                    children.push(loop_data.condition);
-                }
-                if loop_data.incrementor.is_some() {
-                    children.push(loop_data.incrementor);
-                }
-                if loop_data.statement.is_some() {
-                    children.push(loop_data.statement);
-                }
+                push_child(&mut children, loop_data.initializer);
+                push_child(&mut children, loop_data.condition);
+                push_child(&mut children, loop_data.incrementor);
+                push_child(&mut children, loop_data.statement);
             }
         }
 
         k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
             if let Some(for_in) = arena.get_for_in_of(node) {
-                if for_in.initializer.is_some() {
-                    children.push(for_in.initializer);
-                }
-                if for_in.expression.is_some() {
-                    children.push(for_in.expression);
-                }
-                if for_in.statement.is_some() {
-                    children.push(for_in.statement);
-                }
+                push_child(&mut children, for_in.initializer);
+                push_child(&mut children, for_in.expression);
+                push_child(&mut children, for_in.statement);
             }
         }
 
         k if k == syntax_kind_ext::RETURN_STATEMENT || k == syntax_kind_ext::THROW_STATEMENT => {
-            if let Some(ret) = arena.get_return_statement(node)
-                && ret.expression.is_some()
-            {
-                children.push(ret.expression);
+            if let Some(ret) = arena.get_return_statement(node) {
+                push_child(&mut children, ret.expression);
             }
         }
 
         k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
-            if let Some(expr_stmt) = arena.get_expression_statement(node)
-                && expr_stmt.expression.is_some()
-            {
-                children.push(expr_stmt.expression);
+            if let Some(expr_stmt) = arena.get_expression_statement(node) {
+                push_child(&mut children, expr_stmt.expression);
             }
         }
 
         // --- Imports/Exports ---
         k if k == syntax_kind_ext::IMPORT_DECLARATION => {
             if let Some(import) = arena.get_import_decl(node) {
-                if import.import_clause.is_some() {
-                    children.push(import.import_clause);
-                }
-                if import.module_specifier.is_some() {
-                    children.push(import.module_specifier);
-                }
+                push_child(&mut children, import.import_clause);
+                push_child(&mut children, import.module_specifier);
             }
         }
 
         k if k == syntax_kind_ext::EXPORT_DECLARATION => {
             if let Some(export) = arena.get_export_decl(node) {
-                if export.export_clause.is_some() {
-                    children.push(export.export_clause);
-                }
-                if export.module_specifier.is_some() {
-                    children.push(export.module_specifier);
-                }
+                push_child(&mut children, export.export_clause);
+                push_child(&mut children, export.module_specifier);
             }
         }
 
         // --- Type Nodes ---
         k if k == syntax_kind_ext::TYPE_REFERENCE => {
             if let Some(type_ref) = arena.get_type_ref(node) {
-                if type_ref.type_name.is_some() {
-                    children.push(type_ref.type_name);
-                }
+                push_child(&mut children, type_ref.type_name);
                 if let Some(ref type_args) = type_ref.type_arguments {
-                    children.extend(type_args.nodes.iter().copied());
+                    extend_child_list(&mut children, type_args);
                 }
             }
         }
@@ -388,12 +298,8 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         // --- Qualified Names ---
         k if k == syntax_kind_ext::QUALIFIED_NAME => {
             if let Some(qn) = arena.get_qualified_name(node) {
-                if qn.left.is_some() {
-                    children.push(qn.left);
-                }
-                if qn.right.is_some() {
-                    children.push(qn.right);
-                }
+                push_child(&mut children, qn.left);
+                push_child(&mut children, qn.right);
             }
         }
 
@@ -402,6 +308,16 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
     }
 
     children
+}
+
+fn push_child(children: &mut Vec<NodeIndex>, child: NodeIndex) {
+    if child.is_some() {
+        children.push(child);
+    }
+}
+
+fn extend_child_list(children: &mut Vec<NodeIndex>, list: &NodeList) {
+    children.extend(list.nodes.iter().copied());
 }
 
 // === Node Type Guards ===
