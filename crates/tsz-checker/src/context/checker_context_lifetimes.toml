@@ -110,6 +110,10 @@ reason = "enum-namespace type cache keyed by SymbolId; conservative until audit"
 lifetime = "FileLocalReset"
 reason = "variable-declaration type cache; conservative until audit"
 
+[merged_value_types]
+lifetime = "FileLocalReset"
+reason = "merged value/type alias cache keyed by SymbolId; conservative until audit"
+
 [lib_type_resolution_cache]
 lifetime = "FileLocalReset"
 reason = "per-file fallback cache keyed by string; shared map lives in shared_lib_type_cache"
