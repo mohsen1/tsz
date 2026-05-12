@@ -1477,6 +1477,29 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn parse_jsdoc_default_typedef_alias_decl(
+        jsdoc: &str,
+        alias_name: &str,
+    ) -> Option<JsdocTypeAliasDecl> {
+        let type_params = Self::parse_jsdoc_template_params(jsdoc);
+        let (name, type_text) = if Self::jsdoc_has_property_tags(jsdoc) {
+            Self::parse_jsdoc_property_type_alias(jsdoc)?
+        } else {
+            Self::parse_jsdoc_typedef_alias(jsdoc)?
+        };
+        if name != "default" {
+            return None;
+        }
+
+        Some(JsdocTypeAliasDecl {
+            name: alias_name.to_string(),
+            type_params,
+            type_text,
+            description_lines: Vec::new(),
+            render_verbatim: Self::jsdoc_has_property_tags(jsdoc),
+        })
+    }
+
     pub(in crate::declaration_emitter) fn render_jsdoc_type_alias_decl(
         decl: &JsdocTypeAliasDecl,
         exported: bool,
@@ -1728,6 +1751,43 @@ impl<'a> DeclarationEmitter<'a> {
 
         for decl in decls {
             self.emit_rendered_jsdoc_type_alias(decl, exported);
+        }
+    }
+
+    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if !self.source_is_js_file || self.js_export_default_names.len() != 1 {
+            return;
+        }
+        let Some(alias_name) = self.js_export_default_names.iter().next().cloned() else {
+            return;
+        };
+
+        let exported = self.source_file_has_module_syntax(source_file)
+            && self.js_export_equals_names.is_empty();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
+                if let Some(decl) =
+                    Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &alias_name)
+                {
+                    self.emit_rendered_jsdoc_type_alias(decl, exported);
+                }
+            }
+        }
+
+        let Ok(eof_pos) = u32::try_from(source_file.text.len()) else {
+            return;
+        };
+        for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
+            if let Some(decl) = Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &alias_name) {
+                self.emit_rendered_jsdoc_type_alias(decl, exported);
+            }
         }
     }
 }

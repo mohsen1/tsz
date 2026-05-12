@@ -4299,6 +4299,28 @@ export default Test;
 }
 
 #[test]
+fn test_js_default_typedef_after_default_identifier_export_uses_export_name() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Cls {
+    x = 12;
+}
+export default Cls;
+/** @typedef {string | number} default */
+"#,
+    );
+    let trimmed = output.trim();
+    assert!(
+        trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
+        "Expected default typedef to emit before the hoisted default export: {trimmed}"
+    );
+    assert!(
+        trimmed.contains("declare class Cls"),
+        "Expected the exported class declaration to remain: {trimmed}"
+    );
+}
+
+#[test]
 fn test_ts_export_default_identifier_is_not_hoisted() {
     // TS files keep `export default <Identifier>` in source order — only JS
     // declaration emit applies the hoist transformation.
