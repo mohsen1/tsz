@@ -12,6 +12,26 @@ impl<'a> CheckerState<'a> {
         if members.len() < 2 {
             return None;
         }
+        let enum_member_symbols: Vec<_> = members
+            .iter()
+            .filter_map(|&member| self.enum_member_symbol_for_type(member))
+            .collect();
+        if enum_member_symbols.len() == members.len()
+            && let Some((_, enum_sym)) = enum_member_symbols.first().copied()
+            && enum_member_symbols
+                .iter()
+                .all(|(_, candidate)| *candidate == enum_sym)
+        {
+            let widened = self.widen_enum_member_type(members[0]);
+            return self
+                .format_qualified_enum_name_for_message(widened)
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .get_symbol(enum_sym)
+                        .map(|symbol| symbol.escaped_name.clone())
+                });
+        }
         let mut rendered = Vec::with_capacity(members.len());
         let mut collapsed_enum = None;
         let mut rendered_enum_member = false;
