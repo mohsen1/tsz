@@ -11,6 +11,17 @@ use crate::emitter::declarations::class::replace_identifier;
 use crate::transforms::emit_utils;
 use std::sync::Arc;
 
+fn avoid_generator_state_collision(segment: &str, class_temp: &str) -> String {
+    if class_temp != "_a" || !segment.contains("function (_a)") {
+        return segment.to_string();
+    }
+
+    segment
+        .replace("function (_a)", "function (_b)")
+        .replace("_a.label", "_b.label")
+        .replace("_a.sent()", "_b.sent()")
+}
+
 impl<'a> Printer<'a> {
     fn next_arguments_capture_name(&mut self) -> String {
         loop {
@@ -126,7 +137,7 @@ impl<'a> Printer<'a> {
 
     fn write_multiline_fragment(&mut self, text: &str) {
         let extra_indent = if self.writer.indent_level() > 0 {
-            " ".repeat(self.writer.indent_width() as usize)
+            " ".repeat((self.writer.indent_width() * (self.writer.indent_level() + 2)) as usize)
         } else {
             String::new()
         };
@@ -199,6 +210,15 @@ impl<'a> Printer<'a> {
                 let full = self.writer.get_output().to_string();
                 let segment = &full[before..after];
                 let replaced = replace_identifier(segment, class_name, &temp);
+                let replaced = avoid_generator_state_collision(&replaced, &temp);
+                if replaced != segment {
+                    self.writer.truncate(before);
+                    self.write(&replaced);
+                }
+            } else {
+                let full = self.writer.get_output().to_string();
+                let segment = &full[before..after];
+                let replaced = avoid_generator_state_collision(segment, &temp);
                 if replaced != segment {
                     self.writer.truncate(before);
                     self.write(&replaced);
@@ -1158,6 +1178,14 @@ impl<'a> Printer<'a> {
                 &class_iife_expr,
                 &static_field_inits,
             );
+            return;
+        }
+
+        if class_data.name.is_some()
+            && let Some(class_iife_expr) =
+                Self::es5_class_iife_expression_from_var(&es5_output, &class_name)
+        {
+            self.write_multiline_fragment(&class_iife_expr);
             return;
         }
 

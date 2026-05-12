@@ -218,6 +218,42 @@ mod tests {
     }
 
     #[test]
+    fn es5_nested_static_class_expression_reuses_outer_alias_in_async_method() {
+        let source = "class A {\n    static B = class B {\n        static func2() { return new Promise((resolve) => { resolve(null); }); }\n        static C = class C {\n            static async func() { await B.func2(); }\n        }\n    }\n}\nA.B.C.func();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("function A() {\n    }\n    var _a;\n    A.B = (_a ="),
+            "Outer class IIFE should declare the class-expression alias before the static assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a.C = /** @class */ (function () {"),
+            "Nested static class expression should inline the ES5 class IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("function (_b)") && output.contains("yield*/, _a.func2()"),
+            "Async static method should avoid colliding with the outer class-expression alias while preserving the B reference.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_a.C = (function () {"),
+            "Nested static class expression should not use the wrapper-IIFE form.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn class_expression_static_comma_temp_follows_computed_name_temps() {
         let source = "async function* test(x) {\n    return class {\n        [await x] = await x;\n        static [await x] = await x;\n        [yield 1] = yield 2;\n        static [yield 3] = yield 4;\n    };\n}\n";
 
