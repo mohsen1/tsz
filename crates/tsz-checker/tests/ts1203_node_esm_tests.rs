@@ -131,6 +131,20 @@ fn export_equals_with_named_export_emits_ts2309_even_when_ts1203_fires() {
 }
 
 #[test]
+fn export_equals_with_empty_export_marker_does_not_emit_ts2309() {
+    let source = "export = {};\nexport {};\n";
+    let codes = get_codes(source, ModuleKind::ESNext, None);
+    assert!(
+        codes.contains(&1203),
+        "TS1203 should still fire for export= in ESNext, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2309),
+        "empty export marker should not count as another exported element for TS2309, got: {codes:?}"
+    );
+}
+
+#[test]
 fn export_equals_with_named_export_emits_ts2309_in_commonjs() {
     let source = "export const named = 1;\nexport = {};\n";
     let codes = get_codes(source, ModuleKind::CommonJS, None);

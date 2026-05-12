@@ -295,7 +295,15 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            has_other_exports = true;
+                            let is_empty_export_marker = self
+                                .ctx
+                                .arena
+                                .get(export_data.export_clause)
+                                .and_then(|clause| self.ctx.arena.get_named_imports(clause))
+                                .is_some_and(|named| named.elements.nodes.is_empty());
+                            if !is_empty_export_marker {
+                                has_other_exports = true;
+                            }
                         }
                     } else {
                         has_other_exports = true;

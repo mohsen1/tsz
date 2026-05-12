@@ -33,3 +33,25 @@ Fixed the extra TS2345 in `TypeScript/tests/cases/compiler/correlatedUnions.ts` 
 Verification:
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --lib correlated_index_access_argument_satisfies_union_callee_param_union -- --nocapture` -> passed
 - `./scripts/conformance/conformance.sh run --filter "correlatedUnions" --verbose` -> 1/1 passed
+
+## 2026-05-12 update: bundlerSyntaxRestrictions and co/contra check
+
+Fixed the extra TS2309 in `TypeScript/tests/cases/conformance/moduleResolution/bundler/bundlerSyntaxRestrictions.ts`: an empty `export {}` module marker no longer counts as another exported element for export-assignment conflict checking.
+
+Also checked `TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts`; it now passes on this branch.
+
+Verification:
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test ts1203_node_esm_tests export_equals_with_empty_export_marker_does_not_emit_ts2309 -- --nocapture` -> passed
+- `./scripts/conformance/conformance.sh run --filter "bundlerSyntaxRestrictions" --verbose` -> 1/1 passed
+- `./scripts/conformance/conformance.sh run --filter "coAndContraVariantInferences3" --verbose` -> 1/1 passed
+
+## 2026-05-12 update: variadicTuples2
+
+Fixed the remaining fingerprint-only drift in `TypeScript/tests/cases/conformance/types/tuple/variadicTuples2.ts`: tuple source display now widens a trailing boolean literal to `boolean` when the mapped variadic tuple suffix slot is non-boolean, while preserving boolean literals for boolean rest segments.
+
+Verification:
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --lib variadic_rest_tuple_trailing_mismatch_reports_single_error -- --nocapture` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test ts2322_tests tuple_source_display_widens_boolean_literals_past_fixed_target_slots -- --nocapture` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test ts2322_tests exact_optional_tuple_source_display_preserves_boolean_literal_elements -- --nocapture` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test ts2322_tests variadic_tuple_source_display_maps_middle_positions_to_rest_before_suffix -- --nocapture` -> passed
+- `./scripts/conformance/conformance.sh run --filter "variadicTuples2" --verbose` -> 1/1 passed
