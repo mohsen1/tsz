@@ -2,14 +2,14 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 44
-- Potential important unresolved threads: 61
+- PRs excluded as already followed-up: 45
+- Potential important unresolved threads: 58
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 24
+- `crates/tsz-checker`: 22
 - `crates/tsz-emitter`: 12
-- `docs`: 11
+- `docs`: 10
 - `crates/tsz-parser`: 4
 - `scripts`: 3
 - `crates/tsz-solver`: 3
@@ -19,7 +19,6 @@
 
 ## Top PRs By Candidate Count
 
-- [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
 - [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
@@ -39,11 +38,10 @@
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
 - [#4977](https://github.com/mohsen1/tsz/pull/4977) fix(checker): defer parameter-dependent recursive alias TS2589: 1
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg: 1
+- [#4990](https://github.com/mohsen1/tsz/pull/4990) fix(checker): preserve declared alias application display: 1
 
 ## Candidate Threads (Top 100 by score)
 
-- [#5100](https://github.com/mohsen1/tsz/pull/5100) `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md:6` score=3 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword
-  - The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep wor...
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) `crates/tsz-emitter/src/emitter/literals/core.rs:865` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
   - `parse_test_source` takes `&str` and then immediately allocates via `source.to_string()`. In tests that already build a `String` (e.g. the joined `source` used later in this module), this introduces an extra clone/all...
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs:19` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -108,10 +106,6 @@
   - `consume_unknown_specifier_identifier_tail` stops when it detects `\u{...}` debris by consuming only `\` + `u` and leaving the parser positioned at `{`, relying on the caller to handle the rest of the braced escape. I...
 - [#5094](https://github.com/mohsen1/tsz/pull/5094) `crates/tsz-parser/src/parser/state.rs:170` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - New parser state (`current_specifier_recovered_braced_unicode_escape_debris`) is initialized in `new_with_language_version`, but `ParserState::reset()` doesn’t currently clear it. If a `ParserState` instance is reused...
-- [#5100](https://github.com/mohsen1/tsz/pull/5100) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:318` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `conditional_body_has_unresolved_computed_recursive_alias_ref` is now evaluated unconditionally for every type alias, even when `has_stable_recursive_ref` is false. This is an extra full AST walk compared to the previ...
-- [#5100](https://github.com/mohsen1/tsz/pull/5100) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:632` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The new stability check only looks for identifiers in `type_parameter_scope` via `type_arg_nodes_contain_scoped_type_parameter_for_depth_check`, but `type_node_is_deferred_passthrough_for_depth_check` also treats encl...
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs:97` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `property_name_to_key_type` treats symbol-named properties as string-literal keys unless the name is a synthetic `__unique_<id>` atom. This means well-known computed symbol keys like `[Symbol.iterator]` (which are mar...
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-checker/src/state/type_resolution/symbol_types.rs:1136` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

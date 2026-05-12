@@ -30,6 +30,7 @@
     5089,
     5095,
     5096,
+    5100,
     5102,
     5108,
     5114,
@@ -51,24 +52,8 @@
     5830,
     5901
   ],
-  "candidate_count": 61,
+  "candidate_count": 58,
   "candidates": [
-    {
-      "pr_number": 5100,
-      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
-      "merged_at": "2026-05-11T09:42:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BBwz8",
-      "path": "docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md",
-      "line": 6,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep workflows that expect the documented values.",
-      "score": 3,
-      "reasons": [
-        "important-keyword"
-      ]
-    },
     {
       "pr_number": 5899,
       "pr_title": "chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules",
@@ -577,38 +562,6 @@
       "line": 170,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "New parser state (`current_specifier_recovered_braced_unicode_escape_debris`) is initialized in `new_with_language_version`, but `ParserState::reset()` doesn\u2019t currently clear it. If a `ParserState` instance is reused across parses, this flag could retain a stale value and influence later named-import recovery. Recommend resetting it alongside the other recovery flags in `reset()` for consistency and safety.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5100,
-      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
-      "merged_at": "2026-05-11T09:42:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BBw0j",
-      "path": "crates/tsz-checker/src/types/type_checking/type_alias_checking.rs",
-      "line": 318,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`conditional_body_has_unresolved_computed_recursive_alias_ref` is now evaluated unconditionally for every type alias, even when `has_stable_recursive_ref` is false. This is an extra full AST walk compared to the previous behavior and could become noticeable on large codebases; consider gating it behind a cheap precheck (e.g. only when the body is a conditional type and/or when the body contains any self-reference) so non-recursive aliases don't pay the cost.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5100,
-      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
-      "merged_at": "2026-05-11T09:42:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BBw09",
-      "path": "crates/tsz-checker/src/types/type_checking/type_alias_checking.rs",
-      "line": 632,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The new stability check only looks for identifiers in `type_parameter_scope` via `type_arg_nodes_contain_scoped_type_parameter_for_depth_check`, but `type_node_is_deferred_passthrough_for_depth_check` also treats enclosing `infer` bindings as deferred. This means a recursive call like `Foo<Wrap<U>>` (where `U` is from `infer U`) will be treated as a stable recursive reference because `Wrap<U>` isn't a passthrough node and `U` isn't in `type_parameter_scope`, potentially reintroducing definition-site TS2589 false positives for common conditional-type patterns that wrap `infer` results. Consider extending the \"contains scoped parameter\" check here to also treat `infer`-bound identifiers as dependencies (e.g. a recursive `type_node_contains_deferred_passthrough_identifier_for_depth_check` that recurses and checks both type params and infer bindings).",
       "score": 1,
       "reasons": [
         "detailed-thread"
