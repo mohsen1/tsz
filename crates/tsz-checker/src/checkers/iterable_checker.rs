@@ -1662,6 +1662,13 @@ impl<'a> CheckerState<'a> {
             None => return true, // Can't determine - don't emit false positive
         };
 
+        // If either side is any/unknown, or the iterator accepts undefined, avoid
+        // a false positive. `yield*` commonly delegates from generators whose
+        // containing TNext is explicitly `unknown`.
+        if sent_type == TypeId::ANY || sent_type == TypeId::UNKNOWN {
+            return true;
+        }
+
         // If TNext is any, unknown, or undefined, the sent type is always compatible
         if next_type == TypeId::ANY
             || next_type == TypeId::UNKNOWN
