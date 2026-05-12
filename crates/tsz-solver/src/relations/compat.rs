@@ -709,19 +709,28 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Apply compiler options from a bitmask flags value.
     ///
-    /// The flags correspond to `RelationCacheKey` bits:
+    /// Applies the `RelationCacheKey` bits that still have direct setters on
+    /// this legacy checker:
     /// - bit 0: `strict_null_checks`
     /// - bit 1: `strict_function_types`
     /// - bit 2: `exact_optional_property_types`
     /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance` (`strict_subtype_checking`)
-    /// - bit 5: `allow_void_return`
-    /// - bit 6: `allow_bivariant_rest`
-    /// - bit 7: `allow_bivariant_param_count`
-    /// - bit 13: `allow_erased_generic_signature_retry`
+    /// - bit 4: `disable_method_bivariance`
+    /// - bit 5: `subtype.allow_void_return`
+    /// - bit 6: `subtype.allow_bivariant_rest`
+    /// - bit 7: `subtype.allow_bivariant_param_count`
+    /// - bit 13: `subtype.allow_erased_generic_signature_retry`
     ///
-    /// This is used by `QueryCache::is_assignable_to_with_flags` to ensure
-    /// cached results respect the compiler configuration.
+    /// Other `RelationFlags` bits intentionally are not applied here:
+    /// `NO_ERASE_GENERICS`, `STRICT_SUBTYPE_CHECKING`,
+    /// `STRICT_ANY_PROPAGATION`, `SKIP_WEAK_TYPE_CHECKS`,
+    /// `ASSUME_RELATED_ON_CYCLE`, and `IN_CALLBACK_PARAM_CHECK` are routed
+    /// through newer policy/query paths.
+    ///
+    /// This legacy helper only applies the subset that maps directly onto this
+    /// checker instance. Higher-level relation query paths should prefer
+    /// `RelationPolicy`, whose `cache_config()` is the canonical
+    /// cache-partitioning surface for policy-affecting knobs.
     pub fn apply_flags(&mut self, flags: u16) {
         // Apply flags to CompatChecker's own fields
         let strict_null_checks = (flags & (1 << 0)) != 0;

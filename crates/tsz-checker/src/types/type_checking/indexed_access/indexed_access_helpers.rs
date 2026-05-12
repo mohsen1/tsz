@@ -193,6 +193,61 @@ impl<'a> CheckerState<'a> {
         saw_value
     }
 
+    pub(super) fn nested_type_literal_index_access_allows_index(
+        &mut self,
+        object_type_node_idx: NodeIndex,
+        outer_index_node_idx: NodeIndex,
+        outer_index_type: TypeId,
+    ) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_type_node_idx) else {
+            return false;
+        };
+        let Some(nested) = self.ctx.arena.get_indexed_access_type(object_node) else {
+            return false;
+        };
+
+        let nested_index_type = self.get_type_from_type_node(nested.index_type);
+        let mut nested_index_constraint =
+            crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                nested_index_type,
+            );
+        if crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            nested_index_type,
+        ) && nested_index_constraint.is_none()
+        {
+            nested_index_constraint = self
+                .resolve_index_constraint_from_declaration(nested.index_type, nested.object_type);
+        }
+
+        let mut outer_index_constraint = crate::query_boundaries::common::type_parameter_constraint(
+            self.ctx.types,
+            outer_index_type,
+        );
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, outer_index_type)
+            && outer_index_constraint.is_none()
+        {
+            outer_index_constraint = self.resolve_index_constraint_from_declaration(
+                outer_index_node_idx,
+                object_type_node_idx,
+            );
+        }
+
+        let Some(nested_base_keyof) = self.type_literal_keyof_from_node(nested.object_type) else {
+            return false;
+        };
+        let nested_index_for_check = nested_index_constraint.unwrap_or(nested_index_type);
+        let nested_index_for_check = self.evaluate_type_with_env(nested_index_for_check);
+
+        self.is_assignable_to(nested_index_for_check, nested_base_keyof)
+            && self.type_literal_member_values_accept_index(
+                nested.object_type,
+                outer_index_type,
+                outer_index_constraint,
+            )
+    }
+
     fn array_like_kind_has_length(
         &self,
         kind: crate::query_boundaries::type_checking_utilities::ArrayLikeKind,

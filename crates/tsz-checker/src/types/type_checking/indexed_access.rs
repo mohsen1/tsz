@@ -689,6 +689,13 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
+            if self.nested_type_literal_index_access_allows_index(
+                data.object_type,
+                data.index_type,
+                index_type,
+            ) {
+                return;
+            }
             // Clean up object type text: strip enclosing parens and any trailing
             // index access syntax that may leak from the object_type node span.
             let object_type_str = {
