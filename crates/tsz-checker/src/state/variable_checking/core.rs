@@ -1184,6 +1184,12 @@ impl<'a> CheckerState<'a> {
                             .get(var_decl.initializer)
                             .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION);
                     if jsdoc_new_expression_relation {
+                        // Preserve the contextually-seeded initializer cache entry.
+                        // The raw re-check below intentionally runs without context
+                        // for relation parity, but it must not permanently replace
+                        // node_types with the non-contextual initializer type.
+                        let cached_initializer_type =
+                            checker.ctx.node_types.get(&var_decl.initializer.0).copied();
                         let raw_init_snap = checker.ctx.snapshot_diagnostics();
                         checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                         let raw_init_type = checker.get_type_of_node_with_request(
@@ -1191,6 +1197,14 @@ impl<'a> CheckerState<'a> {
                             &TypingRequest::NONE,
                         );
                         checker.ctx.rollback_diagnostics(&raw_init_snap);
+                        if let Some(cached_initializer_type) = cached_initializer_type {
+                            checker
+                                .ctx
+                                .node_types
+                                .insert(var_decl.initializer.0, cached_initializer_type);
+                        } else {
+                            checker.ctx.node_types.remove(&var_decl.initializer.0);
+                        }
                         init_type_for_relation = checker.resolve_lazy_type(raw_init_type);
                     }
                     if let Some(branch_ranges) = conditional_branch_ranges {

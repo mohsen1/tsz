@@ -2,12 +2,12 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 41
-- Potential important unresolved threads: 69
+- PRs excluded as already followed-up: 42
+- Potential important unresolved threads: 68
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 28
+- `crates/tsz-checker`: 27
 - `crates/tsz-emitter`: 12
 - `docs`: 11
 - `crates/tsz-solver`: 6
@@ -35,10 +35,10 @@
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) fix(checker): align recursiveTypeReferences1 array diagnostics: 2
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) fix(dts): ignore cjs exports in esm js modules: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
-- [#5690](https://github.com/mohsen1/tsz/pull/5690) fix(checker): report JS @type subclass assignment mismatch: 1
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules: 1
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
 - [#4951](https://github.com/mohsen1/tsz/pull/4951) fix(checker): preserve literal constraint display for generic calls: 1
+- [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -48,8 +48,6 @@
   - `decl_node` may come from `ctx.arena`, `symbol_arenas`, or `declaration_arenas`, but the subsequent `get_type_alias(decl_node)` calls probe multiple arenas (starting with `ctx.arena`) using a `Node` value whose `data_...
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) `scripts/conformance/conformance-baseline.txt:5` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The PR description claims conformance has “new failures: 0” and “changed failures: 0”, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType...
-- [#5690](https://github.com/mohsen1/tsz/pull/5690) `crates/tsz-checker/src/state/variable_checking/core.rs:1193` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` ...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md:6` score=3 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword
   - The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep wor...
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) `crates/tsz-emitter/src/emitter/literals/core.rs:865` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread

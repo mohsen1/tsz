@@ -37,6 +37,7 @@
     5662,
     5663,
     5666,
+    5690,
     5691,
     5693,
     5694,
@@ -48,7 +49,7 @@
     5830,
     5901
   ],
-  "candidate_count": 69,
+  "candidate_count": 68,
   "candidates": [
     {
       "pr_number": 4967,
@@ -95,23 +96,6 @@
       "line": 5,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The PR description claims conformance has \u201cnew failures: 0\u201d and \u201cchanged failures: 0\u201d, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType.ts`, `.../narrowingMutualSubtypes.ts`, `.../contextualTypeWithTuple.ts`) and also shows previously failing tests now passing (e.g. `.../maxConstraints.ts`). Please reconcile this with the PR description (update the description or regenerate snapshots from the intended base).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5690,
-      "pr_title": "fix(checker): report JS @type subclass assignment mismatch",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5690",
-      "merged_at": "2026-05-12T03:20:03Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BR9N2",
-      "path": "crates/tsz-checker/src/state/variable_checking/core.rs",
-      "line": 1193,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` for the initializer with the non-contextual (raw) type. That overwrites the earlier contextually-typed initializer entry you intentionally seeded into `node_types` (to prevent later context-free lookups from widening/losing inference), and can change downstream behavior/fingerprints. Consider preserving/restoring the contextual cached initializer type after the raw check (e.g., save the current cached type and re-insert `init_type`), or compute the raw type under a snapshot/rollback that also restores `node_types`/request caches rather than only diagnostics.",
       "score": 4,
       "reasons": [
         "important-keyword",
