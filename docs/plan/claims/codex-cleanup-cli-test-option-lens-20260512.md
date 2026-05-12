@@ -1,8 +1,8 @@
 # chore(cli-tests): tidy optional vector length assertions
 
-Status: claim
+Status: ready
 Branch: codex/cleanup-tsserver-result-presence-20260512
-PR: TBD
+PR: #5857
 Owner: Codex
 Date: 2026-05-12
 

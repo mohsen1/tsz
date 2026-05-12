@@ -11,6 +11,10 @@ use tsz::emitter::{ModuleKind, ScriptTarget};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+fn option_len<T>(values: Option<&[T]>) -> Option<usize> {
+    values.map(<[_]>::len)
+}
+
 struct TempDir {
     path: PathBuf,
 }
@@ -299,7 +303,7 @@ fn resolve_compiler_options_allows_paths_without_base_url() {
     let resolved = resolve_compiler_options(config.compiler_options.as_ref())
         .expect("paths without baseUrl should resolve to non-fatal config");
     assert!(resolved.base_url.is_none());
-    assert_eq!(resolved.paths.as_ref().map(|v| v.len()), Some(1));
+    assert_eq!(option_len(resolved.paths.as_deref()), Some(1));
 }
 
 #[test]
