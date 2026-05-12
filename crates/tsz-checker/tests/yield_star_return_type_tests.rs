@@ -106,6 +106,21 @@ function* f(): Generator<number, boolean, string> {
     );
 }
 
+#[test]
+fn yield_star_generic_delegated_next_type_parameter_does_not_emit_ts2766() {
+    let source = r#"
+declare const gen: <T, U, V>() => Generator<T, U, V>;
+function* f(): Generator<"outer", number, unknown> {
+    const x = yield* gen();
+}
+"#;
+    let diags = check_with_strict(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2766),
+        "unresolved delegated TNext type parameters should not emit TS2766, got: {diags:?}"
+    );
+}
+
 // =========================================================================
 // yield* in unannotated generators
 // =========================================================================
