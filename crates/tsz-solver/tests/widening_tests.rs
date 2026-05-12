@@ -249,10 +249,10 @@ fn test_widen_readonly_property_preserved() {
 
 #[test]
 fn test_widen_readonly_nested_object_widens_inner_literals() {
-    // `class C { readonly nested = { p: 1 } }`-style shape: the outer
-    // `nested` is readonly, but tsc widens the INNER `p: 1` to `number`.
-    // The readonly modifier only preserves primitive literals on its
-    // direct value, not literals nested inside compound types.
+    // Synthetic readonly property shape: the outer `nested` is readonly,
+    // but the INNER `p: 1` still widens to `number`. The readonly modifier
+    // only preserves primitive literals on its direct value, not literals
+    // nested inside compound types.
     let interner = TypeInterner::new();
     let inner_props = vec![PropertyInfo {
         name: interner.intern_string("p"),
@@ -311,14 +311,14 @@ fn test_widen_readonly_nested_object_widens_inner_literals() {
 
 #[test]
 fn test_widen_readonly_array_widens_element_type() {
-    // `class C { readonly arr = [1, 2, 3] }`-style: the inner element
-    // literals widen even though the outer property is readonly.
+    // Synthetic readonly array property: the inner element literals widen
+    // even though the outer property is readonly.
     let interner = TypeInterner::new();
     let lit1 = interner.literal_number(1.0);
     let lit2 = interner.literal_number(2.0);
     let lit3 = interner.literal_number(3.0);
     let union = interner.union(vec![lit1, lit2, lit3]);
-    let arr = interner.intern(TypeData::Array(union));
+    let arr = interner.array(union);
 
     let outer_props = vec![PropertyInfo {
         name: interner.intern_string("arr"),
