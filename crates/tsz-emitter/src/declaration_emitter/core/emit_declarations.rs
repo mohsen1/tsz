@@ -1163,6 +1163,11 @@ impl<'a> DeclarationEmitter<'a> {
                             effective_return_type_id,
                         )
                         || self.source_return_type_is_function_type_param(func, type_text)
+                        || self.source_return_type_preserves_function_type_param(
+                            func,
+                            type_text,
+                            effective_return_type_id,
+                        )
                         || (*substituted_parameter_type_query && !type_text.contains("typeof ")))
                 {
                     self.write(": ");

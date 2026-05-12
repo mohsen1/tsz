@@ -863,11 +863,26 @@ impl<'a> Printer<'a> {
 
     /// Create an ES5 class emitter pre-configured with decorator info for the given class.
     fn create_es5_class_emitter_with_decorators(
-        &self,
+        &mut self,
         class_node: NodeIndex,
     ) -> ClassES5Emitter<'a> {
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        if let Some(class_node_ref) = self.arena.get(class_node)
+            && let Some(class_data) = self.arena.get_class(class_node_ref)
+        {
+            let class_name = self.get_identifier_text_idx(class_data.name);
+            let externally_hoisted_decls =
+                self.es5_computed_auto_accessor_hoisted_decls(class_node, &class_name);
+            if !externally_hoisted_decls.is_empty() {
+                for decl in &externally_hoisted_decls {
+                    if !self.hoisted_assignment_temps.contains(decl) {
+                        self.hoisted_assignment_temps.push(decl.clone());
+                    }
+                }
+                es5_emitter.set_externally_hoisted_decls(externally_hoisted_decls);
+            }
+        }
         es5_emitter.set_indent_level(self.writer.indent_level());
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);

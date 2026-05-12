@@ -647,6 +647,40 @@ impl<'a> ES5ClassTransformer<'a> {
                     if self.skip_static_field_initializers {
                         continue;
                     }
+                    if is_accessor_keyword {
+                        let Some(accessor) = self.find_auto_accessor(member_idx) else {
+                            continue;
+                        };
+                        if is_abstract || is_declare || is_private_field {
+                            continue;
+                        }
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::id(self.class_name.clone())),
+                            property_name: self.auto_accessor_setter_property_name(prop_data.name),
+                            descriptor: IRPropertyDescriptor {
+                                get: Some(Box::new(
+                                    self.build_static_auto_accessor_getter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                set: Some(Box::new(
+                                    self.build_static_auto_accessor_setter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: self
+                                    .extract_trailing_comment_for_node(member_node),
+                            },
+                            leading_comment: self.extract_leading_comment(member_node),
+                        });
+                        continue;
+                    }
                     if is_abstract || is_declare || is_private_field || is_accessor_keyword {
                         continue;
                     }
@@ -743,31 +777,88 @@ impl<'a> ES5ClassTransformer<'a> {
                     if is_abstract || is_private_field {
                         continue;
                     }
-                    let property_name = self.get_method_name_ir(prop_data.name);
+                    let storage_inits =
+                        self.auto_accessor_instance_storage_inits_for_computed_key(member_idx);
                     let leading_comment = self.extract_leading_comment(member_node);
-                    body.push(IRNode::DefineProperty {
-                        target: Box::new(IRNode::prop(
-                            IRNode::id(self.class_name.clone()),
-                            "prototype",
-                        )),
-                        property_name,
-                        descriptor: IRPropertyDescriptor {
-                            get: Some(Box::new(
-                                self.build_auto_accessor_getter_function(&accessor.weakmap_name),
+                    if storage_inits.is_empty() {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
                             )),
-                            set: Some(Box::new(
-                                self.build_auto_accessor_setter_function(&accessor.weakmap_name),
+                            property_name: self.auto_accessor_setter_property_name(prop_data.name),
+                            descriptor: IRPropertyDescriptor {
+                                get: Some(Box::new(
+                                    self.build_auto_accessor_getter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                set: Some(Box::new(
+                                    self.build_auto_accessor_setter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: self
+                                    .extract_trailing_comment_for_node(member_node),
+                            },
+                            leading_comment,
+                        });
+                    } else {
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
                             )),
-                            value: None,
-                            get_leading_comment: None,
-                            set_leading_comment: None,
-                            enumerable: false,
-                            configurable: true,
-                            writable: false,
-                            trailing_comment: self.extract_trailing_comment_for_node(member_node),
-                        },
-                        leading_comment,
-                    });
+                            property_name: self
+                                .auto_accessor_getter_property_name(prop_data.name, &storage_inits),
+                            descriptor: IRPropertyDescriptor {
+                                get: Some(Box::new(
+                                    self.build_auto_accessor_getter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                set: None,
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: None,
+                            },
+                            leading_comment,
+                        });
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::prop(
+                                IRNode::id(self.class_name.clone()),
+                                "prototype",
+                            )),
+                            property_name: self.auto_accessor_setter_property_name(prop_data.name),
+                            descriptor: IRPropertyDescriptor {
+                                get: None,
+                                set: Some(Box::new(
+                                    self.build_auto_accessor_setter_function(
+                                        &accessor.weakmap_name,
+                                    ),
+                                )),
+                                value: None,
+                                get_leading_comment: None,
+                                set_leading_comment: None,
+                                enumerable: false,
+                                configurable: true,
+                                writable: false,
+                                trailing_comment: self
+                                    .extract_trailing_comment_for_node(member_node),
+                            },
+                            leading_comment: None,
+                        });
+                    }
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 // --- Static block ---

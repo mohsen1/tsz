@@ -346,6 +346,10 @@ name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 
 [[test]]
+name = "ts2353_mapped_template_literal_key_tests"
+path = "tests/ts2353_mapped_template_literal_key_tests.rs"
+
+[[test]]
 name = "ts2683_tests"
 path = "tests/ts2683_tests.rs"
 
@@ -600,6 +604,10 @@ path = "tests/ts2538_tparam_resolved_to_any_tests.rs"
 [[test]]
 name = "import_attributes_resolution_mode_tests"
 path = "tests/import_attributes_resolution_mode_tests.rs"
+
+[[test]]
+name = "imported_companion_value_type_tests"
+path = "tests/imported_companion_value_type_tests.rs"
 
 [[test]]
 name = "json_namespace_import_tests"

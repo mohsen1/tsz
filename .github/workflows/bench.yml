@@ -6,7 +6,10 @@ on:
     branches: [main]
     types: [completed]
   schedule:
+    # Two cron triggers a day so tsz.dev/benchmarks does not rely solely on
+    # workflow_run for fresh data. Spread evenly across the UTC day.
     - cron: '0 3 * * *'
+    - cron: '0 15 * * *'
   workflow_dispatch:
 
 # Workflow-run benchmarks coalesce aggressively so stale main commits do not
@@ -80,11 +83,20 @@ jobs:
                 should_run=false
               fi
 
+              # Previously we hard-skipped if BENCH_TARGET_SHA != HEAD of
+              # main. Combined with the 15-minute debounce above and the
+              # repo's high merge cadence, that check skipped every single
+              # workflow_run-triggered bench, leaving only the daily 03:00
+              # UTC cron to refresh tsz.dev/benchmarks. Supersession is
+              # already handled by `concurrency.cancel-in-progress` (a newer
+              # workflow_run cancels older ones), so a finite "stale" run is
+              # at worst a small amount of self-hosted runner time and at
+              # best a fresher data point on the public site than letting
+              # the run skip outright.
               latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
                 --jq '.object.sha' 2>/dev/null || true)
               if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
-                echo "Benchmark target ${BENCH_TARGET_SHA} is stale; latest main is ${latest_main_sha}. Skipping."
-                should_run=false
+                echo "Note: target ${BENCH_TARGET_SHA} differs from current main ${latest_main_sha}; proceeding anyway (concurrency.cancel-in-progress will preempt this run if a newer workflow_run starts)."
               fi
             fi
           fi
@@ -118,8 +130,9 @@ jobs:
             latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
               --jq '.object.sha' 2>/dev/null || true)
             if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
-              echo "Benchmark target ${BENCH_TARGET_SHA} became stale after bench-gate; latest main is ${latest_main_sha}. Skipping prepare."
-              should_run=false
+              # Informational only — see bench-gate for the rationale.
+              # Supersession is handled by concurrency.cancel-in-progress.
+              echo "Note: target ${BENCH_TARGET_SHA} differs from current main ${latest_main_sha}; proceeding."
             fi
           fi
 

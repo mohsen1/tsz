@@ -388,10 +388,25 @@ pub enum IRNode {
         weakmap_name: Cow<'static, str>,
     },
 
+    /// __classPrivateFieldGet(receiver, state, "f", storage)
+    PrivateStaticFieldGet {
+        receiver: Box<Self>,
+        state: Box<Self>,
+        storage_name: Cow<'static, str>,
+    },
+
     /// __classPrivateFieldSet(receiver, weakmap, value, "f")
     PrivateFieldSet {
         receiver: Box<Self>,
         weakmap_name: Cow<'static, str>,
+        value: Box<Self>,
+    },
+
+    /// __classPrivateFieldSet(receiver, state, value, "f", storage)
+    PrivateStaticFieldSet {
+        receiver: Box<Self>,
+        state: Box<Self>,
+        storage_name: Cow<'static, str>,
         value: Box<Self>,
     },
 

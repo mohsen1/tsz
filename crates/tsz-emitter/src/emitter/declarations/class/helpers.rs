@@ -261,6 +261,50 @@ impl<'a> Printer<'a> {
         false
     }
 
+    pub(in crate::emitter) fn class_has_decorators(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        if class.modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+            })
+        }) {
+            return true;
+        }
+
+        class.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            let modifiers = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|member| member.modifiers.as_ref()),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|member| member.modifiers.as_ref()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .and_then(|member| member.modifiers.as_ref())
+                }
+                _ => None,
+            };
+            modifiers.is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+        })
+    }
+
     pub(in crate::emitter) fn emit_auto_accessor_methods(
         &mut self,
         node: &Node,
@@ -373,7 +417,7 @@ impl<'a> Printer<'a> {
             self.write("); }");
         } else {
             self.write("get ");
-            self.emit(prop.name);
+            self.emit_auto_accessor_weakmap_name(prop.name, options.computed_storage_inits);
             self.write("() { return ");
             self.write_helper("__classPrivateFieldGet");
             self.write("(this, ");
@@ -389,6 +433,44 @@ impl<'a> Printer<'a> {
             self.write(storage_name);
             self.write(", value, \"f\"); }");
         }
+    }
+
+    fn emit_auto_accessor_weakmap_name(&mut self, name_idx: NodeIndex, storage_inits: &[String]) {
+        if storage_inits.is_empty() {
+            self.emit(name_idx);
+            return;
+        }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            self.emit(name_idx);
+            return;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            self.emit(name_idx);
+            return;
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            self.emit(name_idx);
+            return;
+        };
+
+        self.write("[(");
+        for (i, init) in storage_inits.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.write(init);
+        }
+        self.write(", ");
+        if let Some(temp) = self
+            .computed_prop_temp_map
+            .get(&computed.expression)
+            .cloned()
+        {
+            self.write(&temp);
+            self.write(" = ");
+        }
+        self.emit_expression(computed.expression);
+        self.write(")]");
     }
 
     fn auto_accessor_computed_name_temp(&mut self, name_idx: NodeIndex) -> Option<String> {

@@ -1355,7 +1355,11 @@ impl<'a> CheckerState<'a> {
             && has_return
             && falls_through
             && (!is_generator || has_generator_return_type_for_completeness || !has_declared_return)
-            && !self.should_skip_no_implicit_return_check(check_return_type, has_declared_return)
+            && !self.should_skip_no_implicit_return_check(
+                check_return_type,
+                has_declared_return,
+                is_generator,
+            )
         {
             // TS7030: noImplicitReturns - not all code paths return a value
             // TSC points TS7030 to: return type annotation > function name > node itself

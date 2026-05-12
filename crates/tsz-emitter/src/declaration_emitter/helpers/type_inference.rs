@@ -6758,6 +6758,24 @@ impl<'a> DeclarationEmitter<'a> {
             .any(|type_param| type_param == &name)
     }
 
+    pub(in crate::declaration_emitter) fn source_return_type_preserves_function_type_param(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+        inferred_return_type: tsz_solver::types::TypeId,
+    ) -> bool {
+        let Some(ref type_params) = func.type_parameters else {
+            return false;
+        };
+        let printed = self.print_type_id(inferred_return_type);
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|name| {
+                Self::contains_whole_word_in_text(source_type_text, name)
+                    && !Self::contains_whole_word_in_text(&printed, name)
+            })
+    }
+
     pub(in crate::declaration_emitter) fn function_return_type_text_for_declaration_scope(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -6892,6 +6910,8 @@ impl<'a> DeclarationEmitter<'a> {
         let source_type_text = self
             .simplify_uniform_object_keyof_index_access_text(&source_type_text)
             .unwrap_or(source_type_text);
+        let source_type_text =
+            self.rewrite_returned_object_parameter_unknowns(func, &source_type_text);
         if !source_type_text.contains(": unknown;") {
             return source_type_text;
         }
@@ -6943,6 +6963,85 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         rewritten
+    }
+
+    fn rewrite_returned_object_parameter_unknowns(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> String {
+        if !source_type_text.contains(": unknown;") {
+            return source_type_text.to_string();
+        }
+
+        let Some(object_expr_idx) = self.direct_returned_object_literal(func.body) else {
+            return source_type_text.to_string();
+        };
+        let Some(object_node) = self.arena.get(object_expr_idx) else {
+            return source_type_text.to_string();
+        };
+        let Some(object) = self.arena.get_literal_expr(object_node) else {
+            return source_type_text.to_string();
+        };
+
+        let mut rewritten = source_type_text.to_string();
+        for member_idx in object.elements.nodes.iter().copied() {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let initializer =
+                if let Some(shorthand) = self.arena.get_shorthand_property(member_node) {
+                    shorthand.name
+                } else if let Some(prop) = self.arena.get_property_assignment(member_node) {
+                    prop.initializer
+                } else {
+                    continue;
+                };
+            let Some(member_name_idx) = self.object_literal_member_name_idx(member_node) else {
+                continue;
+            };
+            let Some(member_name) = self.object_literal_member_name_text(member_name_idx) else {
+                continue;
+            };
+            let Some(type_text) = self.function_parameter_type_text(func, initializer) else {
+                continue;
+            };
+            if type_text == "unknown" {
+                continue;
+            }
+            let unknown_member = format!("{member_name}: unknown;");
+            let replacement = format!("{member_name}: {type_text};");
+            rewritten = rewritten.replace(&unknown_member, &replacement);
+        }
+
+        rewritten
+    }
+
+    fn direct_returned_object_literal(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut returned_object = None;
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let ret = self.arena.get_return_statement(stmt_node)?;
+            if !ret.expression.is_some() {
+                return None;
+            }
+            let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
+            let expr_node = self.arena.get(expr_idx)?;
+            if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+            if returned_object.replace(expr_idx).is_some() {
+                return None;
+            }
+        }
+        returned_object
     }
 
     fn direct_returned_class_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
