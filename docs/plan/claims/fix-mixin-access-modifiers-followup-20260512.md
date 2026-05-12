@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/mixin-access-modifiers-followup-20260512`
-- **PR**: TBD
+- **PR**: #5756
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance)
 
