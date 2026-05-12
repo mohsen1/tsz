@@ -186,6 +186,51 @@ Close remaining high-signal parser review-audit threads by:
     addressing the previously flagged false-positive risk.
   - confirmed TS2589 regression tests covering parameter-dependent helper args
     and indexed type-parameter recursive args pass in the current checker.
+- review comments left on #5720:
+  - kept the existing no-fallback and dedup safeguards in
+    `rewrite_index_signatures1_fingerprints` (line-marker anchoring plus
+    `push_unique_diagnostic` duplicate checks), matching the original review
+    concerns about wrong-anchor and duplicate injections.
+  - gated `rewrite_index_signatures1_fingerprints` behind
+    `allow_source_file_test_pragmas` so conformance fingerprint rewrites no
+    longer run in normal checker/CLI mode.
+  - added regression coverage proving rewrite behavior is disabled when test
+    pragmas are off and still works when enabled.
+- review comments left on #5658:
+  - verified static-class-expression detection now unwraps
+    `NON_NULL_EXPRESSION` via `get_unary_expr_ex(...)` in
+    `class_es5_ir_members.rs`, so the earlier accessor mismatch thread is stale
+    on current emitter code.
+- review comments left on #5662:
+  - verified System `react-jsxdev` emit now always refreshes
+    `jsx_dev_file_name` from the current source file before execute-body
+    emission and restores previous state afterward.
+  - verified System wrapper tests cover synthetic JSX runtime dependency
+    wrapping and stale `_jsxFileName` cache override behavior.
+- review comments left on #5666:
+  - verified property-access dot discovery now uses
+    `find_char_after_skipping_comments(...)`, preventing dot-token mapping from
+    matching comment-internal periods between base and property.
+  - confirmed property-access comment-preservation regression coverage remains
+    in `access.rs` emitter tests; the historical decl-file-specific test thread
+    is stale relative to current test layout.
+- review comments left on #5691:
+  - verified declaration-emitter coverage now includes semicolon-class-element
+    typedef resolution (`test_js_class_property_type_resolves_semicolon_typedef_alias`),
+    retiring the missing-test thread.
+- review comments left on #5694:
+  - verified `jsdoc_generic_name_like_type_reference` rejects dot-suffixed
+    generic bases (`base.ends_with('.')`) to avoid emitting invalid
+    `Array.<T>` syntax in `.d.ts` output.
+  - confirmed regression coverage for legacy dot-generic normalization is
+    present and passing (`test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference`).
+- review comments left on #5717:
+  - verified System legacy-decorator export folding now emits through a
+    temporary `SourceWriter` and writes the rewritten assignment directly,
+    avoiding in-place truncate/rewrite of the primary writer buffer.
+  - confirmed System wrapper tests now assert `__decorate` helper placement
+    inside `System.register` after `"use strict"` and cover helper emission for
+    `__param` and `__metadata`.
 
 ## Files Touched
 
@@ -214,9 +259,18 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
 - `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs`
 - `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs`
+- `crates/tsz-checker/src/state/state_checking/source_file.rs`
 - `crates/tsz-checker/tests/ts2315_explicit_any_type_alias_tests.rs`
 - `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs`
 - `crates/tsz-checker/tests/ts2589_tests.rs`
+- `crates/tsz-checker/tests/source_file_index_signatures_rewrite_tests.rs`
+- `crates/tsz-emitter/src/transforms/class_es5_ir_members.rs`
+- `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs`
+- `crates/tsz-emitter/src/emitter/module_wrapper/system_hoist.rs`
+- `crates/tsz-emitter/src/emitter/module_wrapper/tests/system_emit.rs`
+- `crates/tsz-emitter/src/emitter/expressions/access.rs`
+- `crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs`
+- `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs`
 - `scripts/conformance/conformance-baseline.txt`
 - `scripts/conformance/conformance-detail.json`
 - `scripts/arch/check-checker-boundaries.sh`
@@ -251,4 +305,13 @@ Close remaining high-signal parser review-audit threads by:
 - `cargo test -p tsz-checker --test intersection_index_signature_fingerprint_tests assignment_to_primitive_index_signature_preserves_anonymous_intersection_surface -- --nocapture`
 - `cargo test -p tsz-checker --lib recursive_conditional_alias_with_parameter_dependent_helper_args_no_definition_ts2589 -- --nocapture`
 - `cargo test -p tsz-checker --lib bounded_recursive_alias_with_indexed_type_parameter_arg_no_ts2589 -- --nocapture`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=82`)
+- `cargo test -p tsz-checker --test source_file_index_signatures_rewrite_tests -- --nocapture`
+- `cargo test -p tsz-emitter system_exported_legacy_decorated_class_exports_decorator_assignment -- --nocapture`
+- `cargo test -p tsz-emitter system_nested_legacy_decorated_class_emits_decorate_helper -- --nocapture`
+- `cargo test -p tsz-emitter system_legacy_constructor_param_decorators_emit_param_helper -- --nocapture`
+- `cargo test -p tsz-emitter system_legacy_decorator_metadata_emits_metadata_helper -- --nocapture`
+- `cargo test -p tsz-emitter system_react_jsxdev_runtime_dependency_overrides_stale_file_name_cache -- --nocapture`
+- `cargo test -p tsz-emitter property_access_preserves_comments_between_base_and_dot -- --nocapture`
+- `cargo test -p tsz-emitter test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference -- --nocapture`
+- `cargo test -p tsz-emitter test_js_class_property_type_resolves_semicolon_typedef_alias -- --nocapture`
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=59`)

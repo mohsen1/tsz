@@ -36,6 +36,13 @@
     5100,
     5102,
     5114,
+    5658,
+    5662,
+    5666,
+    5691,
+    5694,
+    5717,
+    5720,
     5743,
     5753,
     5811,
@@ -43,7 +50,7 @@
     5901,
     5954
   ],
-  "candidate_count": 82,
+  "candidate_count": 59,
   "candidates": [
     {
       "pr_number": 4988,
@@ -267,23 +274,6 @@
       ]
     },
     {
-      "pr_number": 5658,
-      "pr_title": "fix(emit): align nested async class expression emit",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5658",
-      "merged_at": "2026-05-12T00:13:41Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQXjd",
-      "path": "crates/tsz-emitter/src/transforms/class_es5_ir_members.rs",
-      "line": 883,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`NON_NULL_EXPRESSION` nodes are not type assertions, so `self.arena.get_type_assertion(node)` will always return `None` here. If you want to unwrap `expr!`, use the unary accessor (e.g. `get_unary_expr_ex`) to reach the inner `expression` instead of `get_type_assertion`.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5660,
       "pr_title": "fix(checker): align jsxComponentTypeErrors TS2786 fingerprint",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5660",
@@ -294,23 +284,6 @@
       "line": 788,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The test name says TS2786 should be emitted **at** `MixedComponent`, but the assertion only checks the message text. To catch the fingerprint/anchor regression this PR is about, consider also asserting `diag.start` (and/or `length`) matches the `MixedComponent` tag name location (similar to other anchor-focused tests in this file).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5662,
-      "pr_title": "fix(emit): wrap automatic JSX runtime in system modules",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5662",
-      "merged_at": "2026-05-12T01:31:21Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQiKP",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 307,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "In System `react-jsxdev` emit, `jsx_dev_file_name` is only set when it is currently `None`. If the same `Printer` instance is reused across multiple files, this can reuse a previous file\u2019s `_jsxFileName` value for later emits. Consider setting `jsx_dev_file_name` unconditionally for the current source (and restoring afterward) instead of only when `None`.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -335,40 +308,6 @@
       ]
     },
     {
-      "pr_number": 5666,
-      "pr_title": "fix(emit): align decl file comment placement",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5666",
-      "merged_at": "2026-05-12T06:01:31Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQqCG",
-      "path": "crates/tsz-emitter/src/emitter/expressions/access.rs",
-      "line": 235,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`dot_pos` is derived via a raw byte search for `'.'` in the source span. This can match a `.` inside a block/line comment between the base expression and the real property-access dot (e.g. `obj/*has . here*/.prop`), which can cause the split comment emission to write parts of the original source (including the real `.`) via `leading_text`, resulting in duplicated dots / incorrect spacing and mapping. Consider locating the dot token while skipping comment ranges (similar to `source_tail_contains_equals_outside_comments`) or otherwise ensuring the found `.` is outside comments/trivia.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5666,
-      "pr_title": "fix(emit): align decl file comment placement",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5666",
-      "merged_at": "2026-05-12T06:01:31Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQqCc",
-      "path": "crates/tsz-emitter/src/emitter/expressions/access.rs",
-      "line": 1185,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The new regression test is named `decl_file_...` but uses `emit_js()` without enabling declaration emit (`set_declaration_emit(true)`). As written, it only asserts JS emit behavior and won\u2019t catch regressions specific to `.d.ts` emission that the PR description focuses on. Either enable declaration emit in the helper/test or rename the test to reflect that it targets JS/type-erasure emit.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5690,
       "pr_title": "fix(checker): report JS @type subclass assignment mismatch",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5690",
@@ -379,23 +318,6 @@
       "line": 1193,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` for the initializer with the non-contextual (raw) type. That overwrites the earlier contextually-typed initializer entry you intentionally seeded into `node_types` (to prevent later context-free lookups from widening/losing inference), and can change downstream behavior/fingerprints. Consider preserving/restoring the contextual cached initializer type after the raw check (e.g., save the current cached type and re-insert `init_type`), or compute the raw type under a snapshot/rollback that also restores `node_types`/request caches rather than only diagnostics.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5691,
-      "pr_title": "fix(dts): inline semicolon class typedef tags",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5691",
-      "merged_at": "2026-05-12T06:00:59Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BRyAj",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
-      "line": 843,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This change introduces new behavior for resolving `@type {Name}` on class properties via nearby semicolon-only `@typedef` tags, but there\u2019s no regression test covering the semicolon-class-element scenario. Please add a focused test case (similar to the existing JSDoc/type alias tests) that demonstrates the previous leak and asserts the inlined base type in the emitted `.d.ts`.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -416,108 +338,6 @@
       "score": 4,
       "reasons": [
         "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5694,
-      "pr_title": "fix(dts): preserve generic jsdoc type tags",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5694",
-      "merged_at": "2026-05-12T06:00:02Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BR8O3",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
-      "line": 253,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`jsdoc_generic_name_like_type_reference` will return true for the legacy JSDoc dot-generic form `Array.<T>` because the base `Array.` passes the current base-name character filter. Since `jsdoc_name_like_type_expr_for_pos` later emits the expression verbatim, this can produce invalid `.d.ts` output (`Array.<string>` is not valid TypeScript; it should be `Array<string>`). Consider rejecting bases that end with `.` (or normalizing by stripping the trailing dot before `<`) and add a regression test for `@type {Array.<string>}`.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTElv",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 1501,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`emit_system_legacy_class_decorator_export` emits mapped output, then truncates and rewrites it. `SourceWriter::truncate` recomputes line/column but does not roll back any source-map mappings already added, so this can produce incorrect sourcemaps when source map generation is enabled. Prefer emitting into a temporary buffer (and merging mappings with offsets), or avoid speculative emission/truncation for this path when sourcemaps are enabled.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTEmQ",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/tests/system_emit.rs",
-      "line": 227,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The assertion for the `__decorate` helper only checks that the helper text exists somewhere in the output, but the test message claims it is inlined inside the `System.register` callback. To make this a regression test for placement, consider asserting relative ordering (e.g., helper appears after `System.register(... function (exports_1, context_1) {` and the callback's `\"use strict\";`).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5720,
-      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
-      "merged_at": "2026-05-12T05:29:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTIDy",
-      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
-      "line": 977,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This rewrite unconditionally appends new `Diagnostic::error` entries without checking whether an equivalent diagnostic (same code/start/length/message) already exists. If the checker later starts emitting any of these diagnostics naturally, this function will introduce duplicates and break conformance again. Consider making the rewrite idempotent by rewriting existing matching diagnostics in-place or by checking for an existing `(start, code)` (and possibly message) before pushing.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5720,
-      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
-      "merged_at": "2026-05-12T05:29:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTIEF",
-      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
-      "line": 969,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The span lookup falls back to `source_text.find(anchor_marker)` if `line_marker` isn't found. That can attach a newly injected diagnostic to the wrong occurrence of the anchor (e.g. a declaration earlier in the file) if the test file changes slightly. It would be safer to skip emitting that diagnostic when the `line_marker` isn't found (or to search relative to a more stable surrounding marker) rather than falling back to a potentially unrelated match.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTEmY",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 26,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform System wrapper path, those helpers won\u2019t be emitted elsewhere, so decorated output can call `__param`/`__metadata` without definitions. Consider emitting the full required legacy-decorator helper set (decorate/param/metadata) based on a scan (or a shared helper-needed computation) rather than only `__decorate`.",
-      "score": 3,
-      "reasons": [
-        "action-language",
         "detailed-thread"
       ]
     },
@@ -923,70 +743,6 @@
       ]
     },
     {
-      "pr_number": 5658,
-      "pr_title": "fix(emit): align nested async class expression emit",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5658",
-      "merged_at": "2026-05-12T00:13:41Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQXjN",
-      "path": "crates/tsz-emitter/src/transforms/class_es5_ir_members.rs",
-      "line": 733,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The extra `IRNode::VarDecl` uses `self.generate_temp_name()` but that name is not wired to the temp alias actually used when printing the nested static class expression initializer. If the transformer's temp counter has already advanced (e.g., due to computed property temps or `current_static_class_alias`), this can emit `var _b;` while the nested class-expression emitter still generates `(_a = ...)`, causing an undeclared temp (or an unused var) in the output. Consider deriving the alias name using the same temp-naming scheme as the class-expression emitter and passing it through, or avoid emitting a standalone `var` unless you can guarantee it matches the emitted alias.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5658,
-      "pr_title": "fix(emit): align nested async class expression emit",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5658",
-      "merged_at": "2026-05-12T00:13:41Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQXjj",
-      "path": "crates/tsz-emitter/src/emitter/es5/helpers_async.rs",
-      "line": 22,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`avoid_generator_state_collision` is currently hard-coded to only rewrite `function (_a)` when `class_temp == \"_a\"`, and it only replaces `_a.label` / `_a.sent()`. The async lowering can choose other generator-state names (via `IRPrinter::generator_state_name_for_hoisted`), and generator bodies can reference the state object via other properties (e.g. `_a.trys`, `_a.ops`, etc.). This string-based replacement can therefore miss collisions or produce mixed `_a`/`_b` state references. Consider reusing/porting the structured renaming logic from `IRPrinter::rename_colliding_outer_generator_state` (which detects the actual state param name, avoids nested functions, and rewrites all `<state>.` uses), and make it work for any colliding temp name, not just `_a`.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5662,
-      "pr_title": "fix(emit): wrap automatic JSX runtime in system modules",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5662",
-      "merged_at": "2026-05-12T01:31:21Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQiJZ",
-      "path": "crates/tsz-emitter/src/emitter/jsx/emit.rs",
-      "line": 326,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "System wrapper emission now forces the automatic JSX path to emit `_jsx(...)` / `_jsxDEV(...)` when `original_module_kind` is `System`, but I can't find any code in the System wrapper that declares or initializes `_jsx`/`_jsxDEV`/`_jsxs`/`_Fragment` (there\u2019s no JSX auto-import text emission in `emit_system_execute_body`, and `add_system_jsx_runtime_dependency` only assigns the runtime module temp). This will produce output that can throw `ReferenceError: _jsx is not defined` at runtime. Consider either (a) keeping the member-call form for System (`(0, jsx_runtime_1.jsx)(...)`) or (b) extending the System dependency plan/setter emission to bind the needed helpers (e.g. `_jsx = jsx_runtime_1_1.jsx`, `_Fragment = jsx_runtime_1_1.Fragment`, etc.) and hoist those helper names as vars based on `scan_jsx_usage()`.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5662,
-      "pr_title": "fix(emit): wrap automatic JSX runtime in system modules",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5662",
-      "merged_at": "2026-05-12T01:31:21Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQiKG",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 408,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`emit_system_execute_body` always emits an `_jsxFileName = ...;` assignment in `react-jsxdev` mode once `jsx_dev_file_name` is set, but this isn\u2019t gated on actual JSX runtime usage / presence of a `.../jsx-dev-runtime` dependency. For a System module compiled with `jsx=react-jsxdev` but containing no JSX, this will still emit the assignment while `_jsxFileName` is never hoisted, leading to a runtime `ReferenceError`. Gate this emission on `scan_jsx_usage()` or on whether the System dependency plan includes a `/jsx-dev-runtime` action (similar to the hoist logic in `collect_system_hoisted_names`).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5663,
       "pr_title": "fix(checker): align recursiveFunctionTypes display fingerprints",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5663",
@@ -997,22 +753,6 @@
       "line": 2309,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`direct_param_display` is computed before `overloaded_recursive_typeof_parameter_display`, but in the early-return path it\u2019s unused. Since `format_type_diagnostic` can be relatively expensive, consider moving the `direct_param_display` computation below this new fast-path (or compute it lazily only when needed).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5666,
-      "pr_title": "fix(emit): align decl file comment placement",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5666",
-      "merged_at": "2026-05-12T06:01:31Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQqCR",
-      "path": "crates/tsz-emitter/src/emitter/declarations/core.rs",
-      "line": 106,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This new `skip_comments_in_range(node.pos, open_paren_pos)` will consume *all* comments between the start of the function declaration and the opening `(`, including comments that appear after the function name but before `(` (e.g. `function foo /*c*/(x) {}`). If the intent is only to drop comments in the erased pre-name span, consider narrowing the skipped range (or emitting comments in-place between the name end and `(`) to avoid silently deleting user comments in JS output.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -1099,38 +839,6 @@
       ]
     },
     {
-      "pr_number": 5691,
-      "pr_title": "fix(dts): inline semicolon class typedef tags",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5691",
-      "merged_at": "2026-05-12T06:00:59Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BRyAd",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
-      "line": 872,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`local_semicolon_class_member_typedef_type_text` builds a `Vec` of matching comments (`collect::<Vec<_>>()`) just to iterate in reverse. This adds an allocation and walks the full comments list for every `@type` on a property. Consider scanning `self.all_comments.iter().rev()` directly (skipping comments with `end > cursor`) and updating `cursor` inside the loop, which preserves the current semantics without allocating.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5691,
-      "pr_title": "fix(dts): inline semicolon class typedef tags",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5691",
-      "merged_at": "2026-05-12T06:00:59Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BRyAt",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
-      "line": 900,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`is_simple_jsdoc_type_name` duplicates the identifier check logic that already exists as `is_jsdoc_property_identifier_name` later in this module. Consider reusing the existing helper (or extracting a shared one) to avoid two subtly divergent implementations over time.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5693,
       "pr_title": "fix(dts): emit js function type tag signatures",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5693",
@@ -1141,38 +849,6 @@
       "line": 933,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`parse_jsdoc_function_type_signature` finds the parameter list close-paren via `after_params.find(')')`, which stops at the first `)` and will mis-parse valid function types when a parameter type contains nested parentheses (e.g. callbacks like `(cb: (x: T) => void) => void`). This can lead to emitting an invalid `.d.ts` signature rather than safely falling back. Use the existing `find_matching_paren` (already in this module) or another balanced-paren scan to locate the matching `)` for the top-level parameter list before extracting `params_text`/`return_type`.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5694,
-      "pr_title": "fix(dts): preserve generic jsdoc type tags",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5694",
-      "merged_at": "2026-05-12T06:00:02Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BR8On",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
-      "line": 290,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`jsdoc_generic_name_like_type_reference` allows quotes in generic arguments, but `jsdoc_angle_brackets_are_balanced` counts `<`/`>` even inside quoted string literals. This can incorrectly reject valid types like `Test<\"a>b\">` (the `>` in the literal will underflow the depth), causing the generic reference to not be preserved. Either remove quote support here or update the balance check to ignore angle brackets inside quoted strings (with escape handling).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5694,
-      "pr_title": "fix(dts): preserve generic jsdoc type tags",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5694",
-      "merged_at": "2026-05-12T06:00:02Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BR8Oz",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
-      "line": 1236,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`trim_jsdoc_same_line_following_tags` only looks for the substring `\" @\"`. If the next tag is separated by a tab (e.g. `@template T\\t@typedef ...`) or other whitespace patterns, the `@typedef` portion will not be trimmed and can be mis-parsed as template parameters. Consider scanning for any whitespace followed by `@` (or detecting `@` that begins a JSDoc tag) rather than matching only `\" @\"`.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -1253,54 +929,6 @@
       "line": 799,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...` / `flat2...` markers are found. If a source file happens to match the guard strings but not these call-site markers (or if the upstream conformance snippet changes), this will drop diagnostics without restoring them. Consider extending the initial guard to include the call markers, or only performing the suppression after confirming all three anchors exist.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTElg",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 72,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`system_class_needs_legacy_decorate_helper` only checks class decorators + ctor parameter decorators. Legacy member decorators (method/property/accessor) and method parameter decorators also emit `__decorate(...)` via `emit_legacy_member_decorator_calls`, so this pre-scan can skip inlining `__decorate` and generate System output that calls `__decorate` with no helper defined (runtime ReferenceError). Consider reusing the same member/parameter-decorator detection logic used in `emit_class_declaration` (class/emit_declaration.rs:44-101), and/or rely on the already-populated `transforms.helpers().decorate` instead of a shallow top-level scan so nested decorated classes (e.g. inside namespaces) are covered too.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTEl_",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 1487,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This clones the entire writer output (`get_output().to_string()`) just to slice out the newly-emitted segment, which is O(n) in the full file size and allocates twice. You can slice directly from `self.writer.get_output()` into an owned `String` before truncating to avoid copying the whole output buffer.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5720,
-      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
-      "merged_at": "2026-05-12T05:29:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTIDT",
-      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
-      "line": 605,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`rewrite_index_signatures1_fingerprints` is invoked even when `ctx.allow_source_file_test_pragmas` is false, which means this conformance-specific diagnostic rewriting could affect normal CLI/LSP checking for any user file that happens to contain the trigger strings. Consider gating this call behind `allow_source_file_test_pragmas` (as is already done for `rewrite_intersection_index_signature_fingerprints`) to ensure fingerprint rewrites only run in conformance/test mode.",
       "score": 1,
       "reasons": [
         "detailed-thread"
