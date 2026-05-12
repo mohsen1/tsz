@@ -1,8 +1,4 @@
 //! Type Node Checking
-//!
-//! This module handles type resolution from AST type nodes.
-//! It follows the "Check Fast, Explain Slow" pattern where we first
-//! resolve types, then use the solver to explain any failures.
 use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
@@ -314,11 +310,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     continue;
                 };
 
-                // Check if this is an optional/rest type or a regular type
                 use tsz_parser::parser::syntax_kind_ext;
                 if elem_node.kind == syntax_kind_ext::OPTIONAL_TYPE {
-                    // Optional element (e.g., `string?`)
-                    // TS1266: An optional element cannot follow a rest element
                     if seen_rest {
                         self.ctx.error(
                             elem_node.pos,
@@ -329,10 +322,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                     seen_optional = true;
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
-                        // OPTIONAL_TYPE wrapping REST_TYPE represents the
-                        // (invalid) `[...T?]` form. tsc still parses and
-                        // displays it as `[...?T]`, so we mark the element as
-                        // both rest and optional and unwrap the inner type.
                         let (inner_idx, is_rest_optional) = if let Some(inner_node) =
                             self.ctx.arena.get(wrapped.type_node)
                             && inner_node.kind == syntax_kind_ext::REST_TYPE
@@ -370,7 +359,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 wrapped.type_node,
                             );
                         if is_concrete_rest {
-                            // TS1265: A rest element cannot follow another rest element
                             if seen_rest {
                                 self.ctx.error(
                                     elem_node.pos,
@@ -422,7 +410,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     data.type_node,
                                 );
                             if is_concrete_rest {
-                                // TS1265: A rest element cannot follow another rest element
                                 if seen_rest {
                                     self.ctx.error(
                                         elem_node.pos,
@@ -450,7 +437,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     crate::diagnostics::diagnostic_codes::A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_OPTIONAL_WITH_A_QUESTION_MARK_AFTER_THE_N,
                                 );
                             }
-                            // TS1266: An optional element cannot follow a rest element
                             if seen_rest {
                                 self.ctx.error(
                                     elem_node.pos,
@@ -1823,8 +1809,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return false;
         }
-        self.get_property_name_resolved(name_idx)
-            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+
+        if self
+            .get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol."))
+        {
+            return true;
+        }
+
+        self.resolve_computed_property_symbol(computed.expression)
+            .is_some_and(|sym_id| self.symbol_refers_to_unique_symbol(sym_id))
     }
 
     fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
