@@ -205,7 +205,15 @@ impl<'a> CheckerState<'a> {
         segments: &[String],
     ) -> String {
         let display_name = self.import_type_display_name(module_specifier);
-        let base = if self.target_module_has_export_equals(module_specifier) {
+        // When segments is non-empty, we have already traversed into the module's
+        // namespace past the `export =` binding. The `.export=` synthetic qualifier
+        // must be omitted so nested access like `import("./mod").Bar.Q` (where `Bar`
+        // resolves but `Q` doesn't) produces `Namespace '"mod".Bar' has no exported
+        // member 'Q'` — matching tsc — instead of `Namespace '"mod".export=.Bar' ...`.
+        // The no-segments case (direct member missing on an export= module) still
+        // preserves `.export=` via `import_type_namespace_name`.
+        let base = if self.target_module_has_export_equals(module_specifier) && segments.is_empty()
+        {
             format!("\"{display_name}\".export=")
         } else {
             format!("\"{display_name}\"")
