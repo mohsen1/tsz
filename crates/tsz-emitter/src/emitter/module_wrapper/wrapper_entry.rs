@@ -429,6 +429,8 @@ impl<'a> Printer<'a> {
         self.write("\"use strict\";");
         self.write_line();
         let system_plan = self.collect_system_dependency_plan(dependencies, source);
+        let mut system_plan = system_plan;
+        self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
         let mut dep_vars = self.collect_system_dependency_vars(dependencies, source);
         for (dep, actions) in &system_plan.actions {
             if let Some(SystemDependencyAction::Assign(dep_var)) = actions
@@ -736,6 +738,25 @@ impl<'a> Printer<'a> {
                 .filter_map(|&stmt_idx| self.arena.get(stmt_idx))
                 .any(|stmt_node| self.statement_is_top_level_using(stmt_node));
 
+        for actions in system_plan.actions.values() {
+            for action in actions {
+                if let SystemDependencyAction::Assign(name) = action
+                    && seen.insert(name.clone())
+                {
+                    names.push(name.clone());
+                }
+            }
+        }
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev)
+            && system_plan
+                .actions
+                .keys()
+                .any(|dep| dep.ends_with("/jsx-dev-runtime"))
+            && seen.insert("_jsxFileName".to_string())
+        {
+            names.push("_jsxFileName".to_string());
+        }
+
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -796,6 +817,9 @@ impl<'a> Printer<'a> {
                         .arena
                         .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
                     if !is_ambient {
+                        if !self.is_instantiated_module(module_decl.body) {
+                            continue;
+                        }
                         let module_name = self.get_identifier_text_idx(module_decl.name);
                         if !module_name.is_empty() && seen.insert(module_name.clone()) {
                             names.push(module_name);
@@ -1146,6 +1170,33 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn add_system_jsx_runtime_dependency(
+        &mut self,
+        dependencies: &[String],
+        system_plan: &mut SystemDependencyPlan,
+    ) {
+        let Some(runtime_dep) = dependencies.iter().find(|dep| {
+            matches!(dep.as_str(), "react/jsx-runtime" | "react/jsx-dev-runtime")
+                || dep.ends_with("/jsx-runtime")
+                || dep.ends_with("/jsx-dev-runtime")
+        }) else {
+            return;
+        };
+        if system_plan.actions.contains_key(runtime_dep) {
+            return;
+        }
+        let dep_var = if runtime_dep.ends_with("/jsx-dev-runtime") {
+            "jsx_dev_runtime_1"
+        } else {
+            "jsx_runtime_1"
+        };
+        system_plan
+            .actions
+            .entry(runtime_dep.clone())
+            .or_default()
+            .push(SystemDependencyAction::Assign(dep_var.to_string()));
     }
 
     fn collect_system_empty_binding_temps_from_variable_statement(

@@ -1,6 +1,6 @@
 use super::super::Printer;
 use super::{SystemDependencyAction, SystemDependencyPlan};
-use crate::emitter::ModuleKind;
+use crate::emitter::{JsxEmit, ModuleKind};
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
@@ -288,6 +288,7 @@ impl<'a> Printer<'a> {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
         let prev_original = self.ctx.original_module_kind;
+        let prev_jsx_dev_file_name = self.jsx_dev_file_name.clone();
 
         self.ctx.original_module_kind = Some(prev_module);
         self.ctx.options.module = ModuleKind::CommonJS;
@@ -298,9 +299,14 @@ impl<'a> Printer<'a> {
             self.ctx.options.module = prev_module;
             self.ctx.auto_detect_module = prev_auto_detect;
             self.ctx.original_module_kind = prev_original;
+            self.jsx_dev_file_name = prev_jsx_dev_file_name;
             self.in_system_execute_body = false;
             return;
         };
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) && self.jsx_dev_file_name.is_none()
+        {
+            self.jsx_dev_file_name = Some(system_jsx_dev_file_name(&source.file_name));
+        }
         self.register_system_import_substitutions(source, dep_vars, system_plan);
 
         let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
@@ -381,6 +387,7 @@ impl<'a> Printer<'a> {
             self.ctx.options.module = prev_module;
             self.ctx.auto_detect_module = prev_auto_detect;
             self.ctx.original_module_kind = prev_original;
+            self.jsx_dev_file_name = prev_jsx_dev_file_name;
             self.in_system_execute_body = false;
             return;
         }
@@ -388,6 +395,17 @@ impl<'a> Printer<'a> {
         let prev_deferred_local_export_bindings = self
             .deferred_local_export_bindings
             .replace(self.system_reexported_names.clone());
+
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+            if let Some(file_name_text) = self.jsx_dev_file_name_text() {
+                let assignment = file_name_text
+                    .trim()
+                    .strip_prefix("const ")
+                    .unwrap_or(file_name_text.trim());
+                self.write(assignment);
+                self.write_line();
+            }
+        }
 
         for &stmt_idx in &source.statements.nodes {
             // Skip function declarations that were already hoisted to the outer scope
@@ -466,6 +484,9 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     && let Some(module_decl) = self.arena.get_module(stmt_node)
                 {
+                    if !self.is_instantiated_module(module_decl.body) {
+                        continue;
+                    }
                     let module_name = self.get_identifier_text_idx(module_decl.name);
                     if !module_name.is_empty() {
                         self.declared_namespace_names.insert(module_name.clone());
@@ -542,6 +563,7 @@ impl<'a> Printer<'a> {
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
         self.ctx.original_module_kind = prev_original;
+        self.jsx_dev_file_name = prev_jsx_dev_file_name;
         self.in_system_execute_body = false;
     }
 
@@ -1619,6 +1641,21 @@ impl<'a> Printer<'a> {
     }
 }
 
+fn system_jsx_dev_file_name(file_name: &str) -> String {
+    let normalized = file_name.replace('\\', "/");
+    if let Some(src_start) = normalized.find("/.src/") {
+        return normalized[src_start..].to_string();
+    }
+    if let Some(stripped) = normalized.strip_prefix(".src/") {
+        return format!("/.src/{stripped}");
+    }
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(normalized.as_str())
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::emitter::{ModuleKind, Printer, PrinterOptions};
@@ -1988,5 +2025,84 @@ export const Foo = () => <div/>;
             output.contains("__importDefault"),
             "AMD wrapper should still emit __importDefault helper for JSX factory `React` even without textual value usage.\nOutput:\n{output}"
         );
+    }
+
+    #[test]
+    fn system_react_jsx_runtime_dependency_is_wrapped() {
+        use crate::emitter::JsxEmit;
+        let source = r#"namespace JSX {}
+class Component {
+    render() {
+        return <div>{null/* preserved */}</div>;
+    }
+}
+"#;
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::System,
+            jsx: JsxEmit::ReactJsx,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("System.register([\"react/jsx-runtime\"]"),
+            "System automatic JSX emit should wrap the synthetic runtime dependency.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var jsx_runtime_1, Component;"),
+            "System wrapper should hoist the synthetic JSX runtime binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return _jsx(\"div\", { children: null"),
+            "System automatic JSX emit should use the ESM-style JSX helper.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("import { jsx as _jsx }"),
+            "System automatic JSX emit should not leave an ESM import outside the wrapper.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn system_react_jsxdev_runtime_dependency_assigns_file_name() {
+        use crate::emitter::JsxEmit;
+        let source = r#"namespace JSX {}
+class Component {
+    render() {
+        return <div>{null/* preserved */}</div>;
+    }
+}
+"#;
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::System,
+            jsx: JsxEmit::ReactJsxDev,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("System.register([\"react/jsx-dev-runtime\"]"),
+            "System jsxdev emit should wrap the synthetic dev runtime dependency.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var jsx_dev_runtime_1, _jsxFileName, Component;"),
+            "System jsxdev emit should hoist the runtime and file-name bindings.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_jsxFileName = \"test.tsx\";"),
+            "System jsxdev emit should assign the source file name inside execute().\nOutput:\n{output}"
+        );
+        assert!(output.contains("return _jsxDEV(\"div\""));
     }
 }

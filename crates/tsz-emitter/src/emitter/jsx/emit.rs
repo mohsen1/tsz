@@ -1,5 +1,4 @@
-use super::super::Printer;
-use super::super::core::JsxEmit;
+use super::super::{JsxEmit, ModuleKind, Printer};
 use super::{
     AttrGroup, JsxAttrInfo, JsxAttrValue, JsxAttrsInfo, JsxChildSep, decode_jsx_entities,
     escape_jsx_text_for_js_with_quote, needs_quoting, process_jsx_text,
@@ -322,7 +321,8 @@ impl<'a> Printer<'a> {
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
         let filtered_children = self.collect_jsx_children(&children);
         let is_jsxs = filtered_children.len() > 1;
-        let is_cjs = self.ctx.is_effectively_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs()
+            && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
         let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
@@ -416,7 +416,8 @@ impl<'a> Printer<'a> {
             .collect();
         let has_non_key_attrs = !non_key_attrs.is_empty() || attrs_info.has_spread;
 
-        let is_cjs = self.ctx.is_effectively_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs()
+            && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
         let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
@@ -526,7 +527,8 @@ impl<'a> Printer<'a> {
     ) {
         let attrs_info = self.collect_jsx_attributes_info(attributes);
         let filtered_children = self.collect_jsx_children(children);
-        let is_cjs = self.ctx.is_effectively_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs()
+            && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
 
         if is_cjs {
             let base_var = self.jsx_cjs_base_var();
@@ -1115,7 +1117,13 @@ impl<'a> Printer<'a> {
             if let Some(expr_node) = self.arena.get(expr.expression) {
                 let expr_token_end =
                     self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
-                self.emit_comments_in_range(expr_token_end, node.end, true, false);
+                let (emitted_comment, _, _) =
+                    self.emit_comments_in_range(expr_token_end, node.end, true, false);
+                if !emitted_comment
+                    && matches!(self.ctx.original_module_kind, Some(ModuleKind::System))
+                {
+                    self.emit_comments_in_range_untracked(expr_token_end, node.end, true);
+                }
             }
             return;
         }
@@ -1123,6 +1131,47 @@ impl<'a> Printer<'a> {
         // JSX element, fragment, or self-closing element -- emit recursively
         // This will hit the transform dispatch again for nested JSX.
         self.emit(child);
+    }
+
+    pub(in super::super) fn emit_comments_in_range_untracked(
+        &mut self,
+        start_pos: u32,
+        end_pos: u32,
+        insert_space_for_adjacent_inline: bool,
+    ) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let mut emitted = false;
+        let comments: Vec<_> = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.pos < end_pos && comment.end > start_pos)
+            .map(|comment| {
+                (
+                    comment.pos,
+                    comment.end,
+                    comment.has_trailing_new_line,
+                    self.comment_preceded_by_newline(comment.pos),
+                )
+            })
+            .collect();
+        for (pos, end, has_trailing_new_line, preceded_by_newline) in comments {
+            if insert_space_for_adjacent_inline && !has_trailing_new_line && !preceded_by_newline {
+                self.write_space();
+            }
+            if let Ok(comment_text) = crate::safe_slice::slice(text, pos as usize, end as usize) {
+                self.write_comment_with_reindent(comment_text, Some(pos));
+                emitted = true;
+            }
+            if has_trailing_new_line {
+                self.write_line();
+            }
+        }
+        emitted
     }
 
     /// Strip outer parens and erased type-cast wrappers (`as`, `satisfies`,
