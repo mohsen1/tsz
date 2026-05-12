@@ -2,16 +2,16 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 43
-- Potential important unresolved threads: 65
+- PRs excluded as already followed-up: 44
+- Potential important unresolved threads: 61
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 27
+- `crates/tsz-checker`: 24
 - `crates/tsz-emitter`: 12
 - `docs`: 11
-- `scripts`: 4
 - `crates/tsz-parser`: 4
+- `scripts`: 3
 - `crates/tsz-solver`: 3
 - `crates/tsz-cli`: 2
 - `crates/tsz-common`: 1
@@ -19,7 +19,6 @@
 
 ## Top PRs By Candidate Count
 
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
@@ -39,13 +38,10 @@
 - [#4951](https://github.com/mohsen1/tsz/pull/4951) fix(checker): preserve literal constraint display for generic calls: 1
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
 - [#4977](https://github.com/mohsen1/tsz/pull/4977) fix(checker): defer parameter-dependent recursive alias TS2589: 1
+- [#4987](https://github.com/mohsen1/tsz/pull/4987) perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg: 1
 
 ## Candidate Threads (Top 100 by score)
 
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs:163` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - `decl_node` may come from `ctx.arena`, `symbol_arenas`, or `declaration_arenas`, but the subsequent `get_type_alias(decl_node)` calls probe multiple arenas (starting with `ctx.arena`) using a `Node` value whose `data_...
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) `scripts/conformance/conformance-baseline.txt:5` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The PR description claims conformance has “new failures: 0” and “changed failures: 0”, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md:6` score=3 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword
   - The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep wor...
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) `crates/tsz-emitter/src/emitter/literals/core.rs:865` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
@@ -62,10 +58,6 @@
   - The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the...
 - [#4977](https://github.com/mohsen1/tsz/pull/4977) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:318` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditi...
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs:181` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `arena_ref` selection uses `self.ctx.arena.get(alias.type_node).is_some()` to guess which arena owns `alias.type_node`, but `NodeIndex` values are not globally unique across arenas. This can pick `ctx.arena` even when...
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs:200` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The explicit-`any` detection doesn't unwrap wrapped type nodes (notably `syntax_kind_ext::PARENTHESIZED_TYPE`). For `type X = (any)` (or nested parentheses), `alias.type_node` will be a wrapped type whose inner is the...
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) `crates/tsz-common/src/perf_counters.rs:593` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` “compile out entirely”, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inlin...
 - [#4990](https://github.com/mohsen1/tsz/pull/4990) `crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs:1896` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

@@ -27,11 +27,21 @@ initializer relation path performs an additional raw initializer re-check.
   - verified the previously flagged clone-heavy patterns are no longer present:
     no `display_subst = final_subst.clone()` display override path and no
     `un_widened.clone()` union construction in this fallback branch.
+- review comments left on #4982:
+  - verified `symbol_declaration_body_is_explicit_any` now resolves declaration
+    ownership with `binder.arena_for_declaration_or(sym_id, decl_idx, ...)`
+    and performs alias/body lookups against that selected arena (no cross-arena
+    `NodeIndex` probing against mismatched arenas).
+  - verified explicit-`any` detection now unwraps parenthesized type nodes via
+    `type_node_is_explicit_any`, covering `type X = (any)` and nested wrappers.
+  - the historical PR-description/conformance-baseline mismatch thread is stale
+    relative to current baseline churn; no code-side follow-up remains.
 
 ## Files Touched
 
 - `crates/tsz-checker/src/state/variable_checking/core.rs`
 - `crates/tsz-solver/src/operations/generic_call/resolve.rs` (verified current behavior; no edit needed)
+- `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs` (verified current behavior; no edit needed)
 - `docs/plan/claims/codex-review-audit-batch17-20260512.md`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
@@ -41,5 +51,6 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-checker --test jsdoc_cross_file_typedef_tests jsdoc_type_assignment_new_expression_reports_subclass_mismatch -- --nocapture`
 - `cargo test -p tsz-checker --test jsdoc_cross_file_typedef_tests jsdoc_type_assignment_binds_interface_this_to_source_instance -- --nocapture`
 - `cargo test -p tsz-checker --test generic_call_primitive_widening_display_tests -- --nocapture`
+- `cargo test -p tsz-checker --test ts2315_explicit_any_type_alias_tests -- --nocapture`
 - `cargo fmt --all --check`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500`

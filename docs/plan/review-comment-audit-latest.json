@@ -13,6 +13,7 @@
     4960,
     4967,
     4973,
+    4982,
     4988,
     4989,
     4992,
@@ -50,42 +51,8 @@
     5830,
     5901
   ],
-  "candidate_count": 65,
+  "candidate_count": 61,
   "candidates": [
-    {
-      "pr_number": 4982,
-      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
-      "merged_at": "2026-05-10T12:58:33Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5eOF",
-      "path": "crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs",
-      "line": 163,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`decl_node` may come from `ctx.arena`, `symbol_arenas`, or `declaration_arenas`, but the subsequent `get_type_alias(decl_node)` calls probe multiple arenas (starting with `ctx.arena`) using a `Node` value whose `data_index` is arena-relative. Because `NodeIndex`/`data_index` values can overlap across arenas, this can accidentally resolve the wrong alias (or the wrong body node) and incorrectly classify unrelated symbols as an explicit-`any` alias. Prefer selecting the correct arena once per `decl_idx` (e.g. via `binder.arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena)`) and then performing *all* lookups (`get`, `get_type_alias`, `get(alias.type_node)`) against that arena.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4982,
-      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
-      "merged_at": "2026-05-10T12:58:33Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5eOZ",
-      "path": "scripts/conformance/conformance-baseline.txt",
-      "line": 5,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The PR description claims conformance has \u201cnew failures: 0\u201d and \u201cchanged failures: 0\u201d, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType.ts`, `.../narrowingMutualSubtypes.ts`, `.../contextualTypeWithTuple.ts`) and also shows previously failing tests now passing (e.g. `.../maxConstraints.ts`). Please reconcile this with the PR description (update the description or regenerate snapshots from the intended base).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
     {
       "pr_number": 5100,
       "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
@@ -210,38 +177,6 @@
       "line": 318,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditional aliases, consider gating this computation behind `body_is_conditional` (or otherwise ensuring the unresolved-computed path can\u2019t trigger for non-conditional aliases).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4982,
-      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
-      "merged_at": "2026-05-10T12:58:33Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5eON",
-      "path": "crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs",
-      "line": 181,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`arena_ref` selection uses `self.ctx.arena.get(alias.type_node).is_some()` to guess which arena owns `alias.type_node`, but `NodeIndex` values are not globally unique across arenas. This can pick `ctx.arena` even when the alias came from a lib/declaration arena, leading to reading an unrelated node at the same index. Consider carrying the `decl_arena` used to read the alias forward (or using `arena_for_declaration_or`) instead of probing by index presence.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4982,
-      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
-      "merged_at": "2026-05-10T12:58:33Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5eOS",
-      "path": "crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs",
-      "line": 200,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The explicit-`any` detection doesn't unwrap wrapped type nodes (notably `syntax_kind_ext::PARENTHESIZED_TYPE`). For `type X = (any)` (or nested parentheses), `alias.type_node` will be a wrapped type whose inner is the `TypeReference` to `any`, so this helper will return false and TS2315 will still be suppressed. Consider skipping through `PARENTHESIZED_TYPE` via `get_wrapped_type` (looping as needed) before checking for `TYPE_REFERENCE`/`AnyKeyword`.",
       "score": 1,
       "reasons": [
         "detailed-thread"
