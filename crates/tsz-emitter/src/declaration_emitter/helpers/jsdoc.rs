@@ -1183,7 +1183,6 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        self.suppress_current_statement_jsdoc_comments = true;
         self.emit_pending_js_export_equals_for_name(decl_name);
         self.write_indent();
         if is_exported {
