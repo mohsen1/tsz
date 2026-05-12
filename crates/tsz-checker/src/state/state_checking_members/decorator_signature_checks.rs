@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use crate::query_boundaries::common::{CallResult, call_signatures_for_type};
+        use crate::query_boundaries::common::CallResult;
 
         if decorator_type == TypeId::ERROR
             || decorator_type == TypeId::ANY
@@ -27,20 +27,6 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(decorator_type);
         let resolved = self.evaluate_type_for_assignability(decorator_type);
         if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
-            return;
-        }
-
-        let has_call_signatures =
-            crate::query_boundaries::class_type::function_shape(self.ctx.types, resolved).is_some()
-                || call_signatures_for_type(self.ctx.types, resolved)
-                    .is_some_and(|sigs| !sigs.is_empty());
-
-        if !has_call_signatures {
-            self.error_at_node(
-                decorator_node,
-                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-            );
             return;
         }
 
