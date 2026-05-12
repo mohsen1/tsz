@@ -1755,7 +1755,7 @@ impl<'a> CheckerState<'a> {
             return true;
         };
         let value_mask = tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
-        if (symbol.flags & value_mask) != 0 {
+        if symbol.has_any_flags(value_mask) {
             return true;
         }
         // A namespace symbol has value meaning only when it is actually
