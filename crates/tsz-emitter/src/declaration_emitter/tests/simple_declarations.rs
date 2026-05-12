@@ -3046,6 +3046,29 @@ export class Factory {
 }
 
 #[test]
+fn test_js_class_property_type_resolves_semicolon_typedef_alias() {
+    let output = emit_js_dts(
+        r#"
+export class Box {
+    /** @typedef {{ id: string }} Prop */
+    ;
+    /** @type {Prop} */
+    value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value: { id: string };"),
+        "Expected class property JSDoc @type alias to resolve from nearby semicolon-only typedef: {output}"
+    );
+    assert!(
+        !output.contains("value: Prop;"),
+        "Expected class property type to emit resolved typedef body, not unresolved alias name: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_class_static_assignments_emit_typedef_and_namespace_exports() {
     let source = r#"
 class Handler {
