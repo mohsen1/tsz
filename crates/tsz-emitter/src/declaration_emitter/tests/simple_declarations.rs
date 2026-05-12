@@ -5401,3 +5401,30 @@ export class C {
         "Expected backing field JSDoc to stay attached to the deferred field: {output}"
     );
 }
+
+#[test]
+fn test_property_access_to_unannotated_getter_uses_paired_setter_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+class C {
+    value: number;
+    method(input: number) {
+        return this.value + input;
+    }
+    get prop() {
+        return this.method(this.value);
+    }
+    set prop(value: number) {
+        this.value = this.method(value);
+    }
+}
+const c = new C();
+const propValue = c.prop;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const propValue: number;"),
+        "Expected property access to recover the paired setter type: {output}"
+    );
+}
