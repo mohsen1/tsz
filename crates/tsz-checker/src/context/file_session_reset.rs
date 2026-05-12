@@ -285,6 +285,37 @@ impl<'a> CheckerContext<'a> {
         self.enum_namespace_types.clear();
         self.lib_delegation_cache.clear();
         self.var_decl_types.clear();
+        // SymbolId↔DefId mapping caches. The forward map is keyed
+        // by SymbolId (file-local namespace); the reverse map is
+        // keyed by DefId (globally stable) but its **values** are
+        // SymbolIds from the prior file's binder. Carrying either
+        // across a binder swap makes `get_or_create_def_id(sym_id)`
+        // return the prior file's DefId for an unrelated symbol.
+        //
+        // Clearing `def_to_symbol` is *also* required even though
+        // its key is stable: a `DefId` registered against the prior
+        // file's `SymbolId(N)` will, after the swap, decode as
+        // `SymbolId(N)` in the new file's binder — which is a
+        // different symbol. Downstream lookups (`def_to_symbol_id`
+        // in error reporting, namespace exports) would resolve to
+        // the wrong file's symbol.
+        self.symbol_to_def.borrow_mut().clear();
+        self.def_to_symbol.borrow_mut().clear();
+        // `def_type_params` and `def_no_type_params` are keyed by
+        // globally-stable `DefId`. The values are program-stable
+        // type-param info (interned `Atom` names, solver `TypeId`
+        // constraints/defaults). Safe to keep — and clearing them
+        // would force a re-fetch from `TypeEnvironment` /
+        // `DefinitionStore` on every cross-file lookup.
+        //
+        // Reset the warm-once gate so the next
+        // `warm_local_caches_from_shared_store` call actually does
+        // work. Without this reset, the call below is a no-op
+        // (the gate short-circuits) and the cleared
+        // `symbol_to_def`/`def_to_symbol` maps stay empty — every
+        // subsequent `get_or_create_def_id` call would fall back
+        // to creating a fresh DefId, fragmenting the type universe.
+        self.local_caches_warmed.set(false);
         // `lib_type_resolution_cache` is keyed by `String` (lib type
         // names), which is program-stable, NOT file-local. Keep it.
         // `shared_lib_type_cache` is `Arc`-shared at construction
