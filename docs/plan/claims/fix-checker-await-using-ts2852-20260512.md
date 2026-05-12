@@ -1,9 +1,9 @@
-# [WIP] fix(checker): report TS2852 for await using outside async contexts
+# fix(checker): report TS2852 for await using outside async contexts
 
 - **Date**: 2026-05-12
 - **Branch**: `fix-checker-await-using-ts2852-20260512`
 - **Issue**: #5967
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (diagnostic parity for an existing checker bug)
 
 ## Intent
@@ -18,9 +18,20 @@ async function usage.
 - Focused diagnostic tests covering invalid non-async function usage and valid
   async/top-level module usage.
 
+## Changes
+
+- Report TS2852 when `await using` appears in a non-async function, including
+  nested non-async functions under async parents.
+- Report TS2853 for top-level `await using` in script files while preserving
+  valid top-level module usage.
+- Added the focused `ts2852_await_using_context_tests` integration test target.
+
 ## Verification Plan
 
-- Focused checker/CLI test for #5967.
-- `env CARGO_INCREMENTAL=0 cargo test -p tsz-checker ...` or the relevant crate
-  test target once the owning test suite is identified.
-- Manual comparison against `tsc` and `tsz` for the issue repro.
+- `env CARGO_INCREMENTAL=0 cargo test -p tsz-checker --test ts2852_await_using_context_tests -- --nocapture`
+- `env CARGO_INCREMENTAL=0 cargo check -p tsz-checker`
+- `git diff --check`
+- `env CARGO_INCREMENTAL=0 cargo build --release -p tsz-cli --bin tsz`
+- Manual comparison against `tsc` and `.target/release/tsz` for the issue repro,
+  nested non-async function usage, top-level script TS2853, and top-level module
+  no-diagnostic behavior.
