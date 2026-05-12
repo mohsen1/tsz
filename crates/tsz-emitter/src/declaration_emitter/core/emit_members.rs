@@ -779,7 +779,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        self.write("constructor(arrayLength?: number);");
+        self.write("constructor();");
         self.write_line();
         self.write_indent();
         self.write("constructor(arrayLength: number);");

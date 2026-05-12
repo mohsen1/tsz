@@ -3099,7 +3099,7 @@ class ElementsArray extends Array {
 "#,
     );
 
-    let expected = "declare class ElementsArray extends Array<any> {\n    constructor(arrayLength?: number);\n    constructor(arrayLength: number);\n    constructor(...items: any[]);\n}";
+    let expected = "declare class ElementsArray extends Array<any> {\n    constructor();\n    constructor(arrayLength: number);\n    constructor(...items: any[]);\n}";
     assert!(
         output.contains(expected),
         "Expected bare JS Array subclasses to inherit Array constructor overloads: {output}"
