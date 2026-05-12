@@ -9,11 +9,6 @@ fn get_error_codes(source: &str) -> Vec<u32> {
     tsz_checker::test_utils::check_source_codes(source)
 }
 
-#[allow(dead_code)]
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source_code_messages(source)
-}
-
 #[test]
 fn test_type_alias_namespace_merge_basic() {
     // type Foo = Foo.A | Foo.B merged with namespace Foo should resolve

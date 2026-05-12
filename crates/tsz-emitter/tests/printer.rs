@@ -985,6 +985,61 @@ fn namespace_arrow_default_prologue_shadows_exported_name_es2016() {
 }
 
 #[test]
+fn static_field_class_expression_in_arrow_parameter_default_lowers_es2015() {
+    let source = "((b = class { static x = 1 }) => {})();";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var __setFunctionName"),
+        "static class default parameter should request the named-evaluation helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("((b) => {\n    var _a;\n    if (b === void 0) { b = (_a = class")
+            && output.contains("__setFunctionName(_a, \"b\")")
+            && output.contains("_a.x = 1,"),
+        "ES2015 arrow default should lower to a body prologue with a scoped class-expression alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("((b = (_a = class"),
+        "ES2015 output must not keep the transformed class expression inside the parameter list.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_field_class_expression_in_parameter_default_uses_es5_comma_alias() {
+    let source = "((b = class { static x = 1 }) => {})();";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var __setFunctionName"),
+        "ES5 static class default parameter should request the named-evaluation helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function (b) {\n    var _a;\n    if (b === void 0) { b = (_a = /** @class */ (function () {")
+            && output.contains("function class_1()")
+            && output.contains("__setFunctionName(_a, \"b\")")
+            && output.contains("_a.x = 1,"),
+        "ES5 default parameter should use the static-field comma alias form.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("b = (function () {"),
+        "ES5 output must not wrap the class expression in a nested IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_binding_non_identifier_property_uses_destructuring_path() {
     let source = r#"declare const obj: any;
 export let { "foo": bar } = obj;

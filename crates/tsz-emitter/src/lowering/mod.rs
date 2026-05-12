@@ -39,6 +39,7 @@
 
 mod core;
 mod helpers;
+mod name_helpers;
 mod visit_children;
 
 pub use self::core::LoweringPass;
