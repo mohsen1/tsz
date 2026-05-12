@@ -158,6 +158,7 @@ impl<'a> DeclarationEmitter<'a> {
         ) = self.collect_js_commonjs_named_exports(source_file);
         self.js_named_export_names
             .extend(js_commonjs_named_export_names);
+        let js_hoistable_function_export_names = self.js_named_export_names.clone();
         let (module_exports_obj_names, module_exports_obj_stmts) =
             self.collect_js_module_exports_object_names(source_file);
         self.js_named_export_names.extend(module_exports_obj_names);
@@ -316,7 +317,9 @@ impl<'a> DeclarationEmitter<'a> {
                     self.arena.get_function(stmt_node).is_some_and(|func| {
                         self.arena
                             .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                            || self.is_js_named_exported_name(func.name)
+                            || self.get_identifier_text(func.name).is_some_and(|name| {
+                                js_hoistable_function_export_names.contains(&name)
+                            })
                     })
                 } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     self.arena
