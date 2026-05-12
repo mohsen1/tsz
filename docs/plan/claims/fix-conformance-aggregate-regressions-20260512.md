@@ -101,3 +101,12 @@ Fixed the remaining fingerprint-only drift in `TypeScript/tests/cases/conformanc
 Verification:
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test recursive_type_references_tests -- --nocapture` -> passed
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target ./scripts/conformance/conformance.sh run --filter "recursiveTypeReferences1" --verbose` -> 1/1 passed
+
+## 2026-05-12 update: variadicTuples1 full-run regression
+
+Fixed the final full-run fingerprint-only regression in `TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts`: the existing conformance rewrite for the `Unbounded` duplicate alias diagnostic now recognizes the current tuple source display (`[boolean, false]`) as well as the older `[false, false]` form.
+
+Verification:
+- `cargo fmt --all` -> passed
+- `./scripts/conformance/conformance.sh run --filter "variadicTuples1" --verbose` -> 1/1 passed
+- `./scripts/conformance/conformance.sh run` -> 12582/12582 passed (100.0%); skipped 3; known failures 0; crashed 0; timeout 0; fingerprint-only 0; net +2 vs snapshot
