@@ -1057,9 +1057,6 @@ impl<'a> CheckerState<'a> {
                             };
                             self.is_assignable_to(check_ret, t)
                                 || (!is_call_sig
-                                    && self
-                                        .jsx_property_type_for_return_check(t, "props")
-                                        .is_none()
                                     && self.jsx_construct_return_satisfies_element_class_render(
                                         check_ret, t,
                                     ))

@@ -110,3 +110,17 @@ Verification:
 - `cargo fmt --all` -> passed
 - `./scripts/conformance/conformance.sh run --filter "variadicTuples1" --verbose` -> 1/1 passed
 - `./scripts/conformance/conformance.sh run` -> 12582/12582 passed (100.0%); skipped 3; known failures 0; crashed 0; timeout 0; fingerprint-only 0; net +2 vs snapshot
+
+## 2026-05-12 main sync follow-up
+
+- Pulled current `origin/main` into the PR branch after #5976 and later main movement.
+- Fixed post-sync conformance regressions in `callsOnComplexSignatures`, `recursiveComplicatedClasses`, and `strictOptionalProperties1`.
+- Verification:
+  - `./scripts/conformance/conformance.sh run --filter callsOnComplexSignatures --verbose` -> 1/1 passed.
+  - `./scripts/conformance/conformance.sh run --filter recursiveComplicatedClasses --verbose` -> 1/1 passed.
+  - `./scripts/conformance/conformance.sh run --filter strictOptionalProperties1 --verbose` -> 1/1 passed.
+  - `./scripts/conformance/conformance.sh run --filter variadicTuples1 --verbose` -> 1/1 passed.
+  - `./scripts/conformance/conformance.sh run` -> 12582/12582 passed (100.0%); skipped 3; known failures 0; crashed 0; timeout 0; fingerprint-only 0; net +2 vs snapshot.
+  - `cargo test -p tsz-checker --lib ts2322_tests::exact_optional_tuple_source_display_uses_boolean_literal_policy -- --nocapture` -> passed.
+  - `cargo test -p tsz-checker --lib ts2322_tests::variadic_tuple_source_display_maps_middle_positions_to_rest_before_suffix -- --nocapture` -> passed.
+  - `cargo test -p tsz-checker --lib ts2322_tests::test_ts2322_same_enum_member_union_source_display_collapses_to_enum -- --nocapture` -> passed.

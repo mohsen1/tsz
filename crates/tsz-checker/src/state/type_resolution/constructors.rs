@@ -1,9 +1,3 @@
-//! Constructor type operations, type argument application, and base instance
-//! type resolution for `CheckerState`.
-//!
-//! Extracted from `type_resolution/module.rs` to keep files focused and
-//! under the 2 000-line architectural limit.
-
 use crate::query_boundaries::common::call_signatures_for_type;
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
@@ -12,7 +6,6 @@ use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-#[inline]
 pub(super) const fn should_cache_base_expr_result(
     type_argument_count: usize,
     has_active_type_parameter_scope: bool,
@@ -29,9 +22,6 @@ impl<'a> CheckerState<'a> {
         self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, false)
     }
 
-    /// Like `apply_type_arguments_to_constructor_type` but strips construct
-    /// signatures when the base class is not generic. This is only correct in
-    /// extends-clause context where `super()` should then emit TS2346.
     pub(crate) fn apply_type_arguments_to_constructor_type_for_extends(
         &mut self,
         ctor_type: TypeId,
@@ -1077,6 +1067,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) {
+            if self.heritage_expression_shadows_nonconstructable_lib_value(expr_idx, base_sym_id) {
+                if should_cache {
+                    self.ctx
+                        .base_instance_expr_cache
+                        .borrow_mut()
+                        .insert(expr_idx, None);
+                }
+                return None;
+            }
+
             if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
                 && let Some(base_node) = self.ctx.arena.get(base_class_idx)
                 && let Some(base_class) = self.ctx.arena.get_class(base_node)

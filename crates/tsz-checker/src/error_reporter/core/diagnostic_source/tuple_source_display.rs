@@ -124,13 +124,13 @@ impl<'a> CheckerState<'a> {
         &self,
         element: &tsz_solver::TupleElement,
     ) -> bool {
-        self.type_includes_literal_type(element.type_id)
+        self.type_preserves_boolean_literal(element.type_id)
             || (element.rest
                 && crate::query_boundaries::common::array_element_type(
                     self.ctx.types,
                     element.type_id,
                 )
-                .is_some_and(|element_type| self.type_includes_literal_type(element_type)))
+                .is_some_and(|element_type| self.type_preserves_boolean_literal(element_type)))
     }
 
     fn tuple_boolean_rest_before_position_preserves_literal(
@@ -172,5 +172,12 @@ impl<'a> CheckerState<'a> {
                 .any(|&member| self.type_includes_literal_type(member));
         }
         crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id)
+    }
+
+    fn type_preserves_boolean_literal(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::BOOLEAN
+            || crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+                .is_some_and(|members| members.contains(&TypeId::BOOLEAN))
+            || self.type_includes_literal_type(type_id)
     }
 }
