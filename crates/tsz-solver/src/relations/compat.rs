@@ -718,10 +718,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// - bit 5: `allow_void_return`
     /// - bit 6: `allow_bivariant_rest`
     /// - bit 7: `allow_bivariant_param_count`
+    /// - bit 8: `no_erase_generics`
+    /// - bit 9: `strict_subtype_checking`
+    /// - bit 10: `strict_any_propagation`
+    /// - bit 11: `in_callback_param_check`
+    /// - bit 12: `assume_related_on_cycle`
     /// - bit 13: `allow_erased_generic_signature_retry`
     ///
-    /// This is used by `QueryCache::is_assignable_to_with_flags` to ensure
-    /// cached results respect the compiler configuration.
+    /// This legacy helper only applies the subset that maps directly onto this
+    /// checker instance. Higher-level relation query paths should prefer
+    /// `RelationPolicy`, whose `cache_config()` is the canonical
+    /// cache-partitioning surface for policy-affecting knobs.
     pub fn apply_flags(&mut self, flags: u16) {
         // Apply flags to CompatChecker's own fields
         let strict_null_checks = (flags & (1 << 0)) != 0;
