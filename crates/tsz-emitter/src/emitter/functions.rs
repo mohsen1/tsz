@@ -1,8 +1,11 @@
 use super::{ParamTransformPlan, Printer};
+use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::syntax::transform_utils::{contains_arguments_reference, contains_this_reference};
+use tsz_parser::syntax::transform_utils::{
+    contains_arguments_reference, contains_this_reference, is_private_identifier,
+};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -482,6 +485,13 @@ impl<'a> Printer<'a> {
             return false;
         };
 
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            && let Some(class) = self.arena.get_class(node)
+            && self.class_expression_initializer_needs_temp_prologue(class)
+        {
+            return true;
+        }
+
         if let Some(binary) = self.arena.get_binary_expr(node) {
             if binary.operator_token == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
                 && !self.is_simple_nullish_expression(binary.left)
@@ -547,6 +557,67 @@ impl<'a> Printer<'a> {
                 .any(|element| self.param_initializer_generates_hoisted_temp(element));
         }
 
+        false
+    }
+
+    fn class_expression_initializer_needs_temp_prologue(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        let target = self.ctx.options.target;
+        let target_needs_field_lowering = (target as u32) < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let target_needs_static_block_lowering = (target as u32) < (ScriptTarget::ES2022 as u32);
+        let needs_private_field_lowering =
+            !target.supports_es2022() && target != ScriptTarget::ESNext;
+
+        class.members.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+
+            if target_needs_static_block_lowering
+                && member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                return true;
+            }
+
+            if target_needs_field_lowering
+                && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && let Some(prop) = self.arena.get_property_decl(member_node)
+            {
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    return false;
+                }
+
+                if self.arena.is_static(&prop.modifiers)
+                    && (!is_private_identifier(self.arena, prop.name)
+                        || needs_private_field_lowering)
+                {
+                    return true;
+                }
+            }
+
+            needs_private_field_lowering && self.class_member_has_private_name(member_node)
+        })
+    }
+
+    fn class_member_has_private_name(&self, member_node: &Node) -> bool {
+        if let Some(prop) = self.arena.get_property_decl(member_node) {
+            return is_private_identifier(self.arena, prop.name);
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return is_private_identifier(self.arena, method.name);
+        }
+        if let Some(accessor) = self.arena.get_accessor(member_node) {
+            return is_private_identifier(self.arena, accessor.name);
+        }
         false
     }
 
