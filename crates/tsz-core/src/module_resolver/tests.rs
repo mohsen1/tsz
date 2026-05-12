@@ -1633,6 +1633,36 @@ fn test_resolver_relative_ts_file() {
 }
 
 #[test]
+fn test_resolver_clear_cache_drops_file_existence_entries() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_clear_cache_file_exists");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let containing_file = dir.join("main.ts");
+    let dependency = dir.join("utils.ts");
+    fs::write(&containing_file, "import { foo } from './utils';").unwrap();
+
+    let mut resolver = ModuleResolver::node_resolver();
+    let missing = resolver.resolve("./utils", &containing_file, Span::new(0, 10));
+    assert!(
+        matches!(missing, Err(ResolutionFailure::NotFound { .. })),
+        "expected first lookup to miss before utils.ts exists, got {missing:?}"
+    );
+
+    fs::write(&dependency, "export const foo = 42;").unwrap();
+    resolver.clear_cache();
+
+    let resolved = resolver
+        .resolve("./utils", &containing_file, Span::new(0, 10))
+        .expect("clear_cache should drop stale file-existence entries");
+    assert_eq!(resolved.resolved_path, dependency);
+    assert_eq!(resolved.extension, ModuleExtension::Ts);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_explicit_dts_import_probes_sibling_implementation() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_explicit_dts_import");
