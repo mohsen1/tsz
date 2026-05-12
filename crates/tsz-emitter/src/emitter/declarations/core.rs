@@ -63,6 +63,9 @@ impl<'a> Printer<'a> {
         // Name
         if func.name.is_some() {
             self.write_space();
+            if let Some(name_node) = self.arena.get(func.name) {
+                self.skip_comments_in_range(node.pos, name_node.pos);
+            }
             self.emit_decl_name(func.name);
         } else if let Some(override_name) = self.anonymous_default_export_name.clone() {
             // Anonymous default export: use the override name (e.g. `default_1`)
@@ -100,6 +103,7 @@ impl<'a> Printer<'a> {
             };
             self.skip_comments_in_range(tp_skip_start, open_paren_pos);
         }
+        self.skip_comments_in_range(node.pos, open_paren_pos);
         self.write("(");
         let search_start = func
             .parameters
@@ -266,6 +270,9 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if let Some(name_node) = self.arena.get(decl.name) {
+            self.emit_comments_before_pos(name_node.pos);
+        }
         self.emit_decl_name(decl.name);
 
         // Skip type annotation for JavaScript emit — consume any comments
