@@ -948,6 +948,25 @@ const test = dibbity => dibbity
 }
 
 #[test]
+fn test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @type {Array.<number>} */
+const values = [];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const values: Array<number>;"),
+        "Expected legacy JSDoc dot-generic form to normalize to standard generic syntax: {output}"
+    );
+    assert!(
+        !output.contains(": Array.<number>;"),
+        "Did not expect invalid legacy dot-generic syntax in emitted type annotation: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};

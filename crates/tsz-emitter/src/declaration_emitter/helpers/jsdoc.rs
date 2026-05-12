@@ -248,6 +248,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let base = expr[..open].trim();
         if base.is_empty()
+            || base.ends_with('.')
             || !base
                 .chars()
                 .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
@@ -465,10 +466,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> String {
         let trimmed = type_expr.trim();
         let normalized = if trimmed == "*" { "any" } else { trimmed };
+        let normalized = normalized.replace(".<", "<");
         if rest {
             format!("{normalized}[]")
         } else {
-            normalized.to_string()
+            normalized
         }
     }
 
