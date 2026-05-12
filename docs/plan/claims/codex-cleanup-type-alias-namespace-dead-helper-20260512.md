@@ -4,8 +4,8 @@
 - **Branch**: `codex/cleanup-type-alias-namespace-helper-20260512`
 - **Base**: `origin/main`
 - **Issue**: n/a
-- **PR**: tbd
-- **Status**: claim
+- **PR**: [#5993](https://github.com/mohsen1/tsz/pull/5993)
+- **Status**: ready
 - **Labels**: `DRY`, `checker-tests`
 
 ## Intent
