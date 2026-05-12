@@ -98,6 +98,15 @@ pub fn contains_index_access_with_type_parameter_object(
     )
 }
 
+/// Check if a type contains a generic indexed access surface.
+pub fn contains_generic_indexed_access_surface(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(TypeData::IndexAccess(object, index)) = db.lookup(type_id) else {
+        return false;
+    };
+    crate::type_queries::is_type_parameter_like(db, object)
+        || contains_type_parameters_db(db, index)
+}
+
 /// Check if a type contains an indexed access whose object is a variadic tuple
 /// rest element containing a type parameter.
 pub fn contains_index_access_with_variadic_tuple_object(
