@@ -384,6 +384,18 @@ fn post_process_checker_diagnostics(
     }
 }
 
+const LARGE_WILDCARD_BARREL_EXPORTS: usize = 32;
+
+fn has_large_wildcard_barrel(program: &MergedProgram, work_items: &[usize]) -> bool {
+    work_items.iter().any(|&file_idx| {
+        program
+            .files
+            .get(file_idx)
+            .and_then(|file| program.wildcard_reexports.get(&file.file_name))
+            .is_some_and(|sources| sources.len() >= LARGE_WILDCARD_BARREL_EXPORTS)
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn collect_diagnostics(
     program: &MergedProgram,
@@ -1450,7 +1462,8 @@ pub(super) fn collect_diagnostics(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let use_sequential_checking = work_items.len() <= 32;
+            let use_sequential_checking =
+                work_items.len() <= 32 || has_large_wildcard_barrel(program, &work_items);
             // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): when the
             // `TSZ_FILE_SESSION_REUSE` env var is set, the sequential
             // path constructs one `CheckerState` and re-targets it
@@ -4040,6 +4053,30 @@ mod tests {
             ..ResolvedCompilerOptions::default()
         };
         collect_test_diagnostics_with_options(files, &options, std::path::Path::new("/"))
+    }
+
+    fn merged_program_from_owned_files(files: Vec<(String, String)>) -> MergedProgram {
+        let bind_results: Vec<_> = files
+            .into_iter()
+            .map(|(file_name, source)| parallel::parse_and_bind_single(file_name, source))
+            .collect();
+        parallel::merge_bind_results(bind_results)
+    }
+
+    #[test]
+    fn detects_large_wildcard_barrel() {
+        let mut files = Vec::new();
+        let mut barrel = String::new();
+        for i in 0..LARGE_WILDCARD_BARREL_EXPORTS {
+            files.push((format!("/p/a{i}.ts"), format!("export type A{i} = {i};")));
+            barrel.push_str(&format!("export * from \"./a{i}\";\n"));
+        }
+        files.push(("/p/index.ts".to_string(), barrel));
+
+        let program = merged_program_from_owned_files(files);
+        let work_items: Vec<usize> = (0..program.files.len()).collect();
+
+        assert!(has_large_wildcard_barrel(&program, &work_items));
     }
 
     fn checker_lib_set_for_test(libs: &[(&str, &str)]) -> CheckerLibSet {
