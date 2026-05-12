@@ -327,6 +327,9 @@ mod ts7006_broad_jsdoc_type_cast;
 #[path = "../tests/ts7006_iife_arg_implicit_any.rs"]
 mod ts7006_iife_arg_implicit_any;
 #[cfg(test)]
+#[path = "../tests/ts7030_undefined_union_return_tests.rs"]
+mod ts7030_undefined_union_return_tests;
+#[cfg(test)]
 #[path = "../tests/ts7036_tests.rs"]
 mod ts7036_tests;
 #[cfg(test)]

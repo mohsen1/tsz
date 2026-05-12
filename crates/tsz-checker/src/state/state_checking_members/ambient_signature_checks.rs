@@ -989,8 +989,11 @@ impl<'a> CheckerState<'a> {
             } else if self.ctx.no_implicit_returns()
                 && has_return
                 && falls_through
-                && !self
-                    .should_skip_no_implicit_return_check(check_return_type, has_type_annotation)
+                && !self.should_skip_no_implicit_return_check(
+                    check_return_type,
+                    has_type_annotation,
+                    is_generator,
+                )
             {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 // TSC points TS7030 to: return type annotation > method name > node itself
@@ -1812,6 +1815,7 @@ impl<'a> CheckerState<'a> {
                     && !self.should_skip_no_implicit_return_check(
                         check_return_type,
                         has_type_annotation,
+                        false, // accessors cannot be generators
                     )
                 {
                     // TS7030: noImplicitReturns - not all code paths return a value
