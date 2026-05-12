@@ -589,12 +589,10 @@ impl<'a> TypeLowering<'a> {
                 && let Some(type_params) = resolve_params(def_id)
                 && !type_params.is_empty()
                 && type_params.iter().all(|param| param.default.is_some())
-            {
-                if let Some(default_args) =
+                && let Some(default_args) =
                     tsz_solver::fill_application_defaults(self.interner, &[], &type_params)
-                {
-                    return self.interner.application(base_type, default_args);
-                }
+            {
+                return self.interner.application(base_type, default_args);
             }
 
             base_type
