@@ -15,9 +15,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
-use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
+use tsz_solver::{TypeId, Visibility};
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -359,7 +358,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
-                    // Rest element (e.g., `...string[]` or `...T`)
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check_tuple_rest_type_node(wrapped.type_node, true);
                         if let Some(spread_elements) = self.fixed_tuple_spread_elements(elem_type) {
@@ -396,7 +394,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
-                    // Named tuple element (e.g., `[x: number, y?: string, ...rest: boolean[]]`)
                     if let Some(data) = self.ctx.arena.get_named_tuple_member(elem_node) {
                         let elem_type =
                             self.check_tuple_rest_type_node(data.type_node, data.dot_dot_dot_token);
