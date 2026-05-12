@@ -1244,8 +1244,7 @@ pub fn resolve_compiler_options(
 }
 
 pub fn parse_tsconfig(source: &str) -> Result<TsConfig> {
-    let stripped = strip_jsonc(source);
-    let normalized = remove_trailing_commas(&stripped);
+    let normalized = normalize_jsonc(source);
     let config = serde_json::from_str(&normalized).context("failed to parse tsconfig JSON")?;
     Ok(config)
 }
@@ -3610,8 +3609,7 @@ fn collect_removed_options_from_config(path: &Path, removed: &mut Vec<String>) {
     let Ok(source) = std::fs::read_to_string(path) else {
         return;
     };
-    let stripped = strip_jsonc(&source);
-    let normalized = remove_trailing_commas(&stripped);
+    let normalized = normalize_jsonc(&source);
     let Ok(raw) = serde_json::from_str::<serde_json::Value>(&normalized) else {
         return;
     };
@@ -5037,6 +5035,13 @@ pub fn strip_jsonc(input: &str) -> String {
     }
 
     out
+}
+
+/// Convert tsconfig-style JSONC into strict JSON by removing comments and
+/// trailing commas while preserving string contents.
+pub fn normalize_jsonc(input: &str) -> String {
+    let stripped = strip_jsonc(input);
+    remove_trailing_commas(&stripped)
 }
 
 fn remove_trailing_commas(input: &str) -> String {
@@ -8152,6 +8157,23 @@ mod tests {
         assert!(stripped.contains(r#""value": 1"#));
         assert!(!stripped.contains("line comment"));
         assert!(!stripped.contains("block"));
+    }
+
+    #[test]
+    fn test_normalize_jsonc_removes_comments_and_trailing_commas() {
+        let input = r#"{
+  // line comment
+  "url": "https://example.test/*keep*/",
+  "items": [
+    "a",
+  ],
+}"#;
+
+        let normalized = normalize_jsonc(input);
+        let value: serde_json::Value =
+            serde_json::from_str(&normalized).expect("normalized JSONC should parse");
+        assert_eq!(value["url"], "https://example.test/*keep*/");
+        assert_eq!(value["items"][0], "a");
     }
 
     #[test]

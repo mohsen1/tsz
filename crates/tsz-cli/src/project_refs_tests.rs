@@ -51,6 +51,26 @@ fn test_parse_tsconfig_with_references() {
 }
 
 #[test]
+fn test_parse_tsconfig_with_references_accepts_jsonc() {
+    let config = r#"
+        {
+            // Project references follow normal tsconfig JSONC rules.
+            "compilerOptions": {
+                "target": "ES2020",
+            },
+            "references": [
+                { "path": "./packages/core", },
+            ],
+        }
+        "#;
+
+    let parsed = parse_tsconfig_with_references(config).unwrap();
+    let refs = parsed.references.unwrap();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].path, "./packages/core");
+}
+
+#[test]
 fn test_empty_references() {
     let config = r#"
         {
