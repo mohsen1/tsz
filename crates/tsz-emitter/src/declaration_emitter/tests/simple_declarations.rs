@@ -5277,4 +5277,20 @@ u.noError();
         !output.contains("declare const u"),
         "Expected local bare require alias in a non-exporting JS module to be elided: {output}"
     );
+    assert_eq!("export {};", output.trim());
+}
+
+#[test]
+fn test_js_local_dynamic_require_alias_without_exports_is_preserved() {
+    let source = r#"
+const moduleName = "untyped";
+const u = require(moduleName);
+u.noError();
+"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        output.contains("declare const u: any;"),
+        "Expected dynamic require alias to be preserved: {output}"
+    );
 }

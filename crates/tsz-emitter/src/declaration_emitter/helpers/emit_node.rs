@@ -458,9 +458,15 @@ impl<'a> DeclarationEmitter<'a> {
         if self.get_identifier_text(call.expression).as_deref() != Some("require") {
             return false;
         }
-        call.arguments
-            .as_ref()
-            .is_some_and(|args| args.nodes.len() == 1)
+        let Some(args) = call.arguments.as_ref() else {
+            return false;
+        };
+        let [arg_idx] = args.nodes.as_slice() else {
+            return false;
+        };
+        self.arena
+            .get(*arg_idx)
+            .is_some_and(|arg_node| arg_node.kind == SyntaxKind::StringLiteral as u16)
     }
 
     pub(crate) fn source_file_is_js(
