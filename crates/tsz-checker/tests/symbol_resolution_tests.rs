@@ -3,14 +3,17 @@
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn collect_diagnostics(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -32,8 +35,7 @@ fn collect_diagnostics(source: &str) -> Vec<crate::checker::diagnostics::Diagnos
 }
 
 fn collect_diagnostics_with_libs(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -342,8 +344,7 @@ namespace M {
     class B {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -372,8 +373,7 @@ namespace X {
     export interface Y { }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -401,8 +401,7 @@ namespace M {
     class B {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut found_b = false;
@@ -442,8 +441,7 @@ namespace M {
 }
 var t2: M.B[] = [];
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut found = false;
