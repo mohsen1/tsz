@@ -116,6 +116,13 @@ initializer relation path performs an additional raw initializer re-check.
     already caches default libs via `static LIBS: OnceLock<Vec<Arc<LibFile>>>`
     and `get_or_init(load_default_lib_files)`, so repeated per-test lib parsing
     no longer occurs in this file.
+- review comments left on #4956:
+  - extracted duplicated Unknown-token statement-list recovery in
+    `state_statements.rs` into shared helper
+    `recover_after_unknown_token(&mut self, &mut bool, bool)`.
+  - preserved prior behavior split by call site: top-level statement parsing
+    keeps per-token TS1127 recovery without resync, while nested statement
+    lists still resync after immediate Unknown-token handling.
 - supporting harness stability while touching checker paths:
   - `load_compiled_lib_files(...)` now falls back to bundled lib assets by
     stripping the `lib.` prefix when compiled TypeScript `lib.*.d.ts` roots
@@ -158,6 +165,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-checker/tests/global_this_const_property_tests.rs`
 - `crates/tsz-checker/src/test_utils.rs`
 - `crates/tsz-checker/tests/intersection_primitive_member_assignability_tests.rs`
+- `crates/tsz-parser/src/parser/state_statements.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -185,5 +193,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-checker --test generic_alias_assignability_pollution_tests -- --nocapture`
 - `cargo test -p tsz-checker --test global_this_const_property_tests -- --nocapture`
 - `cargo test -p tsz-checker --test intersection_primitive_member_assignability_tests -- --nocapture`
+- `cargo test -p tsz-parser`
+- `cargo fmt --check`
 - `cargo fmt --all --check`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=43`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=42`)

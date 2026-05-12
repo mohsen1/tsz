@@ -12,6 +12,7 @@
     4952,
     4954,
     4955,
+    4956,
     4958,
     4960,
     4967,
@@ -63,24 +64,8 @@
     5899,
     5901
   ],
-  "candidate_count": 43,
+  "candidate_count": 42,
   "candidates": [
-    {
-      "pr_number": 4956,
-      "pr_title": "fix(parser): recover unicode escaped astral identifiers",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4956",
-      "merged_at": "2026-05-10T10:07:13Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A49qr",
-      "path": "crates/tsz-parser/src/parser/state_statements.rs",
-      "line": 240,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the other. Consider extracting a small helper (e.g., `recover_after_unknown_token(&mut self, previous_statement_was_block: &mut bool) -> bool`) so the two loops share the exact same recovery behavior.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
     {
       "pr_number": 4987,
       "pr_title": "perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg",

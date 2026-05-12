@@ -2,17 +2,17 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 56
-- Potential important unresolved threads: 43
+- PRs excluded as already followed-up: 57
+- Potential important unresolved threads: 42
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 17
 - `docs`: 10
 - `crates/tsz-emitter`: 7
-- `crates/tsz-parser`: 3
 - `crates/tsz-solver`: 2
 - `scripts`: 2
+- `crates/tsz-parser`: 2
 - `crates/tsz-common`: 1
 - `crates/tsz-cli`: 1
 
@@ -28,7 +28,6 @@
 - [#5701](https://github.com/mohsen1/tsz/pull/5701) fix(dts): map js default typedef aliases: 2
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) fix(checker): align recursiveTypeReferences1 array diagnostics: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
-- [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg: 1
 - [#5001](https://github.com/mohsen1/tsz/pull/5001) fix(checker): preserve variance alias display: 1
 - [#5004](https://github.com/mohsen1/tsz/pull/5004) perf(checker): gate-once the hottest checker perf-counter inc() sites: 1
@@ -38,11 +37,10 @@
 - [#5060](https://github.com/mohsen1/tsz/pull/5060) perf(solver): T2.4 — wrap auxiliary-interner write-locks with time_shard_write: 1
 - [#5064](https://github.com/mohsen1/tsz/pull/5064) perf(checker): close cache-hits counter coverage gap for cross-arena delegations: 1
 - [#5075](https://github.com/mohsen1/tsz/pull/5075) fix(checker): defer generic construct argument mismatches: 1
+- [#5082](https://github.com/mohsen1/tsz/pull/5082) docs(perf): plan §1 — refresh "Diagnostics timing" and "Perf counters" baseline rows: 1
 
 ## Candidate Threads (Top 100 by score)
 
-- [#4956](https://github.com/mohsen1/tsz/pull/4956) `crates/tsz-parser/src/parser/state_statements.rs:240` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the...
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) `crates/tsz-common/src/perf_counters.rs:593` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` “compile out entirely”, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inlin...
 - [#5001](https://github.com/mohsen1/tsz/pull/5001) `crates/tsz-solver/src/evaluation/evaluate.rs:1155` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
