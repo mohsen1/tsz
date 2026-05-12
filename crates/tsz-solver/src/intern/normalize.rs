@@ -19,6 +19,9 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
+type NormalizeSubtypeChecker<'a> =
+    crate::relations::subtype::SubtypeChecker<'a, crate::def::resolver::NoopResolver>;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum PrimitiveClass {
     String,
@@ -832,13 +835,17 @@ impl TypeInterner {
     /// never calls `intern()` or `evaluate()`.
     #[inline]
     fn is_subtype_shallow(&self, source: TypeId, target: TypeId) -> bool {
-        self.is_subtype_shallow_depth(source, target, 3)
+        let mut checker = None;
+        self.is_subtype_shallow_depth_with_checker(source, target, 3, &mut checker)
     }
 
-    /// Depth-limited shallow subtype check. Handles primitives, literals, objects,
-    /// and function types. The depth parameter limits recursion through object
-    /// properties (each level allows one more structural comparison).
-    fn is_subtype_shallow_depth(&self, source: TypeId, target: TypeId, depth: u32) -> bool {
+    fn is_subtype_shallow_depth_with_checker<'a>(
+        &'a self,
+        source: TypeId,
+        target: TypeId,
+        depth: u32,
+        checker: &mut Option<NormalizeSubtypeChecker<'a>>,
+    ) -> bool {
         if source == target {
             return true;
         }
@@ -892,7 +899,7 @@ impl TypeInterner {
             if let Some(TypeData::Union(members)) = t_data {
                 let members = self.type_list(members);
                 for &member in members.iter() {
-                    if self.is_subtype_shallow_depth(source, member, depth) {
+                    if self.is_subtype_shallow_depth_with_checker(source, member, depth, checker) {
                         return true;
                     }
                 }
@@ -923,9 +930,9 @@ impl TypeInterner {
             let s_members = self.type_list(s_members);
             // Guard: only handle small unions to avoid O(N*M) blowup
             if s_members.len() <= 8 {
-                return s_members
-                    .iter()
-                    .all(|&m| self.is_subtype_shallow_depth(m, target, depth - 1));
+                return s_members.iter().all(|&m| {
+                    self.is_subtype_shallow_depth_with_checker(m, target, depth - 1, checker)
+                });
             }
             return false;
         }
@@ -936,9 +943,9 @@ impl TypeInterner {
         if let Some(TypeData::Union(t_members)) = t_data {
             let t_members = self.type_list(t_members);
             if t_members.len() <= 8 {
-                return t_members
-                    .iter()
-                    .any(|&m| self.is_subtype_shallow_depth(source, m, depth - 1));
+                return t_members.iter().any(|&m| {
+                    self.is_subtype_shallow_depth_with_checker(source, m, depth - 1, checker)
+                });
             }
             return false;
         }
@@ -948,9 +955,9 @@ impl TypeInterner {
             (
                 Some(TypeData::Object(s_id) | TypeData::ObjectWithIndex(s_id)),
                 Some(TypeData::Object(t_id) | TypeData::ObjectWithIndex(t_id)),
-            ) => self.is_object_shape_subtype_shallow_depth(s_id, t_id, 0),
+            ) => self.is_object_shape_subtype_shallow_depth(s_id, t_id, 0, checker),
             (Some(TypeData::Function(s_id)), Some(TypeData::Function(t_id))) => {
-                self.is_function_subtype_shallow(s_id, t_id, depth)
+                self.is_function_subtype_shallow(s_id, t_id, depth, checker)
             }
             _ => false,
         }
@@ -1090,11 +1097,12 @@ impl TypeInterner {
     /// - **Index Signatures**: Skipped (too complex for shallow check)
     ///
     /// Uses O(N+M) two-pointer scan since properties are sorted by Atom.
-    fn is_object_shape_subtype_shallow_depth(
-        &self,
+    fn is_object_shape_subtype_shallow_depth<'a>(
+        &'a self,
         s_id: ObjectShapeId,
         t_id: ObjectShapeId,
         depth: u32,
+        checker: &mut Option<NormalizeSubtypeChecker<'a>>,
     ) -> bool {
         if s_id == t_id {
             return true;
@@ -1134,7 +1142,12 @@ impl TypeInterner {
 
                 // Type comparison: try TypeId equality first, then depth-limited structural check
                 if sp.type_id != t_prop.type_id
-                    && !self.is_subtype_shallow_depth(sp.type_id, t_prop.type_id, depth)
+                    && !self.is_subtype_shallow_depth_with_checker(
+                        sp.type_id,
+                        t_prop.type_id,
+                        depth,
+                        checker,
+                    )
                 {
                     return false;
                 }
@@ -1172,11 +1185,12 @@ impl TypeInterner {
     /// - Return type is checked covariantly (source return type <: target return type)
     /// - Handles optional vs required params with `| undefined` equivalence
     /// - Skips generic functions (too complex for shallow check)
-    fn is_function_subtype_shallow(
-        &self,
+    fn is_function_subtype_shallow<'a>(
+        &'a self,
         s_id: FunctionShapeId,
         t_id: FunctionShapeId,
         depth: u32,
+        checker: &mut Option<NormalizeSubtypeChecker<'a>>,
     ) -> bool {
         if s_id == t_id {
             return true;
@@ -1197,7 +1211,12 @@ impl TypeInterner {
 
         // Return type: covariant (source return <: target return)
         if s.return_type != t.return_type
-            && !self.is_subtype_shallow_depth(s.return_type, t.return_type, depth)
+            && !self.is_subtype_shallow_depth_with_checker(
+                s.return_type,
+                t.return_type,
+                depth,
+                checker,
+            )
         {
             return false;
         }
@@ -1205,7 +1224,7 @@ impl TypeInterner {
         // Check params in the shared range contravariantly
         let min_len = s.params.len().min(t.params.len());
         for i in 0..min_len {
-            if !self.param_contravariant_shallow(&t.params[i], &s.params[i], depth) {
+            if !self.param_contravariant_shallow(&t.params[i], &s.params[i], depth, checker) {
                 return false;
             }
         }
@@ -1243,11 +1262,12 @@ impl TypeInterner {
     /// For `S <: T`, parameters are checked contravariantly: `T_param <: S_param`.
     /// Handles the optional/required distinction where `x?: T` has effective type
     /// `T | undefined` and `x: T | undefined` is equivalent.
-    fn param_contravariant_shallow(
-        &self,
+    fn param_contravariant_shallow<'a>(
+        &'a self,
         t_param: &ParamInfo,
         s_param: &ParamInfo,
         depth: u32,
+        checker: &mut Option<NormalizeSubtypeChecker<'a>>,
     ) -> bool {
         let t_type = t_param.type_id;
         let s_type = s_param.type_id;
@@ -1266,23 +1286,24 @@ impl TypeInterner {
         match (t_param.optional, s_param.optional) {
             (false, false) => {
                 // Both required: t_type <: s_type
-                self.is_subtype_shallow_depth(t_type, s_type, depth)
+                self.is_subtype_shallow_depth_with_checker(t_type, s_type, depth, checker)
             }
             (true, true) => {
                 // Both optional: t_type | undef <: s_type | undef
                 // Reduces to: t_type <: s_type | undef, which holds if t_type <: s_type
-                self.is_subtype_shallow_depth(t_type, s_type, depth) || t_type == TypeId::UNDEFINED
+                self.is_subtype_shallow_depth_with_checker(t_type, s_type, depth, checker)
+                    || t_type == TypeId::UNDEFINED
             }
             (false, true) => {
                 // t required, s optional: t_type <: s_type | undef
                 // Holds if t_type <: s_type (since s_type ⊂ s_type | undef)
-                self.is_subtype_shallow_depth(t_type, s_type, depth)
+                self.is_subtype_shallow_depth_with_checker(t_type, s_type, depth, checker)
             }
             (true, false) => {
                 // t optional, s required: t_type | undef <: s_type
                 // Need both: t_type <: s_type AND undefined <: s_type
                 self.type_contains_undefined(s_type)
-                    && self.is_subtype_shallow_depth(t_type, s_type, depth)
+                    && self.is_subtype_shallow_depth_with_checker(t_type, s_type, depth, checker)
             }
         }
     }
@@ -1497,6 +1518,9 @@ impl TypeInterner {
             self.reduce_union_subtypes_quadratic(flat);
         } else {
             let mut keep = vec![true; len];
+            // Reuse the checker across pairwise comparisons so template-literal
+            // matching can share its evaluation and apparent-primitive caches.
+            let mut checker = None;
             for i in 0..len {
                 if !keep[i] {
                     continue;
@@ -1505,7 +1529,8 @@ impl TypeInterner {
                     if i == j || !keep[j] {
                         continue;
                     }
-                    if self.is_subtype_shallow(flat[i], flat[j]) {
+                    if self.is_subtype_shallow_depth_with_checker(flat[i], flat[j], 3, &mut checker)
+                    {
                         keep[i] = false;
                         break;
                     }
@@ -1619,6 +1644,9 @@ impl TypeInterner {
         } else {
             (1u64 << len) - 1
         };
+        // Reuse the checker across pairwise comparisons so template-literal
+        // matching can share its evaluation and apparent-primitive caches.
+        let mut checker = None;
         for i in 0..len {
             if keep & (1u64 << i) == 0 {
                 continue;
@@ -1627,7 +1655,7 @@ impl TypeInterner {
                 if i == j || keep & (1u64 << j) == 0 {
                     continue;
                 }
-                if self.is_subtype_shallow(flat[i], flat[j]) {
+                if self.is_subtype_shallow_depth_with_checker(flat[i], flat[j], 3, &mut checker) {
                     keep &= !(1u64 << i);
                     break;
                 }
