@@ -41,6 +41,15 @@ fn is_js_like_file_name(file_name: &str) -> bool {
         || file_name.ends_with(".cjs")
 }
 
+pub(super) const fn next_persistent_scope_id(scope_count: usize) -> Option<ScopeId> {
+    // `ScopeId(u32::MAX)` is reserved as `ScopeId::NONE`, so valid persistent
+    // scope IDs are limited to `0..u32::MAX`.
+    if scope_count >= u32::MAX as usize {
+        return None;
+    }
+    Some(ScopeId(scope_count as u32))
+}
+
 impl BinderStateScopeInputs {
     pub(super) fn with_scopes(
         scopes: Arc<Vec<Scope>>,
@@ -916,9 +925,13 @@ impl BinderState {
         capacity: usize,
     ) {
         // Create new scope linked to current
-        let new_scope_id = ScopeId(
-            u32::try_from(self.scopes.len()).expect("persistent scope count exceeds u32::MAX"),
-        );
+        let Some(new_scope_id) = next_persistent_scope_id(self.scopes.len()) else {
+            tracing::warn!(
+                scope_count = self.scopes.len(),
+                "persistent scope count exceeded representable ScopeId range; skipping scope push"
+            );
+            return;
+        };
         let new_scope = if capacity > 0 {
             Scope::with_capacity(self.current_scope_id, kind, node, capacity)
         } else {

@@ -948,6 +948,25 @@ const test = dibbity => dibbity
 }
 
 #[test]
+fn test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @type {Array.<number>} */
+const values = [];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const values: Array<number>;"),
+        "Expected legacy JSDoc dot-generic form to normalize to standard generic syntax: {output}"
+    );
+    assert!(
+        !output.contains(": Array.<number>;"),
+        "Did not expect invalid legacy dot-generic syntax in emitted type annotation: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -1165,6 +1184,93 @@ export function inJs(l) {
     assert!(
         output.contains("export type IFn = <T>(m: T) => T;"),
         "Expected the JSDoc typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@type {IFn}"),
+        "Did not expect implementation-only @type comment in declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_commas() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(x: [T, number], y: { items: [T, string] }) => [T, string]} IFn
+ */
+
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export function inJs<T>(x: [T, number], y: { items: [T, string] }): [T, string];"
+        ),
+        "Expected nested tuple/object commas in JSDoc function typedef to parse as a single signature: {output}"
+    );
+    assert!(
+        output.contains("export type IFn = <T>(x: [T, number], y: {")
+            && output.contains("items: [T, string];")
+            && output.contains("}) => [T, string];"),
+        "Expected nested tuple/object commas to be preserved in emitted typedef alias structure: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_function_param() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {(cb: (x: number) => string, value: number) => void} IFn2
+ */
+
+/** @type {IFn2} */
+export function inJs(cb, value) {
+  cb(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs(cb: (x: number) => string, value: number): void;"),
+        "Expected nested function parameter type to parse through closing paren matching: {output}"
+    );
+    assert!(
+        output.contains("export type IFn2 = (cb: (x: number) => string, value: number) => void;"),
+        "Expected emitted typedef alias to preserve nested function parameter type: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_type_alias_signature_preserves_non_type_jsdoc_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(m : T) => T} IFn
+ */
+
+/**
+ * Keep this function-level JSDoc.
+ * @deprecated use next
+ */
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs<T>(m: T): T;"),
+        "Expected JSDoc @type function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("@deprecated use next"),
+        "Expected non-@type JSDoc comments to remain in declaration output: {output}"
     );
     assert!(
         !output.contains("@type {IFn}"),
@@ -1838,6 +1944,118 @@ module.exports = { x, b };
     assert!(
         x_pos < b_pos,
         "Expected module.exports object declarations to preserve source order: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_enum_object_literal_emits_type_and_namespace() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @enum {string} */
+export const Target = {
+    START: "start",
+    /** @type {number} */
+    OK_I_GUESS: 2
+};
+
+/** @enum {function(number): number} */
+export const Fs = {
+    ADD1: n => n + 1,
+    SUB1: n => n - 1
+};
+
+/** @enum {?} */
+export const Unknowns = { ANY: 1 };
+
+/** @enum {Array} */
+export const Lists = { EMPTY: [] };
+
+/** @enum {Promise} */
+export const Tasks = { DONE: Promise.resolve() };
+
+/** @enum {function(Array): Promise} */
+export const AsyncFns = { RUN: values => Promise.resolve(values) };
+"#,
+    );
+
+    assert!(
+        output.contains("export type Target = string;\nexport namespace Target {"),
+        "Expected JSDoc enum value to emit type plus namespace: {output}"
+    );
+    assert!(
+        output.contains("let START: string;"),
+        "Expected enum members to use the enum base type: {output}"
+    );
+    assert!(
+        output.contains("let OK_I_GUESS: number;"),
+        "Expected member @type to override the enum base type: {output}"
+    );
+    assert!(
+        output.contains("export type Fs = (arg0: number) => number;"),
+        "Expected function enum base type to normalize to arrow function syntax: {output}"
+    );
+    assert!(
+        output.contains("function ADD1(n: any): any;")
+            && output.contains("function SUB1(n: any): any;"),
+        "Expected function enum members to emit as namespace functions: {output}"
+    );
+    assert!(
+        output.contains("export type Unknowns = any;"),
+        "Expected standalone Closure unknown enum type to normalize to any: {output}"
+    );
+    assert!(
+        output.contains("export type Lists = any[];"),
+        "Expected bare Array enum type to normalize to any[]: {output}"
+    );
+    assert!(
+        output.contains("export type Tasks = Promise<any>;"),
+        "Expected bare Promise enum type to normalize to Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("export type AsyncFns = (arg0: any[]) => Promise<any>;"),
+        "Expected enum function type to use JSDoc function normalization: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_missing_generic_arguments_default_to_any() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {Array=} values
+ */
+function takesArray(values) {}
+
+/** @param {Promise} promise */
+function takesPromise(promise) {}
+
+/** @param {function(Array)} callback */
+function takesCallback(callback) {}
+
+/**
+ * @return {?Promise}
+ */
+function maybePromise() {
+    return null;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function takesArray(values?: any[] | undefined): void;"),
+        "Expected optional bare Array to become any[] | undefined: {output}"
+    );
+    assert!(
+        output.contains("declare function takesPromise(promise: Promise<any>): void;"),
+        "Expected bare Promise to become Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("declare function takesCallback(callback: (arg0: any[]) => any): void;"),
+        "Expected function(Array) to use any[] and default any return: {output}"
+    );
+    assert!(
+        output.contains("declare function maybePromise(): Promise<any> | null;"),
+        "Expected nullable bare Promise return to become Promise<any> | null: {output}"
     );
 }
 
@@ -2955,6 +3173,29 @@ export class Factory {
     assert!(
         output.contains("static create<T>(value: T): T;"),
         "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_property_type_resolves_semicolon_typedef_alias() {
+    let output = emit_js_dts(
+        r#"
+export class Box {
+    /** @typedef {{ id: string }} Prop */
+    ;
+    /** @type {Prop} */
+    value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value: { id: string };"),
+        "Expected class property JSDoc @type alias to resolve from nearby semicolon-only typedef: {output}"
+    );
+    assert!(
+        !output.contains("value: Prop;"),
+        "Expected class property type to emit resolved typedef body, not unresolved alias name: {output}"
     );
 }
 

@@ -16,13 +16,15 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::file_extensions::is_ts_declaration_file_name;
 use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
 
+use std::cell::Cell;
+
 use crate::parser::{
     NodeIndex, NodeList,
     node::{IdentifierData, NodeArena},
     syntax_kind_ext,
 };
 use rustc_hash::FxHashMap;
-use tracing::trace;
+use tracing::{trace, warn};
 use tsz_common::interner::Atom;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 use tsz_scanner::{SyntaxKind, token_is_keyword};
@@ -151,6 +153,12 @@ pub struct ParserState {
     /// not suppress a follow-up TS1005 the parser emits at the same position
     /// the way tsc's single `parseDiagnostics` vec does.
     pub(crate) scanner_diagnostics_high_water_mark: usize,
+    /// Tracks whether we've already reported a usize->u32 offset overflow
+    /// during the current parse session to avoid log spam on pathological input.
+    pub(crate) reported_offset_overflow: Cell<bool>,
+    /// Tracks whether we've already reported a u32->u16 node-flag overflow
+    /// during the current parse session to avoid log spam on pathological input.
+    pub(crate) reported_node_flag_overflow: Cell<bool>,
     /// Stack of label scopes for duplicate label detection (TS1114)
     /// Each scope is a map from label name to the position where it was first defined
     pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
@@ -261,15 +269,35 @@ impl ParserState {
     #[inline]
     #[must_use]
     pub(crate) fn u32_from_usize(&self, value: usize) -> u32 {
-        let _ = self;
-        u32::try_from(value).expect("parser offsets must fit in u32::MAX")
+        match u32::try_from(value) {
+            Ok(value) => value,
+            Err(_) => {
+                if !self.reported_offset_overflow.replace(true) {
+                    warn!(
+                        overflow_value = value,
+                        "parser offset overflowed u32; clamping to u32::MAX"
+                    );
+                }
+                u32::MAX
+            }
+        }
     }
 
     #[inline]
     #[must_use]
     pub(crate) fn u16_from_node_flags(&self, value: u32) -> u16 {
-        let _ = self;
-        u16::try_from(value).expect("parser node flags must fit in u16::MAX")
+        match u16::try_from(value) {
+            Ok(value) => value,
+            Err(_) => {
+                if !self.reported_node_flag_overflow.replace(true) {
+                    warn!(
+                        overflow_value = value,
+                        "parser node flags overflowed u16; truncating high bits"
+                    );
+                }
+                (value & u32::from(u16::MAX)) as u16
+            }
+        }
     }
 
     /// Create a new Parser for the given source text.
@@ -302,6 +330,8 @@ impl ParserState {
             recursion_depth: 0,
             last_error_pos: 0,
             scanner_diagnostics_high_water_mark: 0,
+            reported_offset_overflow: Cell::new(false),
+            reported_node_flag_overflow: Cell::new(false),
             label_scopes: vec![FxHashMap::default()],
             seen_module_indicator: false,
             last_named_imports_consumed_closing_brace: false,
@@ -347,6 +377,8 @@ impl ParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
+        self.reported_offset_overflow.set(false);
+        self.reported_node_flag_overflow.set(false);
         self.label_scopes.clear();
         self.label_scopes.push(FxHashMap::default());
         self.seen_module_indicator = false;
@@ -3148,6 +3180,42 @@ impl ParserState {
             current_scope.insert(label_name.to_string(), label_pos);
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ParserState;
+
+    #[test]
+    fn u32_from_usize_clamps_overflow_without_panicking() {
+        let parser = ParserState::new("a.ts".to_string(), String::new());
+
+        assert_eq!(parser.u32_from_usize(usize::MAX), u32::MAX);
+        assert!(parser.reported_offset_overflow.get());
+    }
+
+    #[test]
+    fn u16_from_node_flags_truncates_overflow_without_panicking() {
+        let parser = ParserState::new("a.ts".to_string(), String::new());
+
+        assert_eq!(parser.u16_from_node_flags(0x1_0001), 1);
+        assert!(parser.reported_node_flag_overflow.get());
+    }
+
+    #[test]
+    fn reset_clears_conversion_overflow_markers() {
+        let mut parser = ParserState::new("a.ts".to_string(), String::new());
+        let _ = parser.u32_from_usize(usize::MAX);
+        let _ = parser.u16_from_node_flags(0x1_0001);
+
+        assert!(parser.reported_offset_overflow.get());
+        assert!(parser.reported_node_flag_overflow.get());
+
+        parser.reset("b.ts".to_string(), String::new());
+
+        assert!(!parser.reported_offset_overflow.get());
+        assert!(!parser.reported_node_flag_overflow.get());
     }
 }
 
