@@ -17,7 +17,7 @@ use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHasher};
 use smallvec::SmallVec;
-use std::cell::UnsafeCell;
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc, OnceLock, RwLock,
@@ -84,44 +84,43 @@ struct InternCacheEntry {
 }
 
 /// Combined thread-local cache for both `lookup()` and `intern()` directions.
+///
+/// Uses `Cell<[T; N]>` for interior mutability. Both cache entry types are
+/// `Copy`, so `Cell::as_array_of_cells()` gives us per-slot `get`/`set` that
+/// lowers to the same single load / single store as a raw pointer deref —
+/// with no `unsafe` and no manual `Send`/`Sync` impls. The cache is reached
+/// only through `thread_local!`, which requires neither bound.
 struct TypeInternerCache {
-    lookup: UnsafeCell<[LookupCacheEntry; LOOKUP_CACHE_SIZE]>,
-    intern: UnsafeCell<[InternCacheEntry; INTERN_CACHE_SIZE]>,
+    lookup: Cell<[LookupCacheEntry; LOOKUP_CACHE_SIZE]>,
+    intern: Cell<[InternCacheEntry; INTERN_CACHE_SIZE]>,
 }
 
-// SAFETY: Only accessed via thread_local!, so never shared across threads.
-#[allow(unsafe_code)]
-unsafe impl Send for TypeInternerCache {}
-#[allow(unsafe_code)]
-unsafe impl Sync for TypeInternerCache {}
+const EMPTY_LOOKUP_ENTRY: LookupCacheEntry = LookupCacheEntry {
+    tag: 0,
+    instance_id: 0,
+    data: TypeData::Error,
+};
 
-#[allow(dead_code, unsafe_code)]
+const EMPTY_INTERN_ENTRY: InternCacheEntry = InternCacheEntry {
+    hash: 0,
+    instance_id: 0,
+    key: TypeData::Error,
+    result: TypeId::NONE,
+};
+
+#[allow(dead_code)]
 impl TypeInternerCache {
     const fn new() -> Self {
         Self {
-            lookup: UnsafeCell::new(
-                [LookupCacheEntry {
-                    tag: 0,
-                    instance_id: 0,
-                    data: TypeData::Error,
-                }; LOOKUP_CACHE_SIZE],
-            ),
-            intern: UnsafeCell::new(
-                [InternCacheEntry {
-                    hash: 0,
-                    instance_id: 0,
-                    key: TypeData::Error,
-                    result: TypeId::NONE,
-                }; INTERN_CACHE_SIZE],
-            ),
+            lookup: Cell::new([EMPTY_LOOKUP_ENTRY; LOOKUP_CACHE_SIZE]),
+            intern: Cell::new([EMPTY_INTERN_ENTRY; INTERN_CACHE_SIZE]),
         }
     }
 
     #[inline(always)]
-    fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
+    const fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &(*self.lookup.get())[idx] };
+        let entry = self.lookup.as_array_of_cells()[idx].get();
         if entry.tag == id.0 && entry.instance_id == instance_id {
             Some(entry.data)
         } else {
@@ -132,18 +131,17 @@ impl TypeInternerCache {
     #[inline(always)]
     fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &mut (*self.lookup.get())[idx] };
-        entry.tag = id.0;
-        entry.instance_id = instance_id;
-        entry.data = data;
+        self.lookup.as_array_of_cells()[idx].set(LookupCacheEntry {
+            tag: id.0,
+            instance_id,
+            data,
+        });
     }
 
     #[inline(always)]
     fn intern_probe(&self, hash: u64, instance_id: u32, key: &TypeData) -> Option<TypeId> {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &(*self.intern.get())[idx] };
+        let entry = self.intern.as_array_of_cells()[idx].get();
         if entry.hash == hash && entry.instance_id == instance_id && &entry.key == key {
             Some(entry.result)
         } else {
@@ -154,12 +152,12 @@ impl TypeInternerCache {
     #[inline(always)]
     fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &mut (*self.intern.get())[idx] };
-        entry.hash = hash;
-        entry.instance_id = instance_id;
-        entry.key = key;
-        entry.result = result;
+        self.intern.as_array_of_cells()[idx].set(InternCacheEntry {
+            hash,
+            instance_id,
+            key,
+            result,
+        });
     }
 }
 
@@ -179,21 +177,13 @@ static NEXT_INTERNER_INSTANCE_ID: AtomicU32 = AtomicU32::new(1);
 /// from being returned for `TypeId` values that have been reused by a new interner.
 /// Without this, the lookup cache may return `TypeData` from a dropped interner,
 /// causing incorrect type resolution and panics.
-#[allow(unsafe_code)]
 pub fn clear_thread_local_cache() {
     TL_CACHE.with(|cache| {
-        // Reset lookup cache entries
-        let lookup = unsafe { &mut (*cache.lookup.get()) };
-        for entry in lookup.iter_mut() {
-            entry.tag = 0;
-            entry.data = TypeData::Error;
+        for cell in cache.lookup.as_array_of_cells() {
+            cell.set(EMPTY_LOOKUP_ENTRY);
         }
-        // Reset intern cache entries
-        let intern = unsafe { &mut (*cache.intern.get()) };
-        for entry in intern.iter_mut() {
-            entry.hash = 0;
-            entry.key = TypeData::Error;
-            entry.result = TypeId::NONE;
+        for cell in cache.intern.as_array_of_cells() {
+            cell.set(EMPTY_INTERN_ENTRY);
         }
     });
 }

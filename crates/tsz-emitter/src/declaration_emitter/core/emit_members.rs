@@ -2064,6 +2064,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 decl.initializer,
                                 decl.type_annotation,
                             )
+                            && !self.js_local_bare_require_alias_without_export_surface(
+                                decl.initializer,
+                            )
                     });
                 }
 

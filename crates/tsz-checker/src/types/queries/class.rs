@@ -1803,10 +1803,29 @@ impl<'a> CheckerState<'a> {
         }
 
         if !is_static {
+            let object_property_count = |this: &Self, type_id| {
+                crate::query_boundaries::common::object_shape_for_type(this.ctx.types, type_id)
+                    .map(|shape| shape.properties.len())
+                    .unwrap_or(0)
+            };
+
             if let Some(cached) = cached_instance_this
                 && cached != TypeId::ANY
                 && cached != TypeId::ERROR
             {
+                let cached_count = object_property_count(self, cached);
+                if let Some(&in_progress) = self.ctx.class_instance_type_cache.get(&class_idx)
+                    && in_progress != TypeId::ANY
+                    && in_progress != TypeId::ERROR
+                    && object_property_count(self, in_progress) > cached_count
+                {
+                    if let Some(info) = self.ctx.enclosing_class.as_mut()
+                        && info.class_idx == class_idx
+                    {
+                        info.cached_instance_this_type = Some(in_progress);
+                    }
+                    return Some(in_progress);
+                }
                 return Some(cached);
             }
 

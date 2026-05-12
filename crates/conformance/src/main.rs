@@ -5,6 +5,7 @@
 mod batch_pool;
 mod cache;
 mod cli;
+mod compiler_options;
 mod options_convert;
 mod process_rss;
 mod runner;

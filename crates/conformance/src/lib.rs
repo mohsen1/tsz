@@ -3,6 +3,7 @@
 pub(crate) mod batch_pool;
 pub mod cache;
 pub mod cli;
+pub mod compiler_options;
 pub(crate) mod options_convert;
 pub(crate) mod process_rss;
 pub mod runner;
