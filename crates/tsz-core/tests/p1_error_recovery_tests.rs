@@ -6,9 +6,13 @@
 //! 3. Template literal expressions with errors
 //! 4. Object destructuring patterns with missing commas
 
-use crate::parser::ParserState;
 use crate::test_harness::{TestResult, run_with_timeout};
 use std::time::Duration;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // ===========================================================================
 // Test 1: Class Body Error Recovery
@@ -32,8 +36,7 @@ class MyClass {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // `if` is a valid method name — no parser errors expected
     // (type errors may come later from the checker, not the parser)
@@ -53,8 +56,7 @@ class MyClass {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse both members
     assert!(!parser.arena.is_empty(), "Should parse class members");
@@ -72,8 +74,7 @@ interface A extends B C D {
     x: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse successfully with errors
     let diags = parser.get_diagnostics();
@@ -91,8 +92,7 @@ interface A extends B, C, {
     x: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse successfully
     assert!(!parser.arena.is_empty(), "Should parse interface");
@@ -106,8 +106,7 @@ interface A extends 123, B {
     x: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse successfully with error
     let diags = parser.get_diagnostics();
@@ -125,8 +124,7 @@ interface A extends {
     x: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse successfully with error
     let diags = parser.get_diagnostics();
@@ -149,8 +147,7 @@ fn test_p1_template_unterminated_expression() {
     let source = r#"
 const x = `hello ${world`;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse with error
     let diags = parser.get_diagnostics();
@@ -169,8 +166,7 @@ fn test_p1_template_missing_closing_backtick() {
     let source = r#"
 const x = `hello ${name};
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse with error
     let diags = parser.get_diagnostics();
@@ -194,8 +190,7 @@ fn test_p1_destructuring_missing_commas() {
     let source = r#"
 const { x y z } = obj;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse with errors
     let diags = parser.get_diagnostics();
@@ -211,8 +206,7 @@ fn test_p1_destructuring_trailing_comma() {
     let source = r#"
 const { x, y, z, } = obj;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse successfully (trailing comma is valid)
     assert!(!parser.arena.is_empty(), "Should parse destructuring");
@@ -226,8 +220,7 @@ fn test_p1_destructuring_missing_colon() {
     let source = r#"
 const { x y } = obj;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse with errors
     let diags = parser.get_diagnostics();
@@ -246,8 +239,7 @@ fn test_p1_nested_destructuring_errors() {
         let source = r#"
 const { a: { x y }, b } = obj;
 "#;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        parser.parse_source_file();
+        let (parser, _root) = parse_test_source(source);
 
         // Should parse with errors
         let diags = parser.get_diagnostics();
@@ -282,8 +274,7 @@ interface Bar extends A B {
 
 const { a b } = obj;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
 
     // Should parse entire file despite errors
     let diags = parser.get_diagnostics();
