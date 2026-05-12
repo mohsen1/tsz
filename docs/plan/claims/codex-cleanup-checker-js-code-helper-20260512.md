@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-checker-js-code-helper-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5934
+- **Status**: ready
 - **Workstream**: DRY checker test helpers
 
 ## Intent
@@ -22,4 +22,7 @@ diagnostic regression tests.
 
 ## Verification
 
-- Pending
+- `cargo fmt --check`
+- `cargo clippy -p tsz-checker --lib -- -D warnings`
+- `cargo nextest run -p tsz-checker --test ts1210_class_arguments_tests --no-fail-fast` (3 tests pass)
+- `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_type_cast_star_does_not_suppress_ts7006_for_nested_closure) | test(jsdoc_type_cast_any_does_not_suppress_ts7006_for_nested_closure) | test(jsdoc_type_cast_capital_object_does_not_suppress_ts7006_for_nested_closure) | test(jsdoc_type_cast_function_does_not_suppress_ts7006_for_nested_closure) | test(jsdoc_type_cast_specific_signature_still_suppresses_ts7006)' --no-fail-fast` (5 tests pass)

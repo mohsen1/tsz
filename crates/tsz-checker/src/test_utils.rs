@@ -61,6 +61,26 @@ pub fn check_js_source_diagnostics(source: &str) -> Vec<Diagnostic> {
     )
 }
 
+/// Parse, bind, and type-check JavaScript source, returning only diagnostic codes.
+///
+/// The caller supplies the test file name and any additional checker options;
+/// this helper always enables `allow_js` and `check_js`.
+pub fn check_js_source_codes_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<u32> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        ..options
+    };
+    check_source(source, file_name, options)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
 /// Parse, bind, and type-check source, returning only diagnostic codes.
 ///
 /// Convenience wrapper for tests that only inspect error codes.
