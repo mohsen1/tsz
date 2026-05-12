@@ -559,12 +559,14 @@ impl<'a> CheckerState<'a> {
                             return (literal_type, Vec::new());
                         }
                     }
-                    // `const k = Symbol()` — infer unique symbol type.
-                    // In TypeScript, const declarations initialized with Symbol() get
+                    // `const k = Symbol()` / `const k = Symbol.for(...)` — infer
+                    // unique symbol type. In TypeScript, unannotated const
+                    // declarations initialized with global symbol factory calls get
                     // a unique symbol type (typeof k), not the general `symbol` type.
                     if var_decl.initializer.is_some()
                         && self.is_const_variable_declaration(resolved_value_decl)
-                        && self.is_symbol_call_initializer(var_decl.initializer)
+                        && (self.is_symbol_call_initializer(var_decl.initializer)
+                            || self.is_symbol_for_call_initializer(var_decl.initializer))
                     {
                         return (
                             self.ctx
