@@ -1893,7 +1893,7 @@ impl<'a> CheckerState<'a> {
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
         let def = self.ctx.definition_store.get(def_id)?;
         let name = self.ctx.types.resolve_atom_ref(def.name);
-        if name.as_ref() != "TupleOf" {
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || name.as_ref() != "TupleOf" {
             return None;
         }
 
