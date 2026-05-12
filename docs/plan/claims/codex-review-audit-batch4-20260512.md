@@ -1,4 +1,4 @@
-# fix(audit): restrict TupleOf recursive-alias shortcut to type aliases
+# fix(checker): gate TupleOf recursive shortcut to type aliases
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/review-audit-batch4-20260512`
