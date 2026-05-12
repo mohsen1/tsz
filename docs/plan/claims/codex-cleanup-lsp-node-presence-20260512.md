@@ -1,6 +1,6 @@
 # codex/cleanup-lsp-node-presence-20260512
 
-Status: claim
+Status: ready
 Owner: codex
 Created: 2026-05-12 00:21:40 UTC
 
