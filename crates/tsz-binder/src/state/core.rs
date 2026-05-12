@@ -1108,8 +1108,7 @@ impl BinderState {
     /// - `module.exports.x = ...`
     /// - `exports.x = ...`
     fn source_file_has_commonjs_indicator(arena: &NodeArena, stmts: &[NodeIndex]) -> bool {
-        let mut stack: Vec<NodeIndex> =
-            stmts.iter().copied().filter(|idx| !idx.is_none()).collect();
+        let mut stack: Vec<NodeIndex> = stmts.iter().copied().filter(|idx| idx.is_some()).collect();
 
         while let Some(idx) = stack.pop() {
             let Some(node) = arena.get(idx) else {
