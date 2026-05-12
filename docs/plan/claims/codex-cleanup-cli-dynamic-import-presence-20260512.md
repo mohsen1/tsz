@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-cli-dynamic-import-presence-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5680
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -16,6 +16,7 @@ Replace the inverted `NodeIndex::is_none()` guard in CLI dynamic import collecti
 
 ## Verification
 
-- Planned: `cargo fmt --check`
-- Planned: `cargo nextest run -p tsz-cli`
-- Planned: CI unit/conformance/fourslash/emit matrix
+- `cargo fmt --check` (passed)
+- `cargo nextest run -p tsz-cli resolution_tests` (45 passed, 1560 skipped)
+- `cargo nextest run -p tsz-cli` (attempted; local run reported 1507 passed, 84 failed, 14 skipped from unrelated existing driver/tsc-compat expectations)
+- CI unit/conformance/fourslash/emit matrix (pending on PR)
