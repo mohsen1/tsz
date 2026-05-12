@@ -2840,6 +2840,21 @@ impl<'a> CheckerState<'a> {
                         result = CallResult::Success(instantiated_return);
                     }
                 }
+                if let CallResult::Success(current_return) = result
+                    && current_return != shape.return_type
+                    && common::contains_type_by_id(self.ctx.types, current_return, TypeId::UNKNOWN)
+                {
+                    let instantiated_return = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        shape.return_type,
+                        &return_context_substitution,
+                    );
+                    if instantiated_return != shape.return_type
+                        && self.is_assignable_to_with_env(instantiated_return, ctx_type)
+                    {
+                        result = CallResult::Success(instantiated_return);
+                    }
+                }
             }
         }
 
