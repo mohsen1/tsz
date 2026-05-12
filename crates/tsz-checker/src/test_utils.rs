@@ -84,6 +84,14 @@ pub fn check_source_codes(source: &str) -> Vec<u32> {
         .collect()
 }
 
+/// Parse, bind, and type-check a named TypeScript source string, returning only diagnostic codes.
+pub fn check_source_codes_named(source: &str, file_name: &str) -> Vec<u32> {
+    check_source(source, file_name, CheckerOptions::default())
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
 /// Parse, bind, and type-check source, returning `(code, message_text)` pairs.
 ///
 /// Convenience wrapper for tests that inspect both error codes and message text.
