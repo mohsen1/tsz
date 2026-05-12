@@ -2,13 +2,13 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 37
-- Potential important unresolved threads: 80
+- PRs excluded as already followed-up: 39
+- Potential important unresolved threads: 74
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 32
-- `crates/tsz-emitter`: 18
+- `crates/tsz-emitter`: 12
 - `docs`: 11
 - `crates/tsz-solver`: 7
 - `scripts`: 4
@@ -19,8 +19,7 @@
 
 ## Top PRs By Candidate Count
 
-- [#5717](https://github.com/mohsen1/tsz/pull/5717) fix(emit): decorate system class exports: 5
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit `type X = any` aliases: 4
+- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
 - [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) fix(checker): align indexSignatures1 fingerprints: 3
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
@@ -39,6 +38,7 @@
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) fix(dts): ignore cjs exports in esm js modules: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) fix(checker): report JS @type subclass assignment mismatch: 1
+- [#5899](https://github.com/mohsen1/tsz/pull/5899) chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -52,20 +52,12 @@
   - `should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it’s actually part of a ...
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) `crates/tsz-checker/src/state/variable_checking/core.rs:1193` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` ...
-- [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:1501` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - `emit_system_legacy_class_decorator_export` emits mapped output, then truncates and rewrites it. `SourceWriter::truncate` recomputes line/column but does not roll back any source-map mappings already added, so this ca...
-- [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/tests/system_emit.rs:227` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The assertion for the `__decorate` helper only checks that the helper text exists somewhere in the output, but the test message claims it is inlined inside the `System.register` callback. To make this a regression tes...
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:977` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - This rewrite unconditionally appends new `Diagnostic::error` entries without checking whether an equivalent diagnostic (same code/start/length/message) already exists. If the checker later starts emitting any of these...
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:969` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The span lookup falls back to `source_text.find(anchor_marker)` if `line_marker` isn't found. That can attach a newly injected diagnostic to the wrong occurrence of the anchor (e.g. a declaration earlier in the file) ...
-- [#5753](https://github.com/mohsen1/tsz/pull/5753) `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs:1091` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - This regression assertion covers the non-export case, but it doesn’t exercise the `export =` / CommonJS export-equals path where `emit_pending_js_export_equals_for_name` may emit `export = send;` before the synthetic ...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md:6` score=3 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword
   - The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep wor...
-- [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:26` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
-  - This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform S...
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) `crates/tsz-emitter/src/emitter/literals/core.rs:865` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
   - `parse_test_source` takes `&str` and then immediately allocates via `source.to_string()`. In tests that already build a `String` (e.g. the joined `source` used later in this module), this introduces an extra clone/all...
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs:19` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -186,10 +178,6 @@
   - The diagnostic suppression here is based only on exact `message_text` matches, so it will remove *any* TS2322 in this file with one of these messages, even if it comes from an unrelated assignment. To keep this rewrit...
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) `crates/tsz-checker/src/state/state_checking/source_file.rs:799` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...
-- [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:72` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `system_class_needs_legacy_decorate_helper` only checks class decorators + ctor parameter decorators. Legacy member decorators (method/property/accessor) and method parameter decorators also emit `__decorate(...)` via...
-- [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:1487` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - This clones the entire writer output (`get_output().to_string()`) just to slice out the newly-emitted segment, which is O(n) in the full file size and allocates twice. You can slice directly from `self.writer.get_outp...
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:605` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `rewrite_index_signatures1_fingerprints` is invoked even when `ctx.allow_source_file_test_pragmas` is false, which means this conformance-specific diagnostic rewriting could affect normal CLI/LSP checking for any user...
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs:403` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

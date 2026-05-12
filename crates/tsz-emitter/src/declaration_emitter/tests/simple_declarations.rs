@@ -1156,6 +1156,65 @@ const send = handlers => Promise.resolve(handlers);
 }
 
 #[test]
+fn test_js_typedef_before_cjs_export_equals_function_variable_path_is_covered() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+module.exports = send;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export = send;"),
+        "Expected CommonJS assignment to emit export equals for send: {output}"
+    );
+    assert_eq!(
+        output.matches("export = send;").count(),
+        1,
+        "Did not expect duplicate export-equals emission: {output}"
+    );
+    assert!(
+        output.contains("declare function send(handlers: ResolveRejectMap): Promise<any>;"),
+        "Expected JSDoc-annotated function variable to emit as a declaration: {output}"
+    );
+    assert!(
+        output.contains("declare namespace send {\n    export { ResolveRejectMap };\n}"),
+        "Expected export-equals function to preserve namespace alias export for typedefs: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected multiline typedef alias to be emitted for the export-equals function: {output}"
+    );
+
+    let export_pos = output.find("export = send;").unwrap();
+    let function_pos = output
+        .find("declare function send(handlers: ResolveRejectMap): Promise<any>;")
+        .unwrap();
+    let namespace_pos = output
+        .find("declare namespace send {\n    export { ResolveRejectMap };\n}")
+        .unwrap();
+    let alias_pos = output
+        .find("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};")
+        .unwrap();
+    assert!(
+        export_pos < function_pos && function_pos < namespace_pos && namespace_pos < alias_pos,
+        "Expected export-equals/function/namespace/typedef order for CJS JSDoc function variable emit: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**

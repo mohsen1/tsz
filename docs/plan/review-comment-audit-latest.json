@@ -39,12 +39,14 @@
     5691,
     5693,
     5694,
+    5717,
     5743,
+    5753,
     5811,
     5830,
     5901
   ],
-  "candidate_count": 80,
+  "candidate_count": 74,
   "candidates": [
     {
       "pr_number": 4967,
@@ -132,40 +134,6 @@
       ]
     },
     {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTElv",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 1501,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`emit_system_legacy_class_decorator_export` emits mapped output, then truncates and rewrites it. `SourceWriter::truncate` recomputes line/column but does not roll back any source-map mappings already added, so this can produce incorrect sourcemaps when source map generation is enabled. Prefer emitting into a temporary buffer (and merging mappings with offsets), or avoid speculative emission/truncation for this path when sourcemaps are enabled.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTEmQ",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/tests/system_emit.rs",
-      "line": 227,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The assertion for the `__decorate` helper only checks that the helper text exists somewhere in the output, but the test message claims it is inlined inside the `System.register` callback. To make this a regression test for placement, consider asserting relative ordering (e.g., helper appears after `System.register(... function (exports_1, context_1) {` and the callback's `\"use strict\";`).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5720,
       "pr_title": "fix(checker): align indexSignatures1 fingerprints",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
@@ -200,23 +168,6 @@
       ]
     },
     {
-      "pr_number": 5753,
-      "pr_title": "fix(dts): preserve js function variable docs",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5753",
-      "merged_at": "2026-05-12T07:44:05Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BVEci",
-      "path": "crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs",
-      "line": 1091,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This regression assertion covers the non-export case, but it doesn\u2019t exercise the `export =` / CommonJS export-equals path where `emit_pending_js_export_equals_for_name` may emit `export = send;` before the synthetic `declare function send...`. A focused test for a JSDoc-annotated function variable that is the export-equals target would help ensure the JSDoc remains attached to the `declare function` (and not to the `export =` statement).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5100,
       "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
@@ -230,23 +181,6 @@
       "score": 3,
       "reasons": [
         "important-keyword"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTEmY",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 26,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform System wrapper path, those helpers won\u2019t be emitted elsewhere, so decorated output can call `__param`/`__metadata` without definitions. Consider emitting the full required legacy-decorator helper set (decorate/param/metadata) based on a scan (or a shared helper-needed computation) rather than only `__decorate`.",
-      "score": 3,
-      "reasons": [
-        "action-language",
-        "detailed-thread"
       ]
     },
     {
@@ -1205,38 +1139,6 @@
       "line": 799,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...` / `flat2...` markers are found. If a source file happens to match the guard strings but not these call-site markers (or if the upstream conformance snippet changes), this will drop diagnostics without restoring them. Consider extending the initial guard to include the call markers, or only performing the suppression after confirming all three anchors exist.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTElg",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 72,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`system_class_needs_legacy_decorate_helper` only checks class decorators + ctor parameter decorators. Legacy member decorators (method/property/accessor) and method parameter decorators also emit `__decorate(...)` via `emit_legacy_member_decorator_calls`, so this pre-scan can skip inlining `__decorate` and generate System output that calls `__decorate` with no helper defined (runtime ReferenceError). Consider reusing the same member/parameter-decorator detection logic used in `emit_class_declaration` (class/emit_declaration.rs:44-101), and/or rely on the already-populated `transforms.helpers().decorate` instead of a shallow top-level scan so nested decorated classes (e.g. inside namespaces) are covered too.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5717,
-      "pr_title": "fix(emit): decorate system class exports",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
-      "merged_at": "2026-05-12T05:59:35Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTEl_",
-      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
-      "line": 1487,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This clones the entire writer output (`get_output().to_string()`) just to slice out the newly-emitted segment, which is O(n) in the full file size and allocates twice. You can slice directly from `self.writer.get_output()` into an owned `String` before truncating to avoid copying the whole output buffer.",
       "score": 1,
       "reasons": [
         "detailed-thread"
