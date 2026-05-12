@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/jsdoc-newexpr-raw-relation-subclass-20260512`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Conformance / diagnostic fingerprints)
 
 ## Intent
@@ -28,8 +28,13 @@ the real initializer type for this JSDoc path.
 
 - `crates/tsz-checker/src/state/variable_checking/core.rs`
 - `crates/tsz-checker/tests/jsdoc_cross_file_typedef_tests.rs`
+- `crates/tsz-checker/src/jsdoc/resolution/type_construction.rs`
 
 ## Verification
 
-- Planned: targeted checker regression for JS `@type` new-expression assignment.
-- Planned: targeted conformance `subclassThisTypeAssignable01`.
+- `cargo test -p tsz-checker --lib jsdoc_type_assignment_new_expression_reports_subclass_mismatch -- --nocapture` (1/1 pass)
+- `cargo build --profile dist-fast -p tsz-cli -p tsz-conformance` (pass)
+- `.target/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target/dist-fast/tsz --filter subclassThisTypeAssignable01 --print-fingerprints --verbose` (1/1 pass, fingerprint-only 0)
+- `.target/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target/dist-fast/tsz --filter subclassThisTypeAssignable02 --print-fingerprints --verbose` (1/1 pass, fingerprint-only 0)
+- `cargo fmt --all` (pass)
+- `git diff --check` (pass)
