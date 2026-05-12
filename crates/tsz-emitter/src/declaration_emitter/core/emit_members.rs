@@ -1188,9 +1188,56 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn type_text_union_contains(type_text: &str, needle: &str) -> bool {
-        type_text
-            .split('|')
-            .any(|part| part.trim().trim_matches('(').trim_matches(')') == needle)
+        Self::type_text_top_level_union_members(type_text)
+            .into_iter()
+            .any(|member| Self::trim_wrapping_parens(member) == needle)
+    }
+
+    fn type_text_top_level_union_members(type_text: &str) -> Vec<&str> {
+        let mut members = Vec::new();
+        let mut start = 0usize;
+        let mut paren_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut angle_depth = 0u32;
+
+        for (idx, ch) in type_text.char_indices() {
+            match ch {
+                '(' => paren_depth = paren_depth.saturating_add(1),
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth = bracket_depth.saturating_add(1),
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth = brace_depth.saturating_add(1),
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                '<' => angle_depth = angle_depth.saturating_add(1),
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                '|' if paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    members.push(type_text[start..idx].trim());
+                    start = idx + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+
+        members.push(type_text[start..].trim());
+        members
+    }
+
+    fn trim_wrapping_parens(type_text: &str) -> &str {
+        let mut text = type_text.trim();
+        loop {
+            let Some(stripped) = text
+                .strip_prefix('(')
+                .and_then(|inner| inner.strip_suffix(')'))
+            else {
+                return text;
+            };
+            text = stripped.trim();
+        }
     }
 
     pub(in crate::declaration_emitter) fn js_accessor_backing_field_type_text(
