@@ -60,6 +60,14 @@ Close remaining high-signal parser review-audit threads by:
   - verified the referenced claim file
     `perf-delegate-cache-hits-counter-coverage-2026-05-11.md` no longer exists
     on current `main`; stale thread retired from current audit state.
+- review comments left on #5061:
+  - verified current `cross_file.rs` no longer uses the flagged
+    `enabled_fast()` outer gate + `perf_counters::inc(...)` inner-gate pattern
+    at the cited delegate cache-hit sites; the historical double-gate thread is
+    stale relative to current implementation.
+  - verified the separate docs thread points at a deleted claim file
+    (`perf-delegate-counter-coverage-2026-05-10.md`) and is stale on current
+    `main`.
 
 ## Files Touched
 
@@ -79,9 +87,10 @@ Close remaining high-signal parser review-audit threads by:
 - `docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md`
 - `docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md`
 - `docs/plan/PERFORMANCE_PLAN.md`
+- `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
 
 ## Verification
 
 - `cargo fmt --check`
 - `cargo test -p tsz-parser`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=129`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=126`)

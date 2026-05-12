@@ -2,14 +2,14 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 19
-- Potential important unresolved threads: 129
+- PRs excluded as already followed-up: 20
+- Potential important unresolved threads: 126
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 49
+- `crates/tsz-checker`: 47
 - `crates/tsz-emitter`: 34
-- `docs`: 16
+- `docs`: 15
 - `crates/tsz-parser`: 11
 - `crates/tsz-solver`: 9
 - `scripts`: 6
@@ -34,11 +34,11 @@
 - [#5694](https://github.com/mohsen1/tsz/pull/5694) fix(dts): preserve generic jsdoc type tags: 3
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) fix(checker): align indexSignatures1 fingerprints: 3
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
-- [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
 - [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
 - [#5102](https://github.com/mohsen1/tsz/pull/5102) fix(parser): recover invalid arrow conditional tails: 2
 - [#4958](https://github.com/mohsen1/tsz/pull/4958) fix(parser): align reachability recovery diagnostics: 2
+- [#4993](https://github.com/mohsen1/tsz/pull/4993) docs(solver): clarify interner perf-counter cost summary: 2
 
 ## Candidate Threads (Top 100 by score)
 
@@ -200,12 +200,6 @@
   - This script imports `tomllib`, which requires Python 3.11+. `scripts/arch/check-checker-boundaries.sh` is run in CI (including self-hosted runners via `scripts/ci/gcp-full-ci.sh`), so if any runner or contributor mach...
 - [#5034](https://github.com/mohsen1/tsz/pull/5034) `scripts/arch/checker_field_inventory.py:43` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs i...
-- [#5061](https://github.com/mohsen1/tsz/pull/5061) `docs/plan/claims/perf-delegate-counter-coverage-2026-05-10.md:58` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The Verification section still includes placeholder items ("to be run" / "to be confirmed"), but the PR description indicates these checks already ran clean. Please update these lines to reflect the actual commands/re...
-- [#5061](https://github.com/mohsen1/tsz/pull/5061) `crates/tsz-checker/src/state/type_analysis/cross_file.rs:1148` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - This block gates on `enabled_fast()`, then calls `perf_counters::inc(...)`, which checks `enabled_fast()` again. Since the outer gate is needed to avoid initializing `counters()`, consider incrementing the `AtomicU64`...
-- [#5061](https://github.com/mohsen1/tsz/pull/5061) `crates/tsz-checker/src/state/type_analysis/cross_file.rs:1303` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - Same as the class-instance delegate path: `enabled_fast()` is checked here and then `inc(...)` re-checks it. If the goal is avoiding `counters()` initialization when disabled, increment the atomic directly inside the ...
 - [#5075](https://github.com/mohsen1/tsz/pull/5075) `crates/tsz-checker/src/types/computation/call_finalize.rs:563` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `construct_signature_flags` calls `common::construct_signatures_for_type`, which builds a fresh `Vec<CallSignature>` (cloning signature data) just to compute two booleans. Even though this is on the mismatch path, it’...
 - [#5082](https://github.com/mohsen1/tsz/pull/5082) `docs/plan/PERFORMANCE_PLAN.md:40` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -242,3 +236,9 @@
   - `emit_recovered_namespace_function_arrow_body` emits the recovered body via `emit_expression(...)` directly. That bypasses the expression-statement disambiguation logic (parenthesizing leading `{` / `function` / etc.)...
 - [#5657](https://github.com/mohsen1/tsz/pull/5657) `crates/tsz-checker/src/assignability/assignment_checker/destructuring.rs:444` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal “explain” path and can drop related-information elaborat...
+- [#5658](https://github.com/mohsen1/tsz/pull/5658) `crates/tsz-emitter/src/transforms/class_es5_ir_members.rs:733` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - The extra `IRNode::VarDecl` uses `self.generate_temp_name()` but that name is not wired to the temp alias actually used when printing the nested static class expression initializer. If the transformer's temp counter h...
+- [#5658](https://github.com/mohsen1/tsz/pull/5658) `crates/tsz-emitter/src/emitter/es5/helpers_async.rs:22` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `avoid_generator_state_collision` is currently hard-coded to only rewrite `function (_a)` when `class_temp == "_a"`, and it only replaces `_a.label` / `_a.sent()`. The async lowering can choose other generator-state n...
+- [#5662](https://github.com/mohsen1/tsz/pull/5662) `crates/tsz-emitter/src/emitter/jsx/emit.rs:326` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - System wrapper emission now forces the automatic JSX path to emit `_jsx(...)` / `_jsxDEV(...)` when `original_module_kind` is `System`, but I can't find any code in the System wrapper that declares or initializes `_js...

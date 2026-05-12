@@ -17,6 +17,7 @@
     5040,
     5048,
     5060,
+    5061,
     5062,
     5064,
     5094,
@@ -26,7 +27,7 @@
     5830,
     5901
   ],
-  "candidate_count": 129,
+  "candidate_count": 126,
   "candidates": [
     {
       "pr_number": 5089,
@@ -1336,54 +1337,6 @@
       "line": 43,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs it). Please update the docstring to match current behavior to avoid confusion about when/where the guard runs.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5061,
-      "pr_title": "perf(checker): close delegate-counter coverage gap for cross-arena delegations",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5061",
-      "merged_at": "2026-05-10T22:23:53Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A71Cs",
-      "path": "docs/plan/claims/perf-delegate-counter-coverage-2026-05-10.md",
-      "line": 58,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The Verification section still includes placeholder items (\"to be run\" / \"to be confirmed\"), but the PR description indicates these checks already ran clean. Please update these lines to reflect the actual commands/results (or remove the placeholders) so the claim file stays consistent with the PR state.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5061,
-      "pr_title": "perf(checker): close delegate-counter coverage gap for cross-arena delegations",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5061",
-      "merged_at": "2026-05-10T22:23:53Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A71Cv",
-      "path": "crates/tsz-checker/src/state/type_analysis/cross_file.rs",
-      "line": 1148,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This block gates on `enabled_fast()`, then calls `perf_counters::inc(...)`, which checks `enabled_fast()` again. Since the outer gate is needed to avoid initializing `counters()`, consider incrementing the `AtomicU64` directly (or adding a helper that assumes enabled) to avoid the redundant enabled check in perf-enabled runs.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5061,
-      "pr_title": "perf(checker): close delegate-counter coverage gap for cross-arena delegations",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5061",
-      "merged_at": "2026-05-10T22:23:53Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A71Cw",
-      "path": "crates/tsz-checker/src/state/type_analysis/cross_file.rs",
-      "line": 1303,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "Same as the class-instance delegate path: `enabled_fast()` is checked here and then `inc(...)` re-checks it. If the goal is avoiding `counters()` initialization when disabled, increment the atomic directly inside the outer gate (or use a helper) to avoid the double gate when counters are enabled.",
       "score": 1,
       "reasons": [
         "detailed-thread"
