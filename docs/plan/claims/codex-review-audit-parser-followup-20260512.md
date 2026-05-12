@@ -73,6 +73,14 @@ Close remaining high-signal parser review-audit threads by:
     checker boundary workflow now runs through `scripts/arch/arch_guard.py`
     from `check-checker-boundaries.sh`, so both historical threads on the
     removed script are stale on current `main`.
+- review comments left on #5075:
+  - refactored `construct_signature_flags` in `call_finalize.rs` to avoid the
+    clone-heavy `construct_signatures_for_type` path when only two booleans are
+    needed.
+  - switched to shape-query inspection
+    (`callable_shape_for_type_extended`/`function_shape_for_type`) so construct
+    signature presence and genericity are computed without allocating/cloning a
+    fresh `Vec<CallSignature>`.
 
 ## Files Touched
 
@@ -95,9 +103,12 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
 - `scripts/arch/check-checker-boundaries.sh`
 - `scripts/arch/arch_guard.py`
+- `crates/tsz-checker/src/types/computation/call_finalize.rs`
 
 ## Verification
 
 - `cargo fmt --check`
 - `cargo test -p tsz-parser`
+- `cargo test -p tsz-checker --test generic_call_inference_tests -- --nocapture`
+- `cargo test -p tsz-checker --test ts2344_class_constructor_constraint -- --nocapture`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)
