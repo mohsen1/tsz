@@ -72,9 +72,12 @@ jobs:
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             cross: true
-          - target: x86_64-apple-darwin
-            os: macos-13
-            cross: false
+          # NOTE: x86_64-apple-darwin (Intel Mac) is intentionally omitted.
+          # GitHub Actions macos-13 (Intel) runners are heavily capacity-
+          # constrained and reliably queue for 30+ minutes; Apple Silicon
+          # covers the modern Mac fleet, and Intel users can fall back to
+          # `cargo install --git ...` or build from source. Restore this
+          # matrix entry if macos-13 capacity becomes reliable.
           - target: aarch64-apple-darwin
             os: macos-14
             cross: false
