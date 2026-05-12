@@ -474,36 +474,48 @@ impl<'a> DeclarationEmitter<'a> {
                 inner_type_param_renames,
             ));
         }
-        if inner_func.body.is_some() && self.body_returns_void(inner_func.body) {
-            return Some("void".to_string());
-        }
         if inner_func.body.is_none() {
             return None;
         }
-        let outer_func = outer_func?;
-        let return_expr = self
-            .const_asserted_expression(inner_func.body)
-            .unwrap_or(inner_func.body);
-        let return_node = self.arena.get(return_expr)?;
-        if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
+
+        let return_text = if self.body_returns_void(inner_func.body) {
+            "void".to_string()
+        } else {
+            let outer_func = outer_func?;
+            let return_expr = self
+                .const_asserted_expression(inner_func.body)
+                .unwrap_or(inner_func.body);
+            let return_node = self.arena.get(return_expr)?;
+            if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                return None;
+            }
+            let array = self.arena.get_literal_expr(return_node)?;
+            let elements = array
+                .elements
+                .nodes
+                .iter()
+                .copied()
+                .map(|elem_idx| {
+                    self.function_scope_identifier_type_text(
+                        outer_func,
+                        inner_func,
+                        elem_idx,
+                        inner_type_param_renames,
+                    )
+                })
+                .collect::<Option<Vec<_>>>()?;
+            format!("readonly [{}]", elements.join(", "))
+        };
+
+        if inner_func.is_async
+            || self
+                .arena
+                .has_modifier(&inner_func.modifiers, SyntaxKind::AsyncKeyword)
+        {
+            Some(format!("Promise<{return_text}>"))
+        } else {
+            Some(return_text)
         }
-        let array = self.arena.get_literal_expr(return_node)?;
-        let elements = array
-            .elements
-            .nodes
-            .iter()
-            .copied()
-            .map(|elem_idx| {
-                self.function_scope_identifier_type_text(
-                    outer_func,
-                    inner_func,
-                    elem_idx,
-                    inner_type_param_renames,
-                )
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some(format!("readonly [{}]", elements.join(", ")))
     }
 
     fn const_asserted_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {

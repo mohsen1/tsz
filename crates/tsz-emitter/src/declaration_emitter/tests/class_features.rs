@@ -171,6 +171,23 @@ fn test_parameter_property_initializer_infers_property_type() {
 }
 
 #[test]
+fn test_js_async_class_field_arrow_emits_promise_return() {
+    let output = emit_js_dts(
+        r#"
+class Foo {
+    b = async () => {
+        await Promise.resolve(1);
+    }
+}
+"#,
+    );
+    assert!(
+        output.contains("b: () => Promise<void>;"),
+        "Expected async class field arrow to emit a Promise return: {output}"
+    );
+}
+
+#[test]
 fn test_getter_and_setter() {
     let output = emit_dts(
         r#"
