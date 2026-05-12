@@ -4,7 +4,7 @@
 use crate::parser::node::NodeArena;
 use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{parse_source, parse_source_named};
 use crate::parser::{NodeIndex, ParserState};
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
@@ -751,8 +751,7 @@ fn arrow_nested() {
 #[test]
 fn js_optional_parameter_span_starts_at_question_token() {
     let source = "const f = (b, c?: string) => c;";
-    let mut parser = ParserState::new("fileJs.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_source_named("fileJs.js", source);
     let arena = parser.get_arena();
 
     let init = get_var_initializer(arena, root);
