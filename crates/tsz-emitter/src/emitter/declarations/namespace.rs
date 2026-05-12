@@ -1087,14 +1087,10 @@ impl<'a> Printer<'a> {
                 .arena
                 .get_enum(node)
                 .map(|e| self.get_identifier_text_idx(e.name)),
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.arena.get_module(node).and_then(|module| {
-                    self.arena
-                        .get(module.name)
-                        .and_then(|name_node| self.arena.get_identifier(name_node))
-                        .map(|ident| ident.escaped_text.clone())
-                })
-            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(node)
+                .map(|m| self.get_identifier_text_idx(m.name)),
             _ => None,
         }?;
         if name.is_empty() { None } else { Some(name) }
