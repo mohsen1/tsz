@@ -744,6 +744,11 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let (Some(return_type_text), true) =
+            self.function_body_return_hint(func, func.body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let Some(return_type_text) = self
             .js_function_body_preferred_return_text_for_declaration(
                 func.body,
@@ -1130,6 +1135,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
         for &member_idx in &class.members.nodes {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
@@ -1221,6 +1230,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
         for &member_idx in &class.members.nodes {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;

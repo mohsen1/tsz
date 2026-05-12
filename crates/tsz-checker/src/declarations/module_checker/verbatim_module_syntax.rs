@@ -295,7 +295,7 @@ impl<'a> CheckerState<'a> {
             if sym.is_type_only {
                 return true;
             }
-            if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+            if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
                 let has_syntactic_type_decl_in_js = self.is_js_file()
                     && sym.declarations.iter().any(|&decl_idx| {
                         self.ctx.arena.get(decl_idx).is_some_and(|n| {
@@ -420,7 +420,7 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
                     let message = format_message(
                         diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
                         &[&name],
@@ -451,7 +451,7 @@ impl<'a> CheckerState<'a> {
             // the import alias itself, or the local TYPE_ALIAS that shadowed
             // it. We resolve the import alias via alias_partner_for if the
             // local sym is a TYPE_ALIAS.
-            if (sym.flags & VALUE) != 0 {
+            if sym.has_any_flags(VALUE) {
                 return;
             }
 

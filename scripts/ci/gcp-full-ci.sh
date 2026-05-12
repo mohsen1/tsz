@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source scripts/ci/suite-metadata.sh
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
@@ -217,33 +218,7 @@ publish_latest_metric() {
 }
 
 suite_needs_group() {
-  local suite="$1" group="$2"
-  case "$suite" in
-    all|full)
-      return 0
-      ;;
-  esac
-
-  case "$group" in
-    lint)
-      [[ "$suite" == "lint" ]]
-      ;;
-    unit)
-      [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
-      ;;
-    wasm)
-      [[ "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" ]]
-      ;;
-    node)
-      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
-      ;;
-    rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  ci_suite_needs_group "$@"
 }
 
 ensure_host_tools() {
@@ -1700,31 +1675,9 @@ run_build() {
   show_sccache_stats
 }
 
-# Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
-# Keep these in sync — if you add a suite that reads TypeScript/ source,
-# update both here and there.
-#
-# Default is "needs TS source" because most cargo build / cargo test
-# invocations reference TypeScript/src/lib (and test fixtures pull from
-# tests/cases). The exceptions are explicit:
-#   - lint runs only `cargo clippy`, no build/test.
-#   - dist-binaries and unit-archive only compile Rust artifacts.
-#   - unit-shard runs nextest from a pre-built archive, no compilation.
-#   - fourslash-shard gets built/local and tests/cases/fourslash from the
-#     node-harness artifact.
-# Aggregate suites bypass run_common_setup() entirely (see main()).
 suite_needs_typescript_source() {
   local suite="$1"
-  case "$suite" in
-    lint) return 1 ;;
-    dist-binaries|unit-archive) return 1 ;;
-    unit-shard) return 1 ;;
-    fourslash-shard) return 1 ;;
-    # Aggregate suites only download per-shard JSONs from GCS, jq-sum
-    # them, and compare to a snapshot file. They never read TypeScript/.
-    conformance-aggregate|emit-aggregate|fourslash-aggregate) return 1 ;;
-    *) return 0 ;;
-  esac
+  ci_suite_has_cache "$suite" typescript-source
 }
 
 run_common_setup() {
@@ -1767,6 +1720,12 @@ run_all_suites() {
 
 main() {
   local suite="${1:-${TSZ_CI_SUITE:-all}}"
+
+  if ! ci_suite_is_known full "$suite"; then
+    echo "error: unknown CI suite '${suite}'" >&2
+    echo "valid suites: $(ci_suite_list full ', ')" >&2
+    return 2
+  fi
 
   run_common_setup "$suite"
 
@@ -1844,7 +1803,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, wasm-all, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: $(ci_suite_list full ', ')" >&2
       return 2
       ;;
   esac

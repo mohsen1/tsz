@@ -1,6 +1,7 @@
 //! Recovery for returned local function initializer signatures.
 
 use super::super::DeclarationEmitter;
+use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -49,9 +50,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             let inner_func = self.arena.get_function(init_node)?;
-            if let Some(type_text) =
-                self.source_function_initializer_type_text(outer_func, inner_func)
-            {
+            if let Some(type_text) = self.source_function_initializer_type_text(
+                outer_func,
+                var_decl.initializer,
+                inner_func,
+            ) {
                 return Some(type_text);
             }
         }
@@ -182,7 +185,11 @@ impl<'a> DeclarationEmitter<'a> {
                         return None;
                     }
                     let inner_func = self.arena.get_function(init_node)?;
-                    return self.source_function_initializer_type_text(outer_func, inner_func);
+                    return self.source_function_initializer_type_text(
+                        outer_func,
+                        decl.initializer,
+                        inner_func,
+                    );
                 }
             }
         }
@@ -204,6 +211,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn source_function_initializer_type_text(
         &self,
         outer_func: &tsz_parser::parser::node::FunctionData,
+        inner_idx: NodeIndex,
         inner_func: &tsz_parser::parser::node::FunctionData,
     ) -> Option<String> {
         let outer_type_param_names = outer_func
@@ -211,12 +219,18 @@ impl<'a> DeclarationEmitter<'a> {
             .as_ref()
             .map(|type_params| self.collect_type_param_names(type_params))
             .unwrap_or_default();
-        self.source_nested_function_type_text(Some(outer_func), inner_func, &outer_type_param_names)
+        self.source_nested_function_type_text(
+            Some(outer_func),
+            inner_idx,
+            inner_func,
+            &outer_type_param_names,
+        )
     }
 
     pub(in crate::declaration_emitter) fn source_nested_function_type_text(
         &self,
         outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
         inner_func: &tsz_parser::parser::node::FunctionData,
         outer_type_param_names: &[String],
     ) -> Option<String> {
@@ -244,16 +258,31 @@ impl<'a> DeclarationEmitter<'a> {
             })
             .unwrap_or_default();
 
+        let jsdoc = self.returned_function_expression_jsdoc(inner_idx, inner_func);
+        let jsdoc_function_parts = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_type_text)
+            .and_then(|type_text| Self::parse_function_type_text(&type_text));
         let params_text = inner_func
             .parameters
             .nodes
             .iter()
             .copied()
-            .map(|param_idx| self.source_function_parameter_text(param_idx, &inner_renames))
+            .enumerate()
+            .map(|(position, param_idx)| {
+                self.source_function_parameter_text(
+                    param_idx,
+                    position,
+                    &inner_renames,
+                    jsdoc.as_deref(),
+                    jsdoc_function_parts.as_ref(),
+                )
+            })
             .collect::<Option<Vec<_>>>()?
             .join(", ");
         let return_text = self.source_function_initializer_return_type_text(
             outer_func,
+            inner_idx,
             inner_func,
             &inner_renames,
         )?;
@@ -296,7 +325,7 @@ impl<'a> DeclarationEmitter<'a> {
         let inner_idx = returned_function?;
         let inner_node = self.arena.get(inner_idx)?;
         let inner_func = self.arena.get_function(inner_node)?;
-        self.source_nested_function_type_text(Some(outer_func), inner_func, &[])
+        self.source_nested_function_type_text(Some(outer_func), inner_idx, inner_func, &[])
     }
 
     pub(in crate::declaration_emitter) fn function_body_return_hint(
@@ -331,7 +360,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let inner_func = self.arena.get_function(init_node)?;
         let outer_type_param_names = self.enclosing_class_type_param_names(prop_idx);
-        self.source_nested_function_type_text(None, inner_func, &outer_type_param_names)
+        self.source_nested_function_type_text(
+            None,
+            initializer,
+            inner_func,
+            &outer_type_param_names,
+        )
     }
 
     fn enclosing_class_type_param_names(&self, from_idx: NodeIndex) -> Vec<String> {
@@ -444,7 +478,10 @@ impl<'a> DeclarationEmitter<'a> {
     fn source_function_parameter_text(
         &self,
         param_idx: NodeIndex,
+        position: usize,
         type_param_renames: &[(String, String)],
+        function_jsdoc: Option<&str>,
+        jsdoc_function_parts: Option<&super::type_inference_function_text::FunctionTypeTextParts>,
     ) -> Option<String> {
         let param_node = self.arena.get(param_idx)?;
         let param = self.arena.get_parameter(param_node)?;
@@ -452,6 +489,18 @@ impl<'a> DeclarationEmitter<'a> {
         let raw_type_text = self
             .preferred_annotation_name_text(param.type_annotation)
             .or_else(|| self.emit_type_node_text(param.type_annotation))
+            .or_else(|| {
+                self.source_is_js_file
+                    .then(|| {
+                        self.jsdoc_returned_function_parameter_type_text(
+                            param_idx,
+                            position,
+                            function_jsdoc,
+                            jsdoc_function_parts,
+                        )
+                    })
+                    .flatten()
+            })
             .unwrap_or_else(|| "any".to_string());
         let type_text = Self::simple_type_reference_name(&raw_type_text)
             .and_then(|alias_name| self.local_type_alias_annotation_text(param_idx, &alias_name))
@@ -464,6 +513,33 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(params);
         }
         Some(format!("{name}: {type_text}"))
+    }
+
+    fn jsdoc_returned_function_parameter_type_text(
+        &self,
+        param_idx: NodeIndex,
+        position: usize,
+        function_jsdoc: Option<&str>,
+        jsdoc_function_parts: Option<&super::type_inference_function_text::FunctionTypeTextParts>,
+    ) -> Option<String> {
+        if let Some(part) = jsdoc_function_parts.and_then(|parts| parts.parameters.get(position)) {
+            return Some(part.type_text.clone());
+        }
+
+        let params = function_jsdoc.map(Self::parse_jsdoc_param_decls)?;
+        if params.is_empty() {
+            return None;
+        }
+
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        if let Some(name) = self.get_identifier_text(param.name)
+            && let Some(found) = params.iter().find(|decl| decl.name == name)
+        {
+            return Some(found.type_text.clone());
+        }
+
+        params.into_iter().nth(position).map(|decl| decl.type_text)
     }
 
     fn expand_rest_tuple_parameter_text(
@@ -587,6 +663,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn source_function_initializer_return_type_text(
         &self,
         outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
         inner_func: &tsz_parser::parser::node::FunctionData,
         inner_type_param_renames: &[(String, String)],
     ) -> Option<String> {
@@ -594,6 +671,15 @@ impl<'a> DeclarationEmitter<'a> {
             let type_text = self
                 .preferred_annotation_name_text(inner_func.type_annotation)
                 .or_else(|| self.emit_type_node_text(inner_func.type_annotation))?;
+            return Some(Self::rename_type_text_identifiers(
+                &type_text,
+                inner_type_param_renames,
+            ));
+        }
+        if self.source_is_js_file
+            && let Some(type_text) =
+                self.jsdoc_returned_function_return_type_text(inner_idx, inner_func)
+        {
             return Some(Self::rename_type_text_identifiers(
                 &type_text,
                 inner_type_param_renames,
@@ -641,6 +727,85 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(return_text)
         }
+    }
+
+    fn jsdoc_returned_function_return_type_text(
+        &self,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let jsdoc = self.returned_function_expression_jsdoc(inner_idx, inner_func)?;
+        if let Some(type_text) = Self::parse_jsdoc_type_text(&jsdoc)
+            && let Some(parts) = Self::parse_function_type_text(&type_text)
+        {
+            return Some(parts.return_type);
+        }
+        Self::parse_jsdoc_return_type_text(&jsdoc)
+    }
+
+    fn returned_function_expression_jsdoc(
+        &self,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        if let Some(jsdoc) = self.function_like_jsdoc_for_node(inner_idx) {
+            return Some(jsdoc);
+        }
+        if inner_func.body.is_some()
+            && let Some(jsdoc) = self.function_like_jsdoc_for_node(inner_func.body)
+        {
+            return Some(jsdoc);
+        }
+        if let Some(return_idx) = self.return_statement_ancestor(inner_idx)
+            && let Some(return_node) = self.arena.get(return_idx)
+            && let Some(jsdoc) = self.leading_jsdoc_comment_for_pos(return_node.pos)
+        {
+            return Some(jsdoc);
+        }
+        inner_func
+            .parameters
+            .nodes
+            .first()
+            .and_then(|param_idx| self.function_like_jsdoc_for_node(*param_idx))
+    }
+
+    fn return_statement_ancestor(&self, from_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = from_idx;
+        for _ in 0..8 {
+            let parent_idx = self.arena.parent_of(current)?;
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    fn leading_jsdoc_comment_for_pos(&self, pos: u32) -> Option<String> {
+        let text = self.source_file_text.as_deref()?;
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        self.all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .rev()
+            .find_map(|comment| {
+                let between = text.get(comment.end as usize..actual_start)?;
+                if !between
+                    .bytes()
+                    .all(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+                {
+                    return None;
+                }
+                is_jsdoc_comment(comment, text).then(|| get_jsdoc_content(comment, text))
+            })
     }
 
     fn const_asserted_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {

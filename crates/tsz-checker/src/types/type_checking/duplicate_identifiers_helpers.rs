@@ -1661,7 +1661,7 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::FUNCTION
             | symbol_flags::CLASS
             | symbol_flags::ENUM;
-        if (symbol.flags & concrete_value) != 0 {
+        if symbol.has_any_flags(concrete_value) {
             return has_ambient_value_default_export;
         }
 

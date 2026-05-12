@@ -450,7 +450,7 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.alias_partners_contains(self.ctx.binder, resolved)
                                     },
                                 );
-                        if (symbol.flags & valid_namespace_flags) == 0
+                        if !symbol.has_any_flags(valid_namespace_flags)
                             && !is_alias
                             && !has_alias_partner
                             && !self.ctx.has_parse_errors

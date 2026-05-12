@@ -43,7 +43,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let non_namespace_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        if (sym.flags & non_namespace_value_flags) != 0 {
+        if sym.has_any_flags(non_namespace_value_flags) {
             return true;
         }
 
@@ -587,7 +587,7 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::CLASS
             | symbol_flags::ENUM
             | symbol_flags::VALUE_MODULE;
-        if sym.is_type_only && (sym.flags & value_flags) == 0 {
+        if sym.is_type_only && !sym.has_any_flags(value_flags) {
             let msg = format_message(
                 diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_E,
                 &[&name],
@@ -602,7 +602,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a pure type (TS1282)
         let pure_type = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
-        if (sym.flags & pure_type) != 0 && (sym.flags & value_flags) == 0 {
+        if sym.has_any_flags(pure_type) && !sym.has_any_flags(value_flags) {
             let msg = format_message(
                 diagnostic_messages::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
                 &[&name],

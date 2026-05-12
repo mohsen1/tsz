@@ -2605,6 +2605,43 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_js_late_bound_function_reserved_alias_uses_keyword_name() {
+    let source = r#"
+function foo() {}
+foo.null = true;
+
+function bar() {}
+bar.normal = false;
+
+function baz() {}
+baz.class = true;
+baz.normal = false;
+"#;
+
+    let output = emit_js_dts_with_usage_analysis(source);
+    let expected = r#"declare function foo(): void;
+declare namespace foo {
+    let _null: boolean;
+    export { _null as null };
+}
+declare function bar(): void;
+declare namespace bar {
+    let normal: boolean;
+}
+declare function baz(): void;
+declare namespace baz {
+    let _class: boolean;
+    export { _class as class };
+    let normal_1: boolean;
+    export { normal_1 as normal };
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected JS reserved function expandos to use keyword aliases and avoid reused local names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_arrow_assignments_preserve_key_text_and_types() {
     let source = r#"
 const c = "C";
@@ -3084,6 +3121,25 @@ module.exports = class {
     assert!(
         output.contains("t: number;"),
         "Expected instance properties to survive the synthetic exports class surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_array_subclass_emits_array_any_and_constructors() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class ElementsArray extends Array {
+    static {
+        this.isArray = (arg) => Array.isArray(arg);
+    }
+}
+"#,
+    );
+
+    let expected = "declare class ElementsArray extends Array<any> {\n    constructor();\n    constructor(arrayLength: number);\n    constructor(...items: any[]);\n}";
+    assert!(
+        output.contains(expected),
+        "Expected bare JS Array subclasses to inherit Array constructor overloads: {output}"
     );
 }
 
@@ -5292,5 +5348,37 @@ u.noError();
     assert!(
         output.contains("declare const u: any;"),
         "Expected dynamic require alias to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_js_returned_function_expression_uses_attached_jsdoc_signature() {
+    let output = emit_js_dts(
+        r#"
+function f1() {
+    /**
+     * @param {number} a
+     * @param {number} b
+     * @returns {number}
+     */
+    return (a, b) => a + b;
+}
+
+function f2() {
+    /** @type {(a: string, b: string) => string} */
+    return function (a, b) {
+        return a + b;
+    };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f1(): (a: number, b: number) => number;"),
+        "Expected returned arrow signature to use attached @param/@returns JSDoc: {output}"
+    );
+    assert!(
+        output.contains("declare function f2(): (a: string, b: string) => string;"),
+        "Expected returned function expression signature to use attached @type JSDoc: {output}"
     );
 }

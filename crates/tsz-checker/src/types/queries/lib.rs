@@ -2068,7 +2068,7 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::CLASS
                     | symbol_flags::ENUM;
 
-                if (symbol.flags & shadowing_flags) == 0 {
+                if !symbol.has_any_flags(shadowing_flags) {
                     return false;
                 }
 

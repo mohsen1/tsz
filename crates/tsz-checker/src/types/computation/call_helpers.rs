@@ -1124,7 +1124,7 @@ impl<'a> CheckerState<'a> {
         {
             let value_flags_except_module =
                 tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
-            if (symbol.flags & value_flags_except_module) != 0 && !symbol.is_type_only {
+            if symbol.has_any_flags(value_flags_except_module) && !symbol.is_type_only {
                 // Prefer the merged binder's own value declarations when available.
                 // Driver-mode checking rebuilds checker-facing lib binders, so
                 // direct SymbolIds from those fresh binders are not stable inputs
