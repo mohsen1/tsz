@@ -174,6 +174,18 @@ Close remaining high-signal parser review-audit threads by:
     the current matcher shape.
   - treated the PR-description scope wording thread as stale historical metadata
     relative to the merged test content.
+- review comments left on #5100:
+  - verified claim metadata in
+    `fix-declaration-recursive-alias-ts2589-2026-05-10.md` now uses the
+    documented workflow fields (`PR: #4977`, `Status: shipped`) rather than the
+    old non-standard status wording.
+  - verified recursive conditional TS2589 gating in
+    `type_alias_checking.rs` is conditional-body scoped and includes
+    deferred-passthrough checks for scoped type parameters and enclosing
+    `infer` bindings (`identifier_references_enclosing_infer_binding` path),
+    addressing the previously flagged false-positive risk.
+  - confirmed TS2589 regression tests covering parameter-dependent helper args
+    and indexed type-parameter recursive args pass in the current checker.
 
 ## Files Touched
 
@@ -195,13 +207,16 @@ Close remaining high-signal parser review-audit threads by:
 - `docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md`
 - `docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md`
 - `docs/plan/claims/perf-t0.4-attribution-decision-record.md`
+- `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md`
 - `docs/plan/PERFORMANCE_PLAN.md`
 - `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`
 - `docs/plan/perf-runs/raw/monorepo-00{1..6}-diag.json`
 - `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
 - `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs`
+- `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs`
 - `crates/tsz-checker/tests/ts2315_explicit_any_type_alias_tests.rs`
 - `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs`
+- `crates/tsz-checker/tests/ts2589_tests.rs`
 - `scripts/conformance/conformance-baseline.txt`
 - `scripts/conformance/conformance-detail.json`
 - `scripts/arch/check-checker-boundaries.sh`
@@ -234,5 +249,7 @@ Close remaining high-signal parser review-audit threads by:
 - `cargo test -p tsz-checker --test ts2315_explicit_any_type_alias_tests ts2315_fires_on_parenthesized_explicit_any_alias_body -- --nocapture`
 - `cargo test -p tsz-checker --test intersection_index_signature_fingerprint_tests assignment_to_index_signature_preserves_declared_intersection_and_alias_surfaces -- --nocapture`
 - `cargo test -p tsz-checker --test intersection_index_signature_fingerprint_tests assignment_to_primitive_index_signature_preserves_anonymous_intersection_surface -- --nocapture`
+- `cargo test -p tsz-checker --lib recursive_conditional_alias_with_parameter_dependent_helper_args_no_definition_ts2589 -- --nocapture`
+- `cargo test -p tsz-checker --lib bounded_recursive_alias_with_indexed_type_parameter_arg_no_ts2589 -- --nocapture`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` is currently blocked by GitHub GraphQL rate-limit exhaustion until reset at `2026-05-12T21:09:52Z`.
