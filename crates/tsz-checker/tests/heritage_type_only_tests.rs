@@ -7,8 +7,12 @@ use crate::context::{CheckerOptions, LibContext};
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::{BinderState, lib_loader::LibFile, state::LibContext as BinderLibContext};
-use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     crate::test_utils::load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
@@ -24,8 +28,7 @@ fn class_extends_interface_emits_ts2689() {
 interface I { x: number; }
 class U extends I {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -87,8 +90,7 @@ fn class_extends_generic_interface_prefers_ts2689_over_ts2314() {
 interface I<T> { x: T; }
 class U extends I {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -149,8 +151,7 @@ fn interface_extends_interface_no_ts2693() {
 interface I { x: number; }
 interface Q extends I {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -196,8 +197,7 @@ fn declare_class_extends_interface_no_ts2693() {
 interface I { x: number; }
 declare class B extends I {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -245,8 +245,7 @@ namespace M {
 class D extends M.C {}
 interface I extends M.C {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -305,8 +304,7 @@ namespace M {
     class D extends M.C {}
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -366,8 +364,7 @@ fn class_extends_type_only_import_emits_ts1361() {
 import type { Foo } from './foo';
 class U extends Foo {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -434,8 +431,7 @@ fn interface_extends_type_only_import_no_ts1361() {
 import type { Foo } from './foo';
 interface Q extends Foo {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -504,8 +500,7 @@ fn declare_class_extends_type_only_import_no_ts1361() {
 import type { Foo } from './foo';
 declare class U extends Foo {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -578,8 +573,7 @@ declare function getBadBase(): BadBaseConstructor;
 
     class D5 extends getBadBase() {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     if !lib_files.is_empty() {

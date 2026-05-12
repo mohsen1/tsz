@@ -1,18 +1,4 @@
-use tsz_checker::context::CheckerOptions;
-
-fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_with_options(
-        source,
-        CheckerOptions {
-            strict: true,
-            ..CheckerOptions::default()
-        },
-    )
-    .into_iter()
-    .filter(|d| d.code != 2318)
-    .map(|d| (d.code, d.message_text))
-    .collect()
-}
+use tsz_checker::test_utils::check_source_strict_messages_without_missing_libs as diagnostics;
 
 #[test]
 fn generic_wrapper_call_uses_contextual_return_literal() {

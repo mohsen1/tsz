@@ -1,6 +1,11 @@
 use crate::emitter::{ModuleKind, Printer, PrinterOptions};
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 /// `/// <reference .../>` directives should be stripped from JS output.
 /// tsc never emits these in JS — they are only preserved in .d.ts files.
@@ -41,8 +46,7 @@ fn amd_reference_directive_relative_dts_path_stripped() {
 import { x } from "mod";
 export const y = x;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::AMD,
@@ -111,8 +115,7 @@ fn umd_reference_directive_stripped_from_output() {
 import { x } from "mod";
 export const y = x;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::UMD,
@@ -145,8 +148,7 @@ import {F} from "f1";
 console.log(A + B + C + D + E + F);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::System,
@@ -172,8 +174,7 @@ import { value } from "mod";
 console.log(local, value);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::System,
@@ -195,8 +196,7 @@ console.log(local, value);
 fn system_top_level_using_named_export_keeps_legacy_decorator_assignment_export() {
     let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -230,8 +230,7 @@ fn system_top_level_using_direct_exported_legacy_class_stays_inline() {
     let source =
         "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -264,8 +263,7 @@ fn system_top_level_using_direct_exported_legacy_class_stays_inline() {
 fn system_exported_legacy_decorated_class_exports_decorator_assignment() {
     let source = "declare var dec: any;\n@dec\nexport class A {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -312,8 +310,7 @@ fn system_exported_legacy_decorated_class_exports_decorator_assignment() {
 fn system_nested_legacy_decorated_class_emits_decorate_helper() {
     let source = "declare var dec: any;\nexport function make() {\n    @dec\n    class Nested {}\n    return Nested;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -342,8 +339,7 @@ fn system_nested_legacy_decorated_class_emits_decorate_helper() {
 fn system_legacy_constructor_param_decorators_emit_param_helper() {
     let source = "declare var dec: any;\n@dec\nclass A {\n    constructor(@dec x: string) {}\n}\nexport { A };\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -373,8 +369,7 @@ fn system_legacy_decorator_metadata_emits_metadata_helper() {
     let source =
         "declare var dec: any;\n@dec\nclass A {\n    constructor(x: string) {}\n}\nexport { A };\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -404,8 +399,7 @@ fn system_legacy_decorator_metadata_emits_metadata_helper() {
 fn system_top_level_using_env_hoists_before_later_nested_var() {
     let source = "export { y };\nusing z = null;\nif (false) {\n    var y = 1;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -429,8 +423,7 @@ fn system_top_level_using_env_hoists_before_later_nested_var() {
 fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name() {
     let source = "export let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -462,8 +455,7 @@ fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name()
 fn system_object_binding_initializer_assigns_hoisted_name() {
     let source = "let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\nexport {};\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::with_options(
         &parser.arena,
@@ -560,8 +552,7 @@ fn amd_es5_type_alias_named_like_import_does_not_force_retention() {
 type Foo = string;
 async function f(): Foo { return "" as any; }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::AMD,
