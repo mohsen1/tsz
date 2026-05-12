@@ -11,6 +11,7 @@
     4955,
     4958,
     4960,
+    4967,
     4973,
     4988,
     4989,
@@ -49,25 +50,8 @@
     5830,
     5901
   ],
-  "candidate_count": 68,
+  "candidate_count": 65,
   "candidates": [
-    {
-      "pr_number": 4967,
-      "pr_title": "fix(solver): preserve literal constraint display candidates",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4967",
-      "merged_at": "2026-05-10T11:30:06Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5QBc",
-      "path": "crates/tsz-solver/src/operations/generic_call/resolve.rs",
-      "line": 2353,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "Storing a display alias for `constraint_ty` here can overwrite an existing `display_alias` for the same evaluated constraint type (e.g. the normal alias produced when evaluating `Comparable<number>`). Because `display_alias` is a global interner mapping, this can leak the literal-union provenance into unrelated later diagnostics that happen to format the same `constraint_ty`. Consider avoiding mutation of the global alias map for shared evaluated types (e.g. by attaching the display application to a call-scoped wrapper/diagnostic value, or only storing when you can guarantee the evaluated type was produced specifically for this call site).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
     {
       "pr_number": 4982,
       "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
@@ -210,38 +194,6 @@
       "line": 240,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the other. Consider extracting a small helper (e.g., `recover_after_unknown_token(&mut self, previous_statement_was_block: &mut bool) -> bool`) so the two loops share the exact same recovery behavior.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4967,
-      "pr_title": "fix(solver): preserve literal constraint display candidates",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4967",
-      "merged_at": "2026-05-10T11:30:06Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5QBY",
-      "path": "crates/tsz-solver/src/operations/generic_call/resolve.rs",
-      "line": 2317,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`un_widened.clone()` allocates just to build a union while `un_widened` is still needed later in the fallback branch. Since the interner has `union_from_slice`, you can avoid the clone by building the union from `&un_widened` (or otherwise restructure to compute `candidate_type` once).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4967,
-      "pr_title": "fix(solver): preserve literal constraint display candidates",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4967",
-      "merged_at": "2026-05-10T11:30:06Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5QBg",
-      "path": "crates/tsz-solver/src/operations/generic_call/resolve.rs",
-      "line": 2351,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`let mut display_subst = final_subst.clone()` clones the entire substitution map in a hot path (constraint validation) just to override a single binding for display-only instantiation. If possible, avoid the full clone by temporarily shadowing `tp.name` (save/restore) or by adding a helper that can instantiate with a single-name override layered on top of an existing substitution.",
       "score": 1,
       "reasons": [
         "detailed-thread"

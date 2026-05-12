@@ -2,17 +2,17 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 42
-- Potential important unresolved threads: 68
+- PRs excluded as already followed-up: 43
+- Potential important unresolved threads: 65
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 27
 - `crates/tsz-emitter`: 12
 - `docs`: 11
-- `crates/tsz-solver`: 6
 - `scripts`: 4
 - `crates/tsz-parser`: 4
+- `crates/tsz-solver`: 3
 - `crates/tsz-cli`: 2
 - `crates/tsz-common`: 1
 - `crates/tsz-wasm`: 1
@@ -20,7 +20,6 @@
 ## Top PRs By Candidate Count
 
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
-- [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
@@ -39,11 +38,10 @@
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
 - [#4951](https://github.com/mohsen1/tsz/pull/4951) fix(checker): preserve literal constraint display for generic calls: 1
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
+- [#4977](https://github.com/mohsen1/tsz/pull/4977) fix(checker): defer parameter-dependent recursive alias TS2589: 1
 
 ## Candidate Threads (Top 100 by score)
 
-- [#4967](https://github.com/mohsen1/tsz/pull/4967) `crates/tsz-solver/src/operations/generic_call/resolve.rs:2353` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - Storing a display alias for `constraint_ty` here can overwrite an existing `display_alias` for the same evaluated constraint type (e.g. the normal alias produced when evaluating `Comparable<number>`). Because `display...
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs:163` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - `decl_node` may come from `ctx.arena`, `symbol_arenas`, or `declaration_arenas`, but the subsequent `get_type_alias(decl_node)` calls probe multiple arenas (starting with `ctx.arena`) using a `Node` value whose `data_...
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) `scripts/conformance/conformance-baseline.txt:5` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
@@ -62,10 +60,6 @@
   - The candidate deduplication uses `candidates.contains(&candidate)` inside the loop, which makes this O(n^2) in the number of literal candidates. Consider tracking seen candidates with a small `FxHashSet`/`IndexSet` (o...
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) `crates/tsz-parser/src/parser/state_statements.rs:240` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the...
-- [#4967](https://github.com/mohsen1/tsz/pull/4967) `crates/tsz-solver/src/operations/generic_call/resolve.rs:2317` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `un_widened.clone()` allocates just to build a union while `un_widened` is still needed later in the fallback branch. Since the interner has `union_from_slice`, you can avoid the clone by building the union from `&un_...
-- [#4967](https://github.com/mohsen1/tsz/pull/4967) `crates/tsz-solver/src/operations/generic_call/resolve.rs:2351` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `let mut display_subst = final_subst.clone()` clones the entire substitution map in a hot path (constraint validation) just to override a single binding for display-only instantiation. If possible, avoid the full clon...
 - [#4977](https://github.com/mohsen1/tsz/pull/4977) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:318` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditi...
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs:181` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
