@@ -956,6 +956,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             for &member in member_list.iter() {
+                if let Some(source_elem) = array_element_type(self.interner, source) {
+                    let evaluated_member = self.evaluate_type(member);
+                    if let Some(target_elem) = array_element_type(self.interner, evaluated_member)
+                        && self.check_subtype(source_elem, target_elem).is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
                 if self.check_subtype(source, member).is_true() {
                     return SubtypeResult::True;
                 }

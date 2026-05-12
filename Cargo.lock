@@ -1595,6 +1595,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "web-time",
 ]
 
 [[package]]

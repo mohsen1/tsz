@@ -1510,6 +1510,32 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
                     );
                     type_stack.push(left_type);
+                } else if non_nullish.is_none()
+                    && cause.is_some()
+                    && !left_is_top_type
+                    && left_is_nullish_chain_or_literal
+                {
+                    // TS2871: complementary to TS2869. When the left operand of
+                    // `??` is syntactically a nullish-coalescing chain or a
+                    // bare nullish literal and its evaluated type contains
+                    // only nullish constituents (split yields no non-nullish
+                    // part), tsc emits TS2871 — the left expression is
+                    // *always* nullish, so the `??` itself is redundant.
+                    //
+                    // Same anchor strategy as TS2869: point at the left
+                    // operand, skipping through parentheses.
+                    use crate::diagnostics::diagnostic_codes;
+                    let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
+                    self.error_at_node(
+                        diag_idx,
+                        "This expression is always nullish.",
+                        diagnostic_codes::THIS_EXPRESSION_IS_ALWAYS_NULLISH,
+                    );
+                    // Result type is the right operand's type — the `??`
+                    // result equals `right_type` whenever the left is always
+                    // nullish, matching the `non_nullish.is_none()` branch in
+                    // the else arm below.
+                    type_stack.push(right_type);
                 } else {
                     // tsc uses UnionReduction.Subtype for ?? result types,
                     // which removes structural subtypes (e.g., never[] from

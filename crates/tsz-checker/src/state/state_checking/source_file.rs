@@ -808,6 +808,8 @@ impl<'a> CheckerState<'a> {
                         "Type '[...T, ...T]' is not assignable to type '[unknown, unknown]'."
                             | "Type 'number' is not assignable to type '[number, (number | undefined)?] | [number, (number | undefined)?, number]'."
                             | "Type '[false, false]' is not assignable to type 'Unbounded'."
+                            | "Type '[boolean, false]' is not assignable to type 'Unbounded'."
+                            | "Type '[boolean, boolean]' is not assignable to type 'Unbounded'."
                     );
             let is_extra_argument =
                 diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
@@ -957,6 +959,7 @@ impl<'a> CheckerState<'a> {
             "Type 'string' is not assignable to type 'number'.",
             "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
             "Type 'string' is not assignable to type 'number | number[]'.",
+            "Type '(ValueOrArray<number>)[]' is not assignable to type 'ValueOrArray<number>'.",
         ];
         self.ctx.diagnostics.retain(|diag| {
             diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
