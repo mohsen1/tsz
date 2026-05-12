@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `dry-solver-subtype-cache-test-helper-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5828
+- **Status**: ready
 - **Workstream**: DRY audit Phase 2 / `tsz-solver` test fixture cleanup
 
 ## Intent
@@ -21,4 +21,7 @@ negative-cache cases onto it.
 
 ## Verification
 
-- Pending
+- `cargo fmt -p tsz-solver`
+- `cargo test -p tsz-solver --lib subtype_cache_tests -- --nocapture` (31 passed)
+- `cargo test -p tsz-solver --lib -- --nocapture` (5741 passed, 7 ignored)
+- `cargo clippy -p tsz-solver --all-targets -- -D warnings`
