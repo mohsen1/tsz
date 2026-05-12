@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/variadic-tuples1-fingerprints-20260512`
 - **Base**: `fix/conditional-types1-fingerprints-20260512`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/5730
 - **Status**: ready
 - **Workstream**: conformance
 
