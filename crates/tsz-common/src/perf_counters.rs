@@ -1402,6 +1402,34 @@ pub struct PerfCounterSnapshot {
     /// would force consumers to handle missing rows; emitting the full
     /// table keeps the JSON shape stable).
     pub by_reason: Vec<ByReasonRow>,
+    /// `DelegateCrossArenaSymbol` miss classification.
+    ///
+    /// JSON counterpart of `dump_cross_arena_symbol_miss_classification`.
+    /// Says how each miss reached the fallback child-checker path, so
+    /// reviewers picking a T2.2 migration target can see whether
+    /// `symbol_arenas` / `declaration_arenas` / `symbol_file_targets`
+    /// dominates, and which symbol kinds are walking through the path.
+    pub delegate_miss_classification: DelegateMissClassification,
+    /// Outcome buckets for the no-child alias shortcut attempted before
+    /// constructing a `DelegateCrossArenaSymbol` child checker.
+    ///
+    /// JSON counterpart of `dump_cross_arena_alias_shortcut_outcomes`.
+    /// Always `CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT` long, in
+    /// `CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES` order. A high
+    /// `not_alias` / `missing_module` / `default_import` count says the
+    /// shortcut bailed for a structural reason; a high `success` count
+    /// says the fast path is paying off.
+    pub alias_shortcut_outcomes: Vec<NamedCount>,
+    /// Outcome buckets for direct cross-file interface lowering attempts.
+    ///
+    /// JSON counterpart of
+    /// `dump_direct_cross_file_interface_lowering_outcomes`. Always
+    /// `DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT` long, in
+    /// `DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES` order. The
+    /// non-`success` rows show which structural reasons keep the fast
+    /// path from firing — the target list for "widen the direct
+    /// lowering" follow-ups.
+    pub direct_interface_lowering_outcomes: Vec<NamedCount>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -1444,6 +1472,54 @@ pub struct CheckerCounters {
     pub file_session_resets: u64,
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
+}
+
+/// One `(name, count)` row in a named-counter JSON array.
+///
+/// Used for the `alias_shortcut_outcomes` and
+/// `direct_interface_lowering_outcomes` arrays on
+/// [`PerfCounterSnapshot`]. Each array is always emitted at its full
+/// declared length, with zero counts for inactive buckets, so the JSON
+/// shape stays stable across runs and consumers can index by name
+/// without re-parsing the source enum.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct NamedCount {
+    /// Stable, human-readable bucket name (from the matching `*_NAMES`
+    /// constant in this module).
+    pub name: &'static str,
+    /// Atomic load at snapshot time. Zero means "this bucket was not
+    /// hit", not "the producer is unwired"; per-bucket wiring is
+    /// project-wide for these counters.
+    pub count: u64,
+}
+
+/// `DelegateCrossArenaSymbol` miss classification, as JSON.
+///
+/// Counterpart of `dump_cross_arena_symbol_miss_classification`'s text
+/// dump. Says *why* a delegate path missed both caches and the alias
+/// shortcut — i.e. which fast paths the next T2.2 migration could
+/// plausibly cover.
+///
+/// The `by_source` and `by_kind` arrays are always emitted at their
+/// full `*_NAMES` length so consumers can index by position. The two
+/// scalar totals are the declaration-file vs. source-file split that
+/// the text dump prints at the end of the classification block.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DelegateMissClassification {
+    /// How the target arena was discovered. Always
+    /// `CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT` long, in
+    /// `CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES` order.
+    pub by_source: Vec<NamedCount>,
+    /// Coarse symbol-kind bucket for the miss. Always
+    /// `CROSS_ARENA_SYMBOL_MISS_KIND_COUNT` long, in
+    /// `CROSS_ARENA_SYMBOL_MISS_KIND_NAMES` order.
+    pub by_kind: Vec<NamedCount>,
+    /// Misses whose target arena's primary source file is a declaration
+    /// file (`.d.ts` / `.d.cts` / `.d.mts`).
+    pub target_declaration_files: u64,
+    /// Misses whose target arena's primary source file is a regular
+    /// source file (not a declaration file).
+    pub target_source_files: u64,
 }
 
 /// One row in the per-`CheckerCreationReason` JSON breakdown.
@@ -1608,6 +1684,37 @@ impl PerfCounters {
                     overlay_copy_max_entries: load(&c.overlay_copy_max_entries_by_reason[i]),
                 })
                 .collect(),
+            delegate_miss_classification: DelegateMissClassification {
+                by_source: (0..CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT)
+                    .map(|i| NamedCount {
+                        name: CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES[i],
+                        count: load(&c.delegate_cross_arena_symbol_miss_by_source[i]),
+                    })
+                    .collect(),
+                by_kind: (0..CROSS_ARENA_SYMBOL_MISS_KIND_COUNT)
+                    .map(|i| NamedCount {
+                        name: CROSS_ARENA_SYMBOL_MISS_KIND_NAMES[i],
+                        count: load(&c.delegate_cross_arena_symbol_miss_by_kind[i]),
+                    })
+                    .collect(),
+                target_declaration_files: load(
+                    &c.delegate_cross_arena_symbol_miss_target_declaration_file,
+                ),
+                target_source_files: load(&c.delegate_cross_arena_symbol_miss_target_source_file),
+            },
+            alias_shortcut_outcomes: (0..CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES[i],
+                    count: load(&c.delegate_cross_arena_alias_shortcut_outcome[i]),
+                })
+                .collect(),
+            direct_interface_lowering_outcomes: (0
+                ..DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES[i],
+                    count: load(&c.direct_cross_file_interface_lowering_outcome[i]),
+                })
+                .collect(),
         }
     }
 
@@ -1651,6 +1758,9 @@ mod json_tests {
             "resolver",
             "interner",
             "by_reason",
+            "delegate_miss_classification",
+            "alias_shortcut_outcomes",
+            "direct_interface_lowering_outcomes",
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
@@ -1896,6 +2006,229 @@ mod json_tests {
                 "package_json_reads",
                 "candidate_paths_total",
             ],
+        );
+    }
+
+    #[test]
+    fn delegate_miss_classification_field_shape() {
+        // Lock the top-level field set of `delegate_miss_classification`
+        // so a later rename / addition / removal is caught here instead
+        // of by the bench harness silently swallowing a missing key.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let obj = json["delegate_miss_classification"]
+            .as_object()
+            .expect("delegate_miss_classification is an object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = [
+            "by_source",
+            "by_kind",
+            "target_declaration_files",
+            "target_source_files",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            actual, expected,
+            "`delegate_miss_classification` field set drifted from the lock"
+        );
+    }
+
+    #[test]
+    fn delegate_miss_classification_by_source_locks_to_names_array() {
+        // Each row in `by_source` is keyed by index against
+        // `CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES`. A future PR that adds
+        // a variant must extend both the enum and the names array; this
+        // test would surface a length mismatch immediately.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["delegate_miss_classification"]["by_source"]
+            .as_array()
+            .expect("by_source is array");
+        assert_eq!(
+            rows.len(),
+            CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT,
+            "by_source length must match CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES[i],
+                "by_source[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "by_source[{i}].count should be a number",
+            );
+            let obj = row.as_object().expect("row is object");
+            let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+            let expected: std::collections::BTreeSet<&str> =
+                ["name", "count"].into_iter().collect();
+            assert_eq!(actual, expected, "by_source[{i}] field shape drifted");
+        }
+    }
+
+    #[test]
+    fn delegate_miss_classification_by_kind_locks_to_names_array() {
+        // Mirror of the `by_source` invariant for the symbol-kind bucket.
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["delegate_miss_classification"]["by_kind"]
+            .as_array()
+            .expect("by_kind is array");
+        assert_eq!(
+            rows.len(),
+            CROSS_ARENA_SYMBOL_MISS_KIND_COUNT,
+            "by_kind length must match CROSS_ARENA_SYMBOL_MISS_KIND_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], CROSS_ARENA_SYMBOL_MISS_KIND_NAMES[i],
+                "by_kind[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "by_kind[{i}].count should be a number"
+            );
+        }
+    }
+
+    #[test]
+    fn alias_shortcut_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["alias_shortcut_outcomes"]
+            .as_array()
+            .expect("alias_shortcut_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT,
+            "alias_shortcut_outcomes length must match CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES[i],
+                "alias_shortcut_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "alias_shortcut_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
+    fn direct_interface_lowering_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["direct_interface_lowering_outcomes"]
+            .as_array()
+            .expect("direct_interface_lowering_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT,
+            "direct_interface_lowering_outcomes length must match \
+             DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES[i],
+                "direct_interface_lowering_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "direct_interface_lowering_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
+    fn classification_arrays_propagate_atomic_state_into_snapshot() {
+        // The producer helpers (`record_cross_arena_*`) short-circuit on
+        // `enabled_fast() == false`, so we cannot rely on them in a test
+        // process where `TSZ_PERF_COUNTERS` is unset. Instead drive the
+        // underlying atomics directly to prove the snapshot reads them
+        // back at the right indices — the same atomic-bump the producer
+        // would do under the gate.
+        //
+        // Use `fetch_add(1)` rather than overwriting so this test stays
+        // resilient to other tests that may also touch the global
+        // atomics. Capture the pre-bump counts and assert the post-bump
+        // snapshot reflects the delta.
+        let c = counters();
+
+        let source_idx = CrossArenaSymbolMissSource::SymbolArena.as_index();
+        let kind_idx = CrossArenaSymbolMissKind::Class.as_index();
+        let aso_idx = CrossArenaAliasShortcutOutcome::Success.as_index();
+        let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
+
+        let before_source =
+            c.delegate_cross_arena_symbol_miss_by_source[source_idx].load(Ordering::Relaxed);
+        let before_kind =
+            c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].load(Ordering::Relaxed);
+        let before_decl_file = c
+            .delegate_cross_arena_symbol_miss_target_declaration_file
+            .load(Ordering::Relaxed);
+        let before_aso =
+            c.delegate_cross_arena_alias_shortcut_outcome[aso_idx].load(Ordering::Relaxed);
+        let before_dilo =
+            c.direct_cross_file_interface_lowering_outcome[dilo_idx].load(Ordering::Relaxed);
+
+        c.delegate_cross_arena_symbol_miss_by_source[source_idx].fetch_add(1, Ordering::Relaxed);
+        c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].fetch_add(1, Ordering::Relaxed);
+        c.delegate_cross_arena_symbol_miss_target_declaration_file
+            .fetch_add(1, Ordering::Relaxed);
+        c.delegate_cross_arena_alias_shortcut_outcome[aso_idx].fetch_add(1, Ordering::Relaxed);
+        c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+
+        let by_source = json["delegate_miss_classification"]["by_source"]
+            .as_array()
+            .expect("by_source is array");
+        let symbol_arena_row = &by_source[source_idx];
+        assert_eq!(symbol_arena_row["name"], "symbol_arenas");
+        assert!(
+            symbol_arena_row["count"].as_u64().unwrap_or(0) > before_source,
+            "by_source[symbol_arenas] did not reflect the bump",
+        );
+
+        let by_kind = json["delegate_miss_classification"]["by_kind"]
+            .as_array()
+            .expect("by_kind is array");
+        let class_row = &by_kind[kind_idx];
+        assert_eq!(class_row["name"], "class");
+        assert!(
+            class_row["count"].as_u64().unwrap_or(0) > before_kind,
+            "by_kind[class] did not reflect the bump",
+        );
+
+        assert!(
+            json["delegate_miss_classification"]["target_declaration_files"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_decl_file,
+            "target_declaration_files did not reflect the bump",
+        );
+
+        let aso = json["alias_shortcut_outcomes"]
+            .as_array()
+            .expect("alias_shortcut_outcomes is array");
+        let success_row = &aso[aso_idx];
+        assert_eq!(success_row["name"], "success");
+        assert!(
+            success_row["count"].as_u64().unwrap_or(0) > before_aso,
+            "alias_shortcut_outcomes[success] did not reflect the bump",
+        );
+
+        let dilo = json["direct_interface_lowering_outcomes"]
+            .as_array()
+            .expect("direct_interface_lowering_outcomes is array");
+        let dilo_row = &dilo[dilo_idx];
+        assert_eq!(dilo_row["name"], "success");
+        assert!(
+            dilo_row["count"].as_u64().unwrap_or(0) > before_dilo,
+            "direct_interface_lowering_outcomes[success] did not reflect the bump",
         );
     }
 
