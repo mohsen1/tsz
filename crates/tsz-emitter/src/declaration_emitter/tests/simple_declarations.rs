@@ -5403,6 +5403,38 @@ export class C {
 }
 
 #[test]
+fn test_js_accessor_backing_nested_union_does_not_append_top_level_nullish() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const key = Symbol("key");
+
+export class C {
+    /** @type {(string | null)[]} */
+    [key] = [];
+
+    /** @type {string} */
+    set value(v) {
+        this[key] = [v];
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("set value(v: string);"),
+        "Expected nested null union in backing field to NOT widen setter parameter: {output}"
+    );
+    assert!(
+        !output.contains("set value(v: string | null);"),
+        "Nested `(string | null)[]` must not be treated as top-level `| null`: {output}"
+    );
+    assert!(
+        !output.contains("set value(v: string | undefined);"),
+        "Nested `(string | undefined)[]` branches must not append top-level undefined: {output}"
+    );
+}
+
+#[test]
 fn test_property_access_to_unannotated_getter_uses_paired_setter_type() {
     let output = emit_dts_with_usage_analysis(
         r#"

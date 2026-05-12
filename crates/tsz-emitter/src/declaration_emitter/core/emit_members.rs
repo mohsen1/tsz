@@ -1188,9 +1188,119 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn type_text_union_contains(type_text: &str, needle: &str) -> bool {
-        type_text
-            .split('|')
-            .any(|part| part.trim().trim_matches('(').trim_matches(')') == needle)
+        Self::split_top_level_union_branches(type_text)
+            .into_iter()
+            .any(|part| Self::trim_balanced_outer_parens_for_union(part) == needle)
+    }
+
+    fn split_top_level_union_branches(type_text: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+
+        for (idx, ch) in type_text.char_indices() {
+            if let Some(q) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                '<' => angle_depth += 1,
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                '|' if paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    parts.push(type_text[start..idx].trim());
+                    start = idx + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+
+        parts.push(type_text[start..].trim());
+        parts
+    }
+
+    fn trim_balanced_outer_parens_for_union(type_text: &str) -> &str {
+        let mut text = type_text.trim();
+        while let Some(inner) = Self::strip_balanced_outer_parens_once_for_union(text) {
+            text = inner.trim();
+        }
+        text
+    }
+
+    fn strip_balanced_outer_parens_once_for_union(type_text: &str) -> Option<&str> {
+        let text = type_text.trim();
+        let rest = text.strip_prefix('(')?;
+        if !text.ends_with(')') {
+            return None;
+        }
+
+        let mut depth = 1usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        let mut close_at_end = None;
+
+        for (idx, ch) in rest.char_indices() {
+            if let Some(q) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close_at_end = Some(idx);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let close_at_end = close_at_end?;
+        if close_at_end != rest.len() - 1 {
+            return None;
+        }
+
+        Some(&rest[..close_at_end])
     }
 
     pub(in crate::declaration_emitter) fn js_accessor_backing_field_type_text(

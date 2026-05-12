@@ -41,9 +41,10 @@
     5694,
     5743,
     5811,
-    5830
+    5830,
+    5901
   ],
-  "candidate_count": 81,
+  "candidate_count": 80,
   "candidates": [
     {
       "pr_number": 4967,
@@ -209,23 +210,6 @@
       "line": 1091,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This regression assertion covers the non-export case, but it doesn\u2019t exercise the `export =` / CommonJS export-equals path where `emit_pending_js_export_equals_for_name` may emit `export = send;` before the synthetic `declare function send...`. A focused test for a JSDoc-annotated function variable that is the export-equals target would help ensure the JSDoc remains attached to the `declare function` (and not to the `export =` statement).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5901,
-      "pr_title": "fix(dts): keep js accessor comments with reordered members",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5901",
-      "merged_at": "2026-05-12T14:44:10Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6Bc52l",
-      "path": "crates/tsz-emitter/src/declaration_emitter/core/emit_members.rs",
-      "line": 1189,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`type_text_union_contains` splits on every `|` without tracking nesting, which can mis-detect `null`/`undefined` inside parenthesized or generic unions (e.g. `(string | null)[]`) and incorrectly append top-level nullability to the setter/getter types. Consider reusing the existing top-level-union splitting logic used in `normalize_jsdoc_type_expr` (depth-aware over `()<>[]{}`) so only top-level union members are considered, and add a regression case for array/generic nested unions.",
       "score": 4,
       "reasons": [
         "important-keyword",

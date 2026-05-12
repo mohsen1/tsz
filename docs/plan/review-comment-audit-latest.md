@@ -2,13 +2,13 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 36
-- Potential important unresolved threads: 81
+- PRs excluded as already followed-up: 37
+- Potential important unresolved threads: 80
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 32
-- `crates/tsz-emitter`: 19
+- `crates/tsz-emitter`: 18
 - `docs`: 11
 - `crates/tsz-solver`: 7
 - `scripts`: 4
@@ -62,8 +62,6 @@
   - The span lookup falls back to `source_text.find(anchor_marker)` if `line_marker` isn't found. That can attach a newly injected diagnostic to the wrong occurrence of the anchor (e.g. a declaration earlier in the file) ...
 - [#5753](https://github.com/mohsen1/tsz/pull/5753) `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs:1091` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - This regression assertion covers the non-export case, but it doesn’t exercise the `export =` / CommonJS export-equals path where `emit_pending_js_export_equals_for_name` may emit `export = send;` before the synthetic ...
-- [#5901](https://github.com/mohsen1/tsz/pull/5901) `crates/tsz-emitter/src/declaration_emitter/core/emit_members.rs:1189` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - `type_text_union_contains` splits on every `|` without tracking nesting, which can mis-detect `null`/`undefined` inside parenthesized or generic unions (e.g. `(string | null)[]`) and incorrectly append top-level nulla...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md:6` score=3 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword
   - The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep wor...
 - [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:26` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
