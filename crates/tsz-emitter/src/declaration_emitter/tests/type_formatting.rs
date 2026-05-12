@@ -320,6 +320,26 @@ export function needsRenameForShadowing<T>() {
 }
 
 #[test]
+fn test_direct_returned_function_expression_expands_rest_tuple_aliases() {
+    let output = emit_dts(
+        r#"
+function f() {
+    type A = [a: string];
+    type B = [b: string];
+    type C = [...A, ...A, ...B];
+
+    return function fn(...args: C) { }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f(): (a: string, a_1: string, b: string) => void;"),
+        "expected rest tuple alias to expand into positional parameters: {output}"
+    );
+}
+
+#[test]
 fn test_returned_class_expression_preserves_extends_type_parameter() {
     let source = r#"
 export type Constructor<T = {}> = new (...args: any[]) => T;

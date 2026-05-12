@@ -309,11 +309,13 @@ impl<'a> DeclarationEmitter<'a> {
             .then(|| self.direct_returned_function_expression_type_text(func))
             .flatten();
         let has_direct_function_return = direct_function_return.is_some();
-        (
-            direct_function_return
-                .or_else(|| self.function_body_preferred_return_type_text(func_body)),
-            has_direct_function_return,
-        )
+        let return_text = direct_function_return
+            .or_else(|| self.function_body_preferred_return_type_text(func_body))
+            .map(|type_text| {
+                self.expand_rest_tuple_parameters_in_function_type_text(func_body, &type_text)
+                    .unwrap_or(type_text)
+            });
+        (return_text, has_direct_function_return)
     }
 
     pub(in crate::declaration_emitter) fn class_property_function_initializer_type_text(
@@ -456,7 +458,130 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or_else(|| {
                 Self::rename_type_text_identifiers(&raw_type_text, type_param_renames)
             });
+        if param.dot_dot_dot_token
+            && let Some(params) = self.expand_rest_tuple_parameter_text(param_idx, &type_text)
+        {
+            return Some(params);
+        }
         Some(format!("{name}: {type_text}"))
+    }
+
+    fn expand_rest_tuple_parameter_text(
+        &self,
+        from_idx: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let elements = self.expand_tuple_type_elements(from_idx, type_text, 0)?;
+        if elements.is_empty() {
+            return None;
+        }
+
+        let mut seen = Vec::<String>::new();
+        Some(
+            elements
+                .into_iter()
+                .map(|(name, ty)| {
+                    let unique = Self::unique_parameter_name(&name, &mut seen);
+                    format!("{unique}: {ty}")
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn expand_rest_tuple_parameters_in_function_type_text(
+        &self,
+        scope_idx: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let trimmed = type_text.trim();
+        let arrow_idx = Self::find_top_level_arrow(trimmed)?;
+        let head = trimmed.get(..arrow_idx)?.trim_end();
+        let return_text = trimmed.get(arrow_idx + 2..)?.trim();
+        let open_idx = head.rfind('(')?;
+        let prefix = head.get(..open_idx)?;
+        let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?;
+
+        let mut changed = false;
+        let params = Self::split_top_level_commas(params_text)
+            .into_iter()
+            .map(|param_text| {
+                let param_text = param_text.trim();
+                let Some(rest_text) = param_text.strip_prefix("...").map(str::trim) else {
+                    return Some(param_text.to_string());
+                };
+                let colon_idx = Self::find_top_level_byte(rest_text, b':')?;
+                let type_text = rest_text.get(colon_idx + 1..)?.trim();
+                let expanded = self.expand_rest_tuple_parameter_text(scope_idx, type_text)?;
+                changed = true;
+                Some(expanded)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        changed.then(|| format!("{prefix}({}) => {return_text}", params.join(", ")))
+    }
+
+    fn expand_tuple_type_elements(
+        &self,
+        from_idx: NodeIndex,
+        type_text: &str,
+        depth: usize,
+    ) -> Option<Vec<(String, String)>> {
+        if depth > 8 {
+            return None;
+        }
+        let inner = type_text
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .trim();
+        if inner.is_empty() {
+            return Some(Vec::new());
+        }
+
+        let mut elements = Vec::new();
+        for part in Self::split_top_level_commas(inner) {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            if let Some(alias_name) = part.strip_prefix("...").map(str::trim) {
+                let alias_text = self.local_type_alias_annotation_text(from_idx, alias_name)?;
+                elements.extend(self.expand_tuple_type_elements(
+                    from_idx,
+                    &alias_text,
+                    depth + 1,
+                )?);
+                continue;
+            }
+            let (name, ty) = part.split_once(':')?;
+            let name = name.trim().trim_start_matches("...");
+            let name = name.strip_suffix('?').unwrap_or(name).trim();
+            let ty = ty.trim();
+            if name.is_empty() || ty.is_empty() {
+                return None;
+            }
+            elements.push((name.to_string(), ty.to_string()));
+        }
+        Some(elements)
+    }
+
+    fn unique_parameter_name(name: &str, seen: &mut Vec<String>) -> String {
+        if !seen.iter().any(|existing| existing == name) {
+            seen.push(name.to_string());
+            return name.to_string();
+        }
+
+        let mut suffix = 1usize;
+        loop {
+            let candidate = format!("{name}_{suffix}");
+            if !seen.iter().any(|existing| existing == &candidate) {
+                seen.push(candidate.clone());
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     fn source_function_initializer_return_type_text(
@@ -567,6 +692,15 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn local_type_alias_annotation_text(&self, from_idx: NodeIndex, name: &str) -> Option<String> {
+        if let Some(from_node) = self.arena.get(from_idx)
+            && from_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(from_node)
+            && let Some(type_text) =
+                self.local_type_alias_annotation_text_in_statements(&block.statements, name)
+        {
+            return Some(type_text);
+        }
+
         let mut current_idx = from_idx;
         while let Some(parent_idx) = self.arena.parent_of(current_idx) {
             let Some(parent_node) = self.arena.get(parent_idx) else {
@@ -574,28 +708,39 @@ impl<'a> DeclarationEmitter<'a> {
             };
             if parent_node.kind == syntax_kind_ext::BLOCK
                 && let Some(block) = self.arena.get_block(parent_node)
+                && let Some(type_text) =
+                    self.local_type_alias_annotation_text_in_statements(&block.statements, name)
             {
-                for stmt_idx in block.statements.nodes.iter().copied() {
-                    let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                        continue;
-                    };
-                    if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                        continue;
-                    }
-                    let Some(alias) = self.arena.get_type_alias(stmt_node) else {
-                        continue;
-                    };
-                    if self.get_identifier_text(alias.name).as_deref() == Some(name) {
-                        return self
-                            .local_type_annotation_text(alias.type_node)
-                            .or_else(|| {
-                                self.preferred_annotation_name_text(alias.type_node)
-                                    .or_else(|| self.emit_type_node_text(alias.type_node))
-                            });
-                    }
-                }
+                return Some(type_text);
             }
             current_idx = parent_idx;
+        }
+        None
+    }
+
+    fn local_type_alias_annotation_text_in_statements(
+        &self,
+        statements: &NodeList,
+        name: &str,
+    ) -> Option<String> {
+        for stmt_idx in statements.nodes.iter().copied() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                continue;
+            }
+            let Some(alias) = self.arena.get_type_alias(stmt_node) else {
+                continue;
+            };
+            if self.get_identifier_text(alias.name).as_deref() == Some(name) {
+                return self
+                    .local_type_annotation_text(alias.type_node)
+                    .or_else(|| {
+                        self.preferred_annotation_name_text(alias.type_node)
+                            .or_else(|| self.emit_type_node_text(alias.type_node))
+                    });
+            }
         }
         None
     }
