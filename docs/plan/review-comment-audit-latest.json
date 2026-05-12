@@ -6,6 +6,8 @@
     "truncated_thread_prs": []
   },
   "excluded_followed_up_prs": [
+    4949,
+    4951,
     4952,
     4954,
     4955,
@@ -17,9 +19,12 @@
     4982,
     4988,
     4989,
+    4990,
+    4991,
     4992,
     4993,
     4994,
+    4997,
     5002,
     5003,
     5051,
@@ -36,6 +41,7 @@
     5108,
     5114,
     5640,
+    5655,
     5658,
     5660,
     5662,
@@ -54,7 +60,7 @@
     5899,
     5901
   ],
-  "candidate_count": 56,
+  "candidate_count": 47,
   "candidates": [
     {
       "pr_number": 4944,
@@ -67,54 +73,6 @@
       "line": 19,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`diagnostic_messages` calls `load_default_lib_files()` on every invocation, and this helper is used by multiple tests in this file. Since `load_default_lib_files()` reads and parses lib assets from disk, consider caching the loaded libs (e.g., a `OnceLock<Vec<Arc<LibFile>>>`) so the test suite doesn\u2019t repeatedly reload the same lib bundle.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4949,
-      "pr_title": "fix(cli): anchor TS2578 at comment range, not at line start",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4949",
-      "merged_at": "2026-05-10T07:59:33Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A4kap",
-      "path": "crates/tsz-cli/src/driver/check_utils.rs",
-      "line": 2172,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`find_directive_in_text` still returns a `(DirectiveKind, usize)` but the `usize` (relative offset) is no longer used now that `directive_text_start` was removed. Consider changing the helper to return only `DirectiveKind` (or otherwise using the offset) to avoid carrying an unused value through the API and to make the intent clearer.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4949,
-      "pr_title": "fix(cli): anchor TS2578 at comment range, not at line start",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4949",
-      "merged_at": "2026-05-10T07:59:33Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A4ka2",
-      "path": "scripts/conformance/conformance-snapshot.json",
-      "line": 747,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The PR description claims \u201cnew failures: 0\u201d and a category delta of `false_positive 0`, but the updated conformance snapshot shows `false_positive: 1` with `TS2589` listed under extra/false-positive codes. Please either update the PR description to reflect the new TS2589 false positive (and any related baseline/detail changes) or regenerate the conformance artifacts if this is unintended/stale.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4951,
-      "pr_title": "fix(checker): preserve literal constraint display for generic calls",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4951",
-      "merged_at": "2026-05-10T08:29:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A4ohR",
-      "path": "crates/tsz-checker/src/types/computation/call_result.rs",
-      "line": 578,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The candidate deduplication uses `candidates.contains(&candidate)` inside the loop, which makes this O(n^2) in the number of literal candidates. Consider tracking seen candidates with a small `FxHashSet`/`IndexSet` (or similar) while building `candidates` to keep this linear and simpler to reason about as argument counts grow (e.g., large rest-arg calls).",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -147,54 +105,6 @@
       "line": 593,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` \u201ccompile out entirely\u201d, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inline wrapper). Consider rewording to avoid implying the symbol is removed, and instead state that the timing/recording path is compiled out when the feature is off.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4990,
-      "pr_title": "fix(checker): preserve declared alias application display",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4990",
-      "merged_at": "2026-05-10T13:19:51Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5qN_",
-      "path": "crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs",
-      "line": 1896,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`recursive_tuple_declared_assignment_types` special-cases by `def.name == \"TupleOf\"` but doesn't verify the definition kind. If a user defines an `interface TupleOf<...>` (or other non-alias DefKind) this branch can incorrectly short-circuit assignability and emit TS2322 unconditionally. Consider also requiring `def.kind == DefKind::TypeAlias` (similar to `declared_same_alias_application_assignment_types`) before applying this shortcut.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4991,
-      "pr_title": "test: cover nested object playground shape",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4991",
-      "merged_at": "2026-05-10T13:19:34Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5qWb",
-      "path": "crates/tsz-wasm/src/wasm_tests.rs",
-      "line": 182,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This assertion only checks that TS2322 is absent; the test would still pass if other semantic diagnostics are emitted (meaning the snippet is not actually diagnostic-free). Consider asserting that the semantic diagnostics array is empty (and optionally that syntactic diagnostics are empty) to match the \u201caccepts \u2026 assignment\u201d expectation.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4997,
-      "pr_title": "fix(solver): preserve normalized object literal display",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4997",
-      "merged_at": "2026-05-10T13:57:42Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A507J",
-      "path": "crates/tsz-solver/src/operations/expression_ops.rs",
-      "line": 315,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`normalized_display_properties` does a linear `.find()` over `original_display` for every normalized property, making this O(n\u00b2) per object. Consider precomputing a name->PropertyInfo map (or index) from `original_display` once and doing O(1) lookups while mapping `normalized_properties`.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -643,54 +553,6 @@
       "line": 3865,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`is_removed_option_diagnostic_code` currently returns true for both TS5102 (removed option key) and TS5108 (removed option value like `target=ES3`). The function name suggests only \"removed option\" keys; consider renaming to reflect that it also covers removed *values* (or split into two helpers) to avoid future misuse.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5655,
-      "pr_title": "fix(emit): recover namespace function arrow bodies",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
-      "merged_at": "2026-05-11T23:56:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQNGG",
-      "path": "crates/tsz-parser/src/parser/state_statements.rs",
-      "line": 3042,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`parse_function_declaration` now stores the recovered `=>` expression in `FunctionData.body` (and marks `equals_greater_than_token`). Downstream emitters still treat function-declaration bodies as blocks (e.g., they write `function f(...) ` and then emit `body`), so a non-block body will lead to invalid JS output outside the namespace-special-cases added in this PR. Consider representing this recovery separately (e.g., a dedicated recovery field/kind), or ensure the general function-declaration emit path detects `=>`-recovery (via `equals_greater_than_token` and/or `body.kind != BLOCK`) and emits the expression as an expression statement (matching tsc) instead of emitting a function declaration.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5655,
-      "pr_title": "fix(emit): recover namespace function arrow bodies",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
-      "merged_at": "2026-05-11T23:56:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQNGN",
-      "path": "crates/tsz-emitter/src/transforms/namespace_es5_ir.rs",
-      "line": 1252,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`IRNode::ExpressionStatement` printing currently only parenthesizes `FunctionExpr`, but the recovered arrow body can be any expression (notably an object literal like `{ a: 1 }`). Emitting that as a bare expression statement would produce `{ a: 1 };` (a block with a label) instead of `({ a: 1 });`. Either wrap object-literal/function expressions in parentheses when constructing this IR node, or update the IR printer\u2019s `ExpressionStatement` emission to apply the same disambiguation rules as the AST emitter.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5655,
-      "pr_title": "fix(emit): recover namespace function arrow bodies",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
-      "merged_at": "2026-05-11T23:56:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BQNGV",
-      "path": "crates/tsz-emitter/src/emitter/declarations/namespace.rs",
-      "line": 1985,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`emit_recovered_namespace_function_arrow_body` emits the recovered body via `emit_expression(...)` directly. That bypasses the expression-statement disambiguation logic (parenthesizing leading `{` / `function` / etc.) used by `emit_expression_statement`, so cases like `function f() => { a: 1 }` would likely emit `{ a: 1 };` (parsed as a block) instead of an object-literal expression statement. Consider reusing the same paren/disambiguation rules as `emit_expression_statement` when printing the recovered expression in statement position.",
       "score": 1,
       "reasons": [
         "detailed-thread"

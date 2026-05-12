@@ -89,6 +89,15 @@ initializer relation path performs an additional raw initializer re-check.
     symbols (e.g. `interface TupleOf`) from taking the alias-only path.
   - reran tuple-directionality regression tests covering alias-vs-interface
     behavior in `conditional_infer_tests`.
+- review comments left on #5655:
+  - routed recovered namespace malformed-arrow body emission through the same
+    statement-position disambiguation path used by normal expression
+    statements, so type-erased object literals are correctly parenthesized.
+  - expanded ES5 IR expression-statement parenthesization to include
+    `ObjectLiteral` nodes (not only `FunctionExpr`) to avoid block/statement
+    ambiguity in transformed namespace output.
+  - added namespace regression coverage for malformed
+    `function f() => <any>{ ... }` in both ES5 and ES2015 emit paths.
 
 ## Files Touched
 
@@ -106,6 +115,10 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-solver/src/operations/expression_ops.rs`
 - `crates/tsz-checker/src/types/queries/class.rs`
 - `crates/tsz-checker/tests/this_type_tests.rs`
+- `crates/tsz-emitter/src/emitter/statements/core.rs`
+- `crates/tsz-emitter/src/emitter/declarations/namespace.rs`
+- `crates/tsz-emitter/src/transforms/ir_printer.rs`
+- `crates/tsz-emitter/src/emitter/declarations/namespace/tests.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -126,5 +139,6 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-solver object_union_no_optionalization_in_diagnostic_mode -- --nocapture`
 - `cargo test -p tsz-checker --test this_type_tests class_expression_explicit_this_keeps_missing_property_diagnostic -- --nocapture`
 - `cargo test -p tsz-checker --test this_type_tests test_nonexistent_property_still_errors -- --nocapture`
+- `cargo test -p tsz-emitter namespace_recovered_arrow_object_literal_is_parenthesized -- --nocapture`
 - `cargo fmt --all --check`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (last successful run: `candidate_count=56`; subsequent attempts blocked by GitHub GraphQL rate limit)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=47`)

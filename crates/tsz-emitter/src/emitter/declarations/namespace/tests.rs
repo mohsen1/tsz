@@ -31,6 +31,44 @@ fn namespace_recovers_malformed_export_function_arrow_body() {
     );
 }
 
+#[test]
+fn namespace_recovered_arrow_object_literal_is_parenthesized_es5() {
+    let source = "namespace M {\n    export namespace N {\n        export function f(x:number)=><any>{ value: x };\n    }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("({ value: x });"),
+        "Recovered malformed namespace arrow body should parenthesize object literals in ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_recovered_arrow_object_literal_is_parenthesized_es2015() {
+    let source = "namespace M {\n    export namespace N {\n        export function f(x:number)=><any>{ value: x };\n    }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("({ value: x });"),
+        "Recovered malformed namespace arrow body should parenthesize object literals in ES2015 output.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: type-only import-equals inside a namespace must not
 /// leave a phantom blank line. The import `import T = M1.I;` produces no
 /// JS output (type-only alias), but `emit_namespace_body_statements` used

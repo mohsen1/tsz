@@ -2,27 +2,24 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 47
-- Potential important unresolved threads: 56
+- PRs excluded as already followed-up: 53
+- Potential important unresolved threads: 47
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 21
-- `crates/tsz-emitter`: 11
+- `crates/tsz-checker`: 19
 - `docs`: 10
-- `crates/tsz-parser`: 4
-- `scripts`: 3
-- `crates/tsz-solver`: 3
-- `crates/tsz-cli`: 2
+- `crates/tsz-emitter`: 9
+- `crates/tsz-parser`: 3
+- `crates/tsz-solver`: 2
+- `scripts`: 2
 - `crates/tsz-common`: 1
-- `crates/tsz-wasm`: 1
+- `crates/tsz-cli`: 1
 
 ## Top PRs By Candidate Count
 
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
-- [#4949](https://github.com/mohsen1/tsz/pull/4949) fix(cli): anchor TS2578 at comment range, not at line start: 2
 - [#5034](https://github.com/mohsen1/tsz/pull/5034) perf(checker): T2.1.A.1 — checker field-lifetime inventory + CI guard: 2
 - [#5062](https://github.com/mohsen1/tsz/pull/5062) docs(perf): plan §2 — lock-wait increment sites done after #5060+#5061: 2
 - [#5094](https://github.com/mohsen1/tsz/pull/5094) Fix braced unicode escape identifier tail recovery: 2
@@ -33,33 +30,23 @@
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) fix(dts): ignore cjs exports in esm js modules: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
-- [#4951](https://github.com/mohsen1/tsz/pull/4951) fix(checker): preserve literal constraint display for generic calls: 1
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg: 1
-- [#4990](https://github.com/mohsen1/tsz/pull/4990) fix(checker): preserve declared alias application display: 1
-- [#4991](https://github.com/mohsen1/tsz/pull/4991) test: cover nested object playground shape: 1
-- [#4997](https://github.com/mohsen1/tsz/pull/4997) fix(solver): preserve normalized object literal display: 1
+- [#4999](https://github.com/mohsen1/tsz/pull/4999) fix(checker): preserve strict callback assignability diagnostics: 1
+- [#5001](https://github.com/mohsen1/tsz/pull/5001) fix(checker): preserve variance alias display: 1
+- [#5004](https://github.com/mohsen1/tsz/pull/5004) perf(checker): gate-once the hottest checker perf-counter inc() sites: 1
+- [#5009](https://github.com/mohsen1/tsz/pull/5009) perf(solver): gate-once the intern_* helper counter sites: 1
+- [#5040](https://github.com/mohsen1/tsz/pull/5040) perf(checker): T2.1.A.2 — empty lifetime-class shell types: 1
+- [#5048](https://github.com/mohsen1/tsz/pull/5048) perf(checker): T2.2 prep — typed CrossFileQueryKey + Answer: 1
 
 ## Candidate Threads (Top 100 by score)
 
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs:19` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `diagnostic_messages` calls `load_default_lib_files()` on every invocation, and this helper is used by multiple tests in this file. Since `load_default_lib_files()` reads and parses lib assets from disk, consider cach...
-- [#4949](https://github.com/mohsen1/tsz/pull/4949) `crates/tsz-cli/src/driver/check_utils.rs:2172` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `find_directive_in_text` still returns a `(DirectiveKind, usize)` but the `usize` (relative offset) is no longer used now that `directive_text_start` was removed. Consider changing the helper to return only `Directive...
-- [#4949](https://github.com/mohsen1/tsz/pull/4949) `scripts/conformance/conformance-snapshot.json:747` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The PR description claims “new failures: 0” and a category delta of `false_positive 0`, but the updated conformance snapshot shows `false_positive: 1` with `TS2589` listed under extra/false-positive codes. Please eith...
-- [#4951](https://github.com/mohsen1/tsz/pull/4951) `crates/tsz-checker/src/types/computation/call_result.rs:578` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The candidate deduplication uses `candidates.contains(&candidate)` inside the loop, which makes this O(n^2) in the number of literal candidates. Consider tracking seen candidates with a small `FxHashSet`/`IndexSet` (o...
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) `crates/tsz-parser/src/parser/state_statements.rs:240` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the...
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) `crates/tsz-common/src/perf_counters.rs:593` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` “compile out entirely”, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inlin...
-- [#4990](https://github.com/mohsen1/tsz/pull/4990) `crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs:1896` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `recursive_tuple_declared_assignment_types` special-cases by `def.name == "TupleOf"` but doesn't verify the definition kind. If a user defines an `interface TupleOf<...>` (or other non-alias DefKind) this branch can i...
-- [#4991](https://github.com/mohsen1/tsz/pull/4991) `crates/tsz-wasm/src/wasm_tests.rs:182` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - This assertion only checks that TS2322 is absent; the test would still pass if other semantic diagnostics are emitted (meaning the snippet is not actually diagnostic-free). Consider asserting that the semantic diagnos...
-- [#4997](https://github.com/mohsen1/tsz/pull/4997) `crates/tsz-solver/src/operations/expression_ops.rs:315` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `normalized_display_properties` does a linear `.find()` over `original_display` for every normalized property, making this O(n²) per object. Consider precomputing a name->PropertyInfo map (or index) from `original_dis...
 - [#4999](https://github.com/mohsen1/tsz/pull/4999) `crates/tsz-checker/src/error_reporter/render_failure.rs:946` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it’s invoked unconditionally, even when `depth !...
 - [#5001](https://github.com/mohsen1/tsz/pull/5001) `crates/tsz-solver/src/evaluation/evaluate.rs:1155` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -116,12 +103,6 @@
   - `declared_numeric_literal_union_alias_source_display` lookup chain is repeated here (and again later when computing `source_from_annotation`). Consider computing the declared-display once and reusing it to avoid dupli...
 - [#5647](https://github.com/mohsen1/tsz/pull/5647) `crates/tsz-cli/src/driver/core.rs:3865` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `is_removed_option_diagnostic_code` currently returns true for both TS5102 (removed option key) and TS5108 (removed option value like `target=ES3`). The function name suggests only "removed option" keys; consider rena...
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) `crates/tsz-parser/src/parser/state_statements.rs:3042` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `parse_function_declaration` now stores the recovered `=>` expression in `FunctionData.body` (and marks `equals_greater_than_token`). Downstream emitters still treat function-declaration bodies as blocks (e.g., they w...
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) `crates/tsz-emitter/src/transforms/namespace_es5_ir.rs:1252` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `IRNode::ExpressionStatement` printing currently only parenthesizes `FunctionExpr`, but the recovered arrow body can be any expression (notably an object literal like `{ a: 1 }`). Emitting that as a bare expression st...
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) `crates/tsz-emitter/src/emitter/declarations/namespace.rs:1985` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `emit_recovered_namespace_function_arrow_body` emits the recovered body via `emit_expression(...)` directly. That bypasses the expression-statement disambiguation logic (parenthesizing leading `{` / `function` / etc.)...
 - [#5657](https://github.com/mohsen1/tsz/pull/5657) `crates/tsz-checker/src/assignability/assignment_checker/destructuring.rs:444` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal “explain” path and can drop related-information elaborat...
 - [#5677](https://github.com/mohsen1/tsz/pull/5677) `crates/tsz-emitter/src/declaration_emitter/helpers/returned_function_initializer.rs:558` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
