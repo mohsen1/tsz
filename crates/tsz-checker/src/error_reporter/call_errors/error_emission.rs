@@ -253,6 +253,7 @@ impl<'a> CheckerState<'a> {
         if self.inline_literal_satisfies_has_permissive_target(idx) {
             arg_str = Self::widen_member_literals_in_display_text(&arg_str);
         }
+        param_str = Self::trim_single_unbalanced_trailing_type_arg_close(param_str);
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
@@ -278,6 +279,52 @@ impl<'a> CheckerState<'a> {
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    fn trim_single_unbalanced_trailing_type_arg_close(display: String) -> String {
+        let Some(candidate) = display.strip_suffix('>') else {
+            return display;
+        };
+
+        let mut opens = 0usize;
+        let mut closes = 0usize;
+        let mut prev = '\0';
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut escaped = false;
+
+        for ch in display.chars() {
+            if escaped {
+                escaped = false;
+                prev = ch;
+                continue;
+            }
+            if in_single || in_double {
+                if ch == '\\' {
+                    escaped = true;
+                } else if in_single && ch == '\'' {
+                    in_single = false;
+                } else if in_double && ch == '"' {
+                    in_double = false;
+                }
+                prev = ch;
+                continue;
+            }
+            match ch {
+                '\'' => in_single = true,
+                '"' => in_double = true,
+                '<' => opens += 1,
+                '>' if prev != '=' => closes += 1,
+                _ => {}
+            }
+            prev = ch;
+        }
+
+        if closes == opens.saturating_add(1) {
+            candidate.to_string()
+        } else {
+            display
+        }
     }
 
     fn widen_literal_call_argument_display_against_plain_primitive_parameter(
