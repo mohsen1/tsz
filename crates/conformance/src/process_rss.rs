@@ -5,49 +5,55 @@
 //! platform-specific:
 //!
 //! - Linux: read `/proc/{pid}/statm` and multiply the resident-page count by
-//!   the standard 4 KiB page size.
+//!   the runtime page size.
 //! - macOS: shell out to `ps -o rss= -p {pid}` (returns RSS in KiB).
 //!
 //! On other platforms the function returns `None`.
 
 /// Get the RSS (Resident Set Size) of a process in bytes.
 /// Returns `None` if the RSS cannot be determined.
+#[cfg(target_os = "linux")]
 pub(crate) fn get_process_rss(pid: u32) -> Option<usize> {
     // On Linux, read /proc/{pid}/statm (page counts, space-separated).
     // Field 1 (index 1) is resident pages.
-    #[cfg(target_os = "linux")]
-    {
-        let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
-        let resident_pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
-        let page_size = 4096; // standard on x86_64 Linux
-        return Some(resident_pages * page_size);
-    }
+    let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+    let resident_pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    let page_size = usize::try_from(page_size)
+        .ok()
+        .filter(|page_size| *page_size > 0)?;
+    resident_pages.checked_mul(page_size)
+}
 
+/// Get the RSS (Resident Set Size) of a process in bytes.
+/// Returns `None` if the RSS cannot be determined.
+#[cfg(target_os = "macos")]
+pub(crate) fn get_process_rss(pid: u32) -> Option<usize> {
     // On macOS, use `ps -o rss= -p {pid}` (returns RSS in KB).
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("ps")
-            .args(["-o", "rss=", "-p", &pid.to_string()])
-            .output()
-            .ok()?;
-        let rss_kb: usize = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse()
-            .ok()?;
-        return Some(rss_kb * 1024);
-    }
+    let output = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let rss_kb: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .ok()?;
+    Some(rss_kb * 1024)
+}
 
-    #[allow(unreachable_code)]
-    {
-        let _ = pid;
-        None
-    }
+/// Get the RSS (Resident Set Size) of a process in bytes.
+/// Returns `None` if the RSS cannot be determined.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn get_process_rss(pid: u32) -> Option<usize> {
+    let _ = pid;
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn get_process_rss_reports_current_process_memory_usage() {
         let rss = get_process_rss(std::process::id())
