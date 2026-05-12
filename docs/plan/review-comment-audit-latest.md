@@ -2,12 +2,12 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 40
-- Potential important unresolved threads: 72
+- PRs excluded as already followed-up: 41
+- Potential important unresolved threads: 69
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 31
+- `crates/tsz-checker`: 28
 - `crates/tsz-emitter`: 12
 - `docs`: 11
 - `crates/tsz-solver`: 6
@@ -21,7 +21,6 @@
 
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
 - [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
-- [#5720](https://github.com/mohsen1/tsz/pull/5720) fix(checker): align indexSignatures1 fingerprints: 3
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
@@ -39,6 +38,7 @@
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) fix(checker): report JS @type subclass assignment mismatch: 1
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules: 1
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
+- [#4951](https://github.com/mohsen1/tsz/pull/4951) fix(checker): preserve literal constraint display for generic calls: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -50,10 +50,6 @@
   - The PR description claims conformance has “new failures: 0” and “changed failures: 0”, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType...
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) `crates/tsz-checker/src/state/variable_checking/core.rs:1193` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` ...
-- [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:977` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - This rewrite unconditionally appends new `Diagnostic::error` entries without checking whether an equivalent diagnostic (same code/start/length/message) already exists. If the checker later starts emitting any of these...
-- [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:969` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The span lookup falls back to `source_text.find(anchor_marker)` if `line_marker` isn't found. That can attach a newly injected diagnostic to the wrong occurrence of the anchor (e.g. a declaration earlier in the file) ...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md:6` score=3 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword
   - The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep wor...
 - [#5899](https://github.com/mohsen1/tsz/pull/5899) `crates/tsz-emitter/src/emitter/literals/core.rs:865` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
@@ -174,8 +170,6 @@
   - The diagnostic suppression here is based only on exact `message_text` matches, so it will remove *any* TS2322 in this file with one of these messages, even if it comes from an unrelated assignment. To keep this rewrit...
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) `crates/tsz-checker/src/state/state_checking/source_file.rs:799` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...
-- [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:605` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `rewrite_index_signatures1_fingerprints` is invoked even when `ctx.allow_source_file_test_pragmas` is false, which means this conformance-specific diagnostic rewriting could affect normal CLI/LSP checking for any user...
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs:403` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `source_file_has_native_esm_syntax` walks every top-level statement; it’s called multiple times during per-file setup (e.g., several `collect_js_*` helpers), which adds repeated O(n) passes over the same statement lis...
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs:401` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

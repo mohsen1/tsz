@@ -41,13 +41,14 @@
     5693,
     5694,
     5717,
+    5720,
     5743,
     5753,
     5811,
     5830,
     5901
   ],
-  "candidate_count": 72,
+  "candidate_count": 69,
   "candidates": [
     {
       "pr_number": 4967,
@@ -111,40 +112,6 @@
       "line": 1193,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` for the initializer with the non-contextual (raw) type. That overwrites the earlier contextually-typed initializer entry you intentionally seeded into `node_types` (to prevent later context-free lookups from widening/losing inference), and can change downstream behavior/fingerprints. Consider preserving/restoring the contextual cached initializer type after the raw check (e.g., save the current cached type and re-insert `init_type`), or compute the raw type under a snapshot/rollback that also restores `node_types`/request caches rather than only diagnostics.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5720,
-      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
-      "merged_at": "2026-05-12T05:29:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTIDy",
-      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
-      "line": 977,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This rewrite unconditionally appends new `Diagnostic::error` entries without checking whether an equivalent diagnostic (same code/start/length/message) already exists. If the checker later starts emitting any of these diagnostics naturally, this function will introduce duplicates and break conformance again. Consider making the rewrite idempotent by rewriting existing matching diagnostics in-place or by checking for an existing `(start, code)` (and possibly message) before pushing.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5720,
-      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
-      "merged_at": "2026-05-12T05:29:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTIEF",
-      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
-      "line": 969,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The span lookup falls back to `source_text.find(anchor_marker)` if `line_marker` isn't found. That can attach a newly injected diagnostic to the wrong occurrence of the anchor (e.g. a declaration earlier in the file) if the test file changes slightly. It would be safer to skip emitting that diagnostic when the `line_marker` isn't found (or to search relative to a more stable surrounding marker) rather than falling back to a potentially unrelated match.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -1107,22 +1074,6 @@
       "line": 799,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...` / `flat2...` markers are found. If a source file happens to match the guard strings but not these call-site markers (or if the upstream conformance snippet changes), this will drop diagnostics without restoring them. Consider extending the initial guard to include the call markers, or only performing the suppression after confirming all three anchors exist.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5720,
-      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
-      "merged_at": "2026-05-12T05:29:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BTIDT",
-      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
-      "line": 605,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`rewrite_index_signatures1_fingerprints` is invoked even when `ctx.allow_source_file_test_pragmas` is false, which means this conformance-specific diagnostic rewriting could affect normal CLI/LSP checking for any user file that happens to contain the trigger strings. Consider gating this call behind `allow_source_file_test_pragmas` (as is already done for `rewrite_intersection_index_signature_fingerprints`) to ensure fingerprint rewrites only run in conformance/test mode.",
       "score": 1,
       "reasons": [
         "detailed-thread"
