@@ -1057,7 +1057,7 @@ impl TypeInterner {
         // `OnceLock<PerfCounters>` deref per `intern()` call (vs. one per
         // increment). A disabled run pays only the gate read: subsequent
         // `if let Some(c) = pc` checks are predictable branches on a
-        // local `None` that the optimizer folds into the no-op path.
+        // local `None`, so the increment body is consistently skipped.
         let pc = if tsz_common::perf_counters::enabled_fast() {
             Some(tsz_common::perf_counters::counters())
         } else {
