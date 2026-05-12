@@ -4,7 +4,7 @@
 - **Branch**: `fix/recursive-conditional-fingerprint-followup-20260512`
 - **Base**: `main`
 - **PR**: https://github.com/mohsen1/tsz/pull/5762
-- **Status**: claim
+- **Status**: ready
 - **Issue**: #5579
 - **Workstream**: conformance
 
@@ -36,3 +36,12 @@ codes with mismatched line, column, or message fingerprints.
 ## Progress
 
 - Claim created.
+- Fixed recursive conditional fingerprint drift by preserving scoped bare type
+  parameter display in TS2322 message rewriting and anchoring the recursive
+  wrapper TS2589 at the conditional alias application use site.
+- Verification:
+  - `cargo fmt --all`
+  - `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`
+    - `FINAL RESULTS: 2/2 passed (100.0%)`
+  - `cargo test -p tsz-checker --test conditional_infer_tests recursive_awaited -- --nocapture`
+    - `2 passed`
