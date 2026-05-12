@@ -362,10 +362,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // Rest element (e.g., `...string[]` or `...T`)
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check_tuple_rest_type_node(wrapped.type_node, true);
-                        // Only track seen_rest for concrete array/tuple rest elements.
-                        // Variadic type parameter spreads (...T) don't count as "rest"
-                        // for TS1265/TS1266 purposes — they represent variadic tuples.
-                        let is_concrete_rest = self.is_array_or_tuple_type(elem_type)
+                        let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
                             || Self::ast_kind_is_obviously_array_or_tuple(
                                 self.ctx.arena,
                                 wrapped.type_node,
@@ -412,7 +409,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .map(|id_data| self.ctx.types.intern_string(&id_data.escaped_text));
 
                         if data.dot_dot_dot_token {
-                            let is_concrete_rest = self.is_array_or_tuple_type(elem_type)
+                            let is_concrete_rest = self.is_variadic_array_or_tuple(elem_type)
                                 || Self::ast_kind_is_obviously_array_or_tuple(
                                     self.ctx.arena,
                                     data.type_node,
