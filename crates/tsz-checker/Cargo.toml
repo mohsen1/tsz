@@ -954,6 +954,10 @@ name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
 
 [[test]]
+name = "ts2852_await_using_context_tests"
+path = "tests/ts2852_await_using_context_tests.rs"
+
+[[test]]
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
 
