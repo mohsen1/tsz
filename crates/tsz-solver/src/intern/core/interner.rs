@@ -1318,6 +1318,14 @@ impl TypeInterner {
         if evaluated == application {
             return;
         }
+        // A generic alias can evaluate to a bare type parameter (for example
+        // `type Id<T> = T` or a conditional alias branch that returns `T`).
+        // Type parameter ids are scoped semantic identities, not fresh display
+        // surfaces for one alias application. Recording `T -> Alias<...>` here
+        // repaints unrelated uses of `T` in later diagnostics.
+        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
+            return;
+        }
         // Only alias types produced by this evaluation. Generic helper aliases
         // can otherwise repaint unrelated earlier structural types that happen
         // to intern to the same shape. Concrete applications remain eligible so
@@ -1398,6 +1406,9 @@ impl TypeInterner {
             return;
         }
         if evaluated == application || evaluated.is_intrinsic() {
+            return;
+        }
+        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
             return;
         }
         let Some(TypeData::Application(app_id)) = self.lookup(application) else {
