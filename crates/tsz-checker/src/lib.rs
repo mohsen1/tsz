@@ -418,6 +418,9 @@ mod enum_nominality_tests;
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
 #[cfg(test)]
+#[path = "../tests/file_session_switch_to_file_tests.rs"]
+mod file_session_switch_to_file_tests;
+#[cfg(test)]
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
 #[cfg(test)]

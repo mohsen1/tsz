@@ -460,6 +460,9 @@ impl<'a> CheckerState<'a> {
             }
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
+            // No cache fast-path on this delegate; every entry is a miss.
+            tsz_common::perf_counters::record_delegate_cross_arena_miss();
+            let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
             let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 &target_arena,
                 &target_binder,
@@ -520,6 +523,9 @@ impl<'a> CheckerState<'a> {
         for source_file in &target_arena.source_files {
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
+            // No cache fast-path on this delegate; every entry is a miss.
+            tsz_common::perf_counters::record_delegate_cross_arena_miss();
+            let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
             let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 &target_arena,
                 &target_binder,
