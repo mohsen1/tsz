@@ -10,7 +10,8 @@ Implements `T2.1.A` from `docs/plan/PERFORMANCE_PLAN.md`:
 What this script does:
 
 1. Parse `crates/tsz-checker/src/context/mod.rs` for the `CheckerContext<'a>`
-   struct definition and extract every `pub <field>: <type>` line.
+   struct definition and extract every `pub <field>: <type>` or
+   `pub(crate) <field>: <type>` line.
 2. Load the manifest at
    `crates/tsz-checker/src/context/checker_context_lifetimes.toml` which maps
    each field to one of the lifetime classes described in PERFORMANCE_PLAN.md
@@ -81,11 +82,10 @@ class Field:
 
 
 def parse_checker_context_fields(rs_path: pathlib.Path) -> list[Field]:
-    """Extract `pub <name>: <type>` lines from `pub struct CheckerContext<'a>`.
+    """Extract public-visible field lines from `pub struct CheckerContext<'a>`.
 
     Whitespace-tolerant. Strips trailing commas. Skips inner `// ---` section
-    headers and any non-`pub` lines (private fields are not in scope; they
-    require a separate audit if they appear).
+    headers and fully private fields.
     """
     text = rs_path.read_text(encoding="utf-8")
 
@@ -115,14 +115,25 @@ def parse_checker_context_fields(rs_path: pathlib.Path) -> list[Field]:
     body = text[body_start:i]
 
     fields: list[Field] = []
-    field_pattern = re.compile(
-        r"^\s*pub\s+([a-z_][a-z_0-9]*)\s*:\s*(.+?),\s*$",
-        re.MULTILINE,
+    field_start_pattern = re.compile(
+        r"^\s*pub(?:\(\s*crate\s*\))?\s+([a-z_][a-z_0-9]*)\s*:\s*(.*)$",
     )
-    for match in field_pattern.finditer(body):
+    lines = body.splitlines()
+    line_idx = 0
+    while line_idx < len(lines):
+        match = field_start_pattern.match(lines[line_idx])
+        if match is None:
+            line_idx += 1
+            continue
+
         name = match.group(1)
-        rust_type = match.group(2).strip()
+        type_parts = [match.group(2).strip()]
+        while type_parts[-1].endswith(",") is False and line_idx + 1 < len(lines):
+            line_idx += 1
+            type_parts.append(lines[line_idx].strip())
+        rust_type = " ".join(type_parts).removesuffix(",").strip()
         fields.append(Field(name=name, rust_type=rust_type))
+        line_idx += 1
     return fields
 
 
