@@ -11,6 +11,66 @@ use tsz_solver::TypeDatabase;
 use tsz_solver::TypeId;
 use tsz_solver::def::{DefId, DefKind, DefinitionStore};
 
+/// True when `type_id` is the registered body of a non-generic recursive type alias.
+///
+/// Handles cases like `type Box2 = Box<Box2 | number>` where the alias annotation
+/// `const x: Box2` resolves to the Application body type, NOT `Lazy(Box2_def)`.
+/// tsc preserves "Box2" in TS2322 messages; this helper exposes the structural
+/// rule so the checker can match that policy without hardcoding alias names.
+///
+/// The structural rule: when a non-generic type alias (no type parameters) has a
+/// body that recursively references the alias itself, the alias name must be shown
+/// in TS2322 messages rather than the expanded body.
+pub(crate) fn is_recursive_non_generic_type_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    // Find the alias whose body is registered as this exact type.
+    let Some(def_id) = def_store.find_type_alias_by_body(type_id) else {
+        return false;
+    };
+    let Some(def) = def_store.get(def_id) else {
+        return false;
+    };
+    // Only applies to non-generic type aliases; generic aliases (with type parameters)
+    // are handled by is_recursive_type_alias_application which preserves "Alias<Args>".
+    if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
+        return false;
+    }
+    let Some(body) = def.body else {
+        return false;
+    };
+    // Verify the body recursively references the alias itself.
+    let mut visited: FxHashSet<TypeId> = FxHashSet::default();
+    type_reaches_alias_def(db, body, def_id, &mut visited)
+}
+
+/// True when `def_id` refers to a non-generic `TypeAlias` whose body recursively
+/// references the same alias.
+///
+/// Used to decide whether to preserve a `Lazy(def_id)` alias name in TS2322
+/// messages rather than following the evaluated `display_alias` to an expanded
+/// Application form. tsc shows "Box2" not "Box<number | Box2>" for
+/// `type Box2 = Box<Box2 | number>` in error messages.
+pub(crate) fn is_def_non_generic_recursive_alias(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    def_id: DefId,
+) -> bool {
+    let Some(def) = def_store.get(def_id) else {
+        return false;
+    };
+    if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
+        return false;
+    }
+    let Some(body) = def.body else {
+        return false;
+    };
+    let mut visited: FxHashSet<TypeId> = FxHashSet::default();
+    type_reaches_alias_def(db, body, def_id, &mut visited)
+}
+
 /// True when `type_id` is `Application(Lazy(D), args)` and the alias body of
 /// `D` reaches another reference to `D` (directly via `Lazy(D)` or via
 /// `Application(Lazy(D), _)`, possibly through nested types).

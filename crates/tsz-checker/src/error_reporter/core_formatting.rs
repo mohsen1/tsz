@@ -276,8 +276,17 @@ impl<'a> CheckerState<'a> {
             }
             // Evaluate and check if the result wraps a generic application.
             // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
+            // Exception: recursive non-generic aliases (e.g. `type Box2 = Box<Box2 | number>`)
+            // must show the alias name, not the expanded body. tsc preserves "Box2" in TS2322.
             let evaluated = self.evaluate_type_with_env(ty);
-            if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
+            if evaluated != ty
+                && self.ctx.types.get_display_alias(evaluated).is_some()
+                && !crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
+                    self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
+                    def_id,
+                )
+            {
                 return self.format_type_for_assignability_message(evaluated);
             }
             let name = self.ctx.types.resolve_atom_ref(def.name);
