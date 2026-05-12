@@ -17,10 +17,6 @@ use super::assignability::{
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
-    fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
-        query_utils::is_object_intrinsic_type(self.ctx.types, type_id)
-    }
-
     /// Resolve the parameter name at `param_index` in the first call
     /// signature of `callable_ty` (if any). Used to render TS2328
     /// "Types of parameters '_' and '_' are incompatible." messages.

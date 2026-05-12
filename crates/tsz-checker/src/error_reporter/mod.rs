@@ -34,6 +34,7 @@ mod operator_errors;
 mod primitive_intersection_display;
 mod properties;
 mod property_receiver_formatting;
+mod recursive_alias_display;
 mod render_failure;
 mod suggestions;
 mod type_display_policy;
