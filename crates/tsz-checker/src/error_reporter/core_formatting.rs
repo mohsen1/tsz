@@ -241,15 +241,6 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.resolve_atom_ref(info.name).to_string();
         }
 
-        // For non-generic type alias references (Lazy(DefId)), format the alias name
-        // directly before evaluation resolves it to its body (which loses the alias
-        // identity). tsc preserves alias names like "ExoticAnimal" in error messages
-        // instead of expanding to "CatDog | ManBearPig | Platypus".
-        //
-        // Exceptions:
-        // 1. Computed bodies (intersection reduction, conditional evaluation) → expand.
-        // 2. Aliases wrapping a generic application (e.g. `type Foo = Id<{...}>`) →
-        //    show the inner application.  Detected via display_alias on the evaluated result.
         if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
@@ -267,17 +258,11 @@ impl<'a> CheckerState<'a> {
                             );
                     }
                 }
-                // Only expand computed bodies. For generic function type aliases like
-                // `type bar = <U>(source: ...) => void`, tsc shows the alias name.
                 if self.ctx.definition_store.is_computed_body(body) {
                     let evaluated = self.evaluate_type_with_env(ty);
                     return self.format_type_diagnostic_for_assignability_display(evaluated);
                 }
             }
-            // Evaluate and check if the result wraps a generic application.
-            // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
-            // Exception: recursive non-generic aliases (e.g. `type Box2 = Box<Box2 | number>`)
-            // must show the alias name, not the expanded body. tsc preserves "Box2" in TS2322.
             let evaluated = self.evaluate_type_with_env(ty);
             if evaluated != ty
                 && self.ctx.types.get_display_alias(evaluated).is_some()
@@ -291,10 +276,6 @@ impl<'a> CheckerState<'a> {
             }
             let name = self.ctx.types.resolve_atom_ref(def.name);
             return name.to_string();
-        }
-
-        if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
-            return collapsed;
         }
 
         if let Some(keyof_inner) =
@@ -311,6 +292,14 @@ impl<'a> CheckerState<'a> {
             {
                 return format!("keyof {}", symbol.escaped_name);
             }
+        }
+
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
+            return alias_name;
+        }
+
+        if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
+            return collapsed;
         }
 
         if let Some(enum_name) = self.format_qualified_enum_name_for_message(ty) {
@@ -387,14 +376,6 @@ impl<'a> CheckerState<'a> {
 
         if let Some(extract_display) = self.format_extract_keyof_string_type(ty) {
             return extract_display;
-        }
-
-        // Check for type alias names BEFORE normalization, which transforms the
-        // TypeId and breaks the body_to_alias lookup.  tsc preserves alias names
-        // in assignability messages (e.g. "not assignable to type 'FuncType'"
-        // instead of expanding to the function signature).
-        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
-            return alias_name;
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
@@ -1188,39 +1169,54 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let enum_infos: Vec<_> = members
+            .iter()
+            .map(|&member| self.enum_union_member_display_info(member))
+            .collect();
         let mut rendered = Vec::with_capacity(members.len());
-        let mut collapsed_enum = None;
+        let mut rendered_collapsed_enums = Vec::new();
         let mut rendered_enum_member = false;
-
-        for member in members {
-            if let Some(name) = self.format_enum_member_name_for_message(member) {
-                rendered.push(name);
+        for (index, &member) in members.iter().enumerate() {
+            if let Some((enum_sym, enum_name, is_member)) = enum_infos[index].clone() {
                 rendered_enum_member = true;
-                continue;
-            }
-            let widened = self.widen_enum_member_type(member);
-            if let Some(enum_sym) = self.enum_symbol_from_enumish_type(widened)
-                && let Some(symbol) = self.ctx.binder.get_symbol(enum_sym)
-            {
-                let name = symbol.escaped_name.clone();
-                match collapsed_enum.as_ref() {
-                    Some((existing_sym, _)) if *existing_sym == enum_sym => {}
-                    None => {
-                        collapsed_enum = Some((enum_sym, name.clone()));
-                        rendered.push(name);
+                let enum_count = enum_infos
+                    .iter()
+                    .filter(|info| {
+                        info.as_ref()
+                            .is_some_and(|(candidate, _, _)| *candidate == enum_sym)
+                    })
+                    .count();
+
+                if enum_count > 1 {
+                    if !rendered_collapsed_enums.contains(&enum_sym) {
+                        rendered_collapsed_enums.push(enum_sym);
+                        rendered.push(enum_name);
                     }
-                    Some(_) => return None,
+                } else if is_member {
+                    let member_name = self
+                        .format_enum_member_name_for_message(member)
+                        .unwrap_or(enum_name);
+                    rendered.push(member_name);
+                } else {
+                    rendered.push(enum_name);
                 }
             } else {
                 rendered.push(self.format_type_for_assignability_message(member));
             }
         }
 
-        if collapsed_enum.is_some() || rendered_enum_member {
-            Some(rendered.join(" | "))
-        } else {
-            None
-        }
+        rendered_enum_member.then(|| rendered.join(" | "))
+    }
+
+    fn enum_union_member_display_info(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<(tsz_binder::SymbolId, String, bool)> {
+        let is_member = self.format_enum_member_name_for_message(ty).is_some();
+        let widened = self.widen_enum_member_type(ty);
+        let enum_sym = self.enum_symbol_from_enumish_type(widened)?;
+        let symbol = self.ctx.binder.get_symbol(enum_sym)?;
+        Some((enum_sym, symbol.escaped_name.clone(), is_member))
     }
 
     fn format_enum_member_name_for_message(&mut self, ty: TypeId) -> Option<String> {
