@@ -2,6 +2,9 @@
 
 use crate::context::TypingRequest;
 use crate::state::{CheckerState, MemberAccessLevel, MemberLookup};
+use crate::types_domain::unique_symbol_arena::{
+    is_unique_symbol_type_annotation_unwrapped, unwrap_parenthesized_type,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -521,6 +524,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.in_conditional_extends_depth += 1;
                     self.check_type_for_missing_names(cond.extends_type);
                     self.ctx.in_conditional_extends_depth -= 1;
+                    self.check_unique_symbol_in_conditional_extends(cond.extends_type);
 
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
@@ -1758,6 +1762,18 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+        }
+    }
+
+    fn check_unique_symbol_in_conditional_extends(&mut self, extends_type: NodeIndex) {
+        if is_unique_symbol_type_annotation_unwrapped(self.ctx.arena, extends_type) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let type_idx = unwrap_parenthesized_type(self.ctx.arena, extends_type);
+            self.error_at_node(
+                type_idx,
+                diagnostic_messages::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE,
+                diagnostic_codes::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE,
+            );
         }
     }
 

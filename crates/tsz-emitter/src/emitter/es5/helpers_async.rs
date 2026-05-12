@@ -160,6 +160,7 @@ impl<'a> Printer<'a> {
         class_name: &str,
         class_iife_expr: &str,
         static_field_inits: &[(PropertyNameEmit, NodeIndex)],
+        set_function_name: Option<&str>,
     ) {
         let temp = if self.class_expression_is_in_loop_body(class_node) {
             let temp = self.make_unique_name();
@@ -173,6 +174,10 @@ impl<'a> Printer<'a> {
         self.write(&temp);
         self.write(" = ");
         self.write_multiline_fragment(class_iife_expr);
+
+        if let Some(name) = set_function_name {
+            self.emit_class_expr_set_function_name_comma_item(&temp, name);
+        }
 
         for (name_emit, init_idx) in static_field_inits {
             self.write(",");
@@ -1139,9 +1144,14 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        let class_expr_set_function_name = if class_data.name.is_none() {
+            self.resolve_class_expr_binding_name(class_node)
+        } else {
+            None
+        };
         let use_static_comma = !static_field_inits.is_empty()
             && !self.ctx.options.use_define_for_class_fields
-            && class_data.name.is_some();
+            && (class_data.name.is_some() || class_expr_set_function_name.is_some());
         if use_static_comma {
             es5_emitter.set_skip_static_members(true);
         }
@@ -1158,6 +1168,10 @@ impl<'a> Printer<'a> {
                 let output = es5_emitter.emit_class(class_node);
                 (candidate, output)
             }
+        } else if use_static_comma && class_expr_set_function_name.is_some() {
+            let temp_name = self.make_unique_name_from_base("class");
+            let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
+            (temp_name, output)
         } else {
             let temp_name = self
                 .get_class_expression_name(class_node)
@@ -1177,6 +1191,7 @@ impl<'a> Printer<'a> {
                 &class_name,
                 &class_iife_expr,
                 &static_field_inits,
+                class_expr_set_function_name.as_deref(),
             );
             return;
         }

@@ -6,30 +6,88 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    /// Resolve the binding name for an anonymous class expression from its parent chain.
-    /// For `const C = class { ... }`, this returns `Some("C")`.
-    /// Walks up: `ClassExpression` -> `VariableDeclaration` -> name identifier.
+    /// Resolve the named-evaluation target for an anonymous class expression from
+    /// its parent chain. For `const C = class { ... }` and
+    /// `(C = class { ... })`, this returns `Some("C")`.
     pub(in crate::emitter) fn resolve_class_expr_binding_name(
         &self,
         class_idx: NodeIndex,
     ) -> Option<String> {
-        let ext = self.arena.get_extended(class_idx)?;
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return None;
-        }
-        let parent_node = self.arena.get(parent_idx)?;
-        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            let decl = self.arena.get_variable_declaration(parent_node)?;
-            let name_node = self.arena.get(decl.name)?;
-            if name_node.kind == SyntaxKind::Identifier as u16 {
-                let name = self.get_identifier_text_idx(decl.name);
-                if !name.is_empty() {
-                    return Some(name);
+        let mut current = class_idx;
+        let mut hops = 0;
+
+        while hops < 8 {
+            let parent_idx = self.arena.get_extended(current)?.parent;
+            if parent_idx.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let paren = self.arena.get_parenthesized(parent_node)?;
+                    if paren.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
                 }
+                syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    let assertion = self.arena.get_type_assertion(parent_node)?;
+                    if assertion.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    let non_null = self.arena.get_unary_expr_ex(parent_node)?;
+                    if non_null.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.arena.get_variable_declaration(parent_node)?;
+                    if decl.initializer != current {
+                        return None;
+                    }
+                    return self.identifier_binding_name(decl.name);
+                }
+                syntax_kind_ext::PARAMETER => {
+                    let param = self.arena.get_parameter(parent_node)?;
+                    if param.initializer != current {
+                        return None;
+                    }
+                    return self.identifier_binding_name(param.name);
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let binary = self.arena.get_binary_expr(parent_node)?;
+                    if binary.right != current
+                        || binary.operator_token != SyntaxKind::EqualsToken as u16
+                    {
+                        return None;
+                    }
+                    return self.identifier_binding_name(binary.left);
+                }
+                _ => return None,
             }
         }
+
         None
+    }
+
+    fn identifier_binding_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let name = self.get_identifier_text_idx(name_idx);
+        (!name.is_empty()).then_some(name)
     }
 
     pub(in crate::emitter) fn emit_class_expr_set_function_name_comma_item(

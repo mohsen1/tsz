@@ -12,7 +12,7 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-pub(super) fn is_unique_symbol_type_annotation(
+pub(crate) fn is_unique_symbol_type_annotation(
     arena: &NodeArena,
     type_annotation: NodeIndex,
 ) -> bool {
@@ -30,7 +30,24 @@ pub(super) fn is_unique_symbol_type_annotation(
     }
 }
 
-pub(super) fn is_symbol_type_node(arena: &NodeArena, type_annotation: NodeIndex) -> bool {
+pub(crate) fn is_unique_symbol_type_annotation_unwrapped(
+    arena: &NodeArena,
+    type_annotation: NodeIndex,
+) -> bool {
+    is_unique_symbol_type_annotation(arena, unwrap_parenthesized_type(arena, type_annotation))
+}
+
+pub(crate) fn unwrap_parenthesized_type(arena: &NodeArena, mut type_idx: NodeIndex) -> NodeIndex {
+    while let Some(node) = arena.get(type_idx)
+        && node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+        && let Some(wrapped) = arena.get_wrapped_type(node)
+    {
+        type_idx = wrapped.type_node;
+    }
+    type_idx
+}
+
+pub(crate) fn is_symbol_type_node(arena: &NodeArena, type_annotation: NodeIndex) -> bool {
     let Some(type_node) = arena.get(type_annotation) else {
         return false;
     };
@@ -48,7 +65,7 @@ pub(super) fn is_symbol_type_node(arena: &NodeArena, type_annotation: NodeIndex)
         .is_some_and(|ident| ident.escaped_text == "symbol")
 }
 
-pub(super) fn is_symbol_call_initializer(arena: &NodeArena, init_idx: NodeIndex) -> bool {
+pub(crate) fn is_symbol_call_initializer(arena: &NodeArena, init_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(init_idx) else {
         return false;
     };
