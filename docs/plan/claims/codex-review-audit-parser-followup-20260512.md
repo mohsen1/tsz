@@ -68,6 +68,11 @@ Close remaining high-signal parser review-audit threads by:
   - verified the separate docs thread points at a deleted claim file
     (`perf-delegate-counter-coverage-2026-05-10.md`) and is stale on current
     `main`.
+- review comments left on #5034:
+  - verified `scripts/arch/checker_field_inventory.py` no longer exists; the
+    checker boundary workflow now runs through `scripts/arch/arch_guard.py`
+    from `check-checker-boundaries.sh`, so both historical threads on the
+    removed script are stale on current `main`.
 
 ## Files Touched
 
@@ -88,9 +93,11 @@ Close remaining high-signal parser review-audit threads by:
 - `docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md`
 - `docs/plan/PERFORMANCE_PLAN.md`
 - `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
+- `scripts/arch/check-checker-boundaries.sh`
+- `scripts/arch/arch_guard.py`
 
 ## Verification
 
 - `cargo fmt --check`
 - `cargo test -p tsz-parser`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=126`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)

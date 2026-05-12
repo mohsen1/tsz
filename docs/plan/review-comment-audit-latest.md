@@ -2,8 +2,8 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 20
-- Potential important unresolved threads: 126
+- PRs excluded as already followed-up: 21
+- Potential important unresolved threads: 124
 
 ## Top Subsystems
 
@@ -12,7 +12,7 @@
 - `docs`: 15
 - `crates/tsz-parser`: 11
 - `crates/tsz-solver`: 9
-- `scripts`: 6
+- `scripts`: 4
 - `crates/tsz-cli`: 2
 - `crates/tsz-binder`: 1
 - `crates/tsz-wasm`: 1
@@ -196,10 +196,6 @@
   - `callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it’s invoked unconditionally, even when `depth !...
 - [#5001](https://github.com/mohsen1/tsz/pull/5001) `crates/tsz-solver/src/evaluation/evaluate.rs:1155` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `store_intermediate_application_display_alias` stores a *global* display_alias mapping from `instantiated` (an Application like `Inner<1>`) to `original_type_id` (e.g. `Outer<1>`). Because Application TypeIds are inte...
-- [#5034](https://github.com/mohsen1/tsz/pull/5034) `scripts/arch/checker_field_inventory.py:54` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - This script imports `tomllib`, which requires Python 3.11+. `scripts/arch/check-checker-boundaries.sh` is run in CI (including self-hosted runners via `scripts/ci/gcp-full-ci.sh`), so if any runner or contributor mach...
-- [#5034](https://github.com/mohsen1/tsz/pull/5034) `scripts/arch/checker_field_inventory.py:43` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs i...
 - [#5075](https://github.com/mohsen1/tsz/pull/5075) `crates/tsz-checker/src/types/computation/call_finalize.rs:563` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `construct_signature_flags` calls `common::construct_signatures_for_type`, which builds a fresh `Vec<CallSignature>` (cloning signature data) just to compute two booleans. Even though this is on the mismatch path, it’...
 - [#5082](https://github.com/mohsen1/tsz/pull/5082) `docs/plan/PERFORMANCE_PLAN.md:40` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -242,3 +238,7 @@
   - `avoid_generator_state_collision` is currently hard-coded to only rewrite `function (_a)` when `class_temp == "_a"`, and it only replaces `_a.label` / `_a.sent()`. The async lowering can choose other generator-state n...
 - [#5662](https://github.com/mohsen1/tsz/pull/5662) `crates/tsz-emitter/src/emitter/jsx/emit.rs:326` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - System wrapper emission now forces the automatic JSX path to emit `_jsx(...)` / `_jsxDEV(...)` when `original_module_kind` is `System`, but I can't find any code in the System wrapper that declares or initializes `_js...
+- [#5662](https://github.com/mohsen1/tsz/pull/5662) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:408` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `emit_system_execute_body` always emits an `_jsxFileName = ...;` assignment in `react-jsxdev` mode once `jsx_dev_file_name` is set, but this isn’t gated on actual JSX runtime usage / presence of a `.../jsx-dev-runtime...
+- [#5663](https://github.com/mohsen1/tsz/pull/5663) `crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs:2309` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `direct_param_display` is computed before `overloaded_recursive_typeof_parameter_display`, but in the early-return path it’s unused. Since `format_type_diagnostic` can be relatively expensive, consider moving the `dir...

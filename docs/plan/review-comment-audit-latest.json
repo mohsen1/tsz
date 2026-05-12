@@ -14,6 +14,7 @@
     5003,
     5004,
     5009,
+    5034,
     5040,
     5048,
     5060,
@@ -27,7 +28,7 @@
     5830,
     5901
   ],
-  "candidate_count": 126,
+  "candidate_count": 124,
   "candidates": [
     {
       "pr_number": 5089,
@@ -1305,38 +1306,6 @@
       "line": 1155,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`store_intermediate_application_display_alias` stores a *global* display_alias mapping from `instantiated` (an Application like `Inner<1>`) to `original_type_id` (e.g. `Outer<1>`). Because Application TypeIds are interned, this can repaint any other occurrence of the same `instantiated` application later (including cases where the user explicitly referenced `Inner<1>`), potentially producing misleading diagnostics. Consider scoping this mapping to the specific evaluation/diagnostic context (or adding an additional guard so it only applies when you can prove the instantiated Application was introduced solely as an evaluation intermediate).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5034,
-      "pr_title": "perf(checker): T2.1.A.1 \u2014 checker field-lifetime inventory + CI guard",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5034",
-      "merged_at": "2026-05-10T17:34:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A6tXB",
-      "path": "scripts/arch/checker_field_inventory.py",
-      "line": 54,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This script imports `tomllib`, which requires Python 3.11+. `scripts/arch/check-checker-boundaries.sh` is run in CI (including self-hosted runners via `scripts/ci/gcp-full-ci.sh`), so if any runner or contributor machine uses Python 3.10 or older this will fail. Either ensure CI + tooling pins Python >=3.11 (and document it), or add a compatible fallback (e.g., use a vendored TOML parser / switch the manifest to JSON).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5034,
-      "pr_title": "perf(checker): T2.1.A.1 \u2014 checker field-lifetime inventory + CI guard",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5034",
-      "merged_at": "2026-05-10T17:34:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A6tXD",
-      "path": "scripts/arch/checker_field_inventory.py",
-      "line": 43,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs it). Please update the docstring to match current behavior to avoid confusion about when/where the guard runs.",
       "score": 1,
       "reasons": [
         "detailed-thread"
