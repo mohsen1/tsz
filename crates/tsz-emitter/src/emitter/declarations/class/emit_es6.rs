@@ -9,6 +9,7 @@ use crate::transforms::private_fields_es5::{
     collect_private_fields_with_reserved, collect_private_methods_with_reserved,
     get_private_field_name, is_private_identifier, make_unique_private_name,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_parser::parser::node::{ClassData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -484,6 +485,12 @@ impl<'a> Printer<'a> {
             }
             self.emit_comments_before_pos(node.pos);
         }
+        let auto_accessor_member_map: FxHashMap<NodeIndex, (String, bool)> = auto_accessor_members
+            .iter()
+            .map(|(member_idx, storage_name, _, is_static)| {
+                (*member_idx, (storage_name.clone(), *is_static))
+            })
+            .collect();
 
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
@@ -1440,8 +1447,8 @@ impl<'a> Printer<'a> {
         // when the constructor appears before the property in source order.
         let mut field_inits: Vec<crate::emitter::core::FieldInit> = Vec::new();
         let mut static_field_inits: Vec<StaticFieldInit> = Vec::new();
-        let mut hoisted_native_private_members: Vec<NodeIndex> = Vec::new();
-        let mut hoisted_native_auto_accessor_members: Vec<NodeIndex> = Vec::new();
+        let mut hoisted_native_private_members: FxHashSet<NodeIndex> = FxHashSet::default();
+        let mut hoisted_native_auto_accessor_members: FxHashSet<NodeIndex> = FxHashSet::default();
         if needs_class_field_lowering {
             let members = &class.members.nodes;
             for (member_i, &member_idx) in members.iter().enumerate() {
@@ -1507,17 +1514,14 @@ impl<'a> Printer<'a> {
                         self.get_property_name_emit(prop.name)
                     };
                     if hoist_native_instance_order_inits && is_auto_accessor {
-                        if let Some((_, storage_name, _, _)) = auto_accessor_members
-                            .iter()
-                            .find(|(idx, _, _, _)| *idx == member_idx)
-                        {
+                        if let Some((storage_name, _)) = auto_accessor_member_map.get(&member_idx) {
                             name_emit = Some(PropertyNameEmit::Dot(format!("#{storage_name}")));
-                            hoisted_native_auto_accessor_members.push(member_idx);
+                            hoisted_native_auto_accessor_members.insert(member_idx);
                         }
                     } else if hoist_native_instance_order_inits && is_private_name {
                         if let Some(private_name) = get_private_field_name(self.arena, prop.name) {
                             name_emit = Some(PropertyNameEmit::Dot(private_name));
-                            hoisted_native_private_members.push(member_idx);
+                            hoisted_native_private_members.insert(member_idx);
                         }
                     }
                     let Some(name_emit) = name_emit else {
@@ -1937,9 +1941,7 @@ impl<'a> Printer<'a> {
                 && let Some(member_node) = self.arena.get(member_idx)
                 && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                     && let Some(prop) = self.arena.get_property_decl(member_node)
-                    && !auto_accessor_members
-                        .iter()
-                        .any(|(accessor_idx, _, _, _)| *accessor_idx == member_idx)
+                    && !auto_accessor_member_map.contains_key(&member_idx)
                     && prop.initializer.is_some()
                     && !self
                         .arena
@@ -2195,10 +2197,7 @@ impl<'a> Printer<'a> {
             }
 
             let before_len = self.writer.len();
-            let auto_accessor = auto_accessor_members
-                .iter()
-                .find(|(idx, _, _, _)| *idx == member_idx)
-                .map(|(_, storage_name, _, is_static)| (storage_name.clone(), *is_static));
+            let auto_accessor = auto_accessor_member_map.get(&member_idx).cloned();
             if let Some(member_node) = self.arena.get(member_idx) {
                 let property_end = if auto_accessor.is_some() {
                     let upper = class
