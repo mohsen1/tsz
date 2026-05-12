@@ -1475,24 +1475,43 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::flags::node_flags;
         let flags_u32 = node.flags as u32;
         let is_using = (flags_u32 & node_flags::USING) != 0;
-        let is_await_using = flags_u32 == node_flags::AWAIT_USING;
+        let is_await_using = node_flags::is_await_using(flags_u32);
 
-        // TS2854: Top-level 'await using' requires specific module + target options.
-        // Routes through the environment capability boundary to determine whether
-        // a diagnostic should be emitted.
-        if is_await_using && self.ctx.function_depth == 0 {
-            use crate::query_boundaries::capabilities::FeatureGate;
-            if self
-                .ctx
-                .capabilities
-                .check_feature_gate(FeatureGate::TopLevelAwaitUsing)
-                .is_some()
-            {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        if is_await_using {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+            if self.ctx.function_depth == 0 {
+                // TS2853: Top-level 'await using' is only valid in modules.
+                if !self.ctx.is_external_module_file() {
+                    self.error_at_node(
+                        list_idx,
+                        diagnostic_messages::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FIL,
+                        diagnostic_codes::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FIL,
+                    );
+                }
+
+                // TS2854: Top-level 'await using' requires specific module + target options.
+                // Routes through the environment capability boundary to determine whether
+                // a diagnostic should be emitted.
+                use crate::query_boundaries::capabilities::FeatureGate;
+                if self
+                    .ctx
+                    .capabilities
+                    .check_feature_gate(FeatureGate::TopLevelAwaitUsing)
+                    .is_some()
+                {
+                    self.error_at_node(
+                        list_idx,
+                        diagnostic_messages::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                        diagnostic_codes::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                    );
+                }
+            } else if !self.enclosing_function_allows_await_using(list_idx) {
+                // TS2852: Nested 'await using' is only valid inside async functions.
                 self.error_at_node(
                     list_idx,
-                    diagnostic_messages::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
-                    diagnostic_codes::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                    diagnostic_messages::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
+                    diagnostic_codes::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
                 );
             }
         }
@@ -1520,6 +1539,30 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn enclosing_function_allows_await_using(&self, idx: NodeIndex) -> bool {
+        let Some(function_idx) = self.find_enclosing_function(idx) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(function_idx) else {
+            return false;
+        };
+
+        self.ctx
+            .arena
+            .get_function(node)
+            .is_some_and(|function| function.is_async)
+            || self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|method| self.has_async_modifier(&method.modifiers))
+            || self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .is_some_and(|accessor| self.has_async_modifier(&accessor.modifiers))
     }
 
     /// TS2492: Check if any `let`/`const` declaration in a catch block shadows
