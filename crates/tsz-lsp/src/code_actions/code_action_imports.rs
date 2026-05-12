@@ -1039,9 +1039,14 @@ impl<'a> CodeActionProvider<'a> {
             let Some(existing_local_name) = self.arena.get_identifier_text(local_ident) else {
                 continue;
             };
-            if compare_import_specifier_local_names(local_name, existing_local_name, ignore_case)
-                == std::cmp::Ordering::Less
-            {
+            let ordering = if ignore_case {
+                local_name
+                    .to_ascii_lowercase()
+                    .cmp(&existing_local_name.to_ascii_lowercase())
+            } else {
+                local_name.cmp(existing_local_name)
+            };
+            if ordering != std::cmp::Ordering::Greater {
                 return Some(spec_node.pos);
             }
         }
