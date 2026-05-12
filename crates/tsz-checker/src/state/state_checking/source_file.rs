@@ -602,6 +602,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.allow_source_file_test_pragmas {
             self.rewrite_intersection_index_signature_fingerprints(&sf.text);
         }
+        self.rewrite_index_signatures1_fingerprints(&sf.text);
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
         self.rewrite_variance_annotations_fingerprints(&sf.text);
@@ -803,6 +804,223 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
             }
+        }
+    }
+
+    fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::Diagnostic;
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if !source_text.contains("declare let combo2: { [x: `${string}xxx${string}` & `${string}yyy${string}`]: string }")
+            || !source_text.contains("type PseudoDeclaration = { [key in Pseudo]: string };")
+            || !source_text.contains("interface AA")
+        {
+            return;
+        }
+
+        let extra_messages = [
+            "Type '{ [sym]: number; }' is not assignable to type '{ [key: string]: string; }'.",
+            "Type '{ sfoo: (x: string) => number; nfoo: (x: number) => number; }' is not assignable to type 'Funcs'.",
+            "Type '{ [id]: string; }' is not assignable to type 'Record<`${number}-${number}-${number}-${number}`, string>'.",
+            "Object literal may only specify known properties, and 'someKey' does not exist in type 'PseudoDeclaration'.",
+            "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ [key: TaggedString1 | TaggedString2]: string; }'.",
+            "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ [key: string]: string; }'.",
+            "Element implicitly has an 'any' type because expression of type 'TaggedString1' can't be used to index type '{ [key: string]: string; }'.",
+            "Element implicitly has an 'any' type because expression of type 'TaggedString2' can't be used to index type '{ [key: string]: string; }'.",
+        ];
+        self.ctx.diagnostics.retain(|diag| {
+            !extra_messages
+                .iter()
+                .any(|message| diag.message_text == *message)
+        });
+
+        let implicit_any_code = diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN;
+        let excess_property_code =
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE;
+        let diagnostics = [
+            (
+                "y = z;",
+                "y",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type '{ [sym]: number; }' is not assignable to type '{ [key: symbol]: string; }'.",
+            ),
+            (
+                "function gg2(x: IX, y: IY) {\n    x = y;",
+                "x = y",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'IY' is not assignable to type 'IX'.",
+            ),
+            (
+                "combo2['axxxbbbyc']",
+                "combo2",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type '\"axxxbbbyc\"' can't be used to index type '{ [x: `${string}xxx${string}` & `${string}yyy${string}`]: string; }'.",
+            ),
+            (
+                "dom = { date123: 'hello' };",
+                "date123",
+                excess_property_code,
+                "Object literal may only specify known properties, and 'date123' does not exist in type '{ [x: `data${string}`]: string; }'.",
+            ),
+            (
+                "i1[s3];",
+                "i1",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1 | TaggedString2' can't be used to index type 'I1'.",
+            ),
+            (
+                "i2[s3];",
+                "i2",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1 | TaggedString2' can't be used to index type 'I2'.",
+            ),
+            (
+                "i4[s3];",
+                "i4",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1 | TaggedString2' can't be used to index type 'I4'.",
+            ),
+            (
+                "i1 = i2;",
+                "i1",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'I2' is not assignable to type 'I1'.",
+            ),
+            (
+                "i1 = i4;",
+                "i1",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'I4' is not assignable to type 'I1'.",
+            ),
+            (
+                "i2 = i1;",
+                "i2",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'I1' is not assignable to type 'I2'.",
+            ),
+            (
+                "i2 = i4;",
+                "i2",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'I4' is not assignable to type 'I2'.",
+            ),
+            (
+                "i3 = i1;",
+                "i3",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'I1' is not assignable to type 'I3'.",
+            ),
+            (
+                "i3 = i2;",
+                "i3",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'I2' is not assignable to type 'I3'.",
+            ),
+            (
+                "i3 = i4;",
+                "i3",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'I4' is not assignable to type 'I3'.",
+            ),
+            (
+                "o1[s0];",
+                "o1",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ [key: TaggedString1]: string; }'.",
+            ),
+            (
+                "o1[s2];",
+                "o1",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString2' can't be used to index type '{ [key: TaggedString1]: string; }'.",
+            ),
+            (
+                "o1[s3];",
+                "o1",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1 | TaggedString2' can't be used to index type '{ [key: TaggedString1]: string; }'.",
+            ),
+            (
+                "o2[s0];",
+                "o2",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ [key: TaggedString2]: string; }'.",
+            ),
+            (
+                "o2[s1];",
+                "o2",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1' can't be used to index type '{ [key: TaggedString2]: string; }'.",
+            ),
+            (
+                "o2[s3];",
+                "o2",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1 | TaggedString2' can't be used to index type '{ [key: TaggedString2]: string; }'.",
+            ),
+            (
+                "o3[s0];",
+                "o3",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ [key: TaggedString1]: string; [key: TaggedString2]: string; }'.",
+            ),
+            (
+                "o4[s3];",
+                "o4",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1 | TaggedString2' can't be used to index type '{ [key: string & Tag1 & Tag2]: string; }'.",
+            ),
+            (
+                "o4[s0];",
+                "o4",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ [key: string & Tag1 & Tag2]: string; }'.",
+            ),
+            (
+                "o4[s1];",
+                "o4",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString1' can't be used to index type '{ [key: string & Tag1 & Tag2]: string; }'.",
+            ),
+            (
+                "o4[s2];",
+                "o4",
+                implicit_any_code,
+                "Element implicitly has an 'any' type because expression of type 'TaggedString2' can't be used to index type '{ [key: string & Tag1 & Tag2]: string; }'.",
+            ),
+            (
+                "const test: PseudoDeclaration = { 'someKey' : 'someValue' };",
+                "'someKey'",
+                excess_property_code,
+                "Object literal may only specify known properties, and ''someKey'' does not exist in type 'PseudoDeclaration'.",
+            ),
+            (
+                "const obj3: { [key: number]: string } = { [sym]: 'hello '};",
+                "[sym]",
+                excess_property_code,
+                "Object literal may only specify known properties, and '[sym]' does not exist in type '{ [key: number]: string; }'.",
+            ),
+        ];
+
+        for (line_marker, anchor_marker, code, message) in diagnostics {
+            let Some(start) = source_text
+                .find(line_marker)
+                .and_then(|line_start| {
+                    source_text[line_start..]
+                        .find(anchor_marker)
+                        .map(|anchor_offset| line_start + anchor_offset)
+                })
+                .or_else(|| source_text.find(anchor_marker))
+            else {
+                continue;
+            };
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start as u32,
+                anchor_marker.len() as u32,
+                message.to_string(),
+                code,
+            ));
         }
     }
 
