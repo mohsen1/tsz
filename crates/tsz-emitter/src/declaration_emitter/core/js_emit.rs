@@ -1,5 +1,6 @@
 use rustc_hash::FxHashSet;
 use tsz_binder::{BinderState, SymbolId};
+use tsz_parser::parser::node::FunctionData;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -9,6 +10,262 @@ use tsz_solver::type_queries;
 use super::DeclarationEmitter;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn emit_js_class_define_property_accessors_for_name(
+        &mut self,
+        class_name_idx: NodeIndex,
+    ) {
+        let Some(class_name) = self.get_identifier_text(class_name_idx) else {
+            return;
+        };
+        let Some(accessors) = self
+            .js_class_define_property_accessors
+            .get(&class_name)
+            .cloned()
+        else {
+            return;
+        };
+
+        for accessor in accessors {
+            if let Some(setter) = accessor.setter {
+                let (param_name, type_text) = self.js_define_property_setter_parameter_text(setter);
+                self.write_indent();
+                self.write("set ");
+                self.write(&self.declaration_property_name_text(&accessor.property_name));
+                self.write("(");
+                self.write(&param_name);
+                self.write(": ");
+                self.write(&type_text);
+                self.write(");");
+                self.write_line();
+            }
+
+            if let Some(getter) = accessor.getter {
+                let type_text = self
+                    .js_define_property_getter_return_type_text(getter)
+                    .unwrap_or_else(|| "any".to_string());
+                self.write_indent();
+                self.write("get ");
+                self.write(&self.declaration_property_name_text(&accessor.property_name));
+                self.write("(): ");
+                self.write(&type_text);
+                self.write(";");
+                self.write_line();
+            }
+        }
+    }
+
+    fn js_define_property_getter_return_type_text(
+        &mut self,
+        getter_idx: NodeIndex,
+    ) -> Option<String> {
+        let getter_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(getter_idx);
+        let getter_node = self.arena.get(getter_idx)?;
+        if getter_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            let method = self.arena.get_method_decl(getter_node)?;
+            if method.type_annotation.is_some() {
+                return self.type_node_text(method.type_annotation);
+            }
+            if let Some(type_text) = self.jsdoc_return_type_text_for_node(getter_idx) {
+                return Some(type_text);
+            }
+            return self
+                .function_body_preferred_return_type_text(method.body)
+                .or_else(|| {
+                    self.get_node_type_or_names(&[getter_idx, method.name])
+                        .map(|type_id| self.print_type_id(type_id))
+                });
+        }
+
+        let func = self.js_define_property_function_data(getter_idx)?.clone();
+        if func.type_annotation.is_some() {
+            return self.type_node_text(func.type_annotation);
+        }
+        if let Some(type_text) = self.jsdoc_return_type_text_for_node(getter_idx) {
+            return Some(type_text);
+        }
+        self.function_body_preferred_return_type_text(func.body)
+            .or_else(|| {
+                self.get_node_type_or_names(&[getter_idx])
+                    .map(|type_id| self.print_type_id(type_id))
+            })
+    }
+
+    fn js_define_property_setter_parameter_text(
+        &mut self,
+        setter: crate::declaration_emitter::helpers::JsClassDefinePropertySetter,
+    ) -> (String, String) {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(setter.initializer);
+        if let Some((name, type_text)) = self.js_define_property_setter_parameter_from_function(
+            initializer,
+            setter.preserve_param_name,
+        ) {
+            return (name, type_text);
+        }
+        if let Some(type_text) =
+            self.js_define_property_setter_parameter_type_from_expression(initializer)
+        {
+            return ("value".to_string(), type_text);
+        }
+        ("value".to_string(), "any".to_string())
+    }
+
+    fn js_define_property_setter_parameter_type_from_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        if let Some(local_name) = self.get_identifier_text(expr_idx)
+            && let Some(initializer) = self.js_top_level_variable_initializer(&local_name)
+        {
+            return self
+                .js_define_property_setter_parameter_text(
+                    crate::declaration_emitter::helpers::JsClassDefinePropertySetter {
+                        initializer,
+                        preserve_param_name: false,
+                    },
+                )
+                .1
+                .into();
+        }
+
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            let cond = self.arena.get_conditional_expr(expr_node)?;
+            let left =
+                self.js_define_property_setter_parameter_type_from_expression(cond.when_true);
+            let right =
+                self.js_define_property_setter_parameter_type_from_expression(cond.when_false);
+            return match (left, right) {
+                (Some(left), Some(right)) if left == right => Some(left),
+                (Some(_), Some(_)) => Some("any".to_string()),
+                _ => None,
+            };
+        }
+
+        None
+    }
+
+    fn js_define_property_setter_parameter_from_function(
+        &mut self,
+        func_idx: NodeIndex,
+        preserve_param_name: bool,
+    ) -> Option<(String, String)> {
+        let func_node = self.arena.get(func_idx)?;
+        if func_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            let method = self.arena.get_method_decl(func_node)?;
+            return Some(self.js_define_property_setter_parameter_from_params(
+                &method.parameters,
+                method.body,
+                preserve_param_name,
+            ));
+        }
+
+        let func = self.js_define_property_function_data(func_idx)?.clone();
+        Some(self.js_define_property_setter_parameter_from_params(
+            &func.parameters,
+            func.body,
+            preserve_param_name,
+        ))
+    }
+
+    fn js_define_property_setter_parameter_from_params(
+        &mut self,
+        params: &NodeList,
+        _body_idx: NodeIndex,
+        preserve_param_name: bool,
+    ) -> (String, String) {
+        let Some(&param_idx) = params.nodes.first() else {
+            return ("value".to_string(), "any".to_string());
+        };
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return ("value".to_string(), "any".to_string());
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return ("value".to_string(), "any".to_string());
+        };
+        let name = if preserve_param_name {
+            self.get_identifier_text(param.name)
+                .unwrap_or_else(|| "value".to_string())
+        } else {
+            "value".to_string()
+        };
+        let mut type_text = if param.type_annotation.is_some() {
+            self.type_node_text(param.type_annotation)
+        } else if let Some(jsdoc_param) = self.jsdoc_param_decl_for_parameter(param_idx, 0) {
+            Some(jsdoc_param.type_text)
+        } else {
+            self.get_node_type_or_names(&[param_idx, param.name])
+                .map(|type_id| self.print_type_id(type_id))
+        }
+        .unwrap_or_else(|| "any".to_string());
+
+        if param.dot_dot_dot_token {
+            if let Some(element_type) = type_text.strip_suffix("[]") {
+                type_text = element_type.to_string();
+            }
+        }
+
+        (name, type_text)
+    }
+
+    fn js_define_property_function_data(&self, func_idx: NodeIndex) -> Option<&FunctionData> {
+        let func_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(func_idx);
+        let func_node = self.arena.get(func_idx)?;
+        if func_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && func_node.kind != syntax_kind_ext::ARROW_FUNCTION
+        {
+            return None;
+        }
+        self.arena.get_function(func_node)
+    }
+
+    fn js_top_level_variable_initializer(&self, name: &str) -> Option<NodeIndex> {
+        let root_idx = self.current_source_file_idx?;
+        let root_node = self.arena.get(root_idx)?;
+        let source_file = self.arena.get_source_file(root_node)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let var_stmt = self.arena.get_variable(stmt_node)?;
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let decl_list_node = self.arena.get(decl_list_idx)?;
+                let decl_list = self.arena.get_variable(decl_list_node)?;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let decl_node = self.arena.get(decl_idx)?;
+                    let decl = self.arena.get_variable_declaration(decl_node)?;
+                    if self.get_identifier_text(decl.name).as_deref() == Some(name) {
+                        return decl.initializer.into_option();
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn type_node_text(&mut self, type_idx: NodeIndex) -> Option<String> {
+        if !type_idx.is_some() {
+            return None;
+        }
+        let saved_comment_idx = self.comment_emit_idx;
+        let saved_pending_source_pos = self.pending_source_pos;
+        let saved_writer = std::mem::take(&mut self.writer);
+        self.emit_type(type_idx);
+        let type_writer = std::mem::replace(&mut self.writer, saved_writer);
+        self.comment_emit_idx = saved_comment_idx;
+        self.pending_source_pos = saved_pending_source_pos;
+        Some(type_writer.take_output())
+    }
+
     /// Emit a `declare class X { private constructor(); ... }` for a variable
     /// that has `.prototype` member assignments (the JS class-like heuristic).
     pub(in crate::declaration_emitter) fn emit_js_class_like_heuristic_if_needed(
@@ -380,6 +637,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let initializer = self.js_anonymous_module_exports_assignment_initializer(stmt_idx)?;
+        if self.is_js_function_initializer(initializer) {
+            return Some(initializer);
+        }
         self.js_synthetic_export_value_type_text(initializer)
             .map(|_| initializer)
     }
@@ -388,16 +648,20 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         initializer: NodeIndex,
     ) {
-        let Some(type_text) = self.js_synthetic_export_value_type_text(initializer) else {
-            return;
-        };
-
         let export_name = if self.reserved_names.contains("_exports") {
             self.generate_unique_name("_exports")
         } else {
             "_exports".to_string()
         };
         self.reserved_names.insert(export_name.clone());
+
+        if self.emit_js_anonymous_export_equals_function_declaration(initializer, &export_name) {
+            return;
+        }
+
+        let Some(type_text) = self.js_synthetic_export_value_type_text(initializer) else {
+            return;
+        };
 
         self.write_indent();
         self.write("declare ");
@@ -415,6 +679,101 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.emitted_scope_marker = true;
         self.emitted_module_indicator = true;
+    }
+
+    fn emit_js_anonymous_export_equals_function_declaration(
+        &mut self,
+        initializer: NodeIndex,
+        export_name: &str,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if !self.is_js_function_initializer(initializer) {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        let jsdoc_aliases = self.jsdoc_type_alias_decls_before_pos(init_node.pos);
+        if !jsdoc_aliases.is_empty() {
+            self.write_indent();
+            self.write("declare namespace ");
+            self.write(export_name);
+            self.write(" {");
+            self.write_line();
+            self.increase_indent();
+            self.write_indent();
+            self.write("export { ");
+            for (idx, alias) in jsdoc_aliases.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                self.write(&alias.name);
+            }
+            self.write(" };");
+            self.write_line();
+            self.decrease_indent();
+            self.write_indent();
+            self.write("}");
+            self.write_line();
+        }
+
+        let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        self.write_indent();
+        self.write("declare function ");
+        self.write(export_name);
+        self.write("(");
+        let saved_comment_idx = self.comment_emit_idx;
+        self.comment_emit_idx = self
+            .all_comments
+            .iter()
+            .position(|comment| comment.end > init_node.pos)
+            .unwrap_or(self.all_comments.len());
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.comment_emit_idx = saved_comment_idx;
+        self.write(")");
+
+        if func.type_annotation.is_some() {
+            self.write(": ");
+            self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_return_type_text)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                initializer,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write(": void");
+        } else {
+            self.write(": any");
+        }
+        self.write(";");
+        self.write_line();
+
+        self.write_indent();
+        self.write("export = ");
+        self.write(export_name);
+        self.write(";");
+        self.write_line();
+
+        for alias in jsdoc_aliases {
+            self.emit_rendered_jsdoc_type_alias(alias, false);
+        }
+
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
+        true
     }
 
     pub(in crate::declaration_emitter) fn emit_js_synthetic_function_declaration(
@@ -936,6 +1295,13 @@ impl<'a> DeclarationEmitter<'a> {
                     let Some(prop) = self.arena.get_property_assignment(member_node) else {
                         continue;
                     };
+                    if let Some(prop_name) = self.get_identifier_text(prop.name)
+                        && let Some(init_name) = self.get_identifier_text(prop.initializer)
+                        && prop_name == init_name
+                        && self.js_named_export_names.contains(&prop_name)
+                    {
+                        continue;
+                    }
                     if self
                         .emit_js_named_export_object_literal_namespace(prop.name, prop.initializer)
                     {
@@ -1181,6 +1547,19 @@ impl<'a> DeclarationEmitter<'a> {
         type_text: &str,
         keyword: &'static str,
     ) {
+        if let Some((export_name, local_name)) = self.js_reserved_export_local_text(name) {
+            self.write_indent();
+            self.write(keyword);
+            self.write(&local_name);
+            self.write(": ");
+            self.write(type_text);
+            self.write(";");
+            self.write_line();
+            self.js_cjs_export_aliases.push((export_name, local_name));
+            self.emitted_module_indicator = true;
+            return;
+        }
+
         self.write_indent();
         self.write("export ");
         self.write(keyword);
@@ -1190,6 +1569,21 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(";");
         self.write_line();
         self.emitted_module_indicator = true;
+    }
+
+    fn js_reserved_export_local_text(&mut self, export_name: &str) -> Option<(String, String)> {
+        if !token_is_reserved_word(string_to_token(export_name)) {
+            return None;
+        }
+
+        let base = format!("_{export_name}");
+        let local_name = if self.reserved_names.contains(&base) {
+            self.generate_unique_name(&base)
+        } else {
+            base
+        };
+        self.reserved_names.insert(local_name.clone());
+        Some((export_name.to_string(), local_name))
     }
 
     pub(in crate::declaration_emitter) fn emit_js_named_export_object_literal_namespace(
@@ -1990,6 +2384,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => Some("boolean".to_string()),
             k if k == SyntaxKind::NullKeyword as u16 => Some("null".to_string()),
             k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined".to_string()),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.infer_fallback_type_text(initializer)
+            }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(initializer)
             }

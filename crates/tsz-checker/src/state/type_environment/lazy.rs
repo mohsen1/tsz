@@ -1,16 +1,15 @@
 //! Lazy type resolution and type environment population.
 
 use crate::query_boundaries::common::{
-    collect_lazy_def_ids, collect_type_queries, contains_lazy_or_recursive, lazy_def_id,
+    collect_type_queries, contains_lazy_or_recursive, enum_def_id, get_type_query_symbol_ref,
+    lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
-use crate::query_boundaries::state::type_environment::{
-    collect_enum_def_ids, collect_referenced_types,
-};
+use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
 // Thread-local depth counter for `ensure_application_symbols_resolved` nesting.
 //
@@ -1381,6 +1380,8 @@ impl<'a> CheckerState<'a> {
         let mut seen_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
         let mut seen_def_ids: rustc_hash::FxHashSet<tsz_solver::DefId> =
             rustc_hash::FxHashSet::default();
+        let mut seen_type_queries: rustc_hash::FxHashSet<tsz_solver::SymbolRef> =
+            rustc_hash::FxHashSet::default();
         let mut resolved_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
 
         while let Some(current) = worklist.pop() {
@@ -1406,11 +1407,11 @@ impl<'a> CheckerState<'a> {
 
             resolved_types.insert(current);
 
-            for next in collect_referenced_types(self.ctx.types, current) {
+            for_each_direct_referenced_type(self.ctx.types, current, |next| {
                 worklist.push(next);
-            }
+            });
 
-            for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+            if let Some(def_id) = lazy_def_id(self.ctx.types, current) {
                 if !seen_def_ids.insert(def_id) {
                     continue;
                 }
@@ -1434,9 +1435,7 @@ impl<'a> CheckerState<'a> {
                         fully_resolved = false;
                     }
                 }
-            }
-
-            for def_id in collect_enum_def_ids(self.ctx.types, current) {
+            } else if let Some(def_id) = enum_def_id(self.ctx.types, current) {
                 if !seen_def_ids.insert(def_id) {
                     continue;
                 }
@@ -1444,6 +1443,10 @@ impl<'a> CheckerState<'a> {
                 // Consume fuel for enum resolution too
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
+                    break;
+                }
 
                 match self.resolve_enum_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
@@ -1456,9 +1459,11 @@ impl<'a> CheckerState<'a> {
                         fully_resolved = false;
                     }
                 }
-            }
+            } else if let Some(symbol_ref) = get_type_query_symbol_ref(self.ctx.types, current) {
+                if !seen_type_queries.insert(symbol_ref) {
+                    continue;
+                }
 
-            for symbol_ref in collect_type_queries(self.ctx.types, current) {
                 let sym_id = SymbolId(symbol_ref.0);
                 let symbol = self.ctx.binder.get_symbol(sym_id);
                 if symbol.is_none() {
@@ -1481,18 +1486,20 @@ impl<'a> CheckerState<'a> {
                 // Consume fuel for type query resolution
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
+                    break;
+                }
 
-                // TypeQuery (`typeof X`) resolves to the VALUE type (constructor
-                // for classes), not the type-reference type (instance for classes).
-                // Using `get_type_of_symbol` returns the constructor/value type,
-                // while `type_reference_symbol_type` returns the instance type for
-                // classes — which would incorrectly overwrite the constructor type
-                // already in the TypeEnvironment.
-                let is_class = symbol.is_some_and(|s| s.has_any_flags(symbol_flags::CLASS));
-                let resolved = if is_class {
-                    self.get_type_of_symbol(sym_id)
+                let resolved = if symbol.as_ref().is_some_and(|s| {
+                    s.has_any_flags(symbol_flags::TYPE_ALIAS | symbol_flags::VARIABLE)
+                }) {
+                    let value_decl = symbol
+                        .map(|s| s.value_declaration)
+                        .unwrap_or(tsz_parser::NodeIndex::NONE);
+                    self.type_of_value_declaration_for_symbol(sym_id, value_decl)
                 } else {
-                    self.type_reference_symbol_type(sym_id)
+                    self.get_type_of_symbol(sym_id)
                 };
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;

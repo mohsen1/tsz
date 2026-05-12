@@ -276,8 +276,17 @@ impl<'a> CheckerState<'a> {
             }
             // Evaluate and check if the result wraps a generic application.
             // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
+            // Exception: recursive non-generic aliases (e.g. `type Box2 = Box<Box2 | number>`)
+            // must show the alias name, not the expanded body. tsc preserves "Box2" in TS2322.
             let evaluated = self.evaluate_type_with_env(ty);
-            if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
+            if evaluated != ty
+                && self.ctx.types.get_display_alias(evaluated).is_some()
+                && !crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
+                    self.ctx.types.as_type_database(),
+                    &self.ctx.definition_store,
+                    def_id,
+                )
+            {
                 return self.format_type_for_assignability_message(evaluated);
             }
             let name = self.ctx.types.resolve_atom_ref(def.name);
@@ -1838,12 +1847,7 @@ impl<'a> CheckerState<'a> {
         Some(missing_required_props[0].name)
     }
 
-    /// Look up a type alias name for a TypeId, returning the alias name if found.
-    ///
-    /// Uses the definition store's `body_to_alias` index to check if the given
-    /// TypeId is the body of a non-generic type alias.  This must be called
-    /// BEFORE `normalize_assignability_display_type`, which creates a new TypeId
-    /// that won't match the stored body.
+    /// Look up a displayable non-generic type alias name for a TypeId.
     pub(crate) fn lookup_type_alias_name_for_display(&self, ty: TypeId) -> Option<String> {
         // Only check composite types — tsc does NOT preserve alias names for
         // primitive types (number, string, etc.) or literal types.
@@ -1940,6 +1944,16 @@ impl<'a> CheckerState<'a> {
         }
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
+    }
+
+    pub(crate) fn recursive_non_generic_alias_body_name(&self, ty: TypeId) -> String {
+        crate::query_boundaries::recursive_alias::recursive_non_generic_type_alias_body_name(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            ty,
+        )
+        .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
+        .unwrap_or_else(|| self.format_type_diagnostic(ty))
     }
 
     pub(in crate::error_reporter) fn compute_ambiguous_conditional_display(

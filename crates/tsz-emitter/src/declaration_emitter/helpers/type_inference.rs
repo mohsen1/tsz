@@ -6104,10 +6104,13 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 }
             }
-            let elem_type = self.preferred_expression_type_text(elem_idx).or_else(|| {
-                self.get_node_type_or_names(&[elem_idx])
-                    .map(|type_id| self.print_type_id(type_id))
-            })?;
+            let elem_type = self
+                .preferred_expression_type_text(elem_idx)
+                .or_else(|| {
+                    self.get_node_type_or_names(&[elem_idx])
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+                .or_else(|| self.infer_fallback_type_text_at(elem_idx, self.indent_level + 1))?;
             element_types.push(elem_type);
         }
 
@@ -7808,10 +7811,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// If `expr_idx` is a value reference whose symbol is an enum member,
-    /// return the member's escaped name. This is used as a fallback to keep
-    /// method-like dts syntax for `[E.A]() {}` even when the type system
-    /// hasn't produced a literal type for the access expression.
+    /// Returns an enum member's escaped name for method-like dts syntax such as `[E.A]() {}`.
     pub(in crate::declaration_emitter) fn enum_member_access_name_text(
         &self,
         expr_idx: NodeIndex,
@@ -7947,9 +7947,7 @@ impl<'a> DeclarationEmitter<'a> {
                     || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
                 {
                     // Use the COMPUTED_PROPERTY_NAME node's source slice.
-                    // The node.end may extend past `]` into trailing `:`
-                    // (property colon) or `(` (getter/method params), so
-                    // trim to the closing `]` to avoid `::` or `(` leaking.
+                    // Trim at `]` because node.end may include trailing property punctuation.
                     if let Some(mut s) = self.get_source_slice(node.pos, node.end) {
                         // Find the last `]` and truncate after it
                         if let Some(bracket_pos) = s.rfind(']') {
@@ -8759,9 +8757,7 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(data) = self.arena.get_property_assignment(member_node) {
             return Some(data.initializer);
         }
-        // Shorthand `{ foo }` has no separate initializer node; the value
-        // reference IS the name identifier. `{ foo = expr }` (CoverInitializedName)
-        // is the only shape where `object_assignment_initializer` is non-`NONE`.
+        // Shorthand `{ foo }` has no initializer; `{ foo = expr }` is CoverInitializedName.
         self.arena.get_shorthand_property(member_node).map(|data| {
             if data.object_assignment_initializer == NodeIndex::NONE {
                 data.name
