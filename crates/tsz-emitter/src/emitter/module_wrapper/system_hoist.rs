@@ -25,6 +25,22 @@ impl<'a> Printer<'a> {
                 .filter_map(|&stmt_idx| self.arena.get(stmt_idx))
                 .any(|stmt_node| self.statement_is_top_level_using(stmt_node));
 
+        // Source import declarations establish the observable temp declaration
+        // order for duplicate System dependencies.
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos)
+                && seen.insert(dep_var.clone())
+            {
+                names.push(dep_var.clone());
+            }
+        }
+
+        // Synthetic assignments, such as automatic JSX runtime imports, are
+        // not backed by a source statement and still need to precede ordinary
+        // declaration hoists.
         for actions in system_plan.actions.values() {
             for action in actions {
                 if let SystemDependencyAction::Assign(name) = action
@@ -34,6 +50,7 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+
         if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev)
             && system_plan
                 .actions

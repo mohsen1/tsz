@@ -134,6 +134,37 @@ export const y = x;
 }
 
 #[test]
+fn system_duplicate_import_temps_follow_source_order() {
+    let source = r#"import {A} from "f1";
+import {B} from "f2";
+import {C} from "f3";
+import {D} from "f2";
+import {E} from "f2";
+import {F} from "f1";
+
+console.log(A + B + C + D + E + F);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var f1_1, f2_1, f3_1, f2_2, f2_3, f1_2;"),
+        "System duplicate import temps should follow source order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_top_level_using_named_export_keeps_legacy_decorator_assignment_export() {
     let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
 
