@@ -36,6 +36,30 @@ Close remaining high-signal parser review-audit threads by:
 - review comments left on #5040:
   - verified `context/mod.rs` no longer exports `pub mod lifetime_shells`; the
     module-surface concern in the original thread is already resolved in current code.
+- review comments left on #5004:
+  - updated `perf-t0-checker-hot-counter-gate-2026-05-10.md` scope wording to
+    match the listed sites (`seven` rather than `five`) and corrected the
+    counter-deref API wording to `OnceLock::get_or_init(...)`.
+- review comments left on #5009:
+  - updated `perf-t0-interner-intern-helpers-gate-2026-05-10.md` to refer to
+    the actual `OnceLock::get_or_init(...)` path used by
+    `tsz_common::perf_counters::counters()`.
+- review comments left on #5048:
+  - verified the referenced claim file
+    `perf-t2.2-cross-file-query-key-answer-2026-05-10.md` no longer exists on
+    current `main`; stale thread retired from current audit state.
+- review comments left on #5060:
+  - verified the referenced claim file
+    `perf-t2.4-wrap-aux-interner-locks-2026-05-10.md` no longer exists on
+    current `main`; stale thread retired from current audit state.
+- review comments left on #5062:
+  - verified `docs/plan/PERFORMANCE_PLAN.md` no longer contains the historical
+    wording that conflated interner lock-wait wiring with cross-arena delegate
+    counter coverage; stale wording threads retired.
+- review comments left on #5064:
+  - verified the referenced claim file
+    `perf-delegate-cache-hits-counter-coverage-2026-05-11.md` no longer exists
+    on current `main`; stale thread retired from current audit state.
 
 ## Files Touched
 
@@ -52,9 +76,12 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-parser/tests/parser_improvement_tests.rs`
 - `crates/tsz-common/src/perf_counters.rs`
 - `crates/tsz-checker/src/context/mod.rs`
+- `docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md`
+- `docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md`
+- `docs/plan/PERFORMANCE_PLAN.md`
 
 ## Verification
 
 - `cargo fmt --check`
 - `cargo test -p tsz-parser`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=136`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=129`)

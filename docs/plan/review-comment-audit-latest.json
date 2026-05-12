@@ -12,7 +12,13 @@
     4960,
     4987,
     5003,
+    5004,
+    5009,
     5040,
+    5048,
+    5060,
+    5062,
+    5064,
     5094,
     5743,
     5753,
@@ -20,7 +26,7 @@
     5830,
     5901
   ],
-  "candidate_count": 136,
+  "candidate_count": 129,
   "candidates": [
     {
       "pr_number": 5089,
@@ -1304,38 +1310,6 @@
       ]
     },
     {
-      "pr_number": 5004,
-      "pr_title": "perf(checker): gate-once the hottest checker perf-counter inc() sites",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5004",
-      "merged_at": "2026-05-10T14:49:24Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A6BIr",
-      "path": "docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md",
-      "line": 8,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The claim says there are \"Five inline\" perf-counter sites (and refers to \"all five\"), but the Sites list below enumerates 7 call sites. Please reconcile the count (either update the text to 7, or trim the list) to avoid confusion when tracking the migrated sites.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5009,
-      "pr_title": "perf(solver): gate-once the intern_* helper counter sites",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5009",
-      "merged_at": "2026-05-10T15:12:39Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A6Gok",
-      "path": "docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md",
-      "line": 14,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "Technical accuracy: this refers to `OnceLock<PerfCounters>::get()`, but `tsz_common::perf_counters::counters()` uses `OnceLock::get_or_init(...)`. Consider updating the text to match the actual API being called (still an unconditional OnceLock deref, but via `get_or_init`).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5034,
       "pr_title": "perf(checker): T2.1.A.1 \u2014 checker field-lifetime inventory + CI guard",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5034",
@@ -1362,38 +1336,6 @@
       "line": 43,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs it). Please update the docstring to match current behavior to avoid confusion about when/where the guard runs.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5048,
-      "pr_title": "perf(checker): T2.2 prep \u2014 typed CrossFileQueryKey + Answer",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5048",
-      "merged_at": "2026-05-10T19:39:56Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A7Lsd",
-      "path": "docs/plan/claims/perf-t2.2-cross-file-query-key-answer-2026-05-10.md",
-      "line": 72,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The nextest filter here doesn\u2019t match the actual test module/file name (`cross_file_query_types`). As written, `-E 'test(cross_file_query_key_answer)'` won\u2019t select these tests, so the verification command is misleading. Update the expression to match the real test name substring used by this module, and consider updating the pre-commit line to reflect the current PR status (it still says \u201cto be confirmed before push\u201d).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5060,
-      "pr_title": "perf(solver): T2.4 \u2014 wrap auxiliary-interner write-locks with time_shard_write",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5060",
-      "merged_at": "2026-05-10T21:52:45Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A7uPC",
-      "path": "docs/plan/claims/perf-t2.4-wrap-aux-interner-locks-2026-05-10.md",
-      "line": 63,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The Verification section still says the pre-commit hook run is \u201cto be confirmed before push\u201d. Since this claim file is being merged alongside the implementation, this should be updated to the actual outcome (or removed) so the claim doesn\u2019t retain a stale TODO.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -1442,54 +1384,6 @@
       "line": 1303,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "Same as the class-instance delegate path: `enabled_fast()` is checked here and then `inc(...)` re-checks it. If the goal is avoiding `counters()` initialization when disabled, increment the atomic directly inside the outer gate (or use a helper) to avoid the double gate when counters are enabled.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5062,
-      "pr_title": "docs(perf): plan \u00a72 \u2014 lock-wait increment sites done after #5060+#5061",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5062",
-      "merged_at": "2026-05-10T22:31:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A75Kw",
-      "path": "docs/plan/PERFORMANCE_PLAN.md",
-      "line": 64,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This sentence appears to conflate the interner lock-wait histogram (`lock_wait_histogram_ns` / `interner_lock_wait_histogram_ns`) with the cross-arena delegate counter work in #5061. #5061 wires `delegate_cross_arena_calls`/depth tracking, but it doesn\u2019t wrap any lock-wait increment sites; only #5060 adds `time_shard_write` around interner write-lock acquisition. Suggest rewording to separate \u201clock-wait histogram wiring\u201d (interner write paths) from \u201cdelegate counter wiring\u201d (cross-arena delegate paths).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5062,
-      "pr_title": "docs(perf): plan \u00a72 \u2014 lock-wait increment sites done after #5060+#5061",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5062",
-      "merged_at": "2026-05-10T22:31:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A75K2",
-      "path": "docs/plan/PERFORMANCE_PLAN.md",
-      "line": 70,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The phrase \u201clock-wait increment sites are wrapped \u2026 and all cross-arena delegate paths (#5061)\u201d is likely inaccurate: cross-arena delegate paths in #5061 add delegate counter increments / recursion-depth tracking, not `time_shard_write` lock-wait instrumentation. Consider clarifying that lock-wait wrapping applies to interner write-lock sites (#5060), while #5061 closes delegate-counter coverage for cross-arena delegations.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5064,
-      "pr_title": "perf(checker): close cache-hits counter coverage gap for cross-arena delegations",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5064",
-      "merged_at": "2026-05-11T00:09:34Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A8Nc7",
-      "path": "docs/plan/claims/perf-delegate-cache-hits-counter-coverage-2026-05-11.md",
-      "line": 65,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The Verification section still contains placeholders (\"to be run\" / \"confirmed before push\"), but the PR description states these checks have already passed. Please update these lines to reflect the actual commands/results (or remove the placeholders) so the claim file is accurate.",
       "score": 1,
       "reasons": [
         "detailed-thread"
