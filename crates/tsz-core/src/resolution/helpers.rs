@@ -591,16 +591,11 @@ pub(crate) fn declaration_substitution_for_main(path: &Path) -> Option<PathBuf> 
 /// Simplified package.json structure for resolution
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)] // Fields deserialized from JSON; not all read directly
 pub(crate) struct PackageJson {
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
-    pub version: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub main: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
-    pub module: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub types: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
