@@ -52,24 +52,8 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn normalize_jsdoc_enum_type_text(type_text: &str) -> String {
         let trimmed = type_text.trim();
-        let Some(params_and_return) = trimmed.strip_prefix("function(") else {
-            return trimmed.to_string();
-        };
-        let Some(params_end) = params_and_return.find(')') else {
-            return trimmed.to_string();
-        };
-        let params = &params_and_return[..params_end];
-        let rest = params_and_return[params_end + 1..].trim();
-        let return_type = rest.strip_prefix(':').map(str::trim).unwrap_or("any");
-        let params = params
-            .split(',')
-            .map(str::trim)
-            .filter(|param| !param.is_empty())
-            .enumerate()
-            .map(|(index, param)| format!("arg{index}: {param}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("({params}) => {return_type}")
+        Self::convert_jsdoc_function_type(trimmed)
+            .unwrap_or_else(|| Self::normalize_jsdoc_type_expr(trimmed))
     }
 
     pub(crate) fn emit_jsdoc_enum_variable_declaration_if_possible(

@@ -471,10 +471,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
+    pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
         let trimmed = type_expr.trim();
         if trimmed.is_empty() {
             return "any".to_string();
+        }
+        if trimmed == "?" {
+            return Self::normalize_jsdoc_type_atom(trimmed);
         }
         if let Some(inner) = trimmed.strip_prefix('?') {
             return format!("{} | null", Self::normalize_jsdoc_type_expr(inner));

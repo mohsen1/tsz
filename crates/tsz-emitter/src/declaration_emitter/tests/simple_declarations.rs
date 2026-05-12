@@ -1857,6 +1857,18 @@ export const Fs = {
     ADD1: n => n + 1,
     SUB1: n => n - 1
 };
+
+/** @enum {?} */
+export const Unknowns = { ANY: 1 };
+
+/** @enum {Array} */
+export const Lists = { EMPTY: [] };
+
+/** @enum {Promise} */
+export const Tasks = { DONE: Promise.resolve() };
+
+/** @enum {function(Array): Promise} */
+export const AsyncFns = { RUN: values => Promise.resolve(values) };
 "#,
     );
 
@@ -1880,6 +1892,22 @@ export const Fs = {
         output.contains("function ADD1(n: any): any;")
             && output.contains("function SUB1(n: any): any;"),
         "Expected function enum members to emit as namespace functions: {output}"
+    );
+    assert!(
+        output.contains("export type Unknowns = any;"),
+        "Expected standalone Closure unknown enum type to normalize to any: {output}"
+    );
+    assert!(
+        output.contains("export type Lists = any[];"),
+        "Expected bare Array enum type to normalize to any[]: {output}"
+    );
+    assert!(
+        output.contains("export type Tasks = Promise<any>;"),
+        "Expected bare Promise enum type to normalize to Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("export type AsyncFns = (arg0: any[]) => Promise<any>;"),
+        "Expected enum function type to use JSDoc function normalization: {output}"
     );
 }
 
