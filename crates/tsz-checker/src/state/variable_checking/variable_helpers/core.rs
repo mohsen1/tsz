@@ -1479,22 +1479,6 @@ impl<'a> CheckerState<'a> {
         let Some(assertion) = self.ctx.arena.get_type_assertion(n) else {
             return false;
         };
-        let Some(type_node) = self.ctx.arena.get(assertion.type_node) else {
-            return false;
-        };
-        if type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16 {
-            return true;
-        }
-        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
-        {
-            return type_ref.type_arguments.is_none()
-                && self
-                    .ctx
-                    .arena
-                    .get_identifier_text(type_ref.type_name)
-                    .is_some_and(|name| name == "const");
-        }
-        false
+        self.is_const_assertion_type_node(assertion.type_node)
     }
 }

@@ -3,6 +3,11 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
@@ -441,8 +446,7 @@ function beastFoo(beast: Object) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -548,8 +552,7 @@ function test(value: string) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -611,8 +614,7 @@ function test(value: string) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -684,8 +686,7 @@ function f12(x: string | (() => string) | undefined) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -750,8 +751,7 @@ function getString(x: string | number) {
 const s: string = getString("hello");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -811,8 +811,7 @@ function getResults2(value: Results | { data: Results }): Results {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -905,8 +904,7 @@ if (chunk.isInit(chunk)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1153,8 +1151,7 @@ function f(x: string | number) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1203,8 +1200,7 @@ function f(x: string | number) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1256,8 +1252,7 @@ function f(obj: { x: string | number }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1314,8 +1309,7 @@ if (isA(v)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1378,8 +1372,7 @@ function test(foo: Foo): {type: 'A', a: number} {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1439,8 +1432,7 @@ const result = capture(isB);
 const check: 'B' = result;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1523,8 +1515,7 @@ class Foo<T extends string> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1585,8 +1576,7 @@ class C11 {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1641,8 +1631,7 @@ function f27(outer: { obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: nu
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1698,8 +1687,7 @@ function f26(outer: { readonly obj: { kind: 'foo', foo: string } | { kind: 'bar'
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1755,8 +1743,7 @@ function f(obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: number }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1811,8 +1798,7 @@ function f(obj: { kind: 'foo', foo?: string } | { kind: 'bar', bar?: number }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
