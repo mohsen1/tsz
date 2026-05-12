@@ -475,13 +475,51 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 }
                 let import_line = format!("import {{ {import_specifier} }} from {module};");
-                if !output.contains(&import_line) && output.contains(&format!(": {name}<")) {
+                if !output.contains(&import_line)
+                    && output.contains(&format!(": {name}<"))
+                    && !Self::type_reference_only_in_matching_ambient_module(&output, name, module)
+                {
                     output.insert_str(0, &(import_line + "\n"));
                 }
             }
         }
         output = Self::prune_unused_named_import_specifiers_from_output(&output);
         output
+    }
+
+    fn type_reference_only_in_matching_ambient_module(
+        output: &str,
+        name: &str,
+        module: &str,
+    ) -> bool {
+        let reference = format!(": {name}<");
+        let module_start = format!("declare module {module}");
+        let mut ambient_depth = 0usize;
+        let mut found_in_ambient_module = false;
+
+        for line in output.lines() {
+            let enters_matching_module =
+                ambient_depth == 0 && line.trim_start().starts_with(&module_start);
+            if enters_matching_module {
+                ambient_depth = 1;
+            }
+
+            if line.contains(&reference) {
+                if ambient_depth == 0 {
+                    return false;
+                }
+                found_in_ambient_module = true;
+            }
+
+            if ambient_depth > 0 {
+                if !enters_matching_module {
+                    ambient_depth = ambient_depth.saturating_add(line.matches('{').count());
+                }
+                ambient_depth = ambient_depth.saturating_sub(line.matches('}').count());
+            }
+        }
+
+        found_in_ambient_module
     }
 
     fn prune_unused_named_import_specifiers_from_output(output: &str) -> String {

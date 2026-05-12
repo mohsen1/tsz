@@ -24,6 +24,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
 use tsz_solver::visitor;
 
+use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
 mod type_walk;
@@ -101,6 +102,8 @@ pub struct UsageAnalyzer<'a> {
     foreign_symbols: FxHashSet<SymbolId>,
     /// Context flag: true when we're in a value position (expression, typeof)
     in_value_pos: bool,
+    /// String-literal ambient module currently being analyzed, if any.
+    current_ambient_module_specifier: Option<String>,
 }
 
 impl<'a> UsageAnalyzer<'a> {
@@ -131,6 +134,7 @@ impl<'a> UsageAnalyzer<'a> {
             source_is_js_file,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
+            current_ambient_module_specifier: None,
         }
     }
 
@@ -306,6 +310,11 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         };
 
+        let previous_ambient_module_specifier = self.current_ambient_module_specifier.clone();
+        if let Some(module_specifier) = string_literal_text(self.arena, module.name) {
+            self.current_ambient_module_specifier = Some(module_specifier);
+        }
+
         if let Some(body_node) = self.arena.get(module.body) {
             if let Some(module_block) = self.arena.get_module_block(body_node) {
                 if let Some(ref stmts) = module_block.statements {
@@ -317,6 +326,8 @@ impl<'a> UsageAnalyzer<'a> {
                 self.analyze_module_declaration(module.body);
             }
         }
+
+        self.current_ambient_module_specifier = previous_ambient_module_specifier;
     }
 
     fn analyze_import_equals_declaration(&mut self, import_idx: NodeIndex) {
@@ -1736,7 +1747,12 @@ impl<'a> UsageAnalyzer<'a> {
                     UsageKind::TYPE
                 };
                 if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
-                    self.mark_symbol_used(sym_id, kind);
+                    let should_mark = self.arena.get_identifier(name_node).is_none_or(|ident| {
+                        !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                    });
+                    if should_mark {
+                        self.mark_symbol_used(sym_id, kind);
+                    }
                     if kind == UsageKind::TYPE
                         && self.binder.symbols.get(sym_id).is_some_and(|symbol| {
                             symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
@@ -1765,10 +1781,16 @@ impl<'a> UsageAnalyzer<'a> {
                         }
                     }
                     if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
-                        self.mark_symbol_used(sym_id, kind);
+                        if !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                        {
+                            self.mark_symbol_used(sym_id, kind);
+                        }
                     }
                     if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
-                        self.mark_symbol_used(sym_id, kind);
+                        if !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                        {
+                            self.mark_symbol_used(sym_id, kind);
+                        }
                     }
                     // Also check namespace/module scope tables, since the
                     // symbol may live in a parent namespace scope rather than
@@ -1778,7 +1800,11 @@ impl<'a> UsageAnalyzer<'a> {
                     // `export {};` scope markers).
                     for scope in self.binder.scopes.iter() {
                         if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
-                            self.mark_symbol_used(sym_id, kind);
+                            if !self
+                                .is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                            {
+                                self.mark_symbol_used(sym_id, kind);
+                            }
                         }
                     }
                 }
@@ -1801,6 +1827,29 @@ impl<'a> UsageAnalyzer<'a> {
             }
             _ => {}
         }
+    }
+
+    fn is_current_ambient_module_self_import(&self, sym_id: SymbolId, ident: &str) -> bool {
+        let Some(module_specifier) = self.current_ambient_module_specifier.as_deref() else {
+            return false;
+        };
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.import_module.as_deref() != Some(module_specifier) {
+            return false;
+        }
+
+        // An unaliased `import { Observable } from "observable"` is redundant
+        // inside `declare module "observable"` because the declaration body is
+        // already scoped to that ambient module. Aliased imports still need to
+        // count as usages because the alias is not introduced by the module body.
+        symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(&symbol.escaped_name)
+            == ident
+            && symbol.escaped_name == ident
     }
 
     fn analyze_entity_name_qualifier(&mut self, name_idx: NodeIndex) {
