@@ -4,7 +4,6 @@
 - PRs scanned: 500
 - PRs excluded as already followed-up: 3
 - Potential important unresolved threads: 140
-- GraphQL rate remaining: 4117 (cost 20)
 
 ## Top Subsystems
 
@@ -21,26 +20,26 @@
 
 ## Top PRs By Candidate Count
 
-- [#4952](https://github.com/mohsen1/tsz/pull/4952) `perf(docs): T0.4 attribution run + Tier 0 exit decision record`: 11
-- [#5717](https://github.com/mohsen1/tsz/pull/5717) `fix(emit): decorate system class exports`: 5
-- [#5003](https://github.com/mohsen1/tsz/pull/5003) `fix(checker): preserve unique symbol keys in keyof`: 5
-- [#5089](https://github.com/mohsen1/tsz/pull/5089) `fix(parser): guard u32/u16 conversion panics with better error messages`: 4
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) `fix(checker): emit TS2315 for explicit `type X = any` aliases`: 4
-- [#4967](https://github.com/mohsen1/tsz/pull/4967) `fix(solver): preserve literal constraint display candidates`: 3
-- [#4973](https://github.com/mohsen1/tsz/pull/4973) `fix(checker): preserve object literal normalization diagnostics`: 3
-- [#4992](https://github.com/mohsen1/tsz/pull/4992) `fix(checker): harden explicit-any alias detection`: 3
-- [#5114](https://github.com/mohsen1/tsz/pull/5114) `fix(checker): cover intersection index signature display`: 3
-- [#5658](https://github.com/mohsen1/tsz/pull/5658) `fix(emit): align nested async class expression emit`: 3
-- [#5662](https://github.com/mohsen1/tsz/pull/5662) `fix(emit): wrap automatic JSX runtime in system modules`: 3
-- [#5666](https://github.com/mohsen1/tsz/pull/5666) `fix(emit): align decl file comment placement`: 3
-- [#5691](https://github.com/mohsen1/tsz/pull/5691) `fix(dts): inline semicolon class typedef tags`: 3
-- [#5694](https://github.com/mohsen1/tsz/pull/5694) `fix(dts): preserve generic jsdoc type tags`: 3
-- [#5720](https://github.com/mohsen1/tsz/pull/5720) `fix(checker): align indexSignatures1 fingerprints`: 3
-- [#5100](https://github.com/mohsen1/tsz/pull/5100) `fix(checker): defer parameter-dependent recursive alias TS2589`: 3
-- [#5061](https://github.com/mohsen1/tsz/pull/5061) `perf(checker): close delegate-counter coverage gap for cross-arena delegations`: 3
-- [#5104](https://github.com/mohsen1/tsz/pull/5104) `fix(checker): preserve unique symbol keys in keyof`: 3
-- [#5655](https://github.com/mohsen1/tsz/pull/5655) `fix(emit): recover namespace function arrow bodies`: 3
-- [#5102](https://github.com/mohsen1/tsz/pull/5102) `fix(parser): recover invalid arrow conditional tails`: 2
+- [#4952](https://github.com/mohsen1/tsz/pull/4952) perf(docs): T0.4 attribution run + Tier 0 exit decision record: 11
+- [#5717](https://github.com/mohsen1/tsz/pull/5717) fix(emit): decorate system class exports: 5
+- [#5003](https://github.com/mohsen1/tsz/pull/5003) fix(checker): preserve unique symbol keys in keyof: 5
+- [#5089](https://github.com/mohsen1/tsz/pull/5089) fix(parser): guard u32/u16 conversion panics with better error messages: 4
+- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit `type X = any` aliases: 4
+- [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
+- [#4973](https://github.com/mohsen1/tsz/pull/4973) fix(checker): preserve object literal normalization diagnostics: 3
+- [#4992](https://github.com/mohsen1/tsz/pull/4992) fix(checker): harden explicit-any alias detection: 3
+- [#5114](https://github.com/mohsen1/tsz/pull/5114) fix(checker): cover intersection index signature display: 3
+- [#5658](https://github.com/mohsen1/tsz/pull/5658) fix(emit): align nested async class expression emit: 3
+- [#5662](https://github.com/mohsen1/tsz/pull/5662) fix(emit): wrap automatic JSX runtime in system modules: 3
+- [#5666](https://github.com/mohsen1/tsz/pull/5666) fix(emit): align decl file comment placement: 3
+- [#5691](https://github.com/mohsen1/tsz/pull/5691) fix(dts): inline semicolon class typedef tags: 3
+- [#5694](https://github.com/mohsen1/tsz/pull/5694) fix(dts): preserve generic jsdoc type tags: 3
+- [#5720](https://github.com/mohsen1/tsz/pull/5720) fix(checker): align indexSignatures1 fingerprints: 3
+- [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
+- [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
+- [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
+- [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
+- [#5102](https://github.com/mohsen1/tsz/pull/5102) fix(parser): recover invalid arrow conditional tails: 2
 
 ## Candidate Threads (Top 100 by score)
 

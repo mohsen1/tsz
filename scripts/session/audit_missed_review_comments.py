@@ -37,6 +37,7 @@ query($owner: String!, $repo: String!, $cursor: String) {
         baseRefName
         author { login }
         reviewThreads(first: 100) {
+          pageInfo { hasNextPage }
           nodes {
             id
             isResolved
@@ -54,11 +55,6 @@ query($owner: String!, $repo: String!, $cursor: String) {
         }
       }
     }
-  }
-  rateLimit {
-    cost
-    remaining
-    resetAt
   }
 }
 """.strip()
@@ -231,11 +227,15 @@ def subsystem_from_path(path: str) -> str:
     return parts[0]
 
 
+def markdown_text(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("`", "\\`")
+
+
 def collect_candidates(owner: str, repo: str, limit: int, followed_up: set[int]) -> tuple[list[Candidate], dict[str, Any]]:
     cursor: str | None = None
     scanned_prs = 0
     candidates: list[Candidate] = []
-    rate_limit: dict[str, Any] = {}
+    truncated_thread_prs: list[int] = []
 
     while scanned_prs < limit:
         payload = graphql_page(owner, repo, cursor)
@@ -243,7 +243,6 @@ def collect_candidates(owner: str, repo: str, limit: int, followed_up: set[int])
             raise RuntimeError(f"graphql error: {json.dumps(payload['errors'], indent=2)}")
 
         data = payload["data"]["repository"]["pullRequests"]
-        rate_limit = payload["data"]["rateLimit"]
         nodes = data.get("nodes") or []
         if not nodes:
             break
@@ -258,7 +257,10 @@ def collect_candidates(owner: str, repo: str, limit: int, followed_up: set[int])
                 continue
 
             pr_author = ((pr.get("author") or {}).get("login")) or None
-            threads = (pr.get("reviewThreads") or {}).get("nodes") or []
+            review_threads = pr.get("reviewThreads") or {}
+            if (review_threads.get("pageInfo") or {}).get("hasNextPage"):
+                truncated_thread_prs.append(number)
+            threads = review_threads.get("nodes") or []
             for thread in threads:
                 if thread.get("isResolved") or thread.get("isOutdated"):
                     continue
@@ -298,7 +300,7 @@ def collect_candidates(owner: str, repo: str, limit: int, followed_up: set[int])
 
     summary = {
         "scanned_prs": scanned_prs,
-        "rate_limit": rate_limit,
+        "truncated_thread_prs": sorted(set(truncated_thread_prs)),
     }
     return candidates, summary
 
@@ -325,9 +327,12 @@ def emit_markdown(
     lines.append(f"- PRs scanned: {summary['scanned_prs']}")
     lines.append(f"- PRs excluded as already followed-up: {followed_up_count}")
     lines.append(f"- Potential important unresolved threads: {len(candidates)}")
-    rl = summary.get("rate_limit") or {}
-    if rl:
-        lines.append(f"- GraphQL rate remaining: {rl.get('remaining')} (cost {rl.get('cost')})")
+    truncated = summary.get("truncated_thread_prs") or []
+    if truncated:
+        lines.append(
+            f"- PRs with more than 100 review threads, audit may be incomplete: "
+            + ", ".join(f"#{pr}" for pr in truncated)
+        )
     lines.append("")
 
     if by_subsystem:
@@ -342,7 +347,7 @@ def emit_markdown(
         lines.append("")
         for pr_number, count in by_pr.most_common(20):
             sample = grouped[pr_number][0]
-            lines.append(f"- [#{pr_number}]({sample.pr_url}) `{sample.pr_title}`: {count}")
+            lines.append(f"- [#{pr_number}]({sample.pr_url}) {markdown_text(sample.pr_title)}: {count}")
         lines.append("")
 
     lines.append("## Candidate Threads (Top 100 by score)")

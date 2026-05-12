@@ -295,6 +295,36 @@ fn system_exported_legacy_decorated_class_exports_decorator_assignment() {
 }
 
 #[test]
+fn system_nested_legacy_decorated_class_emits_decorate_helper() {
+    let source = "declare var dec: any;\nexport function make() {\n    @dec\n    class Nested {}\n    return Nested;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __decorate = (this && this.__decorate) || function"),
+        "System wrapper should inline __decorate for nested decorated classes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Nested = __decorate(["),
+        "System wrapper should preserve the nested decorated class reassignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_legacy_constructor_param_decorators_emit_param_helper() {
     let source = "declare var dec: any;\n@dec\nclass A {\n    constructor(@dec x: string) {}\n}\nexport { A };\n";
 
