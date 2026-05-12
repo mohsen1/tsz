@@ -1167,6 +1167,60 @@ export function inJs(l) {
 }
 
 #[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_commas() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(x: [T, number], y: { items: [T, string] }) => [T, string]} IFn
+ */
+
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export function inJs<T>(x: [T, number], y: { items: [T, string] }): [T, string];"
+        ),
+        "Expected nested tuple/object commas in JSDoc function typedef to parse as a single signature: {output}"
+    );
+    assert!(
+        output.contains("export type IFn = <T>(x: [T, number], y: {")
+            && output.contains("items: [T, string];")
+            && output.contains("}) => [T, string];"),
+        "Expected nested tuple/object commas to be preserved in emitted typedef alias structure: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_function_param() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {(cb: (x: number) => string, value: number) => void} IFn2
+ */
+
+/** @type {IFn2} */
+export function inJs(cb, value) {
+  cb(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs(cb: (x: number) => string, value: number): void;"),
+        "Expected nested function parameter type to parse through closing paren matching: {output}"
+    );
+    assert!(
+        output.contains("export type IFn2 = (cb: (x: number) => string, value: number) => void;"),
+        "Expected emitted typedef alias to preserve nested function parameter type: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_fold_into_declarations() {
     let source = r#"
 const x = 1;
