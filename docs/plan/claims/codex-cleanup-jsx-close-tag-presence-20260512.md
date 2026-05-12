@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-jsx-close-tag-presence-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5676
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -16,6 +16,8 @@ Replace the inverted `NodeIndex::is_none()` check in JSX close-tag mismatch hand
 
 ## Verification
 
-- Planned: `cargo fmt --check`
-- Planned: `cargo nextest run -p tsz-parser jsx`
-- Planned: `cargo nextest run -p tsz-parser`
+- `cargo fmt --check` (passed)
+- `cargo nextest run -p tsz-parser jsx` (44 passed, 828 skipped)
+- `cargo nextest run -p tsz-parser` (871 passed, 1 skipped)
+- `cargo clippy -p tsz-parser --all-targets -- -D warnings` (passed)
+- `scripts/safe-run.sh cargo nextest run` (attempted; local linker failed with `No space left on device` while building unrelated checker/wasm test binaries)
