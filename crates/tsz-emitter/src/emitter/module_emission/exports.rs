@@ -425,11 +425,26 @@ impl<'a> Printer<'a> {
                 }
                 // export class C {} or export default class C {}
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    let recovered_anonymous_named_export = if !export.is_default_export
+                        && !self.ctx.module_state.has_export_assignment
+                    {
+                        self.arena
+                            .get_class(clause_node)
+                            .filter(|class| {
+                                !self.arena.is_declare(&class.modifiers) && class.name.is_none()
+                            })
+                            .map(|_| self.next_anonymous_default_export_name())
+                    } else {
+                        None
+                    };
+
                     let mut named_export_emitted_with_class = false;
                     if !self.ctx.module_state.has_export_assignment
                         && !export.is_default_export
                         && let Some(class) = self.arena.get_class(clause_node)
-                        && let Some(name) = self.get_identifier_text_opt(class.name)
+                        && let Some(name) = self
+                            .get_identifier_text_opt(class.name)
+                            .or_else(|| recovered_anonymous_named_export.clone())
                     {
                         // Keep named class export assignment immediately after the class
                         // declaration and before lowered static blocks/IIFEs.
@@ -587,7 +602,15 @@ impl<'a> Printer<'a> {
                     }
 
                     // Emit the class declaration
+                    let prev_anonymous_default_export_name =
+                        self.anonymous_default_export_name.clone();
+                    if let Some(name) = recovered_anonymous_named_export.as_ref() {
+                        self.anonymous_default_export_name = Some(name.clone());
+                    }
                     self.emit_class_declaration(clause_node, export.export_clause);
+                    if recovered_anonymous_named_export.is_some() {
+                        self.anonymous_default_export_name = prev_anonymous_default_export_name;
+                    }
                     // Only write a newline if we're not already at line start
                     // (class declarations with lowered static fields already end
                     // with write_line() after the last `ClassName.field = value;`)
@@ -598,7 +621,9 @@ impl<'a> Printer<'a> {
                     // Get class name and emit export (unless file has export =)
                     if !self.ctx.module_state.has_export_assignment
                         && let Some(class) = self.arena.get_class(clause_node)
-                        && let Some(name) = self.get_identifier_text_opt(class.name)
+                        && let Some(name) = self
+                            .get_identifier_text_opt(class.name)
+                            .or_else(|| recovered_anonymous_named_export.clone())
                     {
                         if export.is_default_export {
                             self.write_export_binding_start("default");

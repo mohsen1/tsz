@@ -1058,6 +1058,33 @@ export default class {
 }
 
 #[test]
+fn recovered_anonymous_named_class_export_gets_synthetic_binding() {
+    let source = "export class {\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("class default_1"),
+        "Recovered anonymous exported class should get a synthetic local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.default_1 = default_1;"),
+        "Recovered anonymous exported class should be exported under its synthetic name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn anonymous_default_function_avoids_user_default_1_binding() {
     let source = r#"
 const default_1 = "user binding";
