@@ -2806,11 +2806,13 @@ impl ParserState {
         let mut bracket_depth = 0u32;
         let mut nested_conditionals = 0u32;
 
-        while !matches!(
-            self.token(),
-            SyntaxKind::EndOfFileToken | SyntaxKind::SemicolonToken
-        ) {
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
             match self.token() {
+                SyntaxKind::SemicolonToken
+                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
+                {
+                    return false;
+                }
                 SyntaxKind::OpenParenToken => paren_depth += 1,
                 SyntaxKind::CloseParenToken => paren_depth = paren_depth.saturating_sub(1),
                 SyntaxKind::OpenBraceToken => brace_depth += 1,
