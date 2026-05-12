@@ -1,13 +1,16 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_code_lens_function() {
     let source = "function foo() {\n  return 1;\n}\nfoo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -37,8 +40,7 @@ fn test_code_lens_function() {
 #[test]
 fn test_code_lens_class() {
     let source = "class MyClass {\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -56,8 +58,7 @@ fn test_code_lens_class() {
 #[test]
 fn test_code_lens_interface() {
     let source = "interface Foo {\n  bar(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -80,8 +81,7 @@ fn test_code_lens_interface() {
 #[test]
 fn test_code_lens_resolve() {
     let source = "function foo() {}\nfoo();\nfoo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -118,8 +118,7 @@ fn test_code_lens_resolve() {
 #[test]
 fn test_code_lens_enum() {
     let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -138,8 +137,7 @@ fn test_code_lens_enum() {
 #[test]
 fn test_code_lens_type_alias() {
     let source = "type MyType = string | number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -157,8 +155,7 @@ fn test_code_lens_type_alias() {
 #[test]
 fn test_code_lens_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -176,8 +173,7 @@ fn test_code_lens_empty_file() {
 #[test]
 fn test_code_lens_variable_no_lens() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -201,8 +197,7 @@ fn test_code_lens_variable_no_lens() {
 #[test]
 fn test_code_lens_multiple_functions() {
     let source = "function foo() {}\nfunction bar() {}\nfunction baz() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -230,8 +225,7 @@ fn test_code_lens_multiple_functions() {
 #[test]
 fn test_code_lens_nested_functions() {
     let source = "function outer() {\n  function inner() {}\n  return inner();\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -260,8 +254,7 @@ fn test_code_lens_nested_functions() {
 #[test]
 fn test_code_lens_interface_method() {
     let source = "interface Greeter {\n  greet(name: string): string;\n  wave(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -293,8 +286,7 @@ fn test_code_lens_interface_method() {
 #[test]
 fn test_code_lens_class_with_constructor_and_methods() {
     let source = "class Animal {\n  constructor(public name: string) {}\n  speak() {\n    return this.name;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -323,8 +315,7 @@ fn test_code_lens_class_with_constructor_and_methods() {
 #[test]
 fn test_code_lens_multiple_classes() {
     let source = "class A {\n  foo() {}\n}\nclass B {\n  bar() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -351,8 +342,7 @@ fn test_code_lens_multiple_classes() {
 #[test]
 fn test_code_lens_exported_function() {
     let source = "export function greet() {}\nexport function farewell() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -374,8 +364,7 @@ fn test_code_lens_exported_function() {
 #[test]
 fn test_code_lens_resolve_zero_references() {
     let source = "function unused() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -403,8 +392,7 @@ fn test_code_lens_resolve_zero_references() {
 #[test]
 fn test_code_lens_all_have_data() {
     let source = "function a() {}\nclass B {}\ninterface C {}\nenum D { X }\ntype E = string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -429,8 +417,7 @@ fn test_code_lens_all_have_data() {
 #[test]
 fn test_code_lens_abstract_class() {
     let source = "abstract class Base {\n  abstract foo(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -452,8 +439,7 @@ fn test_code_lens_abstract_class() {
 #[test]
 fn test_code_lens_const_enum() {
     let source = "const enum Direction {\n  Up,\n  Down,\n  Left,\n  Right\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -472,8 +458,7 @@ fn test_code_lens_const_enum() {
 #[test]
 fn test_code_lens_interface_only_has_implementations_kind() {
     let source = "interface Serializable {\n  serialize(): string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -500,8 +485,7 @@ fn test_code_lens_interface_only_has_implementations_kind() {
 fn test_code_lens_class_no_implementations_kind() {
     // Regular classes should not get an Implementations lens (only interfaces do)
     let source = "class Concrete {\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -526,8 +510,7 @@ fn test_code_lens_class_no_implementations_kind() {
 #[test]
 fn test_code_lens_resolve_interface_implementations() {
     let source = "interface Runnable {\n  run(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -561,8 +544,7 @@ fn test_code_lens_resolve_interface_implementations() {
 #[test]
 fn test_code_lens_resolve_with_no_data() {
     let source = "function foo() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -586,8 +568,7 @@ fn test_code_lens_resolve_with_no_data() {
 #[test]
 fn test_code_lens_multiple_interfaces() {
     let source = "interface A {\n  x: number;\n}\ninterface B {\n  y: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -617,8 +598,7 @@ fn test_code_lens_multiple_interfaces() {
 #[test]
 fn test_code_lens_only_comments() {
     let source = "// This is a comment\n/* Block comment */";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -638,8 +618,7 @@ fn test_code_lens_only_comments() {
 #[test]
 fn test_code_lens_generic_function() {
     let source = "function identity<T>(arg: T): T {\n  return arg;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -660,8 +639,7 @@ fn test_code_lens_generic_function() {
 #[test]
 fn test_code_lens_resolve_single_reference() {
     let source = "function greet() {}\ngreet();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -692,8 +670,7 @@ fn test_code_lens_resolve_single_reference() {
 #[test]
 fn test_code_lens_class_with_static_method() {
     let source = "class Utils {\n  static parse() {}\n  static format() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -715,8 +692,7 @@ fn test_code_lens_class_with_static_method() {
 #[test]
 fn test_code_lens_arrow_function_variable() {
     let source = "const greet = () => 'hello';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -735,8 +711,7 @@ fn test_code_lens_arrow_function_variable() {
 #[test]
 fn test_code_lens_class_getter_setter() {
     let source = "class Obj {\n  get value() { return 1; }\n  set value(v: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -758,8 +733,7 @@ fn test_code_lens_class_getter_setter() {
 #[test]
 fn test_code_lens_function_overloads() {
     let source = "function foo(x: string): string;\nfunction foo(x: number): number;\nfunction foo(x: any): any { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -777,8 +751,7 @@ fn test_code_lens_function_overloads() {
 #[test]
 fn test_code_lens_exported_class() {
     let source = "export class Widget {\n  render() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -799,8 +772,7 @@ fn test_code_lens_exported_class() {
 #[test]
 fn test_code_lens_exported_interface() {
     let source = "export interface Config {\n  debug: boolean;\n  port: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -824,8 +796,7 @@ fn test_code_lens_exported_interface() {
 fn test_code_lens_enum_with_values() {
     let source =
         "enum Status {\n  Active = 'active',\n  Inactive = 'inactive',\n  Pending = 'pending'\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -846,8 +817,7 @@ fn test_code_lens_enum_with_values() {
 #[test]
 fn test_code_lens_class_with_properties() {
     let source = "class Config {\n  public host: string = 'localhost';\n  private port: number = 3000;\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -869,8 +839,7 @@ fn test_code_lens_class_with_properties() {
 #[test]
 fn test_code_lens_generic_class() {
     let source = "class Container<T> {\n  value: T;\n  get(): T { return this.value; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -891,8 +860,7 @@ fn test_code_lens_generic_class() {
 #[test]
 fn test_code_lens_generic_interface() {
     let source = "interface Repository<T> {\n  find(id: string): T;\n  save(item: T): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -913,8 +881,7 @@ fn test_code_lens_generic_interface() {
 #[test]
 fn test_code_lens_class_extending_class() {
     let source = "class Animal {\n  move() {}\n}\nclass Dog extends Animal {\n  bark() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -935,8 +902,7 @@ fn test_code_lens_class_extending_class() {
 #[test]
 fn test_code_lens_class_implementing_interface() {
     let source = "interface Printable {\n  print(): void;\n}\nclass Report implements Printable {\n  print() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -963,8 +929,7 @@ fn test_code_lens_class_implementing_interface() {
 #[test]
 fn test_code_lens_resolve_many_references() {
     let source = "function used() {}\nused();\nused();\nused();\nused();\nused();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -995,8 +960,7 @@ fn test_code_lens_resolve_many_references() {
 fn test_code_lens_abstract_method() {
     let source =
         "abstract class Shape {\n  abstract area(): number;\n  abstract perimeter(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1018,8 +982,7 @@ fn test_code_lens_abstract_method() {
 #[test]
 fn test_code_lens_mixed_declarations() {
     let source = "function a() {}\nclass B {}\ninterface C {}\nenum D { X }\ntype E = number;\nfunction f() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1042,8 +1005,7 @@ fn test_code_lens_mixed_declarations() {
 fn test_code_lens_interface_extending_interface() {
     let source =
         "interface Base {\n  id: number;\n}\ninterface Child extends Base {\n  name: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1065,7 +1027,7 @@ fn test_code_lens_interface_extending_interface() {
 fn test_code_lens_file_path_in_data() {
     let source = "function test() {}";
     let file_path = "src/components/widget.ts";
-    let mut parser = ParserState::new(file_path.to_string(), source.to_string());
+    let mut parser = tsz_parser::ParserState::new(file_path.to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
 
@@ -1090,8 +1052,7 @@ fn test_code_lens_file_path_in_data() {
 #[test]
 fn test_code_lens_async_function() {
     let source = "async function fetchData() {\n  return await Promise.resolve(1);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1112,8 +1073,7 @@ fn test_code_lens_async_function() {
 #[test]
 fn test_code_lens_generator_function() {
     let source = "function* gen() {\n  yield 1;\n  yield 2;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1134,8 +1094,7 @@ fn test_code_lens_generator_function() {
 #[test]
 fn test_code_lens_class_with_private_method() {
     let source = "class Secret {\n  private hidden() {}\n  public visible() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1157,8 +1116,7 @@ fn test_code_lens_class_with_private_method() {
 #[test]
 fn test_code_lens_interface_with_readonly_properties() {
     let source = "interface Immutable {\n  readonly x: number;\n  readonly y: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1180,8 +1138,7 @@ fn test_code_lens_interface_with_readonly_properties() {
 fn test_code_lens_enum_with_computed_values() {
     let source =
         "enum FileAccess {\n  Read = 1 << 0,\n  Write = 1 << 1,\n  ReadWrite = Read | Write\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1202,8 +1159,7 @@ fn test_code_lens_enum_with_computed_values() {
 #[test]
 fn test_code_lens_type_alias_union_of_interfaces() {
     let source = "interface A {}\ninterface B {}\ntype AB = A | B;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1225,8 +1181,7 @@ fn test_code_lens_type_alias_union_of_interfaces() {
 #[test]
 fn test_code_lens_class_with_index_signature() {
     let source = "class DynamicObj {\n  [key: string]: any;\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1247,8 +1202,7 @@ fn test_code_lens_class_with_index_signature() {
 #[test]
 fn test_code_lens_function_with_default_params() {
     let source = "function greet(name: string = 'World') {\n  return `Hello ${name}`;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1269,8 +1223,7 @@ fn test_code_lens_function_with_default_params() {
 #[test]
 fn test_code_lens_declare_function() {
     let source = "declare function external(): void;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1288,8 +1241,7 @@ fn test_code_lens_declare_function() {
 #[test]
 fn test_code_lens_class_with_decorators_syntax() {
     let source = "class Component {\n  method() {}\n}\nclass Service {\n  handle() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1311,8 +1263,7 @@ fn test_code_lens_class_with_decorators_syntax() {
 fn test_code_lens_interface_with_optional_properties() {
     let source =
         "interface Options {\n  debug?: boolean;\n  verbose?: boolean;\n  timeout?: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1333,8 +1284,7 @@ fn test_code_lens_interface_with_optional_properties() {
 #[test]
 fn test_code_lens_resolve_command_for_references() {
     let source = "function target() {}\ntarget();\ntarget();\ntarget();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1367,8 +1317,7 @@ fn test_code_lens_resolve_command_for_references() {
 #[test]
 fn test_code_lens_class_implementing_multiple_interfaces() {
     let source = "interface A {\n  a(): void;\n}\ninterface B {\n  b(): void;\n}\nclass Impl implements A, B {\n  a() {}\n  b() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1390,8 +1339,7 @@ fn test_code_lens_class_implementing_multiple_interfaces() {
 #[test]
 fn test_code_lens_namespace_declaration() {
     let source = "namespace Utils {\n  export function helper() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1409,8 +1357,7 @@ fn test_code_lens_namespace_declaration() {
 #[test]
 fn test_code_lens_empty_class() {
     let source = "class Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1431,8 +1378,7 @@ fn test_code_lens_empty_class() {
 #[test]
 fn test_code_lens_empty_interface() {
     let source = "interface Marker {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1454,8 +1400,7 @@ fn test_code_lens_empty_interface() {
 #[test]
 fn test_code_lens_type_alias_intersection() {
     let source = "type Combined = { a: number } & { b: string };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1476,8 +1421,7 @@ fn test_code_lens_type_alias_intersection() {
 #[test]
 fn test_code_lens_async_generator_function() {
     let source = "async function* streamData() {\n  yield 1;\n  yield 2;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1498,8 +1442,7 @@ fn test_code_lens_async_generator_function() {
 #[test]
 fn test_code_lens_class_with_protected_method() {
     let source = "class Base {\n  protected init() {}\n  protected cleanup() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1520,8 +1463,7 @@ fn test_code_lens_class_with_protected_method() {
 #[test]
 fn test_code_lens_enum_single_member() {
     let source = "enum Singleton {\n  Instance\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1542,8 +1484,7 @@ fn test_code_lens_enum_single_member() {
 #[test]
 fn test_code_lens_function_with_rest_params() {
     let source = "function collect(...args: number[]) {\n  return args;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1564,8 +1505,7 @@ fn test_code_lens_function_with_rest_params() {
 #[test]
 fn test_code_lens_class_with_static_property() {
     let source = "class Registry {\n  static instances: Registry[] = [];\n  static count = 0;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1586,8 +1526,7 @@ fn test_code_lens_class_with_static_property() {
 #[test]
 fn test_code_lens_interface_with_call_signature() {
     let source = "interface Callable {\n  (x: number): string;\n  (x: string): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1609,8 +1548,7 @@ fn test_code_lens_interface_with_call_signature() {
 #[test]
 fn test_code_lens_multiple_type_aliases() {
     let source = "type A = string;\ntype B = number;\ntype C = boolean;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1631,8 +1569,7 @@ fn test_code_lens_multiple_type_aliases() {
 #[test]
 fn test_code_lens_whitespace_only_file() {
     let source = "   \n   \n   ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1651,8 +1588,7 @@ fn test_code_lens_whitespace_only_file() {
 #[test]
 fn test_code_lens_unicode_function_name() {
     let source = "function grüße() {\n  return 1;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1671,8 +1607,7 @@ fn test_code_lens_unicode_function_name() {
 #[test]
 fn test_code_lens_class_with_constructor_only() {
     let source = "class Singleton {\n  constructor() {\n    // init\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1691,8 +1626,7 @@ fn test_code_lens_class_with_constructor_only() {
 #[test]
 fn test_code_lens_deeply_nested_class() {
     let source = "namespace Outer {\n  namespace Inner {\n    class Deep {\n      method() {}\n    }\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1711,8 +1645,7 @@ fn test_code_lens_deeply_nested_class() {
 #[test]
 fn test_code_lens_class_with_readonly_property() {
     let source = "class Config {\n  readonly host: string = 'localhost';\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1731,8 +1664,7 @@ fn test_code_lens_class_with_readonly_property() {
 #[test]
 fn test_code_lens_type_alias_conditional() {
     let source = "type IsString<T> = T extends string ? true : false;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1751,8 +1683,7 @@ fn test_code_lens_type_alias_conditional() {
 #[test]
 fn test_code_lens_type_alias_mapped() {
     let source = "type Partial<T> = {\n  [K in keyof T]?: T[K];\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1771,8 +1702,7 @@ fn test_code_lens_type_alias_mapped() {
 #[test]
 fn test_code_lens_function_with_optional_params() {
     let source = "function greet(name?: string, greeting?: string) {\n  return `Hello`;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1793,8 +1723,7 @@ fn test_code_lens_function_with_optional_params() {
 #[test]
 fn test_code_lens_interface_with_generic_params() {
     let source = "interface Repository<T, K extends string> {\n  get(id: K): T;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1815,8 +1744,7 @@ fn test_code_lens_interface_with_generic_params() {
 #[test]
 fn test_code_lens_enum_string_members() {
     let source = "enum Status {\n  Active = 'active',\n  Inactive = 'inactive'\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1836,8 +1764,7 @@ fn test_code_lens_enum_string_members() {
 fn test_code_lens_multiple_namespaces() {
     let source =
         "namespace A {\n  export function fa() {}\n}\nnamespace B {\n  export function fb() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1858,8 +1785,7 @@ fn test_code_lens_multiple_namespaces() {
 fn test_code_lens_class_with_abstract_property() {
     let source =
         "abstract class Shape {\n  abstract area: number;\n  abstract perimeter(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1878,8 +1804,7 @@ fn test_code_lens_class_with_abstract_property() {
 #[test]
 fn test_code_lens_single_line_function() {
     let source = "function id(x: number) { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1898,8 +1823,7 @@ fn test_code_lens_single_line_function() {
 #[test]
 fn test_code_lens_function_returning_generic() {
     let source = "function wrap<T>(value: T): Array<T> {\n  return [value];\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1921,8 +1845,7 @@ fn test_code_lens_function_returning_generic() {
 #[test]
 fn test_code_lens_interface_with_index_signature() {
     let source = "interface StringMap {\n  [key: string]: any;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1942,8 +1865,7 @@ fn test_code_lens_interface_with_index_signature() {
 #[test]
 fn test_code_lens_class_with_multiple_constructors() {
     let source = "class Builder {\n  private items: string[] = [];\n  add(item: string) {\n    this.items.push(item);\n    return this;\n  }\n  build() {\n    return this.items;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1967,8 +1889,7 @@ fn test_code_lens_class_with_multiple_constructors() {
 #[test]
 fn test_code_lens_class_with_private_static_method() {
     let source = "class Util {\n  private static helper() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1985,8 +1906,7 @@ fn test_code_lens_class_with_private_static_method() {
 #[test]
 fn test_code_lens_function_expression_not_top_level() {
     let source = "const x = function myFunc() { return 1; };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2000,8 +1920,7 @@ fn test_code_lens_function_expression_not_top_level() {
 #[test]
 fn test_code_lens_multiple_enums() {
     let source = "enum A { X }\nenum B { Y }\nenum C { Z }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2018,8 +1937,7 @@ fn test_code_lens_multiple_enums() {
 #[test]
 fn test_code_lens_class_with_method_overloads() {
     let source = "class Converter {\n  convert(x: string): number;\n  convert(x: number): string;\n  convert(x: any): any { return x; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2035,8 +1953,7 @@ fn test_code_lens_class_with_method_overloads() {
 #[test]
 fn test_code_lens_interface_with_multiple_methods() {
     let source = "interface Service {\n  start(): void;\n  stop(): void;\n  restart(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2052,8 +1969,7 @@ fn test_code_lens_interface_with_multiple_methods() {
 #[test]
 fn test_code_lens_type_alias_generic() {
     let source = "type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2066,8 +1982,7 @@ fn test_code_lens_type_alias_generic() {
 #[test]
 fn test_code_lens_class_with_accessors() {
     let source = "class Config {\n  private _value = 0;\n  get value() { return this._value; }\n  set value(v: number) { this._value = v; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2083,8 +1998,7 @@ fn test_code_lens_class_with_accessors() {
 #[test]
 fn test_code_lens_exported_enum() {
     let source = "export enum Direction {\n  Up,\n  Down,\n  Left,\n  Right\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2097,8 +2011,7 @@ fn test_code_lens_exported_enum() {
 #[test]
 fn test_code_lens_exported_type_alias() {
     let source = "export type ID = string | number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2111,8 +2024,7 @@ fn test_code_lens_exported_type_alias() {
 #[test]
 fn test_code_lens_class_with_heritage_and_methods() {
     let source = "interface Base { run(): void; }\nclass Impl implements Base {\n  run() {}\n  extra() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2128,8 +2040,7 @@ fn test_code_lens_class_with_heritage_and_methods() {
 #[test]
 fn test_code_lens_declare_class() {
     let source = "declare class External {\n  method(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2142,8 +2053,7 @@ fn test_code_lens_declare_class() {
 #[test]
 fn test_code_lens_declare_interface() {
     let source = "declare interface ExternalApi {\n  fetch(url: string): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2156,8 +2066,7 @@ fn test_code_lens_declare_interface() {
 #[test]
 fn test_code_lens_function_with_destructured_params() {
     let source = "function process({ name, age }: { name: string; age: number }) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2173,8 +2082,7 @@ fn test_code_lens_function_with_destructured_params() {
 #[test]
 fn test_code_lens_class_with_computed_property() {
     let source = "class Store {\n  [Symbol.iterator]() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2191,8 +2099,7 @@ fn test_code_lens_class_with_computed_property() {
 #[test]
 fn test_code_lens_interface_with_construct_signature() {
     let source = "interface Constructor {\n  new (name: string): object;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2208,8 +2115,7 @@ fn test_code_lens_interface_with_construct_signature() {
 #[test]
 fn test_code_lens_multiple_functions_and_classes() {
     let source = "function a() {}\nfunction b() {}\nclass C {}\nclass D {}\ninterface E {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2226,8 +2132,7 @@ fn test_code_lens_multiple_functions_and_classes() {
 #[test]
 fn test_code_lens_enum_with_string_and_numeric_members() {
     let source = "enum Mixed {\n  A = 0,\n  B = \"bee\",\n  C = 2\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2243,8 +2148,7 @@ fn test_code_lens_enum_with_string_and_numeric_members() {
 #[test]
 fn test_code_lens_class_with_async_method() {
     let source = "class Api {\n  async fetch() { return null; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2260,8 +2164,7 @@ fn test_code_lens_class_with_async_method() {
 #[test]
 fn test_code_lens_type_alias_template_literal() {
     let source = "type EventName = `on${string}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2277,8 +2180,7 @@ fn test_code_lens_type_alias_template_literal() {
 #[test]
 fn test_code_lens_resolve_class_references() {
     let source = "class Foo {}\nlet a: Foo;\nlet b = new Foo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2299,8 +2201,7 @@ fn test_code_lens_resolve_class_references() {
 #[test]
 fn test_code_lens_resolve_enum_references() {
     let source = "enum Status { Active, Inactive }\nlet s: Status = Status.Active;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);

@@ -1,13 +1,16 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_type_definition_interface() {
     let source = "interface Foo { x: number; }\nlet a: Foo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -33,8 +36,7 @@ fn test_type_definition_interface() {
 #[test]
 fn test_type_definition_type_alias() {
     let source = "type MyType = string;\nlet x: MyType;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -58,8 +60,7 @@ fn test_type_definition_type_alias() {
 #[test]
 fn test_type_definition_class() {
     let source = "class MyClass {}\nlet obj: MyClass;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -82,8 +83,7 @@ fn test_type_definition_class() {
 #[test]
 fn test_type_definition_primitive() {
     let source = "let x: number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -109,8 +109,7 @@ fn test_type_definition_primitive() {
 #[test]
 fn test_type_definition_no_type_annotation() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -133,8 +132,7 @@ fn test_type_definition_no_type_annotation() {
 fn test_type_definition_function_return() {
     let source =
         "interface Result { ok: boolean; }\nfunction foo(): Result { return { ok: true }; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -158,8 +156,7 @@ fn test_type_definition_function_return() {
 #[test]
 fn test_type_definition_parameter() {
     let source = "interface Options { debug: boolean; }\nfunction foo(opts: Options) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -182,8 +179,7 @@ fn test_type_definition_parameter() {
 #[test]
 fn test_type_definition_enum() {
     let source = "enum Color { Red, Green, Blue }\nlet c: Color;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -207,8 +203,7 @@ fn test_type_definition_enum() {
 #[test]
 fn test_type_definition_generic_type() {
     let source = "interface Box<T> { value: T; }\nlet b: Box<number>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -232,8 +227,7 @@ fn test_type_definition_generic_type() {
 #[test]
 fn test_type_definition_union_type() {
     let source = "interface Foo { x: number; }\ninterface Bar { y: string; }\nlet u: Foo | Bar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -259,8 +253,7 @@ fn test_type_definition_union_type() {
 #[test]
 fn test_type_definition_intersection_type() {
     let source = "interface A { x: number; }\ninterface B { y: string; }\nlet val: A & B;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -286,8 +279,7 @@ fn test_type_definition_intersection_type() {
 #[test]
 fn test_type_definition_nested_interface() {
     let source = "interface Inner { x: number; }\ninterface Outer { inner: Inner; }\nlet o: Outer;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -314,8 +306,7 @@ fn test_type_definition_nested_interface() {
 fn test_type_definition_function_param_with_interface() {
     let source =
         "interface Config { debug: boolean; timeout: number; }\nfunction init(cfg: Config) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -338,8 +329,7 @@ fn test_type_definition_function_param_with_interface() {
 #[test]
 fn test_type_definition_type_alias_reference() {
     let source = "type ID = string;\ntype User = { id: ID; name: string; };\nlet u: User;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -365,8 +355,7 @@ fn test_type_definition_type_alias_reference() {
 #[test]
 fn test_type_definition_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -386,8 +375,7 @@ fn test_type_definition_empty_file() {
 fn test_type_definition_on_type_annotation_itself() {
     // Cursor on the type reference in the annotation, not the variable name
     let source = "interface Widget { render(): void; }\nlet w: Widget;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -413,8 +401,7 @@ fn test_type_definition_on_type_annotation_itself() {
 #[test]
 fn test_type_definition_multiple_variables_same_type() {
     let source = "interface Shared { x: number; }\nlet a: Shared;\nlet b: Shared;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -439,8 +426,7 @@ fn test_type_definition_multiple_variables_same_type() {
 #[test]
 fn test_type_definition_property_with_interface_type() {
     let source = "interface Addr { city: string; }\ninterface Person { address: Addr; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -462,8 +448,7 @@ fn test_type_definition_property_with_interface_type() {
 #[test]
 fn test_type_definition_out_of_bounds_position() {
     let source = "let x: number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -486,8 +471,7 @@ fn test_type_definition_out_of_bounds_position() {
 #[test]
 fn test_type_definition_class_with_methods() {
     let source = "class MyService {\n  getData(): string { return \"\"; }\n}\nlet svc: MyService;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -513,8 +497,7 @@ fn test_type_definition_class_with_methods() {
 #[test]
 fn test_type_definition_const_no_type() {
     let source = "const pi = 3.14;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -538,8 +521,7 @@ fn test_type_definition_const_no_type() {
 #[test]
 fn test_type_definition_function_multiple_params() {
     let source = "interface Config { x: number; }\ninterface Logger { log(msg: string): void; }\nfunction init(cfg: Config, logger: Logger) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -562,8 +544,7 @@ fn test_type_definition_function_multiple_params() {
 #[test]
 fn test_type_definition_at_start_of_file() {
     let source = "interface First { x: number; }\nlet f: First;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -585,8 +566,7 @@ fn test_type_definition_at_start_of_file() {
 #[test]
 fn test_type_definition_abstract_class_type() {
     let source = "abstract class Animal {\n  abstract speak(): void;\n}\nlet a: Animal;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -612,8 +592,7 @@ fn test_type_definition_abstract_class_type() {
 #[test]
 fn test_type_definition_only_whitespace() {
     let source = "   \n   \n   ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -633,8 +612,7 @@ fn test_type_definition_only_whitespace() {
 fn test_type_definition_return_type_location() {
     let source =
         "interface Result { ok: boolean; }\nfunction check(): Result { return { ok: true }; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -660,8 +638,7 @@ fn test_type_definition_return_type_location() {
 #[test]
 fn test_type_definition_array_type() {
     let source = "interface Item { id: number; }\nlet items: Item[];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -686,8 +663,7 @@ fn test_type_definition_array_type() {
 #[test]
 fn test_type_definition_optional_type() {
     let source = "interface Data { value: number; }\nlet d: Data | undefined;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -707,8 +683,7 @@ fn test_type_definition_optional_type() {
 #[test]
 fn test_type_definition_tuple_type() {
     let source = "interface Point { x: number; y: number; }\nlet pair: [Point, Point];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -728,8 +703,7 @@ fn test_type_definition_tuple_type() {
 #[test]
 fn test_type_definition_const_assertion() {
     let source = "const colors = ['red', 'blue'] as const;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -749,8 +723,7 @@ fn test_type_definition_const_assertion() {
 #[test]
 fn test_type_definition_readonly_array() {
     let source = "interface Entry { key: string; }\nlet entries: readonly Entry[];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -770,8 +743,7 @@ fn test_type_definition_readonly_array() {
 #[test]
 fn test_type_definition_mapped_type() {
     let source = "type Partial<T> = { [K in keyof T]?: T[K]; };\ninterface User { name: string; age: number; }\nlet u: Partial<User>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -795,8 +767,7 @@ fn test_type_definition_mapped_type() {
 #[test]
 fn test_type_definition_conditional_type() {
     let source = "type IsString<T> = T extends string ? true : false;\nlet x: IsString<number>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -821,8 +792,7 @@ fn test_type_definition_conditional_type() {
 fn test_type_definition_extends_class() {
     let source =
         "class Base { x: number; }\nclass Derived extends Base { y: string; }\nlet d: Derived;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -848,8 +818,7 @@ fn test_type_definition_extends_class() {
 #[test]
 fn test_type_definition_literal_type_alias() {
     let source = "type Direction = 'north' | 'south' | 'east' | 'west';\nlet d: Direction;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -871,8 +840,7 @@ fn test_type_definition_literal_type_alias() {
 #[test]
 fn test_type_definition_interface_with_index_signature() {
     let source = "interface Dict { [key: string]: number; }\nlet d: Dict;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -894,8 +862,7 @@ fn test_type_definition_interface_with_index_signature() {
 #[test]
 fn test_type_definition_namespace_qualified() {
     let source = "namespace NS {\n  export interface Inner { x: number; }\n}\nlet v: NS.Inner;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -915,8 +882,7 @@ fn test_type_definition_namespace_qualified() {
 #[test]
 fn test_type_definition_function_type_alias() {
     let source = "type Callback = (x: number) => void;\nlet cb: Callback;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -938,8 +904,7 @@ fn test_type_definition_function_type_alias() {
 #[test]
 fn test_type_definition_class_with_constructor() {
     let source = "class Service {\n  constructor(public name: string) {}\n}\nlet s: Service;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -961,8 +926,7 @@ fn test_type_definition_class_with_constructor() {
 #[test]
 fn test_type_definition_on_keyword() {
     let source = "interface Foo { x: number; }\nlet a: Foo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -983,8 +947,7 @@ fn test_type_definition_on_keyword() {
 #[test]
 fn test_type_definition_string_type() {
     let source = "let s: string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1006,8 +969,7 @@ fn test_type_definition_string_type() {
 #[test]
 fn test_type_definition_boolean_type() {
     let source = "let b: boolean;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1029,8 +991,7 @@ fn test_type_definition_boolean_type() {
 #[test]
 fn test_type_definition_void_return_type() {
     let source = "function noop(): void {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1051,8 +1012,7 @@ fn test_type_definition_void_return_type() {
 #[test]
 fn test_type_definition_multiple_type_params() {
     let source = "interface Map<K, V> { get(key: K): V; }\nlet m: Map<string, number>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1074,8 +1034,7 @@ fn test_type_definition_multiple_type_params() {
 #[test]
 fn test_type_definition_generic_class_type() {
     let source = "class Container<T> {\n  value: T;\n}\nlet c: Container<string>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1097,8 +1056,7 @@ fn test_type_definition_generic_class_type() {
 #[test]
 fn test_type_definition_interface_with_methods() {
     let source = "interface Service {\n  start(): void;\n  stop(): void;\n}\nlet svc: Service;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1120,8 +1078,7 @@ fn test_type_definition_interface_with_methods() {
 #[test]
 fn test_type_definition_enum_member_type() {
     let source = "enum Status {\n  Active = 'active',\n  Inactive = 'inactive'\n}\nlet s: Status;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1143,8 +1100,7 @@ fn test_type_definition_enum_member_type() {
 #[test]
 fn test_type_definition_any_type() {
     let source = "let x: any;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1166,8 +1122,7 @@ fn test_type_definition_any_type() {
 #[test]
 fn test_type_definition_never_type() {
     let source = "let n: never;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1189,8 +1144,7 @@ fn test_type_definition_never_type() {
 #[test]
 fn test_type_definition_unknown_type() {
     let source = "let u: unknown;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1212,8 +1166,7 @@ fn test_type_definition_unknown_type() {
 #[test]
 fn test_type_definition_promise_like_type_alias() {
     let source = "type AsyncResult<T> = Promise<T>;\nlet r: AsyncResult<number>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1236,8 +1189,7 @@ fn test_type_definition_promise_like_type_alias() {
 #[test]
 fn test_type_definition_record_type_alias() {
     let source = "type Dict = Record<string, number>;\nlet d: Dict;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1260,8 +1212,7 @@ fn test_type_definition_record_type_alias() {
 #[test]
 fn test_type_definition_class_with_generics_and_constraints() {
     let source = "interface Comparable {\n  compareTo(other: any): number;\n}\nclass SortedList<T extends Comparable> {\n  items: T[] = [];\n}\nlet list: SortedList<Comparable>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1284,8 +1235,7 @@ fn test_type_definition_class_with_generics_and_constraints() {
 #[test]
 fn test_type_definition_interface_extending_interface() {
     let source = "interface Base {\n  id: number;\n}\ninterface Extended extends Base {\n  name: string;\n}\nlet e: Extended;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1310,8 +1260,7 @@ fn test_type_definition_interface_extending_interface() {
 #[test]
 fn test_type_definition_only_comments() {
     let source = "// This is a comment\n/* Block comment */";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1330,8 +1279,7 @@ fn test_type_definition_only_comments() {
 #[test]
 fn test_type_definition_let_with_explicit_string_literal_type() {
     let source = "type Mode = 'read' | 'write';\nlet m: Mode;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1357,8 +1305,7 @@ fn test_type_definition_let_with_explicit_string_literal_type() {
 #[test]
 fn test_type_definition_readonly_property() {
     let source = "interface Config {\n  readonly host: string;\n}\nlet c: Config;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1381,8 +1328,7 @@ fn test_type_definition_readonly_property() {
 #[test]
 fn test_type_definition_nested_generic() {
     let source = "interface Box<T> {\n  value: T;\n}\ntype NestedBox<T> = Box<Box<T>>;\nlet nb: NestedBox<string>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1405,8 +1351,7 @@ fn test_type_definition_nested_generic() {
 #[test]
 fn test_type_definition_function_expression_type() {
     let source = "type Handler = (event: string) => void;\nlet h: Handler;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1429,8 +1374,7 @@ fn test_type_definition_function_expression_type() {
 #[test]
 fn test_type_definition_type_alias_with_keyof() {
     let source = "interface Person {\n  name: string;\n  age: number;\n}\ntype PersonKeys = keyof Person;\nlet k: PersonKeys;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1453,8 +1397,7 @@ fn test_type_definition_type_alias_with_keyof() {
 #[test]
 fn test_type_definition_const_enum_type() {
     let source = "const enum Status {\n  Active,\n  Inactive\n}\nlet s: Status;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1477,8 +1420,7 @@ fn test_type_definition_const_enum_type() {
 #[test]
 fn test_type_definition_var_with_type_annotation() {
     let source = "interface Widget {}\nvar w: Widget;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1501,8 +1443,7 @@ fn test_type_definition_var_with_type_annotation() {
 #[test]
 fn test_type_definition_declared_type() {
     let source = "declare class Buffer {\n  length: number;\n}\nlet b: Buffer;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1525,8 +1466,7 @@ fn test_type_definition_declared_type() {
 #[test]
 fn test_type_definition_type_alias_with_template_literal() {
     let source = "type EventName = `on${string}`;\nlet e: EventName;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1549,8 +1489,7 @@ fn test_type_definition_type_alias_with_template_literal() {
 #[test]
 fn test_type_definition_number_type_annotation() {
     let source = "let n: number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1570,8 +1509,7 @@ fn test_type_definition_number_type_annotation() {
 #[test]
 fn test_type_definition_object_type_literal() {
     let source = "type Point = { x: number; y: number };\nlet p: Point;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1594,8 +1532,7 @@ fn test_type_definition_object_type_literal() {
 #[test]
 fn test_type_definition_at_numeric_literal() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1616,8 +1553,7 @@ fn test_type_definition_at_numeric_literal() {
 #[test]
 fn test_type_definition_arrow_function_param() {
     let source = "interface Config { debug: boolean; }\nconst fn = (cfg: Config) => cfg.debug;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1641,8 +1577,7 @@ fn test_type_definition_arrow_function_param() {
 #[test]
 fn test_type_definition_destructured_param() {
     let source = "interface Point { x: number; y: number; }\nfunction draw({ x, y }: Point) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1663,8 +1598,7 @@ fn test_type_definition_destructured_param() {
 #[test]
 fn test_type_definition_rest_param() {
     let source = "function sum(...nums: number[]) { return 0; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1685,8 +1619,7 @@ fn test_type_definition_rest_param() {
 #[test]
 fn test_type_definition_optional_param() {
     let source = "interface Options { verbose?: boolean; }\nfunction run(opts?: Options) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1710,8 +1643,7 @@ fn test_type_definition_optional_param() {
 #[test]
 fn test_type_definition_class_with_heritage() {
     let source = "class Base {}\nclass Derived extends Base {}\nlet d: Derived;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1736,8 +1668,7 @@ fn test_type_definition_class_with_heritage() {
 #[test]
 fn test_type_definition_generic_function_type() {
     let source = "type Mapper<T, U> = (item: T) => U;\nlet m: Mapper<string, number>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1761,8 +1692,7 @@ fn test_type_definition_generic_function_type() {
 #[test]
 fn test_type_definition_at_string_literal() {
     let source = "const greeting = \"hello world\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1783,8 +1713,7 @@ fn test_type_definition_at_string_literal() {
 #[test]
 fn test_type_definition_enum_as_type() {
     let source = "enum Color { Red, Green, Blue }\nlet c: Color;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1809,8 +1738,7 @@ fn test_type_definition_enum_as_type() {
 fn test_type_definition_deeply_nested_type() {
     let source =
         "interface Inner { value: number; }\ninterface Outer { inner: Inner; }\nlet o: Outer;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1836,8 +1764,7 @@ fn test_type_definition_deeply_nested_type() {
 fn test_type_definition_union_of_interfaces() {
     let source =
         "interface Cat { meow(): void; }\ninterface Dog { bark(): void; }\nlet pet: Cat | Dog;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1858,8 +1785,7 @@ fn test_type_definition_union_of_interfaces() {
 #[test]
 fn test_type_definition_at_boolean_literal() {
     let source = "const flag = true;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1880,8 +1806,7 @@ fn test_type_definition_at_boolean_literal() {
 #[test]
 fn test_type_definition_interface_with_generics() {
     let source = "interface List<T> { items: T[]; }\nlet myList: List<string>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1905,8 +1830,7 @@ fn test_type_definition_interface_with_generics() {
 #[test]
 fn test_type_definition_at_template_literal() {
     let source = "const msg = `hello ${\"world\"}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1926,8 +1850,7 @@ fn test_type_definition_at_template_literal() {
 #[test]
 fn test_type_definition_unicode_identifier() {
     let source = "interface Élément { valeur: number; }\nlet é: Élément;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1947,8 +1870,7 @@ fn test_type_definition_unicode_identifier() {
 fn test_type_definition_type_predicate() {
     let source =
         "interface Fish { swim(): void; }\nfunction isFish(pet: any): pet is Fish { return true; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1969,8 +1891,7 @@ fn test_type_definition_type_predicate() {
 #[test]
 fn test_type_definition_at_null_literal() {
     let source = "const n = null;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1989,8 +1910,7 @@ fn test_type_definition_at_null_literal() {
 #[test]
 fn test_type_definition_generic_type_param() {
     let source = "function identity<T>(x: T): T { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2005,8 +1925,7 @@ fn test_type_definition_generic_type_param() {
 fn test_type_definition_promise_type() {
     let source =
         "async function fetchData(): Promise<string> { return ''; }\nconst r = fetchData();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2020,8 +1939,7 @@ fn test_type_definition_promise_type() {
 #[test]
 fn test_type_definition_tuple_type_pair() {
     let source = "type Pair = [string, number];\nconst p: Pair = ['a', 1];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2035,8 +1953,7 @@ fn test_type_definition_tuple_type_pair() {
 #[test]
 fn test_type_definition_intersection_abc() {
     let source = "type A = { x: number };\ntype B = { y: string };\ntype C = A & B;\nconst c: C = { x: 1, y: '' };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2050,8 +1967,7 @@ fn test_type_definition_intersection_abc() {
 #[test]
 fn test_type_definition_mapped_type_keys() {
     let source = "type Keys = 'a' | 'b';\ntype Mapped = { [K in Keys]: number };\nconst m: Mapped = { a: 1, b: 2 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2066,8 +1982,7 @@ fn test_type_definition_mapped_type_keys() {
 fn test_type_definition_conditional_is_string() {
     let source =
         "type IsString<T> = T extends string ? true : false;\nconst x: IsString<number> = false;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2081,8 +1996,7 @@ fn test_type_definition_conditional_is_string() {
 #[test]
 fn test_type_definition_template_literal_type() {
     let source = "type EventName = `on${string}`;\nconst e: EventName = 'onClick';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2096,8 +2010,7 @@ fn test_type_definition_template_literal_type() {
 #[test]
 fn test_type_definition_abstract_class() {
     let source = "abstract class Base { abstract foo(): void; }\nclass Impl extends Base { foo() {} }\nconst i: Base = new Impl();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2112,8 +2025,7 @@ fn test_type_definition_abstract_class() {
 fn test_type_definition_keyof_type() {
     let source =
         "interface Foo { a: number; b: string; }\ntype Keys = keyof Foo;\nconst k: Keys = 'a';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2127,8 +2039,7 @@ fn test_type_definition_keyof_type() {
 #[test]
 fn test_type_definition_readonly_array_numbers() {
     let source = "const arr: ReadonlyArray<number> = [1, 2, 3];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2142,8 +2053,7 @@ fn test_type_definition_readonly_array_numbers() {
 #[test]
 fn test_type_definition_record_type() {
     let source = "const map: Record<string, number> = {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2157,8 +2067,7 @@ fn test_type_definition_record_type() {
 #[test]
 fn test_type_definition_at_semicolon() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2172,8 +2081,7 @@ fn test_type_definition_at_semicolon() {
 #[test]
 fn test_type_definition_at_number_literal() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2187,8 +2095,7 @@ fn test_type_definition_at_number_literal() {
 #[test]
 fn test_type_definition_at_true_literal() {
     let source = "const x = true;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2202,8 +2109,7 @@ fn test_type_definition_at_true_literal() {
 #[test]
 fn test_type_definition_at_hello_string() {
     let source = r#"const x = "hello";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2217,8 +2123,7 @@ fn test_type_definition_at_hello_string() {
 #[test]
 fn test_type_definition_namespace_member() {
     let source = "namespace NS { export interface Foo {} }\nconst x: NS.Foo = {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2232,8 +2137,7 @@ fn test_type_definition_namespace_member() {
 #[test]
 fn test_type_definition_optional_property() {
     let source = "interface Opts { x?: number; }\nconst o: Opts = {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2247,8 +2151,7 @@ fn test_type_definition_optional_property() {
 #[test]
 fn test_type_definition_extends_clause() {
     let source = "class Base {}\nclass Child extends Base {}\nconst c: Child = new Child();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2262,8 +2165,7 @@ fn test_type_definition_extends_clause() {
 #[test]
 fn test_type_definition_union_a_or_b() {
     let source = "interface A { a: number; }\ninterface B { b: string; }\ntype AorB = A | B;\nconst x: AorB = { a: 1 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);

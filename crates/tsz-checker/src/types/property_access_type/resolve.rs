@@ -999,6 +999,15 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        if self.report_declared_intersection_access_on_invalid_receiver(
+            object_type,
+            access.expression,
+            access.name_or_argument,
+            access.name_or_argument,
+        ) {
+            return TypeId::ERROR;
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid
         if object_type == TypeId::ANY {
@@ -1013,31 +1022,18 @@ impl<'a> CheckerState<'a> {
         // Returning `error` (not `never`) matches tsc behavior: when a property doesn't
         // exist, tsc returns `errorType` which suppresses cascading diagnostics (e.g.
         // TS2322 on `ab.y = 'hello'` when `ab: never`).
-        // Also handle intersections that contain `never` (e.g., when mixin classes have
-        // conflicting private members that reduce the intersection to `never`).
+        // Also handle intersections that contain `never`.
         if object_type == TypeId::NEVER
             || access_query::contains_never_type(self.ctx.types, object_type)
         {
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                let property_name = &ident.escaped_text;
-                // tsc emits TS2339 on property access against `never` even when
-                // the property exists on the un-narrowed declared receiver —
-                // the narrowed type is `never`, the code is unreachable, so the
-                // property genuinely doesn't exist on the value at this point.
-                // The earlier blanket suppression hid the diagnostic for type-
-                // predicate / typeof narrowing chains that exhaust a union to
-                // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
-                let suppress_declared_intersection_access = self
-                    .declared_intersection_receiver_has_property(access.expression, property_name);
-                if !property_name.starts_with('#') && !suppress_declared_intersection_access {
-                    self.error_property_not_exist_at(
-                        property_name,
-                        TypeId::NEVER,
-                        access.name_or_argument,
-                    );
-                }
-            }
-            return TypeId::ERROR;
+            let Some(receiver) = self.declared_intersection_receiver_for_never_access(
+                access.expression,
+                access.name_or_argument,
+                access.name_or_argument,
+            ) else {
+                return TypeId::ERROR;
+            };
+            object_type = receiver;
         }
 
         // Enforce private/protected access modifiers when possible.
@@ -2058,6 +2054,15 @@ impl<'a> CheckerState<'a> {
                             skip_flow_narrowing,
                             false,
                         );
+                    }
+                    if let Some(result) = self.resolve_mixin_static_member_property_access(
+                        idx,
+                        access.expression,
+                        object_type_for_access,
+                        property_name,
+                        skip_flow_narrowing,
+                    ) {
+                        return result;
                     }
                     if let Some((class_idx, is_static_access)) = resolved_class_access
                         && !is_static_access

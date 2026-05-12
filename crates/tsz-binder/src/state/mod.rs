@@ -125,8 +125,7 @@ pub struct BinderOptions {
 }
 
 /// Lib file context for global type resolution.
-/// This mirrors the definition in `checker::context` to avoid circular dependencies.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LibContext {
     /// The AST arena for this lib file.
     pub arena: Arc<NodeArena>,

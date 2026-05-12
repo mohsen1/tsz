@@ -125,12 +125,19 @@ impl<'a> CheckerState<'a> {
         // `get_class_decl_from_type` can't pick a single most-derived class.
         // Check each candidate class for the property's access restriction.
         if class_result.is_none() {
-            return self.check_property_accessibility_via_brands(
+            if !self.check_property_accessibility_via_brands(
                 object_expr,
                 property_name,
                 error_node,
                 object_type,
-            );
+            ) || self.report_declared_intersection_access_if_reduced(
+                object_expr,
+                property_name,
+                error_node,
+            ) {
+                return false;
+            }
+            return true;
         }
 
         let (class_idx, is_static) = class_result.expect("early return above handles None case");

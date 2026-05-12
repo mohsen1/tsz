@@ -537,7 +537,7 @@ impl<'a> DeclarationEmitter<'a> {
             .join("\n")
     }
 
-    fn type_annotation_text_from_arena_node(
+    pub(in crate::declaration_emitter) fn type_annotation_text_from_arena_node(
         &self,
         source_arena: &NodeArena,
         type_annotation: NodeIndex,
@@ -1788,7 +1788,11 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|ident| ident.escaped_text.clone())
     }
 
-    fn property_name_text_from_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn property_name_text_from_arena(
+        &self,
+        arena: &NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
         let node = arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
             return self.identifier_text_from_arena(arena, idx);
@@ -2131,6 +2135,12 @@ impl<'a> DeclarationEmitter<'a> {
                     && tsz_solver::type_queries::is_object_like_type(interner, type_id)
                 {
                     return Some(self.print_type_id(type_id));
+                }
+                if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(type_text) =
+                        self.property_access_source_accessor_type_text(expr_idx)
+                {
+                    return Some(type_text);
                 }
                 if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     && self.get_node_type(expr_idx) == Some(tsz_solver::types::TypeId::ANY)
@@ -4585,11 +4595,20 @@ impl<'a> DeclarationEmitter<'a> {
         arena: &NodeArena,
         decl_idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::ClassData> {
+        let class_idx = Self::class_decl_index_from_symbol_decl(arena, decl_idx)?;
+        let node = arena.get(class_idx)?;
+        arena.get_class(node)
+    }
+
+    pub(in crate::declaration_emitter) fn class_decl_index_from_symbol_decl(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = decl_idx;
         for _ in 0..8 {
             let node = arena.get(current)?;
-            if let Some(class_decl) = arena.get_class(node) {
-                return Some(class_decl);
+            if arena.get_class(node).is_some() {
+                return Some(current);
             }
             current = arena.parent_of(current)?;
         }

@@ -511,29 +511,17 @@ impl<'a> CheckerContext<'a> {
                 let mut dm = super::GlobalDeclaredModules::default();
                 for binder in binders.iter() {
                     for module_spec in binder.module_exports.keys() {
-                        let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                        if normalized.contains('*') {
-                            dm.patterns.push(normalized.to_string());
-                        } else {
-                            dm.exact.insert(normalized.to_string());
-                        }
+                        dm.insert_module_name(module_spec);
                     }
                     for name in binder
                         .declared_modules
                         .iter()
                         .chain(binder.shorthand_ambient_modules.iter())
                     {
-                        let normalized = name.trim_matches('"').trim_matches('\'');
-                        if normalized.contains('*') {
-                            dm.patterns.push(normalized.to_string());
-                        } else {
-                            dm.exact.insert(normalized.to_string());
-                        }
+                        dm.insert_module_name(name);
                     }
                 }
-                dm.patterns.sort();
-                dm.patterns.dedup();
-                dm.finalize();
+                dm.finish();
                 self.global_declared_modules = Some(Arc::new(dm));
             }
             if self.global_expando_index.is_none() {
@@ -598,12 +586,7 @@ impl<'a> CheckerContext<'a> {
                         .push((file_idx, sym_id));
                 }
                 if let Some(ref mut dm) = declared_modules {
-                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(module_spec);
                 }
             }
 
@@ -613,12 +596,7 @@ impl<'a> CheckerContext<'a> {
                     .iter()
                     .chain(binder.shorthand_ambient_modules.iter())
                 {
-                    let normalized = name.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(name);
                 }
             }
         }
@@ -638,9 +616,7 @@ impl<'a> CheckerContext<'a> {
         }
 
         if let Some(mut dm) = declared_modules {
-            dm.patterns.sort();
-            dm.patterns.dedup();
-            dm.finalize();
+            dm.finish();
             self.global_declared_modules = Some(Arc::new(dm));
         }
 

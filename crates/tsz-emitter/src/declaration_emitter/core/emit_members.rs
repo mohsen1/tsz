@@ -884,11 +884,15 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let before_type = self.writer.len();
                         self.emit_type(param.type_annotation);
-                        if param.question_token {
+                        let full = self.writer.get_output();
+                        let type_text = &full[before_type..];
+                        if param.question_token
+                            && !self.emitted_type_text_semantically_includes_undefined(type_text)
+                            && !self
+                                .type_node_semantically_includes_undefined(param.type_annotation, 0)
+                        {
                             // Only append `| undefined` if the type doesn't already
                             // include it (avoid `Type | undefined | undefined`).
-                            let full = self.writer.get_output();
-                            let type_text = &full[before_type..];
                             if !type_text.ends_with("| undefined")
                                 && !Self::type_text_has_undefined_branch(type_text)
                             {
@@ -973,6 +977,11 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             self.skip_comments_in_node(accessor_node.pos, accessor_node.end);
+        } else if !is_getter
+            && !is_private
+            && let Some(type_text) = self.js_setter_declared_type_with_backing_nullish(accessor_idx)
+        {
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
         } else if !is_getter
             && !is_private
             && let Some(type_text) = self.js_accessor_backing_field_type_text(accessor_idx)
@@ -1112,6 +1121,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
+            if let Some(type_text) = self.js_setter_declared_type_with_backing_nullish(member_idx) {
+                return Some(type_text);
+            }
+
             if let Some(type_text) = self.js_accessor_backing_field_type_text(member_idx) {
                 return Some(type_text);
             }
@@ -1137,6 +1150,47 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn js_setter_declared_type_with_backing_nullish(
+        &self,
+        accessor_idx: NodeIndex,
+    ) -> Option<String> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let accessor_node = self.arena.get(accessor_idx)?;
+        if accessor_node.kind != syntax_kind_ext::SET_ACCESSOR {
+            return None;
+        }
+
+        let declared = self.jsdoc_type_text_for_node(accessor_idx)?;
+        let Some(backing) = self.js_accessor_backing_field_type_text(accessor_idx) else {
+            return Some(declared);
+        };
+
+        Some(Self::append_missing_nullish_union_members(
+            &declared, &backing,
+        ))
+    }
+
+    fn append_missing_nullish_union_members(declared: &str, backing: &str) -> String {
+        let mut parts = vec![declared.trim().to_string()];
+        for nullish in ["null", "undefined"] {
+            if Self::type_text_union_contains(backing, nullish)
+                && !Self::type_text_union_contains(declared, nullish)
+            {
+                parts.push(nullish.to_string());
+            }
+        }
+        parts.join(" | ")
+    }
+
+    fn type_text_union_contains(type_text: &str, needle: &str) -> bool {
+        type_text
+            .split('|')
+            .any(|part| part.trim().trim_matches('(').trim_matches(')') == needle)
     }
 
     pub(in crate::declaration_emitter) fn js_accessor_backing_field_type_text(

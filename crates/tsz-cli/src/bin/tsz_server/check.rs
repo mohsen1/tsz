@@ -598,11 +598,9 @@ impl Server {
         }
 
         // Phase 2: Create LibContexts from all loaded libs
-        // Use binder::LibContext for merge_lib_contexts_into_binder
-        use tsz::binder::LibContext as BinderLibContext;
-        let lib_contexts: Vec<BinderLibContext> = lib_files
+        let lib_contexts: Vec<LibContext> = lib_files
             .iter()
-            .map(|lib| BinderLibContext {
+            .map(|lib| LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })

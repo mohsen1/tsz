@@ -1,12 +1,15 @@
 use super::*;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_selection_range_simple_identifier() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -31,8 +34,7 @@ fn test_selection_range_simple_identifier() {
 #[test]
 fn test_selection_range_nested_expression() {
     let source = "foo.bar().baz";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -62,8 +64,7 @@ fn test_selection_range_nested_expression() {
 #[test]
 fn test_selection_range_function_body() {
     let source = "function foo() {\n  return 1;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -99,8 +100,7 @@ fn test_selection_range_function_body() {
 #[test]
 fn test_selection_range_multiple_positions() {
     let source = "let a = 1;\nlet b = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -120,8 +120,7 @@ fn test_selection_range_multiple_positions() {
 #[test]
 fn test_selection_range_no_node() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -139,8 +138,7 @@ fn test_selection_range_no_node() {
 #[test]
 fn test_selection_range_block_statement() {
     let source = "if (x) {\n  y = 1;\n  z = 2;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -169,8 +167,7 @@ fn test_selection_range_block_statement() {
 #[test]
 fn test_selection_range_class_member() {
     let source = "class Foo {\n  bar() {\n    return 1;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -197,8 +194,7 @@ fn test_selection_range_class_member() {
 #[test]
 fn test_selection_range_arrow_function_body() {
     let source = "const add = (a: number, b: number) => a + b;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -230,8 +226,7 @@ fn test_selection_range_arrow_function_body() {
 #[test]
 fn test_selection_range_object_literal_property() {
     let source = "const obj = {\n  name: \"hello\",\n  age: 42\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -266,8 +261,7 @@ fn test_selection_range_object_literal_property() {
 #[test]
 fn test_selection_range_template_literal() {
     let source = "const msg = `hello ${name} world`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -298,8 +292,7 @@ fn test_selection_range_template_literal() {
 #[test]
 fn test_selection_range_ternary_expression() {
     let source = "const val = x > 0 ? \"positive\" : \"negative\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -330,8 +323,7 @@ fn test_selection_range_ternary_expression() {
 #[test]
 fn test_selection_range_switch_case() {
     let source = "switch (x) {\n  case 1:\n    break;\n  default:\n    break;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -366,8 +358,7 @@ fn test_selection_range_switch_case() {
 #[test]
 fn test_selection_range_try_catch_finally() {
     let source = "try {\n  foo();\n} catch (e) {\n  bar();\n} finally {\n  baz();\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -402,8 +393,7 @@ fn test_selection_range_try_catch_finally() {
 #[test]
 fn test_selection_range_array_with_nested_objects() {
     let source = "const arr = [\n  { x: 1 },\n  { x: 2 }\n];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -435,8 +425,7 @@ fn test_selection_range_array_with_nested_objects() {
 #[test]
 fn test_selection_range_destructuring_assignment() {
     let source = "const { a, b: c } = obj;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -467,8 +456,7 @@ fn test_selection_range_destructuring_assignment() {
 #[test]
 fn test_selection_range_type_assertion() {
     let source = "const val = expr as string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -499,8 +487,7 @@ fn test_selection_range_type_assertion() {
 #[test]
 fn test_selection_range_for_loop() {
     let source = "for (let i = 0; i < 10; i++) {\n  console.log(i);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -532,8 +519,7 @@ fn test_selection_range_for_loop() {
 #[test]
 fn test_selection_range_multiline_string_concatenation() {
     let source = "const s = \"hello\" +\n  \"world\" +\n  \"foo\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -564,8 +550,7 @@ fn test_selection_range_multiline_string_concatenation() {
 #[test]
 fn test_selection_range_interface_member() {
     let source = "interface Props {\n  name: string;\n  age: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -600,8 +585,7 @@ fn test_selection_range_interface_member() {
 #[test]
 fn test_selection_range_enum_member() {
     let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -632,8 +616,7 @@ fn test_selection_range_enum_member() {
 #[test]
 fn test_selection_range_while_loop() {
     let source = "while (true) {\n  doWork();\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -664,8 +647,7 @@ fn test_selection_range_while_loop() {
 #[test]
 fn test_selection_range_single_line_simple() {
     let source = "x";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -683,8 +665,7 @@ fn test_selection_range_single_line_simple() {
 #[test]
 fn test_selection_range_do_while() {
     let source = "do {\n  process();\n} while (cond);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -715,8 +696,7 @@ fn test_selection_range_do_while() {
 #[test]
 fn test_selection_range_nested_function_calls() {
     let source = "foo(bar(baz(1)));";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -747,8 +727,7 @@ fn test_selection_range_nested_function_calls() {
 #[test]
 fn test_selection_range_parenthesized_expression() {
     let source = "const result = (a + b) * c;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -779,8 +758,7 @@ fn test_selection_range_parenthesized_expression() {
 #[test]
 fn test_selection_range_innermost_first() {
     let source = "function outer() {\n  function inner() {\n    return 42;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -815,8 +793,7 @@ fn test_selection_range_innermost_first() {
 #[test]
 fn test_selection_range_generic_type_annotation() {
     let source = "let x: Array<Map<string, number>> = [];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -847,8 +824,7 @@ fn test_selection_range_generic_type_annotation() {
 #[test]
 fn test_selection_range_for_of_loop() {
     let source = "for (const item of items) {\n  process(item);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -882,8 +858,7 @@ fn test_selection_range_for_of_loop() {
 #[test]
 fn test_selection_range_type_alias() {
     let source = "type Pair<T> = [T, T];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -914,8 +889,7 @@ fn test_selection_range_type_alias() {
 #[test]
 fn test_selection_range_spread_operator() {
     let source = "const merged = { ...a, ...b };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -946,8 +920,7 @@ fn test_selection_range_spread_operator() {
 #[test]
 fn test_selection_range_optional_chaining() {
     let source = "const val = obj?.prop?.nested;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -978,8 +951,7 @@ fn test_selection_range_optional_chaining() {
 #[test]
 fn test_selection_range_multiline_function() {
     let source = "function calculate(\n  x: number,\n  y: number\n): number {\n  return x + y;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1014,8 +986,7 @@ fn test_selection_range_multiline_function() {
 #[test]
 fn test_selection_range_array_destructuring() {
     let source = "const [first, ...rest] = items;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1046,8 +1017,7 @@ fn test_selection_range_array_destructuring() {
 #[test]
 fn test_selection_range_computed_property() {
     let source = "const obj = {\n  [Symbol.iterator]: function() {}\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1078,8 +1048,7 @@ fn test_selection_range_computed_property() {
 #[test]
 fn test_selection_range_position_past_end() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1099,8 +1068,7 @@ fn test_selection_range_class_with_decorators() {
     // but the test should not panic
     let source =
         "class Foo {\n  private x: number = 0;\n  public get value() { return this.x; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1131,8 +1099,7 @@ fn test_selection_range_class_with_decorators() {
 #[test]
 fn test_selection_range_async_await() {
     let source = "async function load() {\n  const data = await fetch('/api');\n  return data;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1163,8 +1130,7 @@ fn test_selection_range_async_await() {
 #[test]
 fn test_selection_range_labeled_statement() {
     let source = "outer: for (let i = 0; i < 10; i++) {\n  inner: for (let j = 0; j < 10; j++) {\n    if (j === 5) break outer;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1199,8 +1165,7 @@ fn test_selection_range_labeled_statement() {
 #[test]
 fn test_selection_range_empty_function_body() {
     let source = "function noop() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1217,8 +1182,7 @@ fn test_selection_range_empty_function_body() {
 #[test]
 fn test_selection_range_numeric_literal() {
     let source = "const n = 123456;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1237,8 +1201,7 @@ fn test_selection_range_numeric_literal() {
 #[test]
 fn test_selection_range_string_literal() {
     let source = "const s = \"hello world\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1257,8 +1220,7 @@ fn test_selection_range_string_literal() {
 #[test]
 fn test_selection_range_for_in_loop() {
     let source = "for (const key in obj) {\n  use(key);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1292,8 +1254,7 @@ fn test_selection_range_for_in_loop() {
 #[test]
 fn test_selection_range_null_coalescing() {
     let source = "const val = a ?? b ?? c;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1324,8 +1285,7 @@ fn test_selection_range_null_coalescing() {
 #[test]
 fn test_selection_range_import_statement() {
     let source = "import { foo, bar } from './module';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1344,8 +1304,7 @@ fn test_selection_range_import_statement() {
 #[test]
 fn test_selection_range_export_statement() {
     let source = "export { foo, bar };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1364,8 +1323,7 @@ fn test_selection_range_export_statement() {
 #[test]
 fn test_selection_range_nested_ternary() {
     let source = "const x = a ? b ? 1 : 2 : 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1396,8 +1354,7 @@ fn test_selection_range_nested_ternary() {
 #[test]
 fn test_selection_range_class_constructor() {
     let source = "class Foo {\n  constructor(private x: number) {\n    this.x = x;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1428,8 +1385,7 @@ fn test_selection_range_class_constructor() {
 #[test]
 fn test_selection_range_comma_separated_params() {
     let source = "function f(a: number, b: string, c: boolean) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1460,8 +1416,7 @@ fn test_selection_range_comma_separated_params() {
 #[test]
 fn test_selection_range_multiline_array_literal() {
     let source = "const arr = [\n  1,\n  2,\n  3,\n  4\n];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1496,8 +1451,7 @@ fn test_selection_range_multiline_array_literal() {
 #[test]
 fn test_selection_range_typeof_expression() {
     let source = "const t = typeof someVar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1532,8 +1486,7 @@ fn test_selection_range_typeof_expression() {
 #[test]
 fn test_selection_range_void_expression() {
     let source = "void doSomething();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1551,8 +1504,7 @@ fn test_selection_range_void_expression() {
 #[test]
 fn test_selection_range_delete_expression() {
     let source = "delete obj.prop;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1582,8 +1534,7 @@ fn test_selection_range_delete_expression() {
 #[test]
 fn test_selection_range_new_expression() {
     let source = "const obj = new MyClass(1, 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1614,8 +1565,7 @@ fn test_selection_range_new_expression() {
 #[test]
 fn test_selection_range_tagged_template() {
     let source = "const result = html`<div>${value}</div>`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1633,8 +1583,7 @@ fn test_selection_range_tagged_template() {
 #[test]
 fn test_selection_range_class_method_with_body() {
     let source = "class Foo {\n  bar(x: number): string {\n    return x.toString();\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1665,8 +1614,7 @@ fn test_selection_range_class_method_with_body() {
 #[test]
 fn test_selection_range_conditional_type() {
     let source = "type IsString<T> = T extends string ? true : false;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1697,8 +1645,7 @@ fn test_selection_range_conditional_type() {
 #[test]
 fn test_selection_range_intersection_type() {
     let source = "type Both = A & B & C;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1717,8 +1664,7 @@ fn test_selection_range_intersection_type() {
 #[test]
 fn test_selection_range_union_type() {
     let source = "type Mixed = string | number | boolean;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1737,8 +1683,7 @@ fn test_selection_range_union_type() {
 #[test]
 fn test_selection_range_mapped_type() {
     let source = "type Readonly<T> = { readonly [K in keyof T]: T[K] };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1769,8 +1714,7 @@ fn test_selection_range_mapped_type() {
 #[test]
 fn test_selection_range_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1786,8 +1730,7 @@ fn test_selection_range_empty_source() {
 #[test]
 fn test_selection_range_assignment_expression() {
     let source = "let x: number;\nx = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1806,8 +1749,7 @@ fn test_selection_range_assignment_expression() {
 #[test]
 fn test_selection_range_nested_if_else() {
     let source = "if (a) {\n  if (b) {\n    doStuff();\n  } else {\n    doOther();\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1838,8 +1780,7 @@ fn test_selection_range_nested_if_else() {
 #[test]
 fn test_selection_range_arrow_with_expression_body() {
     let source = "const double = (x: number) => x * 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1870,8 +1811,7 @@ fn test_selection_range_arrow_with_expression_body() {
 #[test]
 fn test_selection_range_multiline_object_literal() {
     let source = "const config = {\n  host: 'localhost',\n  port: 8080,\n  debug: true\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1906,8 +1846,7 @@ fn test_selection_range_multiline_object_literal() {
 #[test]
 fn test_selection_range_tuple_type() {
     let source = "let pair: [string, number] = ['a', 1];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1926,8 +1865,7 @@ fn test_selection_range_tuple_type() {
 #[test]
 fn test_selection_range_satisfies_expression() {
     let source = "const x = { a: 1 } satisfies Record<string, number>;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1948,8 +1886,7 @@ fn test_selection_range_satisfies_expression() {
 #[test]
 fn test_selection_range_enum_member_expand() {
     let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1980,8 +1917,7 @@ fn test_selection_range_enum_member_expand() {
 #[test]
 fn test_selection_range_namespace_body() {
     let source = "namespace App {\n  export const x = 1;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2012,8 +1948,7 @@ fn test_selection_range_namespace_body() {
 #[test]
 fn test_selection_range_interface_body() {
     let source = "interface Config {\n  host: string;\n  port: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2044,8 +1979,7 @@ fn test_selection_range_interface_body() {
 #[test]
 fn test_selection_range_class_static_method() {
     let source = "class Util {\n  static create() {\n    return new Util();\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2076,8 +2010,7 @@ fn test_selection_range_class_static_method() {
 #[test]
 fn test_selection_range_template_literal_expression() {
     let source = "const name = 'world';\nconst msg = `hello ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2096,8 +2029,7 @@ fn test_selection_range_template_literal_expression() {
 #[test]
 fn test_selection_range_class_extends() {
     let source = "class Base {}\nclass Child extends Base {\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2131,8 +2063,7 @@ fn test_selection_range_class_extends() {
 #[test]
 fn test_selection_range_deeply_nested_blocks() {
     let source = "function f() {\n  if (a) {\n    if (b) {\n      if (c) {\n        doIt();\n      }\n    }\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2163,8 +2094,7 @@ fn test_selection_range_deeply_nested_blocks() {
 #[test]
 fn test_selection_range_multiline_interface() {
     let source = "interface API {\n  get(url: string): void;\n  post(url: string, body: any): void;\n  put(url: string, body: any): void;\n  del(url: string): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2198,8 +2128,7 @@ fn test_selection_range_multiline_interface() {
 #[test]
 fn test_selection_range_switch_case_body() {
     let source = "switch (x) {\n  case 1:\n    console.log('one');\n    break;\n  default:\n    console.log('other');\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2227,8 +2156,7 @@ fn test_selection_range_switch_case_body() {
 #[test]
 fn test_selection_range_class_with_multiple_members() {
     let source = "class Foo {\n  a: number;\n  b: string;\n  c(): void {}\n  d(): boolean { return true; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2262,8 +2190,7 @@ fn test_selection_range_class_with_multiple_members() {
 #[test]
 fn test_selection_range_object_method_shorthand() {
     let source = "const obj = {\n  greet() {\n    return 'hi';\n  }\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2294,8 +2221,7 @@ fn test_selection_range_object_method_shorthand() {
 #[test]
 fn test_selection_range_arrow_with_block_body() {
     let source = "const fn = (x: number) => {\n  const y = x * 2;\n  return y;\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2326,8 +2252,7 @@ fn test_selection_range_arrow_with_block_body() {
 #[test]
 fn test_selection_range_boolean_expression() {
     let source = "const result = a && b || c && d;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2358,8 +2283,7 @@ fn test_selection_range_boolean_expression() {
 #[test]
 fn test_selection_range_type_assertion_angle_bracket() {
     let source = "const x = <string>'hello';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2376,8 +2300,7 @@ fn test_selection_range_type_assertion_angle_bracket() {
 #[test]
 fn test_selection_range_object_destructuring() {
     let source = "const { a, b, c } = obj;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2408,8 +2331,7 @@ fn test_selection_range_object_destructuring() {
 #[test]
 fn test_selection_range_as_expression() {
     let source = "const x = someValue as string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2432,8 +2354,7 @@ fn test_selection_range_as_expression() {
 #[test]
 fn test_selection_range_single_identifier_file() {
     let source = "x";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2450,8 +2371,7 @@ fn test_selection_range_single_identifier_file() {
 #[test]
 fn test_selection_range_whitespace_before_code() {
     let source = "  \n  \nconst x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2468,8 +2388,7 @@ fn test_selection_range_whitespace_before_code() {
 #[test]
 fn test_selection_range_unicode_identifier() {
     let source = "const \u{00e4}\u{00f6}\u{00fc} = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2483,8 +2402,7 @@ fn test_selection_range_unicode_identifier() {
 #[test]
 fn test_selection_range_nested_arrow_functions() {
     let source = "const f = (x: number) => (y: number) => x + y;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2509,8 +2427,7 @@ fn test_selection_range_nested_arrow_functions() {
 #[test]
 fn test_selection_range_async_arrow_function() {
     let source = "const f = async () => { return 1; };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2527,8 +2444,7 @@ fn test_selection_range_async_arrow_function() {
 #[test]
 fn test_selection_range_generator_function() {
     let source = "function* gen() {\n  yield 1;\n  yield 2;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2543,8 +2459,7 @@ fn test_selection_range_generator_function() {
 #[test]
 fn test_selection_range_class_private_field() {
     let source = "class Foo {\n  #bar = 42;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2558,8 +2473,7 @@ fn test_selection_range_class_private_field() {
 #[test]
 fn test_selection_range_class_accessor() {
     let source = "class Foo {\n  get val() { return 1; }\n  set val(v: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2574,8 +2488,7 @@ fn test_selection_range_class_accessor() {
 #[test]
 fn test_selection_range_const_enum() {
     let source = "const enum Dir {\n  Up,\n  Down,\n  Left,\n  Right\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2602,8 +2515,7 @@ fn test_selection_range_const_enum() {
 #[test]
 fn test_selection_range_index_type_query() {
     let source = "type Keys = keyof { a: 1; b: 2 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2620,8 +2532,7 @@ fn test_selection_range_index_type_query() {
 #[test]
 fn test_selection_range_infer_type() {
     let source = "type Ret<T> = T extends (...args: any) => infer R ? R : never;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2636,8 +2547,7 @@ fn test_selection_range_infer_type() {
 #[test]
 fn test_selection_range_nested_ternary_deep() {
     let source = "const x = a ? b : c ? d : e ? f : g;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2662,8 +2572,7 @@ fn test_selection_range_nested_ternary_deep() {
 #[test]
 fn test_selection_range_rest_parameter() {
     let source = "function sum(...nums: number[]) { return 0; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2678,8 +2587,7 @@ fn test_selection_range_rest_parameter() {
 #[test]
 fn test_selection_range_optional_parameter() {
     let source = "function greet(name?: string) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2696,8 +2604,7 @@ fn test_selection_range_optional_parameter() {
 #[test]
 fn test_selection_range_abstract_class_method() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2714,8 +2621,7 @@ fn test_selection_range_abstract_class_method() {
 #[test]
 fn test_selection_range_multiline_chain() {
     let source = "promise\n  .then(x => x)\n  .catch(e => e)\n  .finally(() => {});";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2730,8 +2636,7 @@ fn test_selection_range_multiline_chain() {
 #[test]
 fn test_selection_range_array_destructuring_with_rest() {
     let source = "const [first, ...rest] = [1, 2, 3];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2749,8 +2654,7 @@ fn test_selection_range_array_destructuring_with_rest() {
 #[test]
 fn test_selection_range_nested_object_type() {
     let source = "type Config = {\n  db: {\n    host: string;\n    port: number;\n  };\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2778,8 +2682,7 @@ fn test_selection_range_nested_object_type() {
 #[test]
 fn test_selection_range_throw_statement() {
     let source = "function fail() {\n  throw new Error('oops');\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2794,8 +2697,7 @@ fn test_selection_range_throw_statement() {
 #[test]
 fn test_selection_range_regex_literal() {
     let source = "const pattern = /hello\\s+world/gi;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -2809,8 +2711,7 @@ fn test_selection_range_regex_literal() {
 #[test]
 fn test_selection_range_multiple_variable_declarations() {
     let source = "let a = 1, b = 2, c = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 

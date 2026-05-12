@@ -23,6 +23,12 @@ thread_local! {
     static SIGS_ADV_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ExactLiteralPropertyKey {
+    pub name: Atom,
+    pub is_symbol_named: bool,
+}
+
 #[inline]
 fn with_sigs_adv_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
     let mut visited = SIGS_ADV_VISITED_POOL
@@ -887,10 +893,10 @@ pub fn instantiate_mapped_template_for_property(
     instantiate_type(db, template, &subst)
 }
 
-fn collect_exact_literal_property_keys_inner(
+fn collect_exact_literal_property_keys_with_symbol_info_inner(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-    keys: &mut FxHashSet<Atom>,
+    keys: &mut FxHashSet<ExactLiteralPropertyKey>,
     visited: &mut FxHashSet<TypeId>,
 ) -> Option<()> {
     if !visited.insert(type_id) {
@@ -899,36 +905,53 @@ fn collect_exact_literal_property_keys_inner(
 
     let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
     if evaluated != type_id {
-        return collect_exact_literal_property_keys_inner(db, evaluated, keys, visited);
+        return collect_exact_literal_property_keys_with_symbol_info_inner(
+            db, evaluated, keys, visited,
+        );
     }
 
     match db.lookup(type_id) {
         Some(TypeData::Literal(LiteralValue::String(atom))) => {
-            keys.insert(atom);
+            keys.insert(ExactLiteralPropertyKey {
+                name: atom,
+                is_symbol_named: false,
+            });
             Some(())
         }
         Some(TypeData::Literal(LiteralValue::Number(n))) => {
             let atom = db.intern_string(
                 &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
             );
-            keys.insert(atom);
+            keys.insert(ExactLiteralPropertyKey {
+                name: atom,
+                is_symbol_named: false,
+            });
             Some(())
         }
         Some(TypeData::UniqueSymbol(sym)) => {
             let atom = db.intern_string(&format!("__unique_{}", sym.0));
-            keys.insert(atom);
+            keys.insert(ExactLiteralPropertyKey {
+                name: atom,
+                is_symbol_named: true,
+            });
             Some(())
         }
         Some(TypeData::Union(members)) => {
             for &member in db.type_list(members).iter() {
-                collect_exact_literal_property_keys_inner(db, member, keys, visited)?;
+                collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, member, keys, visited,
+                )?;
             }
             Some(())
         }
         Some(TypeData::Intersection(members)) => {
             let mut saw_precise_member = false;
             for &member in db.type_list(members).iter() {
-                if collect_exact_literal_property_keys_inner(db, member, keys, visited).is_some() {
+                if collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, member, keys, visited,
+                )
+                .is_some()
+                {
                     saw_precise_member = true;
                     continue;
                 }
@@ -940,45 +963,57 @@ fn collect_exact_literal_property_keys_inner(
             saw_precise_member.then_some(())
         }
         Some(TypeData::Enum(_, members)) => {
-            collect_exact_literal_property_keys_inner(db, members, keys, visited)
+            collect_exact_literal_property_keys_with_symbol_info_inner(db, members, keys, visited)
         }
         Some(TypeData::Conditional(cond_id)) => {
             let cond = db.conditional_type(cond_id);
             let branch = resolve_concrete_conditional_branch(db, &cond)?;
-            collect_exact_literal_property_keys_inner(db, branch, keys, visited)
+            collect_exact_literal_property_keys_with_symbol_info_inner(db, branch, keys, visited)
         }
         Some(TypeData::KeyOf(operand)) => {
-            collect_exact_literal_property_keys_from_keyof_operand(db, operand, keys, visited)
+            collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
+                db, operand, keys, visited,
+            )
         }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.and_then(|constraint| {
-                collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
+                collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, constraint, keys, visited,
+                )
             })
         }
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-            collect_exact_literal_property_keys_inner(db, inner, keys, visited)
+            collect_exact_literal_property_keys_with_symbol_info_inner(db, inner, keys, visited)
         }
         Some(TypeData::Intrinsic(crate::types::IntrinsicKind::Never)) => Some(()),
         _ => None,
     }
 }
 
-pub fn collect_exact_literal_property_keys(
+pub fn collect_exact_literal_property_keys_with_symbol_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<FxHashSet<Atom>> {
+) -> Option<FxHashSet<ExactLiteralPropertyKey>> {
     let mut keys = FxHashSet::default();
     let success = with_sigs_adv_visited(|visited| {
-        collect_exact_literal_property_keys_inner(db, type_id, &mut keys, visited)
+        collect_exact_literal_property_keys_with_symbol_info_inner(db, type_id, &mut keys, visited)
     });
     success?;
     Some(keys)
 }
 
-fn collect_exact_literal_property_keys_from_keyof_operand(
+pub fn collect_exact_literal_property_keys(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<FxHashSet<Atom>> {
+    collect_exact_literal_property_keys_with_symbol_info(db, type_id)
+        .map(|keys| keys.into_iter().map(|key| key.name).collect())
+}
+
+fn collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
     db: &dyn TypeDatabase,
     operand: TypeId,
-    keys: &mut FxHashSet<Atom>,
+    keys: &mut FxHashSet<ExactLiteralPropertyKey>,
     visited: &mut FxHashSet<TypeId>,
 ) -> Option<()> {
     let evaluated_operand = crate::evaluation::evaluate::evaluate_type(db, operand);
@@ -995,7 +1030,10 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 return None;
             }
             for prop in &shape.properties {
-                keys.insert(prop.name);
+                keys.insert(ExactLiteralPropertyKey {
+                    name: prop.name,
+                    is_symbol_named: prop.is_symbol_named,
+                });
             }
             Some(())
         }
@@ -1005,7 +1043,10 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 return None;
             }
             for prop in &shape.properties {
-                keys.insert(prop.name);
+                keys.insert(ExactLiteralPropertyKey {
+                    name: prop.name,
+                    is_symbol_named: prop.is_symbol_named,
+                });
             }
             Some(())
         }
@@ -1014,7 +1055,7 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
             let members = match db.lookup(narrowed_operand) {
                 Some(TypeData::Union(members)) => db.type_list(members).to_vec(),
                 _ => {
-                    return collect_exact_literal_property_keys_from_keyof_operand(
+                    return collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
                         db,
                         narrowed_operand,
                         keys,
@@ -1023,7 +1064,9 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 }
             };
             for member in members {
-                collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)?;
+                collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
+                    db, member, keys, visited,
+                )?;
             }
             Some(())
         }
@@ -1034,7 +1077,7 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 let narrowed_member = narrow_keyof_intersection_member_by_literal_discriminants(
                     db, member, &members, member_idx,
                 );
-                if collect_exact_literal_property_keys_from_keyof_operand(
+                if collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
                     db,
                     narrowed_member,
                     keys,
@@ -1054,11 +1097,15 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
         }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.and_then(|constraint| {
-                collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
+                collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, constraint, keys, visited,
+                )
             })
         }
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-            collect_exact_literal_property_keys_from_keyof_operand(db, inner, keys, visited)
+            collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
+                db, inner, keys, visited,
+            )
         }
         _ => {
             let atoms = collect_property_name_atoms_for_diagnostics(db, operand, 8);
@@ -1066,7 +1113,10 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 None
             } else {
                 for atom in atoms {
-                    keys.insert(atom);
+                    keys.insert(ExactLiteralPropertyKey {
+                        name: atom,
+                        is_symbol_named: false,
+                    });
                 }
                 Some(())
             }

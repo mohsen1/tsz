@@ -152,6 +152,90 @@ copyValue;
 }
 
 #[test]
+fn test_computed_unique_prefix_property_stays_string_key() {
+    let diagnostics = compile_and_get_diagnostic_messages_with_options(
+        r#"
+export {};
+
+const propKey = "__unique_1" as const;
+const methodKey = "__unique_2" as const;
+const accessorKey = "__unique_3" as const;
+
+interface Source {
+  [propKey]: number;
+  [methodKey](): string;
+  get [accessorKey](): boolean;
+}
+
+type Assert<T extends true> = T;
+type Keys = keyof Source;
+type KeyCheck =
+  Keys extends "__unique_1" | "__unique_2" | "__unique_3"
+    ? ("__unique_1" | "__unique_2" | "__unique_3") extends Keys
+      ? true
+      : false
+    : false;
+type _Proof = Assert<KeyCheck>;
+
+declare const src: Source;
+const n: number = src[propKey];
+const s: string = src[methodKey]();
+const b: boolean = src[accessorKey];
+
+n;
+s;
+b;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics for computed __unique_* string keys, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_literal_unique_prefix_keys_stay_string_keys() {
+    let diagnostics = compile_and_get_diagnostic_codes_with_options(
+        r#"
+export {};
+
+type Keys = "__unique_1" | "ordinary";
+type Box = { [K in Keys]: K };
+type Read<K extends keyof Box> = Box[K];
+
+type K = keyof Box;
+type Assert<T extends true> = T;
+type KeyCheck =
+  K extends "__unique_1" | "ordinary"
+    ? ("__unique_1" | "ordinary") extends K
+      ? true
+      : false
+    : false;
+type _Proof = Assert<KeyCheck>;
+
+const value: Read<"__unique_1"> = "__unique_1";
+value;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "mapped literal __unique_* keys should remain string keys, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_type_literal_keyof_with_index_signature_uses_solver_key_space() {
     let diagnostics = compile_and_get_diagnostic_codes(
         r#"

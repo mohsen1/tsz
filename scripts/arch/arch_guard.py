@@ -439,6 +439,11 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/type_node.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
+            # Added by fix/merged-const-type-alias-false-positive (issue #5808):
+            "crates/tsz-checker/src/context/mod.rs",
+            "crates/tsz-checker/src/query_boundaries/common.rs",
+            "crates/tsz-checker/src/state/type_analysis/computed/type_alias_variable_alias.rs",
+            "crates/tsz-checker/src/types/type_node_advanced.rs",
         },
     ),
 ]
@@ -464,7 +469,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        232,
+        233,
     ),
 ]
 

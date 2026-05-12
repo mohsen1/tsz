@@ -1,6 +1,10 @@
 use super::*;
 use crate::flow_graph_builder::FlowGraphBuilder;
-use tsz_parser::parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_unreachable_after_return() {
@@ -11,8 +15,7 @@ fn test_unreachable_after_return() {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
 
@@ -39,8 +42,7 @@ fn test_unreachable_after_throw() {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
 
@@ -66,8 +68,7 @@ while (true) {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
 
@@ -93,8 +94,7 @@ while (true) {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
 
@@ -121,8 +121,7 @@ fn test_reachable_code() {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
 
@@ -151,8 +150,7 @@ fn test_multiple_unreachable_sections() {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
 

@@ -1297,7 +1297,11 @@ impl<'a> Printer<'a> {
 #[cfg(test)]
 mod tests {
     use crate::emitter::Printer;
-    use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     /// tsc preserves trailing commas in single-line object literals.
     /// `{ a: 1, b: 2, }` must stay as `{ a: 1, b: 2, }`, not `{ a: 1, b: 2 }`.
@@ -1305,8 +1309,7 @@ mod tests {
     fn trailing_comma_preserved_in_single_line_object_literal() {
         let source = "var o = { a: 1, b: 2, };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1324,8 +1327,7 @@ mod tests {
     fn no_trailing_comma_when_source_has_none() {
         let source = "var o = { a: 1, b: 2 };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1343,8 +1345,7 @@ mod tests {
     fn trailing_comma_preserved_in_object_binding_pattern() {
         let source = "var { b1, } = { b1: 1, };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1368,8 +1369,7 @@ mod tests {
     fn trailing_comma_with_inline_comment_detected() {
         let source = "var b = {\n    x: 1, // comment\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1388,8 +1388,7 @@ mod tests {
     fn empty_object_literal_with_inner_comment_preserved() {
         let source = "var o = {\n    value: {\n        // keep\n    },\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);
@@ -1407,8 +1406,7 @@ mod tests {
     fn block_comment_between_properties_preserved() {
         let source = "var o = {\n    a: 1, /* trailing */\n    b: 2\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena);
         printer.set_source_text(source);

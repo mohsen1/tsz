@@ -4,7 +4,11 @@ mod private_fields;
 #[cfg(test)]
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
-    use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     #[test]
     fn multiline_parenthesized_erased_assertion_keeps_comment_layout() {
@@ -17,8 +21,7 @@ mod tests {
     }
 }"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -35,8 +38,7 @@ mod tests {
     fn parenthesized_expression_preserves_comments_around_close_paren() {
         let source = "/*1*/(/*2*/ \"foo\" /*3*/)/*4*/;\n// open\n/*1*/(\n    // next\n    /*2*/\"foo\"\n    //close\n    /*3*/)/*4*/;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -61,8 +63,7 @@ mod tests {
     fn dynamic_import_emits_import_keyword() {
         let source = r#"const m = import("./module");"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -80,8 +81,7 @@ mod tests {
     fn import_meta_emits_import_keyword() {
         let source = r#"const url = import.meta.url;"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -99,8 +99,7 @@ mod tests {
     fn dynamic_import_in_async_function() {
         let source = r#"async function load() { return await import("./lib"); }"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -123,8 +122,7 @@ mod tests {
     fn yield_from_await_no_extra_parens_in_assignment_rhs() {
         let source = r#"async function func() { o.a = await p; }"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -147,8 +145,7 @@ mod tests {
     fn yield_from_await_no_extra_parens_in_comma_expr() {
         let source = r#"async function func() { var b = (await p, a); }"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -171,8 +168,7 @@ mod tests {
     fn yield_from_await_keeps_parens_in_binary_operator() {
         let source = r#"async function func() { var b = await p || a; }"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -192,8 +188,7 @@ mod tests {
     fn invalid_await_in_function_emits_yield_for_es2015() {
         let source = "function f() {\n    await 1;\n}\nawait 2;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -221,8 +216,7 @@ mod tests {
             yield /*comment5*/* [5];
         }"#;
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -255,8 +249,7 @@ mod tests {
     fn yield_without_operand_has_no_trailing_space() {
         let source = "function* foo() {\n    yield;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -281,8 +274,7 @@ mod tests {
         let source =
             "function *t1() {\n    yield (\n        // comment\n        a as any\n    );\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -310,8 +302,7 @@ mod tests {
         let source =
             "const value = 1;\nfunction* g(): any {\n  yield ( // keep\n    value as any);\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -335,8 +326,7 @@ mod tests {
         // A block comment on the same line as a var declaration
         let source = "{\n    /*comment*/ var x = 1;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -359,8 +349,7 @@ mod tests {
     fn conditional_preserves_newline_after_colon() {
         let source = "var v = a ? b :\n  c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -383,8 +372,7 @@ mod tests {
     fn conditional_preserves_newline_before_colon() {
         let source = "var v = a ? b\n  : c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -407,8 +395,7 @@ mod tests {
     fn conditional_preserves_newline_before_question_and_colon() {
         let source = "var v = a\n  ? b\n  : c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -435,8 +422,7 @@ mod tests {
     fn type_assertion_call_expression_strips_parens() {
         let source = "var b = (<any>a.b()).c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -459,8 +445,7 @@ mod tests {
     fn type_assertion_new_expression_strips_parens() {
         let source = "var b = (<any>new a);\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -479,8 +464,7 @@ mod tests {
     fn type_assertion_new_expression_with_member_strips_parens() {
         let source = "var b = (<any>new a.b);\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -498,8 +482,7 @@ mod tests {
     fn invalid_new_type_assertion_callee_preserves_recovery_text() {
         let source = "var b = new <any>Test2();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -518,8 +501,7 @@ mod tests {
     fn type_assertion_new_expression_keeps_parens_in_access() {
         let source = "var b = (<any>new a).b;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -538,8 +520,7 @@ mod tests {
     fn type_assertion_call_in_new_callee_keeps_parens() {
         let source = "new (x() as any);\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -563,8 +544,7 @@ mod tests {
         // Use angle-bracket style too: `new (<any>x())`
         let source = "new (<any>x());\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -583,8 +563,7 @@ mod tests {
     fn type_assertion_call_outside_new_still_strips_parens() {
         let source = "var b = (<any>x()).foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -610,8 +589,7 @@ mod tests {
         // Top-level: hoisted temp goes at file scope
         let source = "let gg = f() ?? 'foo';\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -634,8 +612,7 @@ mod tests {
     fn prefix_plus_plus_gets_space() {
         let source = "var z = + +y;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -658,8 +635,7 @@ mod tests {
     fn prefix_minus_minus_gets_space() {
         let source = "var c = - -y;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -681,8 +657,7 @@ mod tests {
     fn prefix_plus_before_increment_gets_space() {
         let source = "var z = + ++x;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -705,8 +680,7 @@ mod tests {
     fn conditional_case_a_trailing_colon() {
         let source = "var v = a ?\n  b :\n  c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -732,8 +706,7 @@ mod tests {
     fn conditional_case_a_inline_colon() {
         let source = "var v = a ?\n  b : c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -755,8 +728,7 @@ mod tests {
     fn conditional_case_b_nested_ternaries() {
         let source = "var v = a\n  ? b ? d : e\n  : c ? f : g;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -782,8 +754,7 @@ mod tests {
         // a ?? b || c — the ?? is the left operand of ||, needs parens when lowered
         let source = "a ?? b || c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -803,8 +774,7 @@ mod tests {
     fn nullish_coalescing_in_conditional_condition_gets_parens() {
         let source = "const r = a ?? 'foo' ? 1 : 2;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -825,8 +795,7 @@ mod tests {
         // Source has explicit parens: (a ?? b) || c
         let source = "(a ?? b) || c;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);

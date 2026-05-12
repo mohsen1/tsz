@@ -1,13 +1,16 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_prepare_on_function_declaration() {
     let source = "function foo() {\n  return 1;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -30,8 +33,7 @@ fn test_prepare_on_function_declaration() {
 #[test]
 fn test_prepare_on_method_declaration() {
     let source = "class Foo {\n  bar() {\n    return 1;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -55,8 +57,7 @@ fn test_prepare_on_method_declaration() {
 fn test_prepare_on_class_static_block() {
     let source =
         "class C {\nstatic {\n  function foo() { bar(); }\n  function bar() {}\n  foo();\n}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -82,8 +83,7 @@ fn test_prepare_on_class_static_block() {
 #[test]
 fn test_prepare_nested_function_in_static_block_has_no_class_container() {
     let source = "class C {\n  static {\n    function bar() {}\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -105,8 +105,7 @@ fn test_prepare_nested_function_in_static_block_has_no_class_container() {
 #[test]
 fn test_prepare_not_on_function() {
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -129,8 +128,7 @@ fn test_prepare_not_on_function() {
 #[test]
 fn test_prepare_on_export_equals_anonymous_function_uses_module_item() {
     let source = "export = function () {\n  baz();\n}\nfunction baz() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -156,8 +154,7 @@ fn test_prepare_on_export_equals_anonymous_function_uses_module_item() {
 #[test]
 fn test_outgoing_calls_from_export_equals_module_selection_span() {
     let source = "export = function () {\n  baz();\n}\nfunction baz() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -179,8 +176,7 @@ fn test_outgoing_calls_from_export_equals_module_selection_span() {
 #[test]
 fn test_outgoing_calls_simple() {
     let source = "function greet() {}\nfunction main() {\n  greet();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -207,8 +203,7 @@ fn test_outgoing_calls_simple() {
 #[test]
 fn test_outgoing_calls_includes_new_expression_targets() {
     let source = "class Baz {}\nfunction build() {\n  new Baz();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -242,8 +237,7 @@ fn test_outgoing_calls_includes_new_expression_targets() {
 #[test]
 fn test_outgoing_calls_includes_new_expression_forward_declared_class() {
     let source = "function bar() {\n  new Baz();\n}\n\nclass Baz {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -266,8 +260,7 @@ fn test_outgoing_calls_includes_new_expression_forward_declared_class() {
 #[test]
 fn test_prepare_function_range_uses_source_body_end() {
     let source = "function bar() {\n  return 1;\n}\n\nclass Baz {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -290,8 +283,7 @@ fn test_prepare_function_range_uses_source_body_end() {
 #[test]
 fn test_outgoing_calls_multiple() {
     let source = "function a() {}\nfunction b() {}\nfunction c() {\n  a();\n  b();\n  a();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -324,8 +316,7 @@ fn test_outgoing_calls_multiple() {
 #[test]
 fn test_outgoing_calls_for_static_block_include_only_direct_calls() {
     let source = "class C {\n  static {\n    function foo() {\n      bar();\n    }\n\n    function bar() {}\n    foo();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -351,8 +342,7 @@ fn test_outgoing_calls_for_static_block_include_only_direct_calls() {
 #[test]
 fn test_outgoing_calls_for_function_nested_in_static_block_resolve_sibling_declaration() {
     let source = "class C {\n  static {\n    function foo() {\n      bar();\n    }\n\n    function bar() {\n    }\n\n    foo();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -375,8 +365,7 @@ fn test_outgoing_calls_for_function_nested_in_static_block_resolve_sibling_decla
 #[test]
 fn test_outgoing_calls_no_calls() {
     let source = "function empty() {\n  const x = 1;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -399,8 +388,7 @@ fn test_outgoing_calls_no_calls() {
 #[test]
 fn test_incoming_calls_simple() {
     let source = "function target() {}\nfunction caller() {\n  target();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -426,8 +414,7 @@ fn test_incoming_calls_simple() {
 #[test]
 fn test_incoming_calls_include_decorator_references() {
     let source = "@bar\nclass Foo {\n}\n\nfunction bar() {\n  baz();\n}\n\nfunction baz() {\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -450,8 +437,7 @@ fn test_incoming_calls_include_decorator_references() {
 #[test]
 fn test_incoming_calls_include_tagged_template_references() {
     let source = "function foo() {\n  bar`a${1}b`;\n}\n\nfunction bar(array: TemplateStringsArray, ...args: any[]) {\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -474,8 +460,7 @@ fn test_incoming_calls_include_tagged_template_references() {
 #[test]
 fn test_incoming_calls_inside_static_block_report_static_block_caller() {
     let source = "class C {\n  static {\n    function foo() {\n      bar();\n    }\n\n    function bar() {}\n    foo();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -500,8 +485,7 @@ fn test_incoming_calls_inside_static_block_report_static_block_caller() {
 #[test]
 fn test_incoming_calls_no_callers() {
     let source = "function unused() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -524,8 +508,7 @@ fn test_incoming_calls_no_callers() {
 #[test]
 fn test_incoming_calls_disambiguates_same_name_symbols() {
     let source = "class A {\n  static sameName() {\n  }\n}\n\nclass B {\n  sameName() {\n    A.sameName();\n  }\n}\n\nconst Obj = {\n  get sameName() {\n    return new B().sameName;\n  }\n};\n\nnamespace Foo {\n  function sameName() {\n    return Obj.sameName;\n  }\n\n  export class C {\n    constructor() {\n      sameName();\n    }\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -552,8 +535,7 @@ fn test_incoming_calls_disambiguates_same_name_symbols() {
 #[test]
 fn test_prepare_object_literal_getter_has_variable_container_name() {
     let source = "const Obj = {\n  get sameName() {\n    return 1;\n  }\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -575,8 +557,7 @@ fn test_prepare_object_literal_getter_has_variable_container_name() {
 #[test]
 fn test_incoming_calls_for_object_literal_getter_track_property_access_callers() {
     let source = "class A {\n  static sameName() {\n  }\n}\n\nclass B {\n  sameName() {\n    A.sameName();\n  }\n}\n\nconst Obj = {\n  get sameName() {\n    return new B().sameName;\n  }\n};\n\nnamespace Foo {\n  function sameName() {\n    return Obj.sameName;\n  }\n\n  export class C {\n    constructor() {\n      sameName();\n    }\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -601,8 +582,7 @@ fn test_incoming_calls_for_object_literal_getter_track_property_access_callers()
 #[test]
 fn test_incoming_calls_for_function_inside_constructor_reports_class_caller() {
     let source = "namespace Foo {\n  function sameName() {\n  }\n\n  export class C {\n    constructor() {\n      sameName();\n    }\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -650,8 +630,7 @@ fn test_incoming_calls_for_function_inside_constructor_reports_class_caller() {
 #[test]
 fn test_incoming_calls_do_not_cross_namespace_same_name_functions() {
     let source = "namespace Foo {\n  export function sameName() {\n  }\n\n  export class C {\n    constructor() {\n      sameName();\n    }\n  }\n}\n\nnamespace Foo.Bar {\n  export const sameName = () => new Foo.C();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -674,8 +653,7 @@ fn test_incoming_calls_do_not_cross_namespace_same_name_functions() {
 #[test]
 fn test_prepare_method_selection_range_uses_identifier_length() {
     let source = "class A {\n  static sameName() {\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -697,8 +675,7 @@ fn test_prepare_method_selection_range_uses_identifier_length() {
 #[test]
 fn test_prepare_on_call_expression_resolves_const_function_expression_declaration() {
     let source = "function foo() {\n    bar();\n}\n\nconst bar = function () {\n    baz();\n}\n\nfunction baz() {\n}\n\nbar()\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -722,8 +699,7 @@ fn test_prepare_on_call_expression_resolves_const_function_expression_declaratio
 #[test]
 fn test_call_expression_on_const_function_expression_has_incoming_and_outgoing() {
     let source = "function foo() {\n    bar();\n}\n\nconst bar = function () {\n    baz();\n}\n\nfunction baz() {\n}\n\nbar()\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -757,8 +733,7 @@ fn test_call_expression_on_const_function_expression_has_incoming_and_outgoing()
 #[test]
 fn test_declaration_name_position_for_const_function_expression_has_incoming_and_outgoing() {
     let source = "function foo() {\n    bar();\n}\n\nconst bar = function () {\n    baz();\n}\n\nfunction baz() {\n}\n\nbar()\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -785,8 +760,7 @@ fn test_declaration_name_position_for_const_function_expression_has_incoming_and
 #[test]
 fn test_class_property_arrow_function_prepare_and_incoming_calls() {
     let source = "class C {\n    caller = () => {\n        this.callee();\n    };\n\n    callee = () => {\n    };\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -814,8 +788,7 @@ fn test_class_property_arrow_function_prepare_and_incoming_calls() {
 fn test_interface_method_signature_prepare_and_incoming_calls() {
     let source =
         "interface I {\n    foo(): void;\n}\n\nconst obj: I = { foo() {} };\n\nobj.foo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -874,8 +847,7 @@ fn test_call_hierarchy_item_serialization() {
 #[test]
 fn test_prepare_on_arrow_function_assigned_to_variable() {
     let source = "const greet = (name: string) => {\n  return `Hello ${name}`;\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -900,8 +872,7 @@ fn test_prepare_on_arrow_function_assigned_to_variable() {
 #[test]
 fn test_prepare_on_constructor() {
     let source = "class Foo {\n  constructor(x: number) {\n    this.x = x;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -926,8 +897,7 @@ fn test_prepare_on_constructor() {
 #[test]
 fn test_prepare_on_getter() {
     let source = "class Foo {\n  get value(): number {\n    return 42;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -949,8 +919,7 @@ fn test_prepare_on_getter() {
 #[test]
 fn test_prepare_on_setter() {
     let source = "class Foo {\n  set value(v: number) {\n    this._v = v;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -972,8 +941,7 @@ fn test_prepare_on_setter() {
 #[test]
 fn test_prepare_on_static_method() {
     let source = "class Util {\n  static helper() {\n    return 1;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1000,8 +968,7 @@ fn test_prepare_on_static_method() {
 fn test_incoming_calls_from_nested_functions() {
     let source =
         "function target() {}\nfunction outer() {\n  function inner() {\n    target();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1024,8 +991,7 @@ fn test_incoming_calls_from_nested_functions() {
 #[test]
 fn test_incoming_calls_from_callbacks() {
     let source = "function handler() {}\nfunction setup() {\n  [1, 2].forEach(() => {\n    handler();\n  });\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1050,8 +1016,7 @@ fn test_incoming_calls_from_callbacks() {
 #[test]
 fn test_outgoing_calls_from_class_constructor() {
     let source = "function init() {}\nfunction validate() {}\nclass App {\n  constructor() {\n    init();\n    validate();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1078,8 +1043,7 @@ fn test_outgoing_calls_from_class_constructor() {
 #[test]
 fn test_recursive_function_calls() {
     let source = "function factorial(n: number): number {\n  if (n <= 1) return 1;\n  return n * factorial(n - 1);\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1110,8 +1074,7 @@ fn test_recursive_function_calls() {
 #[test]
 fn test_iife_outgoing_calls() {
     let source = "function helper() {}\n(function() {\n  helper();\n})();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1133,8 +1096,7 @@ fn test_iife_outgoing_calls() {
 #[test]
 fn test_no_hierarchy_at_type_alias() {
     let source = "type Foo = string;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1157,8 +1119,7 @@ fn test_no_hierarchy_at_type_alias() {
 #[test]
 fn test_no_hierarchy_at_interface() {
     let source = "interface Bar {\n  x: number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1181,8 +1142,7 @@ fn test_no_hierarchy_at_interface() {
 #[test]
 fn test_prepare_on_async_function() {
     let source = "async function fetchData(): Promise<void> {\n  await fetch('url');\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1208,8 +1168,7 @@ fn test_prepare_on_async_function() {
 #[test]
 fn test_prepare_on_generator_function() {
     let source = "function* gen() {\n  yield 1;\n  yield 2;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1236,8 +1195,7 @@ fn test_prepare_on_generator_function() {
 fn test_multiple_incoming_calls_from_same_function() {
     let source =
         "function target() {}\nfunction caller() {\n  target();\n  target();\n  target();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1266,8 +1224,7 @@ fn test_multiple_incoming_calls_from_same_function() {
 #[test]
 fn test_outgoing_calls_with_chained_method_calls() {
     let source = "function a() {}\nfunction b() {}\nfunction chain() {\n  a();\n  b();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1294,8 +1251,7 @@ fn test_outgoing_calls_with_chained_method_calls() {
 #[test]
 fn test_prepare_on_function_expression_variable() {
     let source = "const myFunc = function myFuncImpl() {\n  return 1;\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1318,8 +1274,7 @@ fn test_prepare_on_function_expression_variable() {
 #[test]
 fn test_prepare_on_method_in_object_literal() {
     let source = "const obj = {\n  doWork() {\n    return 42;\n  }\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1344,8 +1299,7 @@ fn test_prepare_on_method_in_object_literal() {
 #[test]
 fn test_incoming_calls_multiple_callers() {
     let source = "function target() {}\nfunction callerA() {\n  target();\n}\nfunction callerB() {\n  target();\n}\nfunction callerC() {\n  target();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1374,8 +1328,7 @@ fn test_incoming_calls_multiple_callers() {
 #[test]
 fn test_prepare_on_exported_function() {
     let source = "export function greet(name: string) {\n  return `Hello ${name}`;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1401,8 +1354,7 @@ fn test_prepare_on_exported_function() {
 #[test]
 fn test_prepare_not_on_enum() {
     let source = "enum Color { Red, Green, Blue }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1425,8 +1377,7 @@ fn test_prepare_not_on_enum() {
 #[test]
 fn test_prepare_on_namespace_function() {
     let source = "namespace NS {\n  export function helper() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1453,8 +1404,7 @@ fn test_prepare_on_namespace_function() {
 #[test]
 fn test_outgoing_calls_empty_function() {
     let source = "function empty() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1477,8 +1427,7 @@ fn test_outgoing_calls_empty_function() {
 #[test]
 fn test_outgoing_calls_single_call() {
     let source = "function helper() {}\nfunction main() {\n  helper();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1499,8 +1448,7 @@ fn test_outgoing_calls_single_call() {
 #[test]
 fn test_incoming_calls_from_method() {
     let source = "function target() {}\nclass Svc {\n  run() {\n    target();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1523,8 +1471,7 @@ fn test_incoming_calls_from_method() {
 #[test]
 fn test_outgoing_calls_method_calling_function() {
     let source = "function doWork() {}\nclass Worker {\n  process() {\n    doWork();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1547,8 +1494,7 @@ fn test_outgoing_calls_method_calling_function() {
 #[test]
 fn test_prepare_on_abstract_method() {
     let source = "abstract class Base {\n  abstract compute(): number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1570,8 +1516,7 @@ fn test_prepare_on_abstract_method() {
 #[test]
 fn test_prepare_on_private_method() {
     let source = "class Foo {\n  private secret() {\n    return 42;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1598,8 +1543,7 @@ fn test_prepare_on_private_method() {
 #[test]
 fn test_outgoing_calls_multiple_distinct_targets() {
     let source = "function x() {}\nfunction y() {}\nfunction z() {}\nfunction caller() {\n  x();\n  y();\n  z();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1626,8 +1570,7 @@ fn test_outgoing_calls_multiple_distinct_targets() {
 #[test]
 fn test_prepare_on_overloaded_function() {
     let source = "function add(a: number, b: number): number;\nfunction add(a: string, b: string): string;\nfunction add(a: any, b: any): any {\n  return a + b;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1651,8 +1594,7 @@ fn test_prepare_on_overloaded_function() {
 #[test]
 fn test_prepare_on_async_method() {
     let source = "class Api {\n  async fetch() {\n    return 'data';\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1683,8 +1625,7 @@ fn test_prepare_on_async_method() {
 #[test]
 fn test_prepare_on_default_exported_function() {
     let source = "export default function handler() {\n  return 42;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1707,8 +1648,7 @@ fn test_prepare_on_default_exported_function() {
 #[test]
 fn test_prepare_at_file_end_returns_none() {
     let source = "function foo() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1728,8 +1668,7 @@ fn test_prepare_at_file_end_returns_none() {
 #[test]
 fn test_prepare_at_column_zero_line_zero() {
     let source = "function first() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1750,8 +1689,7 @@ fn test_prepare_at_column_zero_line_zero() {
 #[test]
 fn test_outgoing_calls_from_arrow_function_variable() {
     let source = "function target() {}\nconst caller = () => {\n  target();\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1774,8 +1712,7 @@ fn test_outgoing_calls_from_arrow_function_variable() {
 #[test]
 fn test_incoming_calls_for_constructor_via_new_expression() {
     let source = "class Widget {}\nfunction build() {\n  new Widget();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1801,8 +1738,7 @@ fn test_incoming_calls_for_constructor_via_new_expression() {
 #[test]
 fn test_prepare_on_deeply_nested_function() {
     let source = "function outer() {\n  function middle() {\n    function inner() {\n      return 1;\n    }\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1825,8 +1761,7 @@ fn test_prepare_on_deeply_nested_function() {
 #[test]
 fn test_outgoing_calls_with_conditional_calls() {
     let source = "function a() {}\nfunction b() {}\nfunction decide(flag: boolean) {\n  if (flag) { a(); } else { b(); }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1850,8 +1785,7 @@ fn test_outgoing_calls_with_conditional_calls() {
 #[test]
 fn test_prepare_on_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1872,8 +1806,7 @@ fn test_prepare_on_empty_source() {
 #[test]
 fn test_incoming_calls_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1894,8 +1827,7 @@ fn test_incoming_calls_empty_source() {
 #[test]
 fn test_outgoing_calls_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1916,8 +1848,7 @@ fn test_outgoing_calls_empty_source() {
 #[test]
 fn test_prepare_on_protected_method() {
     let source = "class Base {\n  protected compute() {\n    return 0;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1940,8 +1871,7 @@ fn test_prepare_on_protected_method() {
 #[test]
 fn test_outgoing_calls_from_method_calling_other_methods() {
     let source = "class Svc {\n  a() {}\n  b() {}\n  c() {\n    this.a();\n    this.b();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1965,8 +1895,7 @@ fn test_outgoing_calls_from_method_calling_other_methods() {
 #[test]
 fn test_prepare_on_function_with_type_parameters() {
     let source = "function identity<T>(x: T): T {\n  return x;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1993,7 +1922,7 @@ fn test_prepare_on_function_with_type_parameters() {
 #[test]
 fn test_call_hierarchy_item_has_uri() {
     let source = "function hello() {}\n";
-    let mut parser = ParserState::new("my_file.ts".to_string(), source.to_string());
+    let mut parser = tsz_parser::ParserState::new("my_file.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
 
@@ -2023,8 +1952,7 @@ fn test_call_hierarchy_item_has_uri() {
 #[test]
 fn test_prepare_on_single_line_function() {
     let source = "function f() { return 1; }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2046,8 +1974,7 @@ fn test_prepare_on_single_line_function() {
 #[test]
 fn test_prepare_on_method_with_rest_params() {
     let source = "class C {\n  collect(...args: number[]) {\n    return args;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2070,8 +1997,7 @@ fn test_prepare_on_method_with_rest_params() {
 #[test]
 fn test_outgoing_calls_in_try_catch_block() {
     let source = "function safe() {}\nfunction risky() {}\nfunction doStuff() {\n  try {\n    risky();\n  } catch (e) {\n    safe();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2098,8 +2024,7 @@ fn test_outgoing_calls_in_try_catch_block() {
 #[test]
 fn test_incoming_calls_from_multiple_methods_same_class() {
     let source = "function target() {}\nclass Svc {\n  a() { target(); }\n  b() { target(); }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2124,8 +2049,7 @@ fn test_incoming_calls_from_multiple_methods_same_class() {
 #[test]
 fn test_prepare_on_method_with_optional_params() {
     let source = "class Config {\n  set(key: string, value?: string) {\n    return key;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2148,8 +2072,7 @@ fn test_prepare_on_method_with_optional_params() {
 #[test]
 fn test_prepare_on_function_with_destructured_params() {
     let source = "function process({ x, y }: { x: number; y: number }) {\n  return x + y;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2172,8 +2095,7 @@ fn test_prepare_on_function_with_destructured_params() {
 #[test]
 fn test_outgoing_calls_from_for_loop_body() {
     let source = "function work() {}\nfunction loop_caller() {\n  for (let i = 0; i < 3; i++) {\n    work();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2196,8 +2118,7 @@ fn test_outgoing_calls_from_for_loop_body() {
 #[test]
 fn test_prepare_on_function_unicode_name() {
     let source = "function calcul\u{00E9}() {\n  return 1;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2218,8 +2139,7 @@ fn test_prepare_on_function_unicode_name() {
 #[test]
 fn test_outgoing_calls_from_while_loop() {
     let source = "function tick() {}\nfunction runner() {\n  while (true) {\n    tick();\n    break;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2242,8 +2162,7 @@ fn test_outgoing_calls_from_while_loop() {
 #[test]
 fn test_prepare_on_async_arrow_function() {
     let source = "const fetchAll = async () => {\n  return [];\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2265,8 +2184,7 @@ fn test_prepare_on_async_arrow_function() {
 #[test]
 fn test_incoming_calls_from_switch_case() {
     let source = "function handler() {}\nfunction dispatch(action: string) {\n  switch (action) {\n    case 'a': handler(); break;\n    case 'b': handler(); break;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2292,8 +2210,7 @@ fn test_incoming_calls_from_switch_case() {
 #[test]
 fn test_prepare_on_function_with_default_params() {
     let source = "function greet(name: string = 'World') {\n  return name;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2319,8 +2236,7 @@ fn test_prepare_on_function_with_default_params() {
 #[test]
 fn test_prepare_not_on_type_annotation() {
     let source = "const x: number = 42;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2343,8 +2259,7 @@ fn test_prepare_not_on_type_annotation() {
 #[test]
 fn test_outgoing_calls_from_ternary_expression() {
     let source = "function a() {}\nfunction b() {}\nfunction choose(cond: boolean) {\n  cond ? a() : b();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2372,8 +2287,7 @@ fn test_outgoing_calls_from_ternary_expression() {
 #[test]
 fn test_prepare_on_function_with_many_params() {
     let source = "function compute(a: number, b: number, c: number, d: number, e: number) {\n  return a + b + c + d + e;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2396,8 +2310,7 @@ fn test_prepare_on_function_with_many_params() {
 fn test_outgoing_calls_from_do_while_loop() {
     let source =
         "function step() {}\nfunction loop_fn() {\n  do {\n    step();\n  } while (false);\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2419,8 +2332,7 @@ fn test_outgoing_calls_from_do_while_loop() {
 #[test]
 fn test_incoming_calls_from_arrow_function_variable() {
     let source = "function target() {}\nconst caller = () => {\n  target();\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2445,8 +2357,7 @@ fn test_incoming_calls_from_arrow_function_variable() {
 #[test]
 fn test_prepare_on_method_with_return_type() {
     let source = "class Service {\n  getData(): string[] {\n    return [];\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2470,8 +2381,7 @@ fn test_prepare_on_method_with_return_type() {
 #[test]
 fn test_outgoing_calls_from_nested_if_else() {
     let source = "function alpha() {}\nfunction beta() {}\nfunction gamma() {}\nfunction decide(x: number) {\n  if (x > 0) {\n    alpha();\n  } else if (x < 0) {\n    beta();\n  } else {\n    gamma();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2503,8 +2413,7 @@ fn test_outgoing_calls_from_nested_if_else() {
 #[test]
 fn test_prepare_on_readonly_method() {
     let source = "class Buffer {\n  readonly size: number = 0;\n  getSize(): number {\n    return this.size;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2527,8 +2436,7 @@ fn test_prepare_on_readonly_method() {
 #[test]
 fn test_outgoing_calls_from_for_of_loop() {
     let source = "function process(x: number) {}\nfunction iterate(items: number[]) {\n  for (const item of items) {\n    process(item);\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2550,8 +2458,7 @@ fn test_outgoing_calls_from_for_of_loop() {
 #[test]
 fn test_prepare_not_on_import_statement() {
     let source = "import { foo } from './foo';\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2572,8 +2479,7 @@ fn test_prepare_not_on_import_statement() {
 #[test]
 fn test_outgoing_calls_from_for_in_loop() {
     let source = "function log(k: string) {}\nfunction enumerate(obj: object) {\n  for (const key in obj) {\n    log(key);\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2595,8 +2501,7 @@ fn test_outgoing_calls_from_for_in_loop() {
 #[test]
 fn test_prepare_on_generic_function() {
     let source = "function identity<T>(x: T): T {\n  return x;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2619,8 +2524,7 @@ fn test_prepare_on_generic_function() {
 #[test]
 fn test_outgoing_calls_multiple_calls_to_same_function() {
     let source = "function log(msg: string) {}\nfunction verbose() {\n  log('start');\n  log('middle');\n  log('end');\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2645,8 +2549,7 @@ fn test_outgoing_calls_multiple_calls_to_same_function() {
 #[test]
 fn test_prepare_on_single_line_arrow_function() {
     let source = "const double = (x: number) => x * 2;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2667,8 +2570,7 @@ fn test_prepare_on_single_line_arrow_function() {
 #[test]
 fn test_incoming_calls_from_try_catch() {
     let source = "function risky() {}\nfunction safe() {\n  try {\n    risky();\n  } catch (e) {\n    risky();\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();

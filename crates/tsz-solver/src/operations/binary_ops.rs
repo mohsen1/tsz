@@ -18,6 +18,7 @@ use crate::narrowing::NullishFilter;
 use crate::types::TypeListId;
 use crate::visitor::TypeVisitor;
 use crate::{IntrinsicKind, LiteralValue, QueryDatabase, TypeData, TypeDatabase, TypeId};
+use rustc_hash::FxHashSet;
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -1072,7 +1073,8 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// template literals, unique symbols). For unions, ALL members must be valid.
     /// This check is independent of strictNullChecks.
     pub fn is_valid_computed_property_name_type(&self, type_id: TypeId) -> bool {
-        self.is_valid_key_type_impl(type_id, false)
+        let mut seen = FxHashSet::default();
+        self.is_valid_key_type_impl(type_id, false, &mut seen)
     }
 
     /// Check if a type is a valid mapped type constraint key type (TS2322).
@@ -1081,21 +1083,31 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// as valid, since they cannot be fully resolved in generic context and will
     /// be checked at instantiation time.
     pub fn is_valid_mapped_type_key_type(&self, type_id: TypeId) -> bool {
-        self.is_valid_key_type_impl(type_id, true)
+        let mut seen = FxHashSet::default();
+        self.is_valid_key_type_impl(type_id, true, &mut seen)
     }
 
-    fn is_valid_key_type_impl(&self, type_id: TypeId, defer_unresolved: bool) -> bool {
+    fn is_valid_key_type_impl(
+        &self,
+        type_id: TypeId,
+        defer_unresolved: bool,
+        seen: &mut FxHashSet<TypeId>,
+    ) -> bool {
         if type_id == TypeId::ANY || type_id == TypeId::NEVER || type_id == TypeId::ERROR {
             return true;
         }
-        match self.interner.lookup(type_id) {
+        if !seen.insert(type_id) {
+            return defer_unresolved;
+        }
+
+        let result = match self.interner.lookup(type_id) {
             // For union types, each member must individually be valid
             Some(TypeData::Union(list_id)) => {
                 let members = self.interner.type_list(list_id);
                 !members.is_empty()
                     && members
                         .iter()
-                        .all(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
+                        .all(|&m| self.is_valid_key_type_impl(m, defer_unresolved, seen))
             }
             // For type parameters, check the constraint (e.g., K extends keyof T).
             // tsc uses getBaseConstraintOfType(type) for this check.
@@ -1104,7 +1116,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             // defer the check to instantiation time to avoid false TS2464.
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
                 .constraint
-                .is_some_and(|c| self.is_valid_key_type_impl(c, true)),
+                .is_some_and(|c| self.is_valid_key_type_impl(c, true, seen)),
             // keyof always produces string | number | symbol, which are all valid.
             Some(TypeData::KeyOf(_)) => true,
             // For intersection types, valid if any member is a valid key type.
@@ -1112,7 +1124,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                 let members = self.interner.type_list(list_id);
                 members
                     .iter()
-                    .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
+                    .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved, seen))
             }
             // TypeQuery (typeof expr), deferred types (generic applications, lazy refs,
             // conditionals) — try to evaluate to the underlying type. If they resolve
@@ -1128,7 +1140,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             ) => {
                 let evaluated = self.interner.evaluate_type(type_id);
                 if evaluated != type_id {
-                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved, seen)
                 } else if defer_unresolved {
                     // Unresolvable in generic context — conservatively accept
                     true
@@ -1152,14 +1164,13 @@ impl<'a> BinaryOpEvaluator<'a> {
                             self.interner.lookup(index_type)
                         && let Some(constraint) = info.constraint
                     {
-                        return self
-                            .interner
-                            .is_assignable_to(constraint, self.interner.keyof(object_type));
+                        self.interner
+                            .is_assignable_to(constraint, self.interner.keyof(object_type))
+                    } else {
+                        true
                     }
-
-                    true
                 } else {
-                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved, seen)
                 }
             }
             _ => {
@@ -1167,7 +1178,10 @@ impl<'a> BinaryOpEvaluator<'a> {
                     || self.is_number_like(type_id)
                     || self.is_symbol_like(type_id)
             }
-        }
+        };
+
+        seen.remove(&type_id);
+        result
     }
 
     /// Check if a type is boolean-like (boolean or boolean literal).

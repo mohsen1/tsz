@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =====================================================================
 // Template literal enum evaluation
@@ -891,8 +896,7 @@ fn probe_constructor_type_with_conditional_return_in_extends() {
 fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
     use tsz_common::diagnostics::Diagnostic;
 
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.diagnostics.push(Diagnostic::from_code(
         2883,
@@ -925,8 +929,7 @@ fn take_diagnostics_drops_swapped_ts2883_when_canonical_exists() {
 fn take_diagnostics_keeps_ts2883_when_swapped_seen_before_canonical_duplicate() {
     use tsz_common::diagnostics::Diagnostic;
 
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.diagnostics.push(Diagnostic::from_code(
         2883,
@@ -1061,8 +1064,7 @@ fn check_call_expression_return_type_portability_skips_non_call() {
 #[test]
 fn check_call_expression_return_type_portability_skip_when_disabled() {
     // Verify the check respects skip_portability_check flag
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.set_skip_portability_check(true);
 
@@ -1089,8 +1091,7 @@ fn symlinked_nested_package_reference_fires_when_outer_package_is_not_consumer_a
     // package was reached only through a nested / symlinked `node_modules` chain
     // outside the consumer's normal Node.js resolution scope, so writing `<P>`
     // as a bare specifier from the consumer would not resolve to the same file.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1137,8 +1138,7 @@ fn symlinked_nested_package_reference_fires_even_when_canonical_package_is_reach
     .expect("write declaration");
     std::os::unix::fs::symlink(&top_level_pkg, &nested_pkg).expect("create package symlink");
 
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1164,8 +1164,7 @@ fn symlinked_nested_package_reference_independent_of_user_chosen_names() {
     // The fix must be structural: changing user-chosen package and type names
     // (the bound identifiers in this scenario) must not affect whether the
     // helper fires. Mirrors the failing test's shape with different names.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1188,8 +1187,7 @@ fn symlinked_nested_package_reference_independent_of_user_chosen_names() {
 fn symlinked_nested_package_reference_skips_normal_node_modules_resolution() {
     // Normal resolution: the package's `<X>` is an ancestor of the consumer.
     // The helper must return None so the existing logic decides portability.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1209,8 +1207,7 @@ fn symlinked_nested_package_reference_skips_paths_without_node_modules() {
     // Source paths without any `node_modules` segment (e.g. workspace siblings
     // resolved via symlinked package roots) are handled by other rules; this
     // helper must only consider node_modules-bearing source paths.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
@@ -1230,8 +1227,7 @@ fn symlinked_nested_package_reference_skips_multiple_node_modules() {
     // Source paths with two or more `node_modules` segments are already handled
     // by the existing nested-rules in `check_symbol_portability` (Cases 1 and 2).
     // The helper must defer to them by returning None.
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let emitter = make_path_only_emitter(&parser);
 
     let result = emitter.symlinked_nested_package_reference(
