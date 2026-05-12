@@ -108,7 +108,7 @@ impl<'a> CheckerState<'a> {
 
             let matches_augmentation_decl = |sym_id: tsz_binder::SymbolId| {
                 let sym = binder.get_symbol(sym_id)?;
-                (sym.declarations.contains(&aug.node) && (sym.flags & preferred_flags) != 0)
+                (sym.declarations.contains(&aug.node) && sym.has_any_flags(preferred_flags))
                     .then_some(sym_id)
             };
 

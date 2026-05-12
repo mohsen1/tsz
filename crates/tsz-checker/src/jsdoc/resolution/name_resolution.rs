@@ -735,7 +735,7 @@ impl<'a> CheckerState<'a> {
                                     | symbol_flags::CLASS
                                     | symbol_flags::ENUM
                                     | symbol_flags::VALUE_MODULE;
-                                if (sym.flags & value_mask) == 0 {
+                                if !sym.has_any_flags(value_mask) {
                                     continue;
                                 }
                                 let operand = self.get_type_of_symbol(sym_id);
