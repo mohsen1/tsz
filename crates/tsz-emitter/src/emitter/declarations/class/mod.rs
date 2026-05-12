@@ -23,6 +23,7 @@ pub(in crate::emitter) struct AutoAccessorEmitOptions<'a> {
     pub class_name: &'a str,
     pub property_end: u32,
     pub omit_storage_initializer: bool,
+    pub computed_storage_inits: &'a [String],
 }
 
 /// Replace all occurrences of an identifier with a replacement, respecting word boundaries.

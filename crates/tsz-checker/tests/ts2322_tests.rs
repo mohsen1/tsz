@@ -5726,8 +5726,8 @@ a = [42, undefined, true as boolean];
             .iter()
             .filter(|message| message.contains("Type '[number, undefined, true]'"))
             .count()
-            == 2,
-        "Only const-asserted and satisfies true literals should display as true, got: {diagnostics:#?}"
+            == 4,
+        "Boolean-compatible tuple targets should preserve direct, parenthesized, const-asserted, and satisfies true literals, got: {diagnostics:#?}"
     );
     assert!(
         ts2322_messages
@@ -5740,8 +5740,8 @@ a = [42, undefined, true as boolean];
             .iter()
             .filter(|message| message.contains("[number, undefined, boolean]"))
             .count()
-            == 3,
-        "Direct, parenthesized, and explicit boolean assertions should widen boolean literal elements, got: {diagnostics:#?}"
+            == 1,
+        "Only explicit boolean assertions should display widened boolean literal elements, got: {diagnostics:#?}"
     );
 }
 
@@ -5809,8 +5809,8 @@ target = [1, true, false, true, false];
     assert!(
         ts2322_messages
             .iter()
-            .any(|message| message.contains("Type '[number, boolean, boolean, boolean, boolean]'")),
-        "Expected variadic and trailing tuple slots to remain contextually mapped in source display, got: {diagnostics:#?}"
+            .any(|message| message.contains("Type '[number, true, false, true, false]'")),
+        "Expected variadic boolean tuple slots to preserve literal source display, got: {diagnostics:#?}"
     );
     assert!(
         ts2322_messages

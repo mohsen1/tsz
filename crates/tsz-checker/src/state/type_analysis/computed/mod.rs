@@ -691,15 +691,12 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Counts every entry to
-        // type-of-symbol computation; PR 1 uses this against unique-SymbolId
-        // estimates to characterize recomputation. Gate on `enabled_fast()`
-        // before the `counters()` `OnceLock<PerfCounters>` deref so disabled
-        // builds skip the deref entirely on this multi-million-call hot path.
-        if tsz_common::perf_counters::enabled_fast() {
-            tsz_common::perf_counters::inc(
-                &tsz_common::perf_counters::counters().compute_type_of_symbol_calls,
-            );
-        }
+        // type-of-symbol computation; attribution uses this against
+        // unique-SymbolId estimates to characterize recomputation.
+        // The helper gates once before the `counters()` `OnceLock<PerfCounters>`
+        // deref so disabled builds skip the deref entirely on this
+        // multi-million-call hot path.
+        tsz_common::perf_counters::record_compute_type_of_symbol_call();
 
         let factory = self.ctx.types.factory();
         use tsz_lowering::TypeLowering;

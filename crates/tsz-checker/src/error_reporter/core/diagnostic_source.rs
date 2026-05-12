@@ -1,10 +1,12 @@
 //! Diagnostic source/target expression analysis and formatting.
 
 mod assignment_formatting;
+mod assignment_source_preservation;
 mod compound_assignment_context;
 mod contextual_index_display;
 mod generic_source_display;
 mod literal_surface;
+mod literal_widening_helpers;
 mod literal_widening_policy;
 mod object_literal_targets;
 mod static_schema;
