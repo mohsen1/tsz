@@ -4,6 +4,7 @@ use crate::emitter::{JsxEmit, ModuleKind};
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -56,33 +57,18 @@ impl<'a> Printer<'a> {
         source: &tsz_parser::parser::node::SourceFileData,
     ) -> LegacySystemDecoratorHelpersNeeded {
         let mut needed = LegacySystemDecoratorHelpersNeeded::default();
-        for &stmt_idx in &source.statements.nodes {
+        let mut stack = source.statements.nodes.clone();
+        while let Some(stmt_idx) = stack.pop() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            if (stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || stmt_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
                 && let Some(class_decl) = self.arena.get_class(stmt_node)
             {
                 self.accumulate_system_class_legacy_decorator_helpers(class_decl, &mut needed);
-                continue;
             }
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            }
-            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            if export_decl.module_specifier.is_some() {
-                continue;
-            }
-            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
-                continue;
-            };
-            if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                && let Some(class_decl) = self.arena.get_class(clause_node)
-            {
-                self.accumulate_system_class_legacy_decorator_helpers(class_decl, &mut needed);
-            }
+            stack.extend(self.arena.get_children(stmt_idx));
         }
         needed
     }

@@ -3,11 +3,7 @@
   "limit": 500,
   "summary": {
     "scanned_prs": 500,
-    "rate_limit": {
-      "cost": 20,
-      "remaining": 4117,
-      "resetAt": "2026-05-12T07:08:13Z"
-    }
+    "truncated_thread_prs": []
   },
   "excluded_followed_up_prs": [
     4954,
