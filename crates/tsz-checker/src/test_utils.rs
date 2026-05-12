@@ -167,6 +167,15 @@ pub fn check_source_strict_messages(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+/// Strict `(code, message_text)` diagnostics excluding TS2318 missing-default-lib noise.
+pub fn check_source_strict_messages_without_missing_libs(source: &str) -> Vec<(u32, String)> {
+    check_source_strict(source)
+        .into_iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 /// Standard `lib.d.ts` source roots probed by checker tests, ordered by
 /// preference: bundled stripped assets first (smallest, fastest to parse),
 /// then the full bundled assets, then the TypeScript submodule's

@@ -4,8 +4,8 @@
 - **Branch**: `codex/cleanup-checker-strict-message-filter-20260512`
 - **Base**: `origin/main`
 - **Issue**: n/a
-- **PR**: tbd
-- **Status**: claim
+- **PR**: [#5964](https://github.com/mohsen1/tsz/pull/5964)
+- **Status**: ready
 - **Labels**: `DRY`, `checker-tests`
 
 ## Intent
