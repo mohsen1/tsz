@@ -101,8 +101,6 @@ impl<'a> CheckerContext<'a> {
         self.callback_return_type_errors.clear();
         self.modules_with_ts2307_emitted.clear();
         self.deferred_truthiness_diagnostics.clear();
-        self.deferred_excess_property_implicit_any_diagnostics
-            .clear();
         self.deferred_jsx_import_source_error = None;
         self.jsx_import_source_checked = false;
 

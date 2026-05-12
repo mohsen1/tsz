@@ -163,8 +163,10 @@ def print_summary(snap: dict) -> None:
         print(f"    {bar}")
 
 
-def print_by_reason(snap: dict) -> None:
-    rows = by_reason_rows(snap)
+def print_by_reason(snap: dict, optional=False) -> None:
+    rows = by_reason_rows(snap, optional=optional)
+    if not rows:
+        return
     total = sum(r["with_parent_cache_constructed"] for r in rows)
     if total == 0:
         print("by_reason: all-zero (no with_parent_cache constructions on this run)")
@@ -286,11 +288,11 @@ def main() -> int:
     print(f"perf-counter JSON: {args.json}")
     print()
     if args.by_reason:
-        print_by_reason(snap)
+        print_by_reason(snap, optional=False)
         return 0
     print_summary(snap)
     print()
-    print_by_reason(snap)
+    print_by_reason(snap, optional=True)
     return 0
 
 

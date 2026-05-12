@@ -827,18 +827,18 @@ pub fn record_delegate_cross_arena_miss() {
 /// child-checker construction would fire.
 ///
 /// Mirrors [`record_delegate_cross_arena_miss`]: gate once, look up
-/// `counters()` once, increment the named per-outcome counter directly.
-/// Unlike the miss helper, only the cache-hit counter advances here — the
-/// `delegate_cross_arena_calls` bump happens earlier in the delegation
-/// entry point that already paid the `enabled_fast()` gate, so this hit
-/// helper must not also touch `calls` (it would double-count entries).
+/// `counters()` once, increment both the aggregate call counter and the named
+/// per-outcome counter directly. These cross-file fast paths return before the
+/// slow child-checker miss path can call [`record_delegate_cross_arena_miss`],
+/// so the hit helper owns the aggregate `delegate_cross_arena_calls` bump.
 #[inline]
 pub fn record_delegate_cross_arena_cache_hit_cross_file() {
     if !enabled_fast() {
         return;
     }
-    counters()
-        .delegate_cross_arena_cache_hits_cross_file
+    let c = counters();
+    c.delegate_cross_arena_calls.fetch_add(1, Ordering::Relaxed);
+    c.delegate_cross_arena_cache_hits_cross_file
         .fetch_add(1, Ordering::Relaxed);
 }
 

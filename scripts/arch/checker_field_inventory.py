@@ -39,8 +39,8 @@ Usage:
 
 This script intentionally lives outside `arch_guard.py` because the rule it
 enforces is structurally specific (CheckerContext fields), not a generic
-pattern. Wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2)
-after the manifest covers all fields.
+pattern. It is wired through `scripts/arch/check-checker-boundaries.sh` so the
+field lifetime manifest stays current in the architecture guard.
 """
 
 from __future__ import annotations
