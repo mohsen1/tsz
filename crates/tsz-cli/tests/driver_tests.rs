@@ -16535,6 +16535,46 @@ export {};
 }
 
 #[test]
+fn compile_typeof_import_type_query_non_literal_reports_ts1141() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "noEmit": true,
+    "types": []
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+type ImportByKey<K extends string> = typeof import(K);
+type MappedImport<T extends string[]> = {
+    [K in T[number]]: typeof import(K);
+};
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts1141_count = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::STRING_LITERAL_EXPECTED)
+        .count();
+
+    assert_eq!(
+        ts1141_count, 2,
+        "Expected TS1141 for both typeof import(K) type queries, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn checked_js_jsdoc_import_backtick_reports_ts1141_in_project_mode() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

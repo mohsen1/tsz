@@ -38,21 +38,9 @@ pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
 pub(crate) use super::construct_signatures::construct_signatures_for_type;
 
-/// Re-export of the solver's property access result type.
-///
-/// Wraps `tsz_solver::operations::property::PropertyAccessResult`.
-/// This is the result enum returned by property access evaluation in the solver.
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 
-/// Re-export of the solver's call resolution result type.
-///
-/// Wraps `tsz_solver::CallResult`.
-/// This is the result enum returned by call/new expression resolution.
 pub(crate) use tsz_solver::CallResult;
-/// Re-export of the solver's type substitution mapping.
-///
-/// Wraps `tsz_solver::TypeSubstitution`.
-/// Used to build type parameter -> type argument mappings for instantiation.
 pub(crate) use tsz_solver::TypeSubstitution;
 
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
@@ -157,6 +145,13 @@ pub(crate) fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bo
 
 pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::visitor::contains_type_parameters(db, type_id)
+}
+
+pub(crate) fn contains_generic_indexed_access_surface(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_generic_indexed_access_surface(db, type_id)
 }
 
 pub(crate) fn contains_free_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1087,6 +1082,12 @@ pub(crate) fn is_infer_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 pub(crate) fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_conditional_type(db, type_id)
+}
+
+pub(crate) fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_conditional_type(db, type_id)
+        || is_index_access_type(db, type_id)
+        || is_keyof_type(db, type_id)
 }
 
 // ── Type parameter constraint query ──

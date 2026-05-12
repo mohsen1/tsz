@@ -2,12 +2,16 @@ use super::*;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_declaration_checker_variable() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -93,8 +97,7 @@ x: number;  // Should report TS2564
 y: string = "hello";  // Should NOT report (has initializer)
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -140,8 +143,7 @@ class Foo {
 x!: number;  // Should NOT report (has definite assignment assertion)
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -187,8 +189,7 @@ class Foo {
 static x: number;  // Should NOT report (static property)
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -234,8 +235,7 @@ class Foo {
 x: number;  // Should NOT report (strict mode disabled)
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -282,8 +282,7 @@ constructor() {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -335,8 +334,7 @@ constructor(flag: boolean) {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -387,8 +385,7 @@ constructor(flag: boolean) {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -439,8 +436,7 @@ constructor(flag: boolean) {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -490,8 +486,7 @@ constructor() {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);

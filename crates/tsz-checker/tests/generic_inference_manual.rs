@@ -10,6 +10,11 @@ use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{TypeId, TypeInterner};
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn variable_declaration_initializer_at(
     parser: &ParserState,
@@ -46,8 +51,7 @@ const n = identity(42);
 const b = identity(true);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -90,8 +94,7 @@ const invalid = { id: 1 };
 logName(invalid);
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -132,8 +135,7 @@ function identity<T>(x: T): T {
 const x: string = identity(42);
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -189,8 +191,7 @@ function process<T, U>(value: T, callback: (x: T) => U): U {
 const result = process(42, x => x.toString());
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -231,8 +232,7 @@ declare function testFunction(n: number): Promise<number>;
 declare function testFunction(s: string): Promise<string>;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -286,8 +286,7 @@ var r = utils.fold(c, (s, t) => t, "");
 var r2 = utils.fold(c, (s, t) => t);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -353,8 +352,7 @@ const res3 = test({
 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);

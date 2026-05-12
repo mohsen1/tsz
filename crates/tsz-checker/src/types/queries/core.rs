@@ -1261,8 +1261,26 @@ impl<'a> CheckerState<'a> {
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return false;
         }
-        self.get_property_name_resolved(name_idx)
-            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+        if self
+            .get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol."))
+        {
+            return true;
+        }
+
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+
+        let prev_checking = self.ctx.checking_computed_property_name;
+        self.ctx.checking_computed_property_name = Some(name_idx);
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let expr_type = self.get_type_of_node(computed.expression);
+        self.ctx.preserve_literal_types = prev_preserve;
+        self.ctx.checking_computed_property_name = prev_checking;
+
+        crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type).is_some()
     }
 
     /// For an identifier expression, trace back to the variable's declaration

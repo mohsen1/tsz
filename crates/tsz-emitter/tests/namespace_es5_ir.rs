@@ -1,6 +1,11 @@
 use super::*;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 /// Helper info for namespace extraction
 struct NamespaceInfo {
@@ -39,8 +44,7 @@ fn find_namespace_info(parser: &ParserState, stmt_idx: NodeIndex) -> Option<Name
 
 /// Helper to parse and transform a namespace, returning the IR node
 fn transform_namespace(source: &str) -> Option<IRNode> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -59,8 +63,7 @@ fn transform_namespace(source: &str) -> Option<IRNode> {
 
 /// Helper to parse, transform and emit a namespace to string
 fn transform_and_emit(source: &str) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -82,8 +85,7 @@ fn transform_and_emit(source: &str) -> String {
 
 /// Helper to parse, transform and emit with `CommonJS` mode
 fn transform_and_emit_commonjs(source: &str) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -560,8 +562,7 @@ fn test_namespace_es5_transformer_set_commonjs() {
 
 /// Helper that sets source text for comment extraction
 fn transform_and_emit_with_comments(source: &str) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -647,8 +648,7 @@ fn test_trailing_comment_extraction_direct() {
 fn test_trailing_comment_ir_structure() {
     // Verify the IR body contains TrailingComment nodes
     let source = "namespace M { export var x = 1; //comment\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)

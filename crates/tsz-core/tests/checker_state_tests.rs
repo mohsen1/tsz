@@ -14,6 +14,11 @@ use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
 use tsz_solver::{TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeData};
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // Basic Type Checker Tests
@@ -113,7 +118,6 @@ fn test_checker_union_normalization() {
 #[test]
 fn test_await_type_context_suggests_awaited() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 async function foo() {
@@ -121,8 +125,7 @@ async function foo() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -170,15 +173,13 @@ async function foo() {
 #[test]
 fn test_async_modifier_rejected_for_class_and_enum() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 async class C {}
 async enum E { Value }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     // Parser should NOT emit TS1042 — that is the checker's job
     let parser_1042_count = parser
         .get_diagnostics()
@@ -230,16 +231,13 @@ async enum E { Value }
 
 #[test]
 fn test_excess_property_in_variable_declaration() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { x: number };
 const ok: Foo = { x: 1 };
 const bad: Foo = { x: 1, y: 2 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -280,16 +278,13 @@ const bad: Foo = { x: 1, y: 2 };
 
 #[test]
 fn test_excess_property_allows_variable_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { x: number };
 const obj = { x: 1, y: 2 };
 const ok: Foo = obj;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -320,15 +315,12 @@ const ok: Foo = obj;
 
 #[test]
 fn test_object_trifecta_assignability_in_checker() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let ok: {} = "hi";
 let bad: object = "hi";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -360,14 +352,11 @@ let bad: object = "hi";
 
 #[test]
 fn test_shorthand_property_resolves_parameter() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const mk = (e: number) => ({ e });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -399,8 +388,6 @@ const mk = (e: number) => ({ e });
 
 #[test]
 fn test_ambient_module_export_default_resolves_local() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare module "*!text" {
     const x: string;
@@ -408,8 +395,7 @@ declare module "*!text" {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -441,14 +427,11 @@ declare module "*!text" {
 
 #[test]
 fn test_await_type_reference_does_not_emit_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 var v: await;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -480,16 +463,13 @@ var v: await;
 
 #[test]
 fn test_property_initializer_contextual_literal_type() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C {
     static readonly c: "foo" = "foo";
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -520,8 +500,6 @@ class C {
 
 #[test]
 fn test_indexed_access_class_property_type() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C {
     foo = 3;
@@ -531,8 +509,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -563,8 +540,6 @@ class C {
 
 #[test]
 fn test_tuple_array_assignability_in_checker() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Tup = [string, number];
 const tup: Tup = ["a", 1];
@@ -572,8 +547,7 @@ const arr: (string | number)[] = tup;
 const bad: Tup = arr;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -605,15 +579,12 @@ const bad: Tup = arr;
 
 #[test]
 fn test_satisfies_assignability_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const x = { a: 1 } satisfies { a: number; b: string };
 const y = "hello" satisfies number;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -649,16 +620,13 @@ const y = "hello" satisfies number;
 
 #[test]
 fn test_rest_any_bivariance_in_checker() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Logger = (...args: any[]) => void;
 const log: Logger = (id: number) => {};
 const log2: Logger = (id: number, extra: string) => {};
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -688,8 +656,6 @@ const log2: Logger = (id: number, extra: string) => {};
 
 #[test]
 fn test_weak_type_detection_in_checker() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Weak {
     a?: number;
@@ -701,8 +667,7 @@ const okAssign: Weak = ok;
 const badAssign: Weak = bad;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -734,8 +699,6 @@ const badAssign: Weak = bad;
 
 #[test]
 fn test_apparent_members_on_primitives() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const s: string = "hi";
 const n: number = 1;
@@ -746,8 +709,7 @@ n.toFixed();
 b.valueOf();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -777,15 +739,12 @@ b.valueOf();
 
 #[test]
 fn test_void_return_exception_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type VoidFn = () => void;
 const ok: VoidFn = () => "value";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -815,15 +774,12 @@ const ok: VoidFn = () => "value";
 
 #[test]
 fn test_literal_widening_for_mutable_bindings() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let x = true;
 const y = true;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -861,8 +817,6 @@ const y = true;
 
 #[test]
 fn test_excess_property_in_call_argument() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { x: number };
 function takesFoo(arg: Foo) {}
@@ -871,8 +825,7 @@ const obj = { x: 1, y: 2 };
 takesFoo(obj);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -899,7 +852,6 @@ takesFoo(obj);
 
 #[test]
 fn test_array_literal_best_common_type() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -909,8 +861,7 @@ numbers;
 mixed;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -971,7 +922,6 @@ mixed;
 
 #[test]
 fn test_index_access_union_key_cross_product() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -981,8 +931,7 @@ declare const key: "kind" | "val";
 obj[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1092,8 +1041,6 @@ export function f(node: { body: number }) {
 
 #[test]
 fn test_excess_property_in_return_statement() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { x: number };
 function makeFoo(): Foo {
@@ -1101,8 +1048,7 @@ function makeFoo(): Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1365,15 +1311,12 @@ fn test_checker_type_identity() {
 
 #[test]
 fn test_check_object_literal_excess_properties() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { x: number };
 let foo: Foo = { x: 1, y: 2 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
@@ -1399,11 +1342,9 @@ let foo: Foo = { x: 1, y: 2 };
 
 #[test]
 fn test_function_overload_missing_implementation_2391() {
-    use crate::parser::ParserState;
     let source = r#"function foo();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1429,14 +1370,12 @@ fn test_function_overload_missing_implementation_2391() {
 
 #[test]
 fn test_function_overload_with_implementation() {
-    use crate::parser::ParserState;
     let source = r#"
 function foo(): void;
 function foo() {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1462,14 +1401,12 @@ function foo() {}
 
 #[test]
 fn test_function_overload_wrong_name_2389() {
-    use crate::parser::ParserState;
     let source = r#"
 function foo(): void;
 function bar() {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1496,15 +1433,13 @@ function bar() {}
 #[test]
 fn test_duplicate_identifier_var_function_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 var foo = 1;
 function foo() {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1545,15 +1480,13 @@ function foo() {}
 #[ignore = "Pre-existing failure from recent merges"]
 fn test_duplicate_identifier_var_let_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 var foo = 1;
 let foo = 2;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1593,7 +1526,6 @@ let foo = 2;
 #[test]
 fn test_duplicate_identifier_type_alias_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
@@ -1603,8 +1535,7 @@ type Bar = { x: number };
 interface Bar { y: number; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1643,7 +1574,6 @@ interface Bar { y: number; }
 #[test]
 fn test_duplicate_identifier_enum_member_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 enum Color {
@@ -1655,8 +1585,7 @@ enum Color {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1688,15 +1617,13 @@ enum Color {
 #[test]
 fn test_type_alias_with_function_no_duplicate_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
 function Foo() {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1734,7 +1661,6 @@ function Foo() {}
 #[test]
 fn test_class_accessor_pair_no_duplicate_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class Rectangle {
@@ -1750,8 +1676,7 @@ class Rectangle {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1784,7 +1709,6 @@ class Rectangle {
 #[test]
 fn test_class_duplicate_getter_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class Rectangle {
@@ -1798,8 +1722,7 @@ class Rectangle {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -1837,7 +1760,6 @@ class Rectangle {
 #[test]
 fn test_overload_call_reports_no_overload_matches() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 function f(x: string): void;
@@ -1846,8 +1768,7 @@ function f(x: any, y?: any) {}
 f(true);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1876,8 +1797,6 @@ f(true);
 
 #[test]
 fn test_overload_call_resolves_basic_signatures() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function fn(x: string): string;
 function fn(x: number): number;
@@ -1886,8 +1805,7 @@ fn("hello");
 fn(42);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1913,8 +1831,6 @@ fn(42);
 
 #[test]
 fn test_overload_call_handles_optional_params() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function opt(a: string): void;
 function opt(a: string, b: number): void;
@@ -1923,8 +1839,7 @@ opt("x");
 opt("x", 1);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1950,8 +1865,6 @@ opt("x", 1);
 
 #[test]
 fn test_generic_function_value_is_assignable_to_non_generic_callback() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const SK = <A, B>(_: A, b: B): B => b;
 function accept<A, B>(f: (a: A, b: B) => B) {}
@@ -1960,8 +1873,7 @@ function run<A, B>() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -1987,8 +1899,6 @@ function run<A, B>() {
 
 #[test]
 fn test_overload_call_handles_rest_params() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function rest(...args: number[]): void;
 function rest(...args: string[]): void;
@@ -1997,8 +1907,7 @@ rest(1, 2, 3);
 rest("a", "b");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2024,8 +1933,6 @@ rest("a", "b");
 
 #[test]
 fn test_overload_call_handles_tuple_spread_params() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare function foo1(a: number, b: string, c: boolean, ...d: number[]): void;
 
@@ -2036,8 +1943,7 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2063,8 +1969,6 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
 
 #[test]
 fn test_overload_call_handles_variadic_tuple_param() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare function ft3<T extends unknown[]>(t: [...T]): T;
 declare function ft4<T extends unknown[]>(t: [...T]): readonly [...T];
@@ -2073,8 +1977,7 @@ ft3(["hello", 42]);
 ft4(["hello", 42]);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2100,8 +2003,6 @@ ft4(["hello", 42]);
 
 #[test]
 fn test_overload_call_handles_generic_signatures() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function id<T>(x: T): T;
 function id(x: any): any;
@@ -2110,8 +2011,7 @@ id("test");
 id(123);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2142,16 +2042,13 @@ id(123);
 /// generic callback functions (map and filter work, reduce has overload issues).
 #[test]
 fn test_overload_call_array_methods() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr = [1, 2, 3];
 arr.map(x => x * 2);
 arr.filter(x => x > 1);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2179,15 +2076,12 @@ arr.filter(x => x > 1);
 /// The callback should be contextually typed from the correct `Array.reduce` overload.
 #[test]
 fn test_overload_call_array_reduce() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr = [1, 2, 3];
 arr.reduce((a, b) => a + b, 0);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2219,15 +2113,12 @@ arr.reduce((a, b) => a + b, 0);
 /// like `(acc: number[], a: number) => { return [a]; }` against `reduce<U>`.
 #[test]
 fn test_generic_overload_block_body_callback_no_false_ts2769() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr = [1, 2, 3];
 arr.reduce((acc: number[], a: number, index: number) => { return [a] }, []);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2254,7 +2145,6 @@ arr.reduce((acc: number[], a: number, index: number) => { return [a] }, []);
 #[test]
 fn test_class_method_overload_reports_no_overload_matches() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -2267,8 +2157,7 @@ c.foo(true);
 c.foo("ok");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2298,7 +2187,6 @@ c.foo("ok");
 
 #[test]
 fn test_new_expression_infers_class_instance_type() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -2311,8 +2199,7 @@ class Foo {
 const f = new Foo();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2383,7 +2270,6 @@ const f = new Foo();
 
 #[test]
 fn test_new_expression_infers_parameter_properties() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -2393,8 +2279,7 @@ class Foo {
 const f = new Foo(1, "x", 2);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2450,7 +2335,6 @@ const f = new Foo(1, "x", 2);
 
 #[test]
 fn test_new_expression_infers_base_class_properties() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -2469,8 +2353,7 @@ class Derived extends Base<string> {
 const d = new Derived();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2519,7 +2402,6 @@ const d = new Derived();
 
 #[test]
 fn test_new_expression_infers_generic_class_type_params() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -2532,8 +2414,7 @@ class Box<T> {
 const b = new Box("hi");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2575,8 +2456,6 @@ const b = new Box("hi");
 
 #[test]
 fn test_class_type_annotation_includes_inherited_properties() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Base { name: string; }
 class Derived extends Base { }
@@ -2584,8 +2463,7 @@ let d: Derived;
 d.name;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -2617,16 +2495,13 @@ d.name;
 
 #[test]
 fn test_generic_class_type_annotation_property_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Box<T> { value: T; }
 let b: Box<string>;
 b.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -2658,16 +2533,13 @@ b.value;
 
 #[test]
 fn test_interface_extends_property_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface A { x: number; }
 interface B extends A { y: number; }
 function f(obj: B) { return obj.x + obj.y; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -2700,8 +2572,6 @@ function f(obj: B) { return obj.x + obj.y; }
 #[test]
 
 fn test_class_implements_interface_property_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Printable { print(): void; }
 class Doc implements Printable { }
@@ -2709,8 +2579,7 @@ let doc: Doc;
 doc.print();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -2743,7 +2612,6 @@ doc.print();
 #[test]
 fn test_new_expression_reports_overload_mismatch() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -2754,8 +2622,7 @@ class Foo {
 new Foo(true);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2783,8 +2650,6 @@ new Foo(true);
 
 #[test]
 fn test_new_expression_resolves_constructor_overloads() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     constructor(x: string);
@@ -2795,8 +2660,7 @@ new Foo("ok");
 new Foo(42);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2822,8 +2686,6 @@ new Foo(42);
 
 #[test]
 fn test_new_expression_resolves_constructor_overloads_with_rest() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     constructor(...args: number[]);
@@ -2834,8 +2696,7 @@ new Foo(1, 2, 3);
 new Foo("a", "b");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2861,13 +2722,11 @@ new Foo("a", "b");
 
 #[test]
 fn test_parameter_property_in_function_2369() {
-    use crate::parser::ParserState;
     // Parameter properties (public/private/protected/readonly on params)
     // are only allowed in constructor implementations
     let source = r#"function F(public x: string) { }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2893,11 +2752,9 @@ fn test_parameter_property_in_function_2369() {
 
 #[test]
 fn test_parameter_property_in_arrow_2369() {
-    use crate::parser::ParserState;
     let source = r#"var v = (public x: string) => { };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2923,7 +2780,6 @@ fn test_parameter_property_in_arrow_2369() {
 
 #[test]
 fn test_parameter_property_in_constructor_overload_2369() {
-    use crate::parser::ParserState;
     // Constructor overload signatures should error on parameter properties
     let source = r#"
 class C {
@@ -2932,8 +2788,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2961,7 +2816,6 @@ class C {
 
 #[test]
 fn test_parameter_property_in_constructor_implementation_ok() {
-    use crate::parser::ParserState;
     // Constructor implementations are allowed to have parameter properties
     let source = r#"
 class C {
@@ -2969,8 +2823,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -2996,12 +2849,9 @@ class C {
 
 #[test]
 fn test_class_name_any_error_2414() {
-    use crate::parser::ParserState;
-
     // Test that class name 'any' produces error 2414
     let code = "class any {}";
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3027,8 +2877,6 @@ fn test_class_name_any_error_2414() {
 
 #[test]
 fn test_local_variable_scope_resolution() {
-    use crate::parser::ParserState;
-
     // Test that local variables inside functions are properly resolved
     // This should NOT produce "Cannot find name 'x'" error
     let code = r#"
@@ -3037,8 +2885,7 @@ fn test_local_variable_scope_resolution() {
             let y = x + 1;
         }
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3065,8 +2912,6 @@ fn test_local_variable_scope_resolution() {
 
 #[test]
 fn test_for_loop_variable_scope() {
-    use crate::parser::ParserState;
-
     // Test that for loop variables are properly scoped
     let code = r#"
         function test() {
@@ -3075,8 +2920,7 @@ fn test_for_loop_variable_scope() {
             }
         }
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3103,8 +2947,6 @@ fn test_for_loop_variable_scope() {
 
 #[test]
 fn test_object_literal_properties_resolve_locals() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function test() {
     const foo = 1;
@@ -3113,8 +2955,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3140,8 +2981,6 @@ function test() {
 
 #[test]
 fn test_export_default_in_ambient_module_resolves_local() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare module "foo" {
     const x: string;
@@ -3149,8 +2988,7 @@ declare module "foo" {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3176,14 +3014,11 @@ declare module "foo" {
 
 #[test]
 fn test_missing_identifier_emits_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let x = MissingName;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3210,14 +3045,11 @@ let x = MissingName;
 
 #[test]
 fn test_missing_type_reference_emits_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let x: MissingType;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3247,7 +3079,6 @@ let x: MissingType;
 #[test]
 fn test_ts2307_import_with_module_augmentation() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { value } from "dep";
@@ -3259,8 +3090,7 @@ declare module "dep" {
 value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -3300,16 +3130,13 @@ value;
 
 #[test]
 fn test_declared_module_recorded_in_script() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare module "dep" {
     export const value: number;
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -3334,14 +3161,12 @@ declare module "dep" {
 #[test]
 fn test_ts2307_relative_import_not_found() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { foo } from "./non-existent-module";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -3377,14 +3202,12 @@ import { foo } from "./non-existent-module";
 #[test]
 fn test_ts2307_bare_specifier_not_found() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { something } from "nonexistent-npm-package";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -3420,7 +3243,6 @@ import { something } from "nonexistent-npm-package";
 #[test]
 fn test_ts2307_check_js_require_call_not_found() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const { foo } = require("bar");
@@ -3481,7 +3303,6 @@ const { foo } = require("bar");
 #[test]
 fn test_local_require_shadowing_does_not_emit_ts2307() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 function require(name) {
@@ -3538,7 +3359,6 @@ const { foo } = require("bar");
 #[test]
 fn test_declared_module_prevents_ts2307() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     // Script file (no import/export) with declare module
     let source = r#"
@@ -3588,8 +3408,6 @@ declare module "my-external-lib" {
 /// Test that `shorthand_ambient_modules` prevents TS2307 when module is declared without body
 #[test]
 fn test_shorthand_ambient_module_prevents_ts2307() {
-    use crate::parser::ParserState;
-
     // Shorthand ambient module declaration (no body)
     let source = r#"
 declare module "*.json";
@@ -3597,8 +3415,7 @@ declare module "*.json";
 import data from "./file.json";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -3635,14 +3452,12 @@ import data from "./file.json";
 #[test]
 fn test_ts2307_scoped_package_not_found() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { Component } from "@angular/core";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -3678,7 +3493,6 @@ import { Component } from "@angular/core";
 #[test]
 fn test_ts2307_multiple_unresolved_imports() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { foo } from "./missing1";
@@ -3686,8 +3500,7 @@ import { bar } from "./missing2";
 import * as pkg from "nonexistent-pkg";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -3731,14 +3544,12 @@ import * as pkg from "nonexistent-pkg";
 #[test]
 fn test_ts2307_diagnostic_message_contains_specifier() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { foo } from "./specific-missing-module";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3778,7 +3589,6 @@ import { foo } from "./specific-missing-module";
 #[test]
 fn test_ts2307_dynamic_import_unresolved() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 async function loadModule() {
@@ -3787,8 +3597,7 @@ async function loadModule() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3836,7 +3645,6 @@ async function loadModule() {
 #[test]
 fn test_ts2307_dynamic_import_non_string_specifier_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 async function loadModule(modulePath: string) {
@@ -3845,8 +3653,7 @@ async function loadModule(modulePath: string) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3881,14 +3688,11 @@ async function loadModule(modulePath: string) {
 
 #[test]
 fn test_missing_type_reference_in_function_type_emits_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Fn = (value: MissingType) => void;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3914,15 +3718,12 @@ type Fn = (value: MissingType) => void;
 
 #[test]
 fn test_missing_property_access_emits_2339_not_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const obj = { value: 1 };
 obj.missing;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3952,8 +3753,6 @@ obj.missing;
 
 #[test]
 fn test_arguments_in_async_arrow_no_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function f() {
     return async () => arguments.length;
@@ -3966,8 +3765,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -3993,8 +3791,6 @@ class C {
 
 #[test]
 fn test_ts2496_arguments_in_arrow_function_es5() {
-    use crate::parser::ParserState;
-
     // TS2496: arguments cannot be referenced in an arrow function in ES5.
     let source = r#"
 function f() {
@@ -4002,8 +3798,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4036,8 +3831,6 @@ function f() {
 
 #[test]
 fn test_ts2496_not_emitted_for_es2015_target() {
-    use crate::parser::ParserState;
-
     // TS2496 should NOT fire when target is ES2015+ (arrow functions are native).
     let source = r#"
 function f() {
@@ -4045,8 +3838,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4079,16 +3871,13 @@ function f() {
 
 #[test]
 fn test_ts1100_arguments_in_strict_mode() {
-    use crate::parser::ParserState;
-
     // TS1100: 'arguments' used as variable name in strict mode.
     let source = r#"
 var arguments;
 var a = () => arguments;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4125,8 +3914,6 @@ var a = () => arguments;
 
 #[test]
 fn test_signature_type_params_no_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface BaseConstructor {
     new <T>(x: T): { value: T };
@@ -4134,8 +3921,7 @@ interface BaseConstructor {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4161,14 +3947,11 @@ interface BaseConstructor {
 
 #[test]
 fn test_extends_undefined_no_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C extends undefined {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4194,15 +3977,12 @@ class C extends undefined {}
 
 #[test]
 fn test_extends_null_no_2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C extends null {}
 class D extends (null) {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4228,8 +4008,6 @@ class D extends (null) {}
 
 #[test]
 fn test_decorator_invalid_declarations_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare function dec<T>(target: T): T;
 
@@ -4249,8 +4027,7 @@ type T = number;
 var x: number;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4277,7 +4054,6 @@ var x: number;
 #[test]
 fn test_abstract_class_in_local_scope_2511() {
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     // Test case from tests/cases/compiler/abstractClassInLocalScopeIsAbstract.ts
     // Abstract class declared inside an IIFE should still error on instantiation
@@ -4290,8 +4066,7 @@ fn test_abstract_class_in_local_scope_2511() {
         })()
     "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4369,7 +4144,6 @@ fn test_abstract_class_in_local_scope_2511() {
 #[test]
 fn test_static_member_suggestion_2662() {
     // Error 2662: Cannot find name 'foo'. Did you mean the static member 'C.foo'?
-    use crate::parser::ParserState;
     let source = r#"
 class C {
     static foo: string;
@@ -4380,8 +4154,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4422,7 +4195,6 @@ fn test_static_member_suggestion_2662_assignment_target() {
     // Error 2662: Cannot find name 's'. Did you mean the static member 'C.s'?
     // This tests the case where a static member is used as an assignment target,
     // which goes through get_type_of_assignment_target instead of get_type_of_identifier.
-    use crate::parser::ParserState;
     let source = r#"
 class C {
     static s: any;
@@ -4433,8 +4205,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4472,8 +4243,6 @@ class C {
 
 #[test]
 fn test_class_static_side_property_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class A {
     static foo: number;
@@ -4482,8 +4251,7 @@ class B {}
 let ctor: typeof A = B;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -4516,8 +4284,6 @@ let ctor: typeof A = B;
 
 #[test]
 fn test_private_member_nominal_class_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class A {
     private x: number;
@@ -4528,8 +4294,7 @@ class B {
 const a: A = new B();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -4563,7 +4328,6 @@ const a: A = new B();
 #[test]
 fn test_private_protected_property_access_errors() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -4575,8 +4339,7 @@ f.x;
 f.y;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -4611,8 +4374,6 @@ f.y;
 
 #[test]
 fn test_private_protected_property_access_ok() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Base {
     protected z = 3;
@@ -4626,8 +4387,7 @@ class Baz {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -4663,7 +4423,6 @@ class Baz {
 #[test]
 fn test_protected_access_requires_derived_instance() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     // In tsc, accessing a protected member on a base-class-typed reference from
     // a derived class is TS2446 ("Property 'y' is protected and only accessible
@@ -4681,8 +4440,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -4718,7 +4476,6 @@ class Derived extends Base {
 #[test]
 fn test_protected_static_access_allowed_from_derived_class() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     // Protected static members are accessible from subclasses through any
     // reference to the class hierarchy (both Base.s and Derived.s).
@@ -4736,8 +4493,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -4773,7 +4529,6 @@ class Derived extends Base {
 #[test]
 fn test_abstract_property_in_constructor_2715() {
     // Error 2715: Abstract property 'prop' in class 'AbstractClass' cannot be accessed in the constructor.
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class AbstractClass {
@@ -4785,8 +4540,7 @@ abstract class AbstractClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4813,11 +4567,9 @@ abstract class AbstractClass {
 #[test]
 fn test_interface_name_cannot_be_reserved_2427() {
     // Error 2427: Interface name cannot be 'string' (or other primitive types)
-    use crate::parser::ParserState;
     let source = r#"interface string {}"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4850,11 +4602,9 @@ fn test_interface_name_cannot_be_reserved_2427() {
 #[test]
 fn test_const_modifier_on_class_property_1248() {
     // Error 1248: A class member cannot have the 'const' keyword
-    use crate::parser::ParserState;
     let source = r#"class AtomicNumbers { static const H = 1; }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4888,14 +4638,12 @@ fn test_const_modifier_on_class_property_1248() {
 fn test_accessor_type_compatibility_2322() {
     // TS 5.1+: when BOTH getter and setter have explicit type annotations,
     // unrelated types are allowed — no TS2322.
-    use crate::parser::ParserState;
     let source = r#"class C {
     public set AnnotatedSetter(a: number) { }
     public get AnnotatedSetter(): string { return ""; }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4924,7 +4672,6 @@ fn test_accessor_type_compatibility_inheritance_no_error() {
     // Test that getter returning derived class type is assignable to setter base class param
     // class B extends A, so B <: A
     // Getter returns B, setter takes A -> Should NOT error (B is assignable to A)
-    use crate::parser::ParserState;
 
     let source = r#"
 class A { }
@@ -4936,8 +4683,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -4978,7 +4724,6 @@ class C {
 #[test]
 fn test_accessor_type_compatibility_typeof_structural() {
     // Getter return type should be assignable to setter param type when using typeof.
-    use crate::parser::ParserState;
     let source = r#"
 var x: { foo: string; }
 class C {
@@ -4987,8 +4732,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5016,7 +4760,6 @@ class C {
 #[test]
 fn test_abstract_class_through_type_alias_2511() {
     // Error 2511: Cannot create an instance of an abstract class - through type alias
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class AbstractA { a!: string; }
@@ -5025,8 +4768,7 @@ declare const cls2: Abstracts;
 new cls2();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5060,7 +4802,6 @@ new cls2();
 #[test]
 fn test_abstract_class_union_type_2511() {
     // Error 2511: Cannot create an instance of an abstract class - through union type
-    use crate::parser::ParserState;
 
     let source = r#"
 class ConcreteA {}
@@ -5073,8 +4814,7 @@ declare const cls1: ConcretesOrAbstracts;
 new cls1();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5108,7 +4848,6 @@ new cls1();
 #[test]
 fn test_property_used_before_initialization_2729() {
     // Error 2729: Property is used before its initialization
-    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -5122,8 +4861,7 @@ class NoError {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5152,8 +4890,6 @@ class NoError {
 
 #[test]
 fn test_new_expression_property_used_before_initialization_2729() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class CtorTyped {
     value: { new (): object };
@@ -5166,8 +4902,7 @@ class CtorGeneric {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5196,7 +4931,6 @@ class CtorGeneric {
 fn test_static_block_property_used_before_initialization_2729() {
     // Error 2729: Property used before initialization in static blocks
     // Static blocks referencing later-declared static properties via C.X or this.X
-    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -5212,8 +4946,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5245,7 +4978,6 @@ class C {
 #[test]
 fn test_static_block_this_access_2729() {
     // Error 2729: this.X in static block where X is declared after
-    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -5260,8 +4992,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5291,7 +5022,6 @@ class C {
 #[test]
 fn test_static_block_no_error_for_arrow_function_2729() {
     // Accesses inside arrow functions in static blocks are deferred — no TS2729
-    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -5302,8 +5032,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5334,7 +5063,6 @@ class C {
 fn test_property_not_assignable_to_same_in_base_2416() {
     // Error 2416: Property 'num' in type 'WrongTypePropertyImpl' is not assignable
     // to the same property in base type 'WrongTypeProperty'.
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class WrongTypeProperty {
@@ -5345,8 +5073,7 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     // Debug: Print parsed classes
     let arena = parser.get_arena();
@@ -5396,8 +5123,6 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
 
 #[test]
 fn test_property_not_assignable_to_generic_base_2416() {
-    use crate::parser::ParserState;
-
     let source = r#"
 abstract class Base<T> {
     abstract value: T;
@@ -5407,8 +5132,7 @@ class Derived extends Base<string> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -5436,7 +5160,6 @@ class Derived extends Base<string> {
 fn test_non_abstract_class_missing_implementations_2654() {
     // Error 2654: Non-abstract class 'C' is missing implementations for
     // the following members of 'B': 'prop', 'm'.
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class B {
@@ -5448,8 +5171,7 @@ class C extends B {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5498,7 +5220,6 @@ class C extends B {
 #[test]
 fn test_readonly_property_assignment_2540() {
     // Error 2540: Cannot assign to 'ro' because it is a read-only property.
-    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -5508,8 +5229,7 @@ let c = new C();
 c.ro = "error: lhs of assignment can't be readonly";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5544,7 +5264,6 @@ c.ro = "error: lhs of assignment can't be readonly";
 #[test]
 fn test_readonly_element_access_assignment_2540() {
     // Error 2540: Cannot assign to 'name' because it is a read-only property.
-    use crate::parser::ParserState;
 
     let source = r#"
 interface Config {
@@ -5554,8 +5273,7 @@ let config: Config = { name: "ok" };
 config["name"] = "error";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5586,15 +5304,13 @@ config["name"] = "error";
 #[test]
 fn test_readonly_array_element_assignment_2540() {
     // Error 2542: Index signature in type 'readonly number[]' only permits reading.
-    use crate::parser::ParserState;
 
     let source = r#"
 const xs: readonly number[] = [1, 2];
 xs[0] = 3;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5626,7 +5342,6 @@ xs[0] = 3;
 #[test]
 fn test_readonly_method_signature_assignment_2540() {
     // Error 2540: Cannot assign to 'run' because it is a read-only property.
-    use crate::parser::ParserState;
 
     let source = r#"
 interface Service {
@@ -5636,8 +5351,7 @@ let svc: Service = { run() {} };
 svc.run = () => {};
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5668,7 +5382,6 @@ svc.run = () => {};
 #[test]
 fn test_readonly_index_signature_element_access_assignment_2542() {
     // Error 2542: Index signature in type 'MyReadonlyMap' only permits reading.
-    use crate::parser::ParserState;
 
     let source = r#"
 interface MyReadonlyMap {
@@ -5678,8 +5391,7 @@ let map: MyReadonlyMap = { a: 1 };
 map["a"] = 2;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5710,7 +5422,6 @@ map["a"] = 2;
 #[test]
 fn test_readonly_index_signature_variable_access_assignment_2542() {
     // Error 2542: Index signature in type 'ReadonlyMap' only permits reading.
-    use crate::parser::ParserState;
 
     let source = r#"
 interface ReadonlyMap {
@@ -5721,8 +5432,7 @@ let key: string = "a";
 map[key] = 2;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5753,7 +5463,6 @@ fn test_nonexistent_property_should_not_report_ts2540() {
     // P1 fix: Assigning to a non-existent property should report TS2339 (property doesn't exist)
     // but NOT TS2540 (cannot assign to readonly). This matches tsc behavior which checks
     // property existence before readonly status.
-    use crate::parser::ParserState;
 
     let source = r#"
 interface Person {
@@ -5764,8 +5473,7 @@ let p: Person = { name: "Alice" };
 p.nonexistent = "error";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5808,15 +5516,13 @@ p.nonexistent = "error";
 fn test_readonly_tuple_computed_index_assignment_2542() {
     // TS2542 for computed index on readonly tuple: v[0 + 1] = 1
     // The ReadonlyChecker must recognize ReadonlyType(Tuple) has a readonly number index.
-    use crate::parser::ParserState;
 
     let source = r#"
 declare var v: readonly [number, number, ...number[]];
 v[0 + 1] = 1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5847,15 +5553,13 @@ v[0 + 1] = 1;
 #[test]
 fn test_delete_readonly_element_access_2542() {
     // TS2542 for delete on readonly element access: delete v[2]
-    use crate::parser::ParserState;
 
     let source = r#"
 declare var v: readonly [number, number, ...number[]];
 delete v[2];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -5886,7 +5590,6 @@ delete v[2];
 #[test]
 fn test_abstract_property_negative_errors() {
     // Test the full abstractPropertyNegative test case to verify expected errors
-    use crate::parser::ParserState;
 
     let source = r#"
 interface A {
@@ -5910,8 +5613,7 @@ let c = new C();
 c.ro = "error: lhs of assignment can't be readonly";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -6013,7 +5715,6 @@ fn test_contextual_typing_for_function_parameters() {
 
 #[test]
 fn test_contextual_typing_skips_this_parameter() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
     use tsz_solver::TypeData;
 
@@ -6024,8 +5725,7 @@ takesHandler(function(this: { value: number }, x) {
 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -6087,16 +5787,13 @@ takesHandler(function(this: { value: number }, x) {
 
 #[test]
 fn test_contextual_typing_for_variable_initializer() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const handler: (x: string) => void = (x) => {
     let y: number = x;
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -6122,8 +5819,6 @@ const handler: (x: string) => void = (x) => {
 
 #[test]
 fn test_contextual_typing_overload_by_arity() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function register(cb: (x: string) => void): void;
 function register(cb: (x: number, y: boolean) => void, flag: boolean): void;
@@ -6134,8 +5829,7 @@ register((x) => {
 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -6213,15 +5907,12 @@ fn test_contextual_typing_for_object_properties() {
 
 #[test]
 fn test_contextual_property_type_infers_callback_param() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Handler = { cb: (x: number) => void };
 const h: Handler = { cb: x => x.toUpperCase() };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -6247,16 +5938,13 @@ const h: Handler = { cb: x => x.toUpperCase() };
 
 #[test]
 fn test_ts2339_any_property_access_no_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let value: any;
 value.foo;
 value.bar();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6287,8 +5975,6 @@ value.bar();
 
 #[test]
 fn test_ts2339_unknown_property_access_after_narrowing() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let value: unknown = {};
 value.foo;
@@ -6296,8 +5982,7 @@ const obj: object = value as object;
 obj.foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6347,8 +6032,6 @@ obj.foo;
 
 #[test]
 fn test_ts2339_catch_binding_unknown() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @strict: true
 function f() {
@@ -6358,8 +6041,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6396,8 +6078,6 @@ function f() {
 
 #[test]
 fn test_ts2339_union_optional_property_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type A = { foo?: string };
 type B = { foo: string };
@@ -6407,8 +6087,7 @@ function read(value: A | B) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6439,8 +6118,6 @@ function read(value: A | B) {
 
 #[test]
 fn test_ts2339_class_static_inheritance() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Base {
     static foo: number;
@@ -6451,8 +6128,7 @@ class Derived extends Base {}
 Derived.foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6483,8 +6159,6 @@ Derived.foo;
 
 #[test]
 fn test_ts2339_class_instance_object_members() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C {
     x: number = 1;
@@ -6495,8 +6169,7 @@ c.toString();
 c.hasOwnProperty("x");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6527,8 +6200,6 @@ c.hasOwnProperty("x");
 
 #[test]
 fn test_ts2339_this_missing_property_in_class() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C {
     constructor() {
@@ -6537,8 +6208,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6569,8 +6239,6 @@ class C {
 
 #[test]
 fn test_ts2339_static_property_access_from_instance() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C {
     static foo: number;
@@ -6583,8 +6251,7 @@ c.foo;
 c.bar;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6615,16 +6282,13 @@ c.bar;
 
 #[test]
 fn test_ts2339_computed_name_this_missing_static() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C {
     static [this.missing] = 123;
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6658,8 +6322,6 @@ class C {
 
 #[test]
 fn test_ts2339_computed_name_this_in_class_expression() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class C {
     static readonly c: "foo" = "foo";
@@ -6670,8 +6332,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6705,8 +6366,6 @@ class C {
 
 #[test]
 fn test_ts2339_private_name_missing_on_index_signature() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class A {
     [k: string]: any;
@@ -6717,8 +6376,7 @@ class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -6751,8 +6409,6 @@ class A {
 
 #[test]
 fn test_ts2339_private_name_in_expression_typo() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     #field = 1;
@@ -6763,8 +6419,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     // Parser may emit diagnostics for private name `in` expressions; that's fine.
 
     let mut binder = BinderState::new();
@@ -6791,8 +6446,6 @@ class Foo {
 
 #[test]
 fn test_ts2339_class_interface_merge() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface C {
     x: number;
@@ -6807,8 +6460,7 @@ c.x;
 c.y;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -7060,16 +6712,13 @@ fn test_symbol_constructor_too_many_args() {
 
 #[test]
 fn test_variable_redeclaration_same_type() {
-    use crate::parser::ParserState;
-
     // Test that redeclaring a variable with the same type is allowed
     let source = r#"function test() {
     var x: string;
     var x: string;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7092,8 +6741,6 @@ fn test_variable_redeclaration_same_type() {
 
 #[test]
 fn test_variable_redeclaration_different_type_2403() {
-    use crate::parser::ParserState;
-
     // Test that redeclaring a variable with different type causes error TS2403
     // Must be inside a function where local scopes are active
     let source = r#"function test() {
@@ -7101,8 +6748,7 @@ fn test_variable_redeclaration_different_type_2403() {
     var x: number;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7129,8 +6775,6 @@ fn test_variable_redeclaration_different_type_2403() {
 
 #[test]
 fn test_variable_self_reference_no_2403() {
-    use crate::parser::ParserState;
-
     // Self-references in a var initializer should not trigger TS2403.
     let source = r#"function test() {
     var x = {
@@ -7139,8 +6783,7 @@ fn test_variable_self_reference_no_2403() {
     };
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7166,8 +6809,6 @@ fn test_variable_self_reference_no_2403() {
 
 #[test]
 fn test_param_var_redecl_ts2403() {
-    use crate::parser::ParserState;
-
     // TS2403: var redeclaration of optional parameter with different type
     // `options?: number` has type `number | undefined`, var declares `number`
     let source = r#"class C {
@@ -7176,8 +6817,7 @@ fn test_param_var_redecl_ts2403() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7294,8 +6934,6 @@ fn test_symbol_property_not_found() {
 
 #[test]
 fn test_property_access_from_index_signature_4111() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface StringMap {
     [key: string]: number;
@@ -7304,8 +6942,7 @@ const obj: StringMap = {} as any;
 const val = obj.someProperty;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7337,8 +6974,6 @@ const val = obj.someProperty;
 
 #[test]
 fn test_explicit_property_no_error_4111() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface MixedType {
     explicitProp: string;
@@ -7348,8 +6983,7 @@ const obj: MixedType = {} as any;
 const val = obj.explicitProp;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7385,16 +7019,13 @@ const val = obj.explicitProp;
 /// When this is fixed, update to assert !codes.contains(&4111).
 #[test]
 fn test_union_with_index_signature_4111() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Mixed = { x: number } | { [key: string]: number };
 const obj: Mixed = {} as any;
 const val = obj.x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7429,7 +7060,6 @@ const val = obj.x;
 
 #[test]
 fn test_checker_lowers_full_source_file() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -7439,8 +7069,7 @@ type Baz = [string, number];
 type Qux = { [key: string]: Foo };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7546,8 +7175,6 @@ type Qux = { [key: string]: Foo };
 /// Properties from parent interfaces are not correctly inherited.
 #[test]
 fn test_interface_extends_inherits_properties() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base {
     base: string;
@@ -7560,8 +7187,7 @@ const base_value = obj.base;
 const derived_value = obj.derived;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7605,8 +7231,6 @@ const derived_value = obj.derived;
 /// correctly resolved.
 #[test]
 fn test_interface_extends_applies_type_arguments() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Box<T> {
     value: T;
@@ -7618,8 +7242,7 @@ const obj: Derived = { value: "x", count: 1 };
 const value = obj.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7663,8 +7286,6 @@ const value = obj.value;
 /// NOTE: Currently ignored - see `test_interface_extends_applies_type_arguments`.
 #[test]
 fn test_interface_extends_type_alias_applies_type_arguments() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Box<T> = { value: T };
 interface Derived extends Box<string> {
@@ -7674,8 +7295,7 @@ const obj: Derived = { value: "x", count: 1 };
 const value = obj.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7704,8 +7324,6 @@ const value = obj.value;
 
 #[test]
 fn test_interface_extends_class_applies_type_arguments() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Box<T> {
     value!: T;
@@ -7717,8 +7335,7 @@ const obj: Derived = { value: "x", count: 1 };
 const value = obj.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7747,8 +7364,6 @@ const value = obj.value;
 
 #[test]
 fn test_interface_extends_readonly_property_mismatch_2430() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base {
     x: number;
@@ -7758,8 +7373,7 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7786,8 +7400,6 @@ interface Derived extends Base {
 
 #[test]
 fn test_interface_extends_optional_property_mismatch_2430() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base {
     x: number;
@@ -7797,8 +7409,7 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7824,8 +7435,6 @@ interface Derived extends Base {
 
 #[test]
 fn test_optional_property_allows_undefined_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo {
     x?: number;
@@ -7835,8 +7444,7 @@ const ok2: Foo = { x: 1 };
 const ok3: Foo = { x: undefined };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7861,8 +7469,6 @@ const ok3: Foo = { x: undefined };
 
 #[test]
 fn test_interface_extends_string_literal_property_mismatch_2430() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base {
     "x": number;
@@ -7872,8 +7478,7 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7899,8 +7504,6 @@ interface Derived extends Base {
 
 #[test]
 fn test_interface_extends_generic_argument_mismatch_2430() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base<T> {
     x: T;
@@ -7910,8 +7513,7 @@ interface Derived extends Base<string> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7940,8 +7542,6 @@ interface Derived extends Base<string> {
 /// NOTE: Currently ignored - see `test_interface_extends_applies_type_arguments`.
 #[test]
 fn test_interface_extends_generic_argument_match() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base<T> {
     x: T;
@@ -7951,8 +7551,7 @@ interface Derived extends Base<string> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -7978,8 +7577,6 @@ interface Derived extends Base<string> {
 
 #[test]
 fn test_interface_extends_namespace_qualified_base_2430() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export interface Base {
@@ -7991,8 +7588,7 @@ interface Derived extends NS.Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8021,8 +7617,6 @@ interface Derived extends NS.Base {
 /// NOTE: Currently ignored - see `test_interface_extends_inherits_properties`.
 #[test]
 fn test_interface_extends_generic_method_compatible() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base {
     m<T>(value: T): T;
@@ -8032,8 +7626,7 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8059,7 +7652,6 @@ interface Derived extends Base {
 
 #[test]
 fn test_checker_cross_namespace_type_reference() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -8069,8 +7661,7 @@ namespace Outer {
 type Alias = Outer.Inner;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8127,8 +7718,6 @@ type Alias = Outer.Inner;
 
 #[test]
 fn test_checker_nested_namespace_export_visible() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace A {
     export type ID = string;
@@ -8138,8 +7727,7 @@ namespace A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -8170,8 +7758,6 @@ namespace A {
 
 #[test]
 fn test_checker_nested_namespace_non_exported_not_visible() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace A {
     type Internal = number;
@@ -8181,8 +7767,7 @@ namespace A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -8214,14 +7799,12 @@ namespace A {
 #[test]
 fn test_class_extends_null_no_ts2304() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class C1 extends null {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -8253,14 +7836,12 @@ class C1 extends null {}
 #[test]
 fn test_exports_global_no_ts2304() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 exports.foo = 1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -8291,8 +7872,6 @@ exports.foo = 1;
 
 #[test]
 fn test_checker_nested_namespace_exported_class_visible() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Models {
     export class User {}
@@ -8304,8 +7883,7 @@ namespace Models {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -8336,7 +7914,6 @@ namespace Models {
 
 #[test]
 fn test_checker_module_augmentation_merges_exports() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -8350,8 +7927,7 @@ type AliasA = Outer.A;
 type AliasB = Outer.B;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8428,7 +8004,6 @@ type AliasB = Outer.B;
 
 #[test]
 fn test_checker_lower_generic_type_reference_applies_args() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -8436,8 +8011,7 @@ type Box<T> = { value: T };
 type Alias = Box<string>;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8491,15 +8065,13 @@ type Alias = Box<string>;
 
 #[test]
 fn test_checker_lowers_generic_function_type_annotation_uses_type_params() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
 const f: <T>(value: T) => T = (value) => value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8557,7 +8129,6 @@ const f: <T>(value: T) => T = (value) => value;
 
 #[test]
 fn test_interface_generic_call_signature_uses_type_params() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -8566,8 +8137,7 @@ interface Callable {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8632,7 +8202,6 @@ interface Callable {
 
 #[test]
 fn test_interface_generic_construct_signature_uses_type_params() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -8641,8 +8210,7 @@ interface Factory {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8707,7 +8275,6 @@ interface Factory {
 
 #[test]
 fn test_checker_lowers_generic_function_declaration_uses_type_params() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -8716,8 +8283,7 @@ function id<T>(value: T): T {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8775,7 +8341,6 @@ function id<T>(value: T): T {
 
 #[test]
 fn test_function_return_type_inferred_from_body() {
-    use crate::parser::ParserState;
     use tsz_solver::{TypeData, TypeId};
 
     let source = r#"
@@ -8784,8 +8349,7 @@ function id(x: string) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8821,7 +8385,6 @@ function id(x: string) {
 
 #[test]
 fn test_arrow_function_return_type_inferred_union() {
-    use crate::parser::ParserState;
     use tsz_solver::{TypeData, TypeId};
 
     let source = r#"
@@ -8833,8 +8396,7 @@ const f = (flag: boolean) => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -8884,8 +8446,6 @@ const f = (flag: boolean) => {
 /// Test asserts current behavior; update when 7010 is implemented.
 #[test]
 fn test_missing_return_and_implicit_any_diagnostics() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitAny: true
 function noReturn(): number {
@@ -8916,8 +8476,7 @@ function implicitAny(x) {
 const anon = () => { return null; };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -8976,8 +8535,6 @@ const anon = () => { return null; };
 
 #[test]
 fn test_implicit_any_return_in_signatures() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitAny: true
 interface I {
@@ -8993,8 +8550,7 @@ declare class C {
 const obj = { baz() { return undefined; } };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9028,8 +8584,6 @@ const obj = { baz() { return undefined; } };
 
 #[test]
 fn test_ts7010_async_function_no_false_positive() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitAny: true
 // Async functions without return type should NOT trigger TS7010
@@ -9047,8 +8601,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9086,8 +8639,6 @@ class C {
 
 #[test]
 fn test_ts7010_exactly_any_return() {
-    use crate::parser::ParserState;
-
     // TSC does NOT emit TS7010/TS7011 when a function body returns an `any`-typed
     // expression.  The return type is validly *inferred* as `any` (not "implicit any").
     // TS7010 only fires for bodyless declarations (interfaces, abstract methods) or
@@ -9105,8 +8656,7 @@ function returnsAny() {
 const arrowReturnsAny = () => anyValue;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9148,8 +8698,6 @@ const arrowReturnsAny = () => anyValue;
 /// under noImplicitAny. When implemented, update to expect 1 TS7010.
 #[test]
 fn test_ts7010_null_undefined_return() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitAny: true
 // Should trigger TS7010 - return type is null | undefined (treated as 'any')
@@ -9159,8 +8707,7 @@ function returnsNullOrUndefined(flag: boolean) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9195,8 +8742,6 @@ function returnsNullOrUndefined(flag: boolean) {
 
 #[test]
 fn test_ts7010_class_expression_no_false_positive() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitAny: true
 // Functions returning class expressions should NOT trigger TS7010
@@ -9210,8 +8755,7 @@ function createClass() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9254,8 +8798,6 @@ function createClass() {
 
 #[test]
 fn test_ts7010_return_path_analysis() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function allReturn(flag: boolean) {
     if (flag) {
@@ -9293,8 +8835,7 @@ function loopWithNestedSwitchBreak(flag: boolean) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9360,8 +8901,6 @@ function loopWithNestedSwitchBreak(flag: boolean) {
 /// This should NOT fire for functions that only throw since throwing is a valid exit.
 #[test]
 fn test_throw_only_function_no_2355() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Function that only throws should NOT get 2355
 function throwOnly(): number {
@@ -9385,8 +8924,7 @@ function fallsThrough(): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9426,8 +8964,6 @@ function fallsThrough(): number {
 /// Test that infinite loops don't trigger TS2355 either
 #[test]
 fn test_infinite_loop_no_2355() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Infinite loop without break should NOT get 2355
 function infiniteLoop(): number {
@@ -9444,8 +8980,7 @@ function loopWithBreak(): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9480,8 +9015,6 @@ function loopWithBreak(): number {
 
 #[test]
 fn test_async_promise_void_no_2355() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Promise<T> {}
 interface PromiseLike<T> {}
@@ -9501,8 +9034,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9534,16 +9066,13 @@ class C {
 /// Test TS2355: Async function returning Promise<T> requires return statement
 #[test]
 fn test_async_promise_number_requires_return() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Promise<T> {}
 
 async function f(): Promise<number> { }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9574,8 +9103,6 @@ async function f(): Promise<number> { }
 
 #[test]
 fn test_async_generator_no_2355() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface AsyncIterator<T, TReturn = any, TNext = unknown> {}
 interface AsyncIterable<T> {}
@@ -9587,8 +9114,7 @@ async function* g3(): AsyncIterable<number> { yield 1; }
 async function* g4(): {} { yield 1; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9621,8 +9147,6 @@ async function* g4(): {} { yield 1; }
 /// This replicates the scenario where Promise is not locally declared but comes from lib.
 #[test]
 fn test_async_alias_return_type_no_2355() {
-    use crate::parser::ParserState;
-
     // Note: Unlike test_async_promise_void_no_2355, this doesn't declare Promise interface.
     // This matches the conformance test which relies on lib.es2015.promise.
     // The type alias PromiseAlias<T> = Promise<T> should still unwrap to void.
@@ -9633,8 +9157,7 @@ async function f(): PromiseAlias<void> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9669,8 +9192,6 @@ async function f(): PromiseAlias<void> {
 /// terminate control flow (matching tsc — see issue #3662).
 #[test]
 fn test_never_returning_call_no_2355() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Helper that returns never
 function fail(message: string): never {
@@ -9699,8 +9220,7 @@ function usesFailInList(): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9737,8 +9257,6 @@ function usesFailInList(): number {
 /// Test that try/catch blocks that always return or throw don't trigger TS2355.
 #[test]
 fn test_try_catch_no_2355() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function fail(): never {
     throw "boom";
@@ -9777,8 +9295,7 @@ function tryCatchFallsThrough(): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9820,8 +9337,6 @@ function tryCatchFallsThrough(): number {
 
 #[test]
 fn test_no_implicit_any_false_suppresses_diagnostics() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitAny: false
 function implicitAnyParam(x) {
@@ -9829,8 +9344,7 @@ function implicitAnyParam(x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9865,8 +9379,6 @@ function implicitAnyParam(x) {
 /// should trigger these diagnostics when captured by closures.
 #[test]
 fn test_ts7005_not_emitted_for_let_declarations() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function f() {
     // let without initializer, captured by closure — should NOT trigger TS7005/TS7034
@@ -9879,8 +9391,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9929,8 +9440,6 @@ function f() {
 
 #[test]
 fn test_strict_false_suppresses_implicit_any() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @strict: false
 function implicitAnyParam(x) {
@@ -9938,8 +9447,7 @@ function implicitAnyParam(x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -9971,8 +9479,6 @@ function implicitAnyParam(x) {
 
 #[test]
 fn test_implicit_any_parameters_in_type_signatures() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitAny: true
 interface CtorTarget {}
@@ -10000,8 +9506,7 @@ interface HandlerProp {
 type PropAlias = { handler: (g) => void; };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -10035,8 +9540,6 @@ type PropAlias = { handler: (g) => void; };
 
 #[test]
 fn test_implicit_any_rest_parameter() {
-    use crate::parser::ParserState;
-
     // Test that rest parameters without type annotation trigger TS7006 with 'any[]'
     let source = r#"
 // @noImplicitAny: true
@@ -10051,8 +9554,7 @@ function bar(a, ...rest) {
 const arrow = (...items) => items;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -10124,15 +9626,12 @@ const arrow = (...items) => items;
 
 #[test]
 fn test_checker_lowers_element_access_array() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr: number[] = [1, 2];
 const value = arr[0];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10166,15 +9665,13 @@ const value = arr[0];
 /// supertype object `{ a: string }`.
 #[test]
 fn test_array_literal_best_common_type_prefers_supertype_element() {
-    use crate::parser::ParserState;
     use tsz_solver::{TypeData, TypeId};
 
     let source = r#"
 const arr = [{ a: "x" }, { a: "y", b: 1 }];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10212,16 +9709,13 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
 
 #[test]
 fn test_checker_lowers_element_access_tuple_literals() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const tup: [string, number] = ["a", 1];
 const first = tup[0];
 const second = tup[1];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10258,15 +9752,12 @@ const second = tup[1];
 
 #[test]
 fn test_checker_array_element_access_unchecked() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr: number[] = [];
 const value = arr[0];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10295,7 +9786,6 @@ const value = arr[0];
 
 #[test]
 fn test_checker_tuple_optional_element_access_includes_undefined() {
-    use crate::parser::ParserState;
     use tsz_solver::{TypeData, TypeId};
 
     let source = r#"
@@ -10303,8 +9793,7 @@ const tup: [string?] = ["a"];
 const first = tup[0];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10341,15 +9830,12 @@ const first = tup[0];
 
 #[test]
 fn test_checker_lowers_element_access_string_literal_property() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const obj = { x: 1, y: "hi" };
 const value = obj["x"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10378,15 +9864,12 @@ const value = obj["x"];
 
 #[test]
 fn test_checker_lowers_element_access_array_length() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr = [1, 2];
 const length = arr["length"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10432,15 +9915,12 @@ const length = arr["length"];
 
 #[test]
 fn test_checker_lowers_element_access_numeric_string_index() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr: number[] = [1, 2];
 const value = arr["0"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10469,8 +9949,6 @@ const value = arr["0"];
 
 #[test]
 fn test_checker_lowers_element_access_string_index_signature() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface StringMap {
     [key: string]: boolean;
@@ -10479,8 +9957,7 @@ const map: StringMap = {} as any;
 const value = map["foo"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10509,8 +9986,6 @@ const value = map["foo"];
 
 #[test]
 fn test_checker_lowers_element_access_number_index_signature() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface NumberMap {
     [key: number]: string;
@@ -10519,8 +9994,7 @@ const map: NumberMap = {} as any;
 const value = map[1];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10553,8 +10027,6 @@ const value = map[1];
 /// that has no index signature should emit TS7053.
 #[test]
 fn test_checker_element_access_requires_index_signature() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo { x: number; }
 const obj: Foo = { x: 1 };
@@ -10562,8 +10034,7 @@ let key: string = "x";
 const value = obj[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10599,8 +10070,6 @@ const value = obj[key];
 /// that includes non-literal types should emit TS7053.
 #[test]
 fn test_checker_element_access_union_string_index_requires_signature() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo { x: number; }
 const obj: Foo = { x: 1 };
@@ -10608,8 +10077,7 @@ let key: "x" | string;
 const value = obj[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10645,8 +10113,6 @@ const value = obj[key];
 /// should emit TS7053. Related to `test_checker_element_access_union_string_index_requires_signature`.
 #[test]
 fn test_checker_element_access_union_string_number_index_requires_signature() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo { x: number; }
 const obj: Foo = { x: 1 };
@@ -10654,8 +10120,7 @@ let key: string | number;
 const value = obj[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10687,7 +10152,6 @@ const value = obj[key];
 
 #[test]
 fn test_checker_lowers_element_access_literal_key_union() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -10697,8 +10161,7 @@ declare let key: "a" | "b";
 const value = obj[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10735,7 +10198,6 @@ const value = obj[key];
 
 #[test]
 fn test_checker_element_access_union_key_cross_product() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -10745,8 +10207,7 @@ declare const key: "kind" | "val";
 const value = obj[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10789,8 +10250,6 @@ const value = obj[key];
 
 #[test]
 fn test_checker_lowers_element_access_literal_key_type() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo { a: number; b: string; }
 const obj: Foo = { a: 1, b: "hi" };
@@ -10798,8 +10257,7 @@ declare let key: "a";
 const value = obj[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10828,7 +10286,6 @@ const value = obj[key];
 
 #[test]
 fn test_checker_lowers_element_access_numeric_literal_union() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -10837,8 +10294,7 @@ declare let idx: 0 | 2;
 const value = tup[idx];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10876,7 +10332,6 @@ const value = tup[idx];
 
 #[test]
 fn test_checker_lowers_element_access_mixed_literal_key_union() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -10885,8 +10340,7 @@ declare let key: "length" | 0;
 const value = arr[key];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10924,16 +10378,13 @@ const value = arr[key];
 
 #[test]
 fn test_checker_element_access_reports_nullable_object() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { a: number };
 let obj: Foo | undefined;
 const value = obj["a"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -10970,7 +10421,6 @@ const value = obj["a"];
 
 #[test]
 fn test_checker_element_access_optional_chain_nullable_object() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -10979,8 +10429,7 @@ let obj: Foo | undefined;
 const value = obj?.["a"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11017,7 +10466,6 @@ const value = obj?.["a"];
 
 #[test]
 fn test_checker_property_access_optional_chain_nullable_object() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11026,8 +10474,7 @@ let obj: Foo | undefined;
 const value = obj?.a;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11064,7 +10511,6 @@ const value = obj?.a;
 
 #[test]
 fn test_checker_property_access_union_type() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     // Test union property access WITHOUT narrowing
@@ -11075,8 +10521,7 @@ declare const obj: U;
 const value = obj.a;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11113,7 +10558,6 @@ const value = obj.a;
 
 #[test]
 fn test_checker_namespace_merges_with_class_exports() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11124,8 +10568,7 @@ namespace Foo {
 type Alias = Foo.Bar;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11182,7 +10625,6 @@ type Alias = Foo.Bar;
 
 #[test]
 fn test_checker_namespace_merges_with_class_exports_reverse_order() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11193,8 +10635,7 @@ class Foo {}
 type Alias = Foo.Bar;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11252,8 +10693,6 @@ type Alias = Foo.Bar;
 /// NOTE: Currently ignored - see `test_checker_namespace_merges_with_class_element_access`.
 #[test]
 fn test_checker_namespace_merges_with_class_value_exports() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {}
 namespace Foo {
@@ -11262,8 +10701,7 @@ namespace Foo {
 const direct = Foo.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11301,8 +10739,6 @@ const direct = Foo.value;
 /// NOTE: Previously ignored due to wrong type expectation.
 #[test]
 fn test_checker_namespace_merges_with_class_value_exports_reverse_order() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Foo {
     export const value = 1;
@@ -11311,8 +10747,7 @@ class Foo {}
 const direct = Foo.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11360,8 +10795,6 @@ const direct = Foo.value;
 /// combine all exported values across declarations.
 #[test]
 fn test_checker_namespace_merges_across_decls_value_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Merge {
     export const a = 1;
@@ -11372,8 +10805,7 @@ namespace Merge {
 const sum = Merge.a + Merge.b;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11401,7 +10833,6 @@ const sum = Merge.a + Merge.b;
 
 #[test]
 fn test_checker_namespace_merges_across_decls_type_access() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11415,8 +10846,7 @@ type Alias = Merge.A;
 const value: Merge.B = { y: 1 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11480,8 +10910,6 @@ const value: Merge.B = { y: 1 };
 /// NOTE: Previously ignored due to wrong type expectation.
 #[test]
 fn test_checker_namespace_merges_with_function_value_exports() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function Merge() {}
 namespace Merge {
@@ -11490,8 +10918,7 @@ namespace Merge {
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11529,8 +10956,6 @@ const direct = Merge.extra;
 /// NOTE: Previously ignored due to wrong type expectation.
 #[test]
 fn test_checker_namespace_merges_with_function_value_exports_reverse_order() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Merge {
     export const extra = 1;
@@ -11539,8 +10964,7 @@ function Merge() {}
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11590,7 +11014,6 @@ const direct = Merge.extra;
 
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11601,8 +11024,7 @@ namespace Merge {
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11659,7 +11081,6 @@ type Alias = Merge.Extra;
 
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports_reverse_order() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11670,8 +11091,7 @@ function Merge() {}
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11727,8 +11147,6 @@ type Alias = Merge.Extra;
 /// NOTE: Previously ignored due to wrong type expectation.
 #[test]
 fn test_checker_namespace_merges_with_enum_value_exports() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum Merge {
     A,
@@ -11739,8 +11157,7 @@ namespace Merge {
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11778,8 +11195,6 @@ const direct = Merge.extra;
 /// NOTE: Previously ignored due to wrong type expectation.
 #[test]
 fn test_checker_namespace_merges_with_enum_value_exports_reverse_order() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Merge {
     export const extra = 1;
@@ -11790,8 +11205,7 @@ enum Merge {
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11838,7 +11252,6 @@ const direct = Merge.extra;
 
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11851,8 +11264,7 @@ namespace Merge {
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11909,7 +11321,6 @@ type Alias = Merge.Extra;
 
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports_reverse_order() {
-    use crate::parser::ParserState;
     use tsz_solver::TypeData;
 
     let source = r#"
@@ -11922,8 +11333,7 @@ enum Merge {
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -11983,8 +11393,6 @@ type Alias = Merge.Extra;
 /// Namespace members should be visible through bracket access on the class constructor type.
 #[test]
 fn test_checker_namespace_merges_with_class_element_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {}
 namespace Foo {
@@ -11993,8 +11401,7 @@ namespace Foo {
 const direct = Foo["value"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12019,7 +11426,6 @@ const direct = Foo["value"];
 
 #[test]
 fn test_checker_interface_typeof_value_reference() {
-    use crate::parser::ParserState;
     use tsz_solver::{SymbolRef, TypeData};
 
     let source = r#"
@@ -12033,8 +11439,7 @@ interface Bar {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12106,8 +11511,6 @@ interface Bar {
 /// namespace import aliases (`import Alias = Ns`).
 #[test]
 fn test_checker_typeof_namespace_alias_member() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Ns {
     export const value = 1;
@@ -12116,8 +11519,7 @@ import Alias = Ns;
 type T = typeof Alias.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12151,7 +11553,6 @@ type T = typeof Alias.value;
 
 #[test]
 fn test_checker_typeof_with_type_arguments() {
-    use crate::parser::ParserState;
     use tsz_solver::{SymbolRef, TypeData};
 
     let source = r#"
@@ -12159,8 +11560,7 @@ const Foo = <T>(value: T) => value;
 type Alias = typeof Foo<string>;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12210,15 +11610,12 @@ type Alias = typeof Foo<string>;
 /// detection is implemented, update to assert `TypeId::ANY`.
 #[test]
 fn test_checker_circular_type_aliases() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type A = B;
 type B = A;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12295,7 +11692,6 @@ fn test_index_signature_at_solver_level() {
 #[test]
 fn test_ambient_module_relative_path_2436() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     // TS2436: Ambient module declaration cannot specify relative module name
     let source = r#"
@@ -12312,8 +11708,7 @@ declare module "." {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12346,8 +11741,6 @@ declare module "." {
 
 #[test]
 fn test_ambient_module_absolute_path_ok() {
-    use crate::parser::ParserState;
-
     // Absolute module names should be allowed in ambient declarations
     let source = r#"
 declare module "absolute-module" {
@@ -12359,8 +11752,7 @@ declare module "@scoped/package" {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12388,8 +11780,6 @@ declare module "@scoped/package" {
 
 #[test]
 fn test_private_identifier_in_ambient_class_allowed() {
-    use crate::parser::ParserState;
-
     // In tsc 6.0, private identifiers (#name) ARE allowed in ambient classes.
     // TS18019 should NOT be emitted for # members in declare classes.
     let source = r#"
@@ -12404,8 +11794,7 @@ declare class AmbientClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12434,8 +11823,6 @@ declare class AmbientClass {
 
 #[test]
 fn test_private_identifier_in_non_ambient_class_ok() {
-    use crate::parser::ParserState;
-
     // Private identifiers should be allowed in non-ambient classes
     let source = r#"
 class RegularClass {
@@ -12451,8 +11838,7 @@ class RegularClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12480,8 +11866,6 @@ class RegularClass {
 
 #[test]
 fn test_private_static_method_access_no_error() {
-    use crate::parser::ParserState;
-
     // Private static methods should be accessible within the class
     let source = r#"
 class A {
@@ -12492,8 +11876,7 @@ class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12522,8 +11905,6 @@ class A {
 
 #[test]
 fn test_non_private_static_accessor_access_works() {
-    use crate::parser::ParserState;
-
     // Non-private static accessors should be accessible from class reference
     let source = r#"
 class A {
@@ -12534,8 +11915,7 @@ class A {
 let x = A.quux;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12564,8 +11944,6 @@ let x = A.quux;
 
 #[test]
 fn test_private_static_accessor_access_no_error() {
-    use crate::parser::ParserState;
-
     // Private static accessors should be accessible within the class
     // Simplified test: just a getter without body references
     let source = r#"
@@ -12579,8 +11957,7 @@ class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12609,8 +11986,6 @@ class A {
 
 #[test]
 fn test_private_static_generator_method_access_no_error() {
-    use crate::parser::ParserState;
-
     // Private static async generator methods should be accessible within the class
     let source = r#"
 class A {
@@ -12623,8 +11998,7 @@ class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -12664,8 +12038,6 @@ class A {
 
 #[test]
 fn test_namespace_with_relative_path_ok() {
-    use crate::parser::ParserState;
-
     // Namespace declarations (without declare) can have any name, including relative-like names
     // This test ensures we only check ambient modules (declare module)
     let source = r#"
@@ -12674,8 +12046,7 @@ namespace MyNamespace {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12705,16 +12076,13 @@ namespace MyNamespace {
 
 #[test]
 fn test_top_level_variable_redeclaration_different_type_2403() {
-    use crate::parser::ParserState;
-
     // Top-level variables with different types should trigger error 2403
     let source = r#"
 var x: string;
 var x: number;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12740,16 +12108,13 @@ var x: number;
 
 #[test]
 fn test_top_level_variable_redeclaration_same_type_ok() {
-    use crate::parser::ParserState;
-
     // Top-level variables with same type should be allowed
     let source = r#"
 var x: string;
 var x: string;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12777,8 +12142,6 @@ var x: string;
 
 #[test]
 fn test_variable_redeclaration_typeof_ok_no_2403() {
-    use crate::parser::ParserState;
-
     // Test for bi-directional assignability in var redeclaration:
     // `var e = E;` and `var e: typeof E;` should be allowed because
     // the types are bi-directionally assignable (even if TypeIds differ).
@@ -12789,8 +12152,7 @@ var e = E;
 var e: typeof E;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12818,8 +12180,6 @@ var e: typeof E;
 
 #[test]
 fn test_variable_redeclaration_enum_object_literal_no_2403() {
-    use crate::parser::ParserState;
-
     // Ensure enum value redeclaration with structural type does not trigger TS2403.
     let source = r#"
 enum E1 {
@@ -12838,8 +12198,7 @@ var e: {
 var e: typeof E1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12872,8 +12231,6 @@ var e: typeof E1;
 /// array spread is involved.
 #[test]
 fn test_variable_redeclaration_array_spread_no_2403() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function f1() {
     var a = [1, 2, 3];
@@ -12882,8 +12239,7 @@ function f1() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12911,8 +12267,6 @@ function f1() {
 
 #[test]
 fn test_variable_redeclaration_inferred_vs_annotated_no_2403() {
-    use crate::parser::ParserState;
-
     // Test that inferred type from initializer matches explicit annotation
     // Based on conformance test: ambientDeclarationsExternal.ts pattern
     let source = r#"
@@ -12920,8 +12274,7 @@ var n = 42;
 var n: number;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12949,8 +12302,6 @@ var n: number;
 
 #[test]
 fn test_namespace_member_not_found() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace foo {
     export class Provide {}
@@ -12958,8 +12309,7 @@ namespace foo {
 var p: foo.NotExist;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -12988,8 +12338,6 @@ var p: foo.NotExist;
 
 #[test]
 fn test_namespace_value_member_missing_errors() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export const ok = 1;
@@ -12999,8 +12347,7 @@ const bad = NS.missing;
 const badAlias = Alias.missing;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13032,8 +12379,6 @@ const badAlias = Alias.missing;
 /// in ES modules.
 #[test]
 fn test_import_alias_type_resolution() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export class Exported {}
@@ -13044,8 +12389,7 @@ var x: Alias;
 var y: NS.Exported;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13074,8 +12418,6 @@ var y: NS.Exported;
 
 #[test]
 fn test_import_alias_non_exported_member() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export class Exported {}
@@ -13085,8 +12427,7 @@ import Alias = NS.NotExported;
 var x: Alias;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13116,15 +12457,12 @@ var x: Alias;
 
 #[test]
 fn test_import_type_value_usage_errors() {
-    use crate::parser::ParserState;
-
     let source = r#"
 import type { Foo } from "./types";
 Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13159,8 +12497,6 @@ Foo;
 #[test]
 #[ignore = "cross-enum TS2322 not emitted after solver changes"]
 fn test_numeric_enum_open_and_nominal_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum A { X, Y }
 enum B { X, Y }
@@ -13169,8 +12505,7 @@ let n: number = a;
 let b: B = a;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13197,15 +12532,12 @@ let b: B = a;
 
 #[test]
 fn test_string_enum_rejects_string_literal() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum S { A = "a", B = "b" }
 let s: S = "a";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13231,16 +12563,13 @@ let s: S = "a";
 
 #[test]
 fn test_numeric_enum_number_bidirectional() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum E { A = 0, B = 1 }
 let e: E = 1;
 let n: number = e;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13267,16 +12596,13 @@ let n: number = e;
 
 #[test]
 fn test_string_enum_not_assignable_to_string() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum S { A = "a", B = "b" }
 let s: S = S.A;
 let str: string = s;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13302,8 +12628,6 @@ let str: string = s;
 
 #[test]
 fn test_cross_enum_nominal_incompatibility() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum E1 { A = 0, B = 1 }
 enum E2 { X = 0, Y = 1 }
@@ -13311,8 +12635,7 @@ let e1: E1 = E1.A;
 let e2: E2 = e1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13339,8 +12662,6 @@ let e2: E2 = e1;
 
 #[test]
 fn test_string_enum_cross_incompatibility() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum S1 { A = "a", B = "b" }
 enum S2 { X = "a", Y = "b" }
@@ -13348,8 +12669,7 @@ let s1: S1 = S1.A;
 let s2: S2 = s1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13376,8 +12696,6 @@ let s2: S2 = s1;
 
 #[test]
 fn test_nested_namespace_member_resolution() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Outer {
     export namespace Inner {
@@ -13389,8 +12707,7 @@ let bad: Outer.Inner.Box<number> = { value: "oops" };
 let missing: Outer.Inner.Missing;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13421,8 +12738,6 @@ let missing: Outer.Inner.Missing;
 
 #[test]
 fn test_import_alias_namespace_member_resolution() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export interface Box<T> { value: T; }
@@ -13433,8 +12748,7 @@ let bad: Alias.Box<number> = { value: "oops" };
 let missing: Alias.Missing;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13465,8 +12779,6 @@ let missing: Alias.Missing;
 
 #[test]
 fn test_namespace_type_only_member_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export interface Foo { value: number; }
@@ -13475,8 +12787,7 @@ let ok: NS.Foo;
 const bad = NS.Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13503,8 +12814,6 @@ const bad = NS.Foo;
 
 #[test]
 fn test_namespace_type_only_member_element_access_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export interface Foo { value: number; }
@@ -13512,8 +12821,7 @@ namespace NS {
 const bad = NS["Foo"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13539,8 +12847,6 @@ const bad = NS["Foo"];
 
 #[test]
 fn test_namespace_type_only_nested_member_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Outer {
     export namespace Inner {
@@ -13551,8 +12857,7 @@ let ok: Outer.Inner.Foo;
 const bad = Outer.Inner.Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13583,8 +12888,6 @@ const bad = Outer.Inner.Foo;
 
 #[test]
 fn test_namespace_type_only_alias_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export interface Foo { value: number; }
@@ -13593,8 +12896,7 @@ import Alias = NS.Foo;
 const bad = Alias;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13621,8 +12923,6 @@ const bad = Alias;
 
 #[test]
 fn test_namespace_type_only_member_via_alias_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export interface Foo { value: number; }
@@ -13632,8 +12932,7 @@ let ok: Alias.Foo;
 const bad = Alias.Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13665,8 +12964,6 @@ const bad = Alias.Foo;
 
 #[test]
 fn test_namespace_type_only_nested_member_via_alias_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Outer {
     export namespace Inner {
@@ -13678,8 +12975,7 @@ let ok: Alias.Inner.Foo;
 const bad = Alias.Inner.Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13710,16 +13006,13 @@ const bad = Alias.Inner.Foo;
 
 #[test]
 fn test_interface_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo { value: number; }
 let ok: Foo;
 const bad = Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13745,16 +13038,13 @@ const bad = Foo;
 
 #[test]
 fn test_type_alias_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { value: number };
 let ok: Foo;
 const bad = Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13780,16 +13070,13 @@ const bad = Foo;
 
 #[test]
 fn test_type_query_interface_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo { value: number; }
 type T = typeof Foo;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13815,16 +13102,13 @@ let useIt: T;
 
 #[test]
 fn test_type_query_type_alias_value_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Foo = { value: number };
 type T = typeof Foo;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13850,15 +13134,12 @@ let useIt: T;
 
 #[test]
 fn test_type_query_unknown_name_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type T = typeof Missing;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13884,15 +13165,12 @@ let useIt: T;
 
 #[test]
 fn test_type_query_unknown_qualified_name_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type T = typeof Missing.Member;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13918,8 +13196,6 @@ let useIt: T;
 
 #[test]
 fn test_type_query_missing_namespace_member_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Ns {
     export const value = 1;
@@ -13928,8 +13204,7 @@ type T = typeof Ns.Missing;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13956,16 +13231,13 @@ let useIt: T;
 
 #[test]
 fn test_value_symbol_used_as_type_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const value = 1;
 type T = value;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -13991,16 +13263,13 @@ let useIt: T;
 
 #[test]
 fn test_function_symbol_used_as_type_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function foo() { return 1; }
 type T = foo;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14026,8 +13295,6 @@ let useIt: T;
 
 #[test]
 fn test_namespace_symbol_used_as_type_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export const value = 1;
@@ -14036,8 +13303,7 @@ type T = NS;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14064,8 +13330,6 @@ let useIt: T;
 
 #[test]
 fn test_namespace_alias_used_as_type_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export const value = 1;
@@ -14075,8 +13339,7 @@ type T = Alias;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14103,8 +13366,6 @@ let useIt: T;
 
 #[test]
 fn test_namespace_value_member_used_as_type_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export const value = 1;
@@ -14113,8 +13374,7 @@ type T = NS.value;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14140,8 +13400,6 @@ let useIt: T;
 
 #[test]
 fn test_namespace_value_member_via_alias_used_as_type_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export const value = 1;
@@ -14151,8 +13409,7 @@ type T = Alias.value;
 let useIt: T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14182,8 +13439,6 @@ let useIt: T;
 /// Nested namespace value members are not correctly resolved.
 #[test]
 fn test_namespace_value_member_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Outer {
     export const top = 1;
@@ -14197,8 +13452,7 @@ const topValue = Outer.top;
 const viaAlias = Alias.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14247,8 +13501,6 @@ const viaAlias = Alias.value;
 /// The `import Alias = Ns` syntax triggers TS1202 error about import assignments in ES modules.
 #[test]
 fn test_namespace_value_member_element_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Ns {
     export const value = 1;
@@ -14258,8 +13510,7 @@ const direct = Ns["value"];
 const viaAlias = Alias["value"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14298,8 +13549,6 @@ const viaAlias = Alias["value"];
 
 #[test]
 fn test_namespace_value_member_alias_missing_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Outer {
     export namespace Inner {
@@ -14311,8 +13560,7 @@ const ok = Alias.value;
 const bad = Alias.missing;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14344,8 +13592,6 @@ const bad = Alias.missing;
 
 #[test]
 fn test_nested_namespace_value_member_missing_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Outer {
     export namespace Inner {
@@ -14356,8 +13602,7 @@ const okValue = Outer.Inner.ok;
 const badValue = Outer.Inner.missing;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14392,8 +13637,6 @@ const badValue = Outer.Inner.missing;
 
 #[test]
 fn test_namespace_value_member_not_exported_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace NS {
     export const ok = 1;
@@ -14403,8 +13646,7 @@ const ok = NS.ok;
 const bad = NS.hidden;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14436,8 +13678,6 @@ const bad = NS.hidden;
 
 #[test]
 fn test_deep_binary_expression_type_check() {
-    use crate::parser::ParserState;
-
     const COUNT: usize = 50000;
     let mut source = String::with_capacity(COUNT * 4);
     for i in 0..COUNT {
@@ -14448,8 +13688,7 @@ fn test_deep_binary_expression_type_check() {
     }
     source.push(';');
 
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(&source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14471,7 +13710,6 @@ fn test_deep_binary_expression_type_check() {
 
 #[test]
 fn test_scoped_identifier_resolution_uses_binder_scopes() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -14483,8 +13721,7 @@ let x = 1;
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -14562,7 +13799,6 @@ x;
 /// typeof/type guards in if statements and for loops.
 #[test]
 fn test_flow_narrowing_applies_in_if_branch() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -14572,8 +13808,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -14631,8 +13866,6 @@ if (typeof x === "string") {
 
 #[test]
 fn test_flow_narrowing_not_applied_in_closure() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let x: string | number;
 x = Math.random() > 0.5 ? "hello" : 42;
@@ -14643,8 +13876,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -14670,7 +13902,6 @@ if (typeof x === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_in_while() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -14680,8 +13911,7 @@ while (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -14741,7 +13971,6 @@ while (typeof x === "string") {
 /// NOTE: Currently ignored - see `test_flow_narrowing_applies_in_if_branch`.
 #[test]
 fn test_flow_narrowing_applies_in_for() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -14751,8 +13980,7 @@ for (; typeof x === "string"; ) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -14812,7 +14040,6 @@ for (; typeof x === "string"; ) {
 /// NOTE: Currently ignored - flow narrowing in for-of loops is not fully implemented.
 #[test]
 fn test_flow_narrowing_not_applied_in_for_of_body() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -14822,8 +14049,7 @@ for (const value of [x]) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -14887,7 +14113,6 @@ for (const value of [x]) {
 /// NOTE: Currently ignored - flow narrowing in for-in loops is not fully implemented.
 #[test]
 fn test_flow_narrowing_not_applied_in_for_in_body() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -14897,8 +14122,7 @@ for (const key in { a: x }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -14962,8 +14186,6 @@ for (const key in { a: x }) {
 /// NOTE: Currently ignored - flow narrowing in do-while loops is not fully implemented.
 #[test]
 fn test_flow_narrowing_not_applied_in_do_while_body() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let x: string | number;
 do {
@@ -14971,8 +14193,7 @@ do {
 } while (typeof x === "string");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15001,7 +14222,6 @@ do {
 /// NOTE: Currently ignored - see `test_flow_narrowing_not_applied_after_for_exit`.
 #[test]
 fn test_flow_narrowing_not_applied_after_while_exit() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15012,8 +14232,7 @@ while (typeof x === "string") {
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15062,7 +14281,6 @@ x;
 /// after exiting via break.
 #[test]
 fn test_flow_narrowing_not_applied_after_for_exit() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15073,8 +14291,7 @@ for (; typeof x === "string"; ) {
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15121,7 +14338,6 @@ x;
 /// NOTE: Currently ignored - see `test_flow_narrowing_not_applied_after_for_exit`.
 #[test]
 fn test_flow_narrowing_not_applied_after_do_while_exit() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15132,8 +14348,7 @@ do {
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15177,7 +14392,6 @@ x;
 
 #[test]
 fn test_flow_narrowing_applies_for_namespace_alias_member() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15190,8 +14404,7 @@ if (typeof Alias.value === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15248,7 +14461,6 @@ if (typeof Alias.value === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_namespace_element_access() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15260,8 +14472,7 @@ if (typeof Ns["value"] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15318,8 +14529,6 @@ if (typeof Ns["value"] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_namespace_member_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Ns {
     export let value: string | number;
@@ -15331,8 +14540,7 @@ if (typeof Alias.value === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15358,8 +14566,6 @@ if (typeof Alias.value === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_property_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj.prop === "string") {
@@ -15369,8 +14575,7 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15397,8 +14602,6 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_element_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj["prop"] === "string") {
@@ -15408,8 +14611,7 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15436,8 +14638,6 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_across_element_to_property_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj["prop"] === "string") {
@@ -15445,8 +14645,7 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15472,8 +14671,6 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_across_property_to_element_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj.prop === "string") {
@@ -15481,8 +14678,7 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15508,8 +14704,6 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_cross_property_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj["prop"] === "string") {
@@ -15519,8 +14713,7 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15547,8 +14740,6 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_cross_element_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj.prop === "string") {
@@ -15558,8 +14749,7 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15586,7 +14776,6 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_not_applied_for_computed_element_access() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15597,8 +14786,7 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15661,7 +14849,6 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_literal_key() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15672,8 +14859,7 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15734,8 +14920,6 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_computed_element_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 let key: "prop" = "prop";
@@ -15746,8 +14930,7 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15774,7 +14957,6 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_numeric_literal_key() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15785,8 +14967,7 @@ if (typeof arr[idx] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15847,8 +15028,6 @@ if (typeof arr[idx] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_computed_numeric_element_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let arr: (string | number)[] = ["ok", 1];
 let idx: 0 = 0;
@@ -15859,8 +15038,7 @@ if (typeof arr[idx] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -15887,7 +15065,6 @@ if (typeof arr[idx] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_const_literal_key() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15898,8 +15075,7 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -15960,7 +15136,6 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_const_numeric_key() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -15971,8 +15146,7 @@ if (typeof arr[idx] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -16033,7 +15207,6 @@ if (typeof arr[idx] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_literal_discriminant() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -16045,8 +15218,7 @@ if (obj[key] === "a") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -16107,7 +15279,6 @@ if (obj[key] === "a") {
 
 #[test]
 fn test_flow_narrowing_applies_for_literal_element_access() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -16117,8 +15288,7 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -16179,8 +15349,6 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_property_base_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj.prop === "string") {
@@ -16190,8 +15358,7 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -16218,8 +15385,6 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_element_base_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
 if (typeof obj["prop"] === "string") {
@@ -16229,8 +15394,7 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -16257,15 +15421,13 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_parameter_identifier_type_from_symbol_cache() {
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
 function f(x: number) { return x; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let root_node = arena.get(root).expect("root node");
@@ -16484,8 +15646,6 @@ const reducer = createReducer(0, {
 // TODO: Fix TS2304 for mapped type parameters (P, K) -- binder scope gap.
 #[test]
 fn test_key_remapping_syntax_parsing() {
-    use crate::parser::ParserState;
-
     // Test that key remapping syntax parses and binds correctly
     let source = r#"
 // Custom Omit using key remapping with `as never`
@@ -16515,8 +15675,7 @@ declare const o: MyOmit<Person, "email">;
 declare const p: MyPick<Person, "name">;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16551,8 +15710,6 @@ declare const p: MyPick<Person, "name">;
 /// that construct objects, similar to the void return exception for functions (#6).
 #[test]
 fn test_constructor_void_exception() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Constructor type returning void
 type VoidCtor = new () => void;
@@ -16575,8 +15732,7 @@ type DefaultCtor = new () => void;
 const ctor2: DefaultCtor = AnotherClass;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16613,8 +15769,6 @@ const ctor2: DefaultCtor = AnotherClass;
 /// and checks that the thin checker properly handles conditional type declarations.
 #[test]
 fn test_distributivity_conditional_type_declarations() {
-    use crate::parser::ParserState;
-
     // Test that conditional type declarations parse and bind correctly
     let source = r#"
 type Distributive<T> = T extends any ? true : false;
@@ -16625,8 +15779,7 @@ declare const x: Distributive<string>;
 declare const y: NonDistributive<string>;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16661,8 +15814,6 @@ declare const y: NonDistributive<string>;
 /// Note: Conditional type evaluation during type alias assignment is tested in `solver/evaluate_tests.rs`.
 #[test]
 fn test_conditional_type_concrete_extends() {
-    use crate::parser::ParserState;
-
     // Test that conditional types parse and bind correctly with concrete extends checks
     let source = r#"
 // Direct conditional type definitions
@@ -16676,8 +15827,7 @@ declare const n: NumberCheck;
 declare const t: TupleCheck;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16712,8 +15862,6 @@ declare const t: TupleCheck;
 /// The `is_distributive` flag detection is verified in `solver/lower_tests.rs`.
 #[test]
 fn test_tuple_wrapped_conditional_pattern() {
-    use crate::parser::ParserState;
-
     // Test the [T] extends [U] pattern used to disable distributivity
     let source = r#"
 // Generic distributive conditional
@@ -16735,8 +15883,7 @@ declare const e: ExtractElement<string[]>;
 declare const end: ExtractElementNonDist<string[]>;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16775,8 +15922,6 @@ declare const end: ExtractElementNonDist<string[]>;
 /// Pattern: `R extends Reducer<infer S, any> ? S : never`
 #[test]
 fn test_redux_pattern_extract_state_with_infer() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Reducer<S, A> = (state: S | undefined, action: A) => S;
 
@@ -16791,8 +15936,7 @@ declare const s: ExtractedState;
 const n: number = s;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16834,8 +15978,6 @@ const n: number = s;
 // TODO: Fix TS2304 for mapped type parameter K -- binder scope gap.
 #[test]
 fn test_redux_pattern_state_from_reducers_mapped() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Reducer<S, A> = (state: S | undefined, action: A) => S;
 type AnyAction = { type: string };
@@ -16857,8 +15999,7 @@ const c: number = state.count;
 const m: string = state.message;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16898,8 +16039,6 @@ const m: string = state.message;
 /// Pattern: `{ [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }`
 #[test]
 fn test_redux_pattern_deep_partial() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type DeepPartial<T> = {
     [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
@@ -16918,8 +16057,7 @@ const patch: PartialState = { message: "ok" };
 const partial: PartialState = { nested: { value: 42 } };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -16961,8 +16099,6 @@ const partial: PartialState = { nested: { value: 42 } };
 /// NOTE: Currently ignored - see `test_redux_pattern_reducers_map_object`.
 #[test]
 fn test_redux_pattern_generic_function_with_conditional_return() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Reducer<S> = (state: S | undefined) => S;
 type ExtractState<R> = R extends Reducer<infer S> ? S : never;
@@ -16983,8 +16119,7 @@ const state = store.getState();
 const n: number = state;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17033,8 +16168,6 @@ const n: number = state;
 // TODO: Fix TS2304 for mapped type parameter K -- binder scope gap.
 #[test]
 fn test_redux_pattern_indexed_access_on_mapped_union() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type AnyAction = { type: string };
 type Reducer<S, A extends AnyAction> = (state: S | undefined, action: A) => S;
@@ -17054,8 +16187,7 @@ type AllActions = ActionFromReducers<Reducers>;
 declare const action: AllActions;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17099,8 +16231,6 @@ declare const action: AllActions;
 // TODO: Fix TS2304 for mapped type parameter K -- binder scope gap.
 #[test]
 fn test_redux_pattern_reducers_map_object() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type AnyAction = { type: string; payload?: any };
 type Reducer<S, A extends AnyAction> = (state: S | undefined, action: A) => S;
@@ -17127,8 +16257,7 @@ const reducers: RootReducers = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17177,8 +16306,6 @@ const reducers: RootReducers = {
 /// proper instantiation and resolution of type parameter bounds.
 #[test]
 fn test_base_constraint_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // T extends string, so T can be assigned to string
 function f<T extends string>(x: T): string {
@@ -17205,8 +16332,7 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17248,8 +16374,6 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
 /// the constraint itself cannot be assigned back to T.
 #[test]
 fn test_generic_constraint_rejection() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Error case: string is not assignable to T (T could be "hello" or other literal)
 function reject<T extends string>(): T {
@@ -17262,8 +16386,7 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17309,8 +16432,6 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
 /// first check identity (T == U), then check Constraint(T) <: U.
 #[test]
 fn test_generic_param_identity() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Same type parameter is assignable to itself
 function identity<T>(x: T): T {
@@ -17336,8 +16457,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17385,8 +16505,6 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 /// Cross-scope generic constraint resolution: basic constraints, alias chains, and union constraints.
 #[test]
 fn test_cross_scope_generic_constraints() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Simulate cross-file scenario with type aliases
 type Base = { id: number };
@@ -17410,8 +16528,7 @@ function getKind<T extends Entity>(entity: T): "user" | "bot" {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17443,8 +16560,6 @@ function getKind<T extends Entity>(entity: T): "user" | "bot" {
 /// Cross-scope generic constraint with conditional type using `infer`.
 #[test]
 fn test_cross_scope_generic_constraints_conditional_infer() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type ExtractId<T> = T extends { id: infer I } ? I : never;
 function extractId<T extends { id: number }>(item: T): ExtractId<T> {
@@ -17452,8 +16567,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17506,8 +16620,6 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 /// The property type should be derived from getter type for reads and setter type for writes.
 #[test]
 fn test_split_accessors_basic() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Box {
     private _value: string | number = "";
@@ -17527,8 +16639,7 @@ box.value = "hello"; // OK: setter accepts string
 box.value = 42; // OK: setter accepts number
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17560,8 +16671,6 @@ box.value = 42; // OK: setter accepts number
 /// TS Unsoundness #26: Split Accessors - read type mismatch should error
 #[test]
 fn test_split_accessors_read_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Box {
     get value(): string {
@@ -17574,8 +16683,7 @@ const box = new Box();
 const n: number = box.value; // ERROR: string not assignable to number
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17619,8 +16727,6 @@ const n: number = box.value; // ERROR: string not assignable to number
 /// matches the setter parameter type.
 #[test]
 fn test_split_accessors_write_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Box {
     get value(): string {
@@ -17633,8 +16739,7 @@ const box = new Box();
 box.value = true; // Should ERROR: boolean not assignable to string
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17673,8 +16778,6 @@ box.value = true; // Should ERROR: boolean not assignable to string
 /// - You can define types that accept abstract constructors: `abstract new () => any`
 #[test]
 fn test_abstract_class_instantiation_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare const console: { log: (message: string) => void };
 
@@ -17690,8 +16793,7 @@ const dog = new Dog(); // OK: Dog is concrete
 const animal = new Animal(); // ERROR: Cannot create instance of abstract class
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17738,8 +16840,6 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
 /// has issues with type resolution. Currently expects 4 errors.
 #[test]
 fn test_abstract_constructor_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 abstract class Animal {
     abstract speak(): void;
@@ -17769,8 +16869,7 @@ function createAnimal(Ctor: typeof Animal): Animal {
 const animal = createAnimal(Animal); // Passing abstract class as value should be OK
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17821,8 +16920,6 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
 /// properly detect this case or emit the expected diagnostic.
 #[test]
 fn test_abstract_to_concrete_constructor_not_assignable() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class A {}
 
@@ -17840,8 +16937,7 @@ var BB: typeof B = A;
 var CC: typeof C = B;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17895,8 +16991,6 @@ var CC: typeof C = B;
 /// has issues with class type comparison. Currently expects 3 errors.
 #[test]
 fn test_concrete_extends_abstract() {
-    use crate::parser::ParserState;
-
     let source = r#"
 abstract class Shape {
     abstract area(): number;
@@ -17931,8 +17025,7 @@ const shape2: Shape = new Square(4); // Should be OK
 const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -17983,8 +17076,6 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
 /// Function type requires lib.d.ts which isn't available in tests.
 #[test]
 fn test_global_function_type_callable_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Define a minimal Function-like interface for testing
 interface FunctionLike {
@@ -18008,8 +17099,7 @@ const c2: AnyCallable = func; // OK
 const c3: AnyCallable = named; // OK
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18051,8 +17141,6 @@ const c3: AnyCallable = named; // OK
 /// because we don't know its actual signature.
 #[test]
 fn test_function_not_assignable_to_specific() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Untyped callable (simulating Function)
 type AnyCallable = (...args: any[]) => any;
@@ -18067,8 +17155,7 @@ declare const untyped: AnyCallable;
 const specific: SpecificFn = untyped; // This is actually allowed in TS due to any
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18113,8 +17200,6 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
 /// - Object types without call signatures are NOT callable
 #[test]
 fn test_function_type_hierarchy() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Various function types in the hierarchy
 type VoidFn = () => void;
@@ -18142,8 +17227,7 @@ declare const obj: NotCallable;
 // const bad: AnyCallable = obj; // This would be an error
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18186,8 +17270,6 @@ declare const obj: NotCallable;
 /// or creates a union if none exists.
 #[test]
 fn test_best_common_type_array_literal() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Mixed array literal becomes union type
 const mixed = [1, "hello", 2, "world"];
@@ -18208,8 +17290,7 @@ const strings = ["a", "b", "c"];
 const s: string = strings[0]; // OK
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18254,8 +17335,6 @@ const s: string = strings[0]; // OK
 /// has issues. Currently expects 1 error.
 #[test]
 fn test_best_common_type_class_hierarchy() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Animal {
     name: string = "";
@@ -18282,8 +17361,7 @@ const pet = pets[0];
 const name = pet.name; // OK: both Dog and Cat have name
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18329,8 +17407,6 @@ const name = pet.name; // OK: both Dog and Cat have name
 /// unless the array is const or has a specific annotation.
 #[test]
 fn test_best_common_type_literal_widening() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Literal types widen in mutable arrays
 const nums = [1, 2, 3]; // number[] not (1 | 2 | 3)[]
@@ -18348,8 +17424,7 @@ const bools = [true, false]; // boolean[]
 const b: boolean = bools[0]; // OK
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18391,8 +17466,6 @@ const b: boolean = bools[0]; // OK
 /// Multiple interface declarations combine their members.
 #[test]
 fn test_interface_merging_basic() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // First interface declaration
 interface Box {
@@ -18421,8 +17494,7 @@ const d: number = box.depth;
 const l: string = box.label;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18463,8 +17535,6 @@ const l: string = box.label;
 /// When interfaces merge, methods with the same name become overloads.
 #[test]
 fn test_interface_merging_method_overloads() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Calculator {
     add(a: number, b: number): number;
@@ -18483,8 +17553,7 @@ const strResult: string = calc.add("a", "b");
 const product: number = calc.multiply(3, 4);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18528,8 +17597,6 @@ const product: number = calc.multiply(3, 4);
 /// NOTE: Currently ignored - interface extending and merging is not fully implemented.
 #[test]
 fn test_interface_extend_and_merge() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Named {
     name: string;
@@ -18556,8 +17623,7 @@ const a: number = person.age;
 const e: string = person.email;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18601,8 +17667,6 @@ const e: string = person.email;
 /// is not yet implemented. Currently expects 2 errors.
 #[test]
 fn test_namespace_interface_merging() {
-    use crate::parser::ParserState;
-
     let source = r##"
 interface Color {
     r: number;
@@ -18625,8 +17689,7 @@ const red: Color = Color.RED;
 const fromString: Color = Color.fromHex("#FF0000");
 "##;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18668,8 +17731,6 @@ const fromString: Color = Color.fromHex("#FF0000");
 /// The merging doesn't correctly handle type checking for merged static members.
 #[test]
 fn test_class_namespace_merging() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Album {
     title: string;
@@ -18696,8 +17757,7 @@ const track: Album.Track = { name: "Song 1", duration: 180 };
 const created: Album = Album.create("New Album");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18741,8 +17801,6 @@ const created: Album = Album.create("New Album");
 /// yet implemented. Currently expects 4 errors.
 #[test]
 fn test_enum_namespace_merging() {
-    use crate::parser::ParserState;
-
     let source = r#"
 enum Direction {
     Up = 1,
@@ -18764,8 +17822,7 @@ const dir: Direction = Direction.Up;
 const vertical: boolean = Direction.isVertical(Direction.Up);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18816,8 +17873,6 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
 /// is implemented, change to expect 0 errors.
 #[test]
 fn test_method_bivariance_wider_argument() {
-    use crate::parser::ParserState;
-
     // Animal is wider than Dog
     // A method handler(dog: Dog) should be assignable to handler(animal: Animal)
     // because methods are bivariant
@@ -18839,8 +17894,7 @@ declare const dogHandler: HandlerWithDog;
 const animalHandler: HandlerWithAnimal = dogHandler;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18893,8 +17947,6 @@ const animalHandler: HandlerWithAnimal = dogHandler;
 /// Once interface inheritance is properly handled, expect 0 errors.
 #[test]
 fn test_method_bivariance_narrower_argument() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Animal { name: string }
 interface Dog extends Animal { breed: string }
@@ -18913,8 +17965,7 @@ declare const animalHandler: HandlerWithAnimal;
 const dogHandler: HandlerWithDog = animalHandler;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -18966,8 +18017,6 @@ const dogHandler: HandlerWithDog = animalHandler;
 /// properly handled, expect 0 errors.
 #[test]
 fn test_function_property_contravariance() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Animal { name: string }
 interface Dog extends Animal { breed: string }
@@ -18985,8 +18034,7 @@ declare const animalHandler: HandlerWithAnimalProp;
 const dogHandler: HandlerWithDogProp = animalHandler;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19032,8 +18080,6 @@ const dogHandler: HandlerWithDogProp = animalHandler;
 /// covariant direction (narrower param -> wider param).
 #[test]
 fn test_function_property_rejects_covariant() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Animal { name: string }
 interface Dog extends Animal { breed: string }
@@ -19052,8 +18098,7 @@ declare const dogHandler: HandlerWithDogProp;
 const animalHandler: HandlerWithAnimalProp = dogHandler;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19103,8 +18148,6 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
 /// This relies on methods being bivariant (not contravariant) in TypeScript.
 #[test]
 fn test_method_bivariance_event_handler_pattern() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare const console: { log: (...args: any[]) => void };
 
@@ -19125,8 +18168,7 @@ declare const elem: Element;
 elem.addEventListener(handleMouse);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19175,8 +18217,6 @@ elem.addEventListener(handleMouse);
 ///
 #[test]
 fn test_callback_method_parameter_bivariance() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Animal { name: string }
 interface Dog extends Animal { breed: string }
@@ -19197,8 +18237,7 @@ declare const dogs: Dog[];
 processor.process(dogs, handleDog);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19245,8 +18284,6 @@ processor.process(dogs, handleDog);
 /// escape hatch in TypeScript.
 #[test]
 fn test_any_type_assignable_to_specific() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare const anyVal: any;
 
@@ -19259,8 +18296,7 @@ const fn: (x: string) => number = anyVal;
 const arr: number[] = anyVal;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19303,8 +18339,6 @@ const arr: number[] = anyVal;
 /// that allows bypassing type checking.
 #[test]
 fn test_specific_types_assignable_to_any() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare let anyTarget: any;
 
@@ -19324,8 +18358,7 @@ anyTarget = fn;
 anyTarget = arr;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19368,8 +18401,6 @@ anyTarget = arr;
 /// can accept any as an argument.
 #[test]
 fn test_any_type_in_function_calls() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare const anyVal: any;
 
@@ -19383,8 +18414,7 @@ expectNumber(anyVal);
 expectObject(anyVal);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19426,8 +18456,6 @@ expectObject(anyVal);
 /// Operations on any produce any, maintaining the escape hatch.
 #[test]
 fn test_any_type_propagation() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare const anyVal: any;
 
@@ -19443,8 +18471,7 @@ const num: number = elemAccess;
 const obj: { x: number } = call;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19488,8 +18515,6 @@ const obj: { x: number } = call;
 /// because never has no values.
 #[test]
 fn test_any_type_never_relationship() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare const neverVal: never;
 declare let anyTarget: any;
@@ -19504,8 +18529,7 @@ function returnNever(): never {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19549,8 +18573,6 @@ function returnNever(): never {
 /// This prevents typos and catches unintended extra properties.
 #[test]
 fn test_freshness_object_literal_excess_property() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Config {
     host: string;
@@ -19565,8 +18587,7 @@ const config: Config = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19616,8 +18637,6 @@ const config: Config = {
 /// This is the "stale" object behavior - width subtyping is allowed.
 #[test]
 fn test_freshness_variable_no_excess_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Config {
     host: string;
@@ -19635,8 +18654,7 @@ const obj = {
 const config: Config = obj;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19678,8 +18696,6 @@ const config: Config = obj;
 /// Fresh object literals passed as function arguments are checked for excess properties.
 #[test]
 fn test_freshness_function_argument_checked() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Options {
     timeout: number;
@@ -19691,8 +18707,7 @@ function configure(opts: Options): void {}
 configure({ timeout: 5000, retries: 3 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19741,8 +18756,6 @@ configure({ timeout: 5000, retries: 3 });
 /// Fresh object literals in return statements are checked for excess properties.
 #[test]
 fn test_freshness_return_statement_checked() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Result {
     value: number;
@@ -19753,8 +18766,7 @@ function getResult(): Result {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19800,15 +18812,12 @@ function getResult(): Result {
 
 #[test]
 fn test_union_optional_object_literal_excess_property() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type U = { a?: number } | { b?: number };
 const u: U = { a: 1, c: 2 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19865,15 +18874,12 @@ const u: U = { a: 1, c: 2 };
 
 #[test]
 fn test_union_optional_object_literal_no_common_property() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type U = { a?: number } | { b?: number };
 const u: U = { c: 1 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19931,16 +18937,13 @@ const u: U = { c: 1 };
 
 #[test]
 fn test_union_optional_call_argument_excess_property() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type U = { a?: number } | { b?: number };
 function f(value: U) {}
 f({ c: 1 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -19998,16 +19001,13 @@ f({ c: 1 });
 
 #[test]
 fn test_union_optional_variable_assignment_no_common_properties() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type U = { a?: number } | { b?: number };
 const obj = { c: 1 };
 const u: U = obj;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20042,8 +19042,6 @@ const u: U = obj;
 /// Spread in object literals now works; this should produce 0 errors (tsc-compatible).
 #[test]
 fn test_freshness_spread_behavior() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Config {
     host: string;
@@ -20056,8 +19054,7 @@ const base = { host: "localhost", port: 8080 };
 const config: Config = { ...base };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20099,16 +19096,13 @@ const config: Config = { ...base };
 /// checks against the function's return type.
 #[test]
 fn test_freshness_preserved_through_chained_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function fx10(obj1: { x?: number }, obj2: { x?: number, y?: number }) {
     obj1 = obj2 = { x: 1, y: 2 };
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20160,8 +19154,6 @@ function fx10(obj1: { x?: number }, obj2: { x?: number, y?: number }) {
 /// classes with tighter `compare` methods be assigned to base class types.
 #[test]
 fn test_covariant_this_basic_subtyping() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Animal {
     name: string = "";
@@ -20180,8 +19172,7 @@ class Dog extends Animal {
 const animal: Animal = new Dog();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20217,8 +19208,6 @@ const animal: Animal = new Dog();
 /// Class extends checking now works, so this pattern produces 0 errors as expected.
 #[test]
 fn test_covariant_this_fluent_api() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Builder {
     value: number = 0;
@@ -20251,8 +19240,7 @@ const result = new AdvancedBuilder()
     .reset();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20289,8 +19277,6 @@ const result = new AdvancedBuilder()
 /// Interfaces can also use `this` type for fluent patterns.
 #[test]
 fn test_covariant_this_interface_pattern() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Cloneable {
     clone(): this;
@@ -20314,8 +19300,7 @@ const p1 = new Point(1, 2);
 const p2 = p1.clone();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20353,8 +19338,6 @@ const p2 = p1.clone();
 /// even though it's unsound at runtime.
 #[test]
 fn test_covariant_this_unsound_call() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Box {
     content: string = "";
@@ -20374,8 +19357,7 @@ class NumberBox extends Box {
 const b: Box = new NumberBox();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20411,8 +19393,6 @@ const b: Box = new NumberBox();
 /// are only assignable to their own types.
 #[test]
 fn test_strict_null_checks_on() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // With strictNullChecks on (default), null/undefined are not assignable to other types
 const str: string = "hello";
@@ -20431,8 +19411,7 @@ const maybeStr: string | null = null;
 const maybeNum: number | undefined = undefined;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20474,15 +19453,12 @@ const maybeNum: number | undefined = undefined;
 /// With strictNullChecks ON, assigning null to string should error.
 #[test]
 fn test_strict_null_checks_rejects_null() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Assigning null to string should error
 const str: string = null;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20524,15 +19500,12 @@ const str: string = null;
 /// With strictNullChecks ON, assigning undefined to number should error.
 #[test]
 fn test_strict_null_checks_rejects_undefined() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Assigning undefined to number should error
 const num: number = undefined;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20574,8 +19547,6 @@ const num: number = undefined;
 /// Union types can explicitly include null/undefined.
 #[test]
 fn test_null_undefined_union_types() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Union types that include null/undefined work fine
 const maybeStr: string | null = null;
@@ -20586,8 +19557,7 @@ const str: string | null = "hello";
 const num: number | undefined = 42;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20631,8 +19601,6 @@ const num: number | undefined = 42;
 /// TS cannot track that `obj.kind === "a"` implies `obj.val` is `number`.
 #[test]
 fn test_correlated_unions_basic_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type A = { kind: 'a'; val: number };
 type B = { kind: 'b'; val: string };
@@ -20644,8 +19612,7 @@ function test(obj: AB) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20687,8 +19654,6 @@ function test(obj: AB) {
 /// When discriminant is checked, the specific variant is narrowed.
 #[test]
 fn test_correlated_unions_discriminant_narrowing() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type A = { kind: 'a'; val: number };
 type B = { kind: 'b'; val: string };
@@ -20705,8 +19670,7 @@ function test(obj: AB) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20748,8 +19712,6 @@ function test(obj: AB) {
 /// IndexAccess(Union(ObjA, `ObjB`), Key) produces Union(ObjA[Key], `ObjB`[Key]).
 #[test]
 fn test_correlated_unions_index_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Data = {
     numbers: number[];
@@ -20762,8 +19724,7 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20805,8 +19766,6 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
 /// Accessing a property common to all union members works.
 #[test]
 fn test_correlated_unions_common_property() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Circle = { kind: 'circle'; radius: number };
 type Square = { kind: 'square'; size: number };
@@ -20818,8 +19777,7 @@ function getKind(shape: Shape): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20862,8 +19820,6 @@ function getKind(shape: Shape): string {
 /// because the callback might run after the variable has changed.
 #[test]
 fn test_cfa_invalidation_mutable_in_closure() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let x: string | number = "hello";
 
@@ -20879,8 +19835,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20917,8 +19872,6 @@ if (typeof x === "string") {
 /// because the variable cannot be reassigned.
 #[test]
 fn test_cfa_const_maintains_narrowing() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const x: string | number = "hello";
 
@@ -20934,8 +19887,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -20973,8 +19925,6 @@ if (typeof x === "string") {
 /// Arrow functions also invalidate narrowing for captured mutable variables.
 #[test]
 fn test_cfa_invalidation_arrow_function() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let value: string | null = "test";
 
@@ -20990,8 +19940,7 @@ if (value !== null) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21027,8 +19976,6 @@ if (value !== null) {
 /// Callback passed to another function also invalidates narrowing.
 #[test]
 fn test_cfa_invalidation_callback_parameter() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare function doLater(fn: () => void): void;
 
@@ -21046,8 +19993,7 @@ if (data !== undefined) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21088,8 +20034,6 @@ if (data !== undefined) {
 /// JSX type checking is not yet implemented.
 #[test]
 fn test_jsx_intrinsic_element_lowercase_lookup() {
-    use crate::parser::ParserState;
-
     // Use .tsx extension for JSX
     let source = r#"
 declare namespace JSX {
@@ -21154,8 +20098,6 @@ const elem2 = <span id="foo" />;
 /// JSX type checking is not yet implemented.
 #[test]
 fn test_jsx_component_uppercase_resolution() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare namespace JSX {
     interface Element {}
@@ -21217,8 +20159,6 @@ const btn = <MyButton label="Click me" />;
 /// JSX type checking is not yet implemented.
 #[test]
 fn test_jsx_intrinsic_element_not_found_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare namespace JSX {
     interface IntrinsicElements {
@@ -21270,8 +20210,6 @@ const elem = <unknowntag />;
 /// Test that namespace interface members can be used as type annotations
 #[test]
 fn test_namespace_type_member_interface_annotation() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Models {
     export interface User {
@@ -21291,8 +20229,7 @@ function getUser(): Models.User {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21328,8 +20265,6 @@ function getUser(): Models.User {
 /// for cases that should work correctly.
 #[test]
 fn test_namespace_type_member_type_alias_annotation() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Types {
     export type ID = number;
@@ -21342,8 +20277,7 @@ const name: Types.Name = "Bob";
 const pair: Types.Pair<number> = [1, 2];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21375,8 +20309,6 @@ const pair: Types.Pair<number> = [1, 2];
 /// Test that nested namespace type members can be used as type annotations
 #[test]
 fn test_namespace_type_member_nested_annotation() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Outer {
     export namespace Inner {
@@ -21393,8 +20325,7 @@ const config: Outer.Inner.Config = { enabled: true };
 const value: Outer.Inner.Deep.Value = "test";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21426,8 +20357,6 @@ const value: Outer.Inner.Deep.Value = "test";
 /// Test that namespace generic type members work correctly
 #[test]
 fn test_namespace_type_member_generic_usage() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace Collections {
     export interface Container<T> {
@@ -21444,8 +20373,7 @@ const numContainer: Collections.Container<number> = { value: 42 };
 const optString: Collections.Optional<string> = null;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21477,8 +20405,6 @@ const optString: Collections.Optional<string> = null;
 /// Test that namespace type members work in function signatures
 #[test]
 fn test_namespace_type_member_function_signature() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace API {
     export interface Request {
@@ -21498,8 +20424,7 @@ function handleRequest(req: API.Request): API.Response {
 const makeRequest: (req: API.Request) => API.Response = handleRequest;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21531,7 +20456,6 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
 #[test]
 fn test_use_before_assignment_basic_flow() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 function foo() {
@@ -21558,8 +20482,7 @@ function qux() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21604,7 +20527,6 @@ function qux() {
 #[test]
 fn test_use_before_assignment_try_catch() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 function foo() {
@@ -21617,8 +20539,7 @@ function foo() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21663,7 +20584,6 @@ function foo() {
 #[test]
 fn test_use_before_assignment_for_of_initializer() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 function foo(items: number[]) {
@@ -21674,8 +20594,7 @@ function foo(items: number[]) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21714,7 +20633,6 @@ function foo(items: number[]) {
 #[test]
 fn test_use_before_assignment_for_in_initializer() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 function foo(obj: Record<string, number>) {
@@ -21725,8 +20643,7 @@ function foo(obj: Record<string, number>) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21768,16 +20685,13 @@ function foo(obj: Record<string, number>) {
 /// Test that required properties without initialization emit TS2564
 #[test]
 fn test_ts2564_required_property_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name: string;
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21823,16 +20737,13 @@ class Foo {
 /// Test that properties with `undefined` in their type skip TS2564
 #[test]
 fn test_ts2564_union_with_undefined_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name: string | undefined;
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21865,8 +20776,6 @@ class Foo {
 /// Test that optional properties skip TS2564 check
 #[test]
 fn test_ts2564_optional_property_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name?: string;
@@ -21874,8 +20783,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21909,8 +20817,6 @@ class Foo {
 /// Test that definite assignment assertion (!) skips TS2564 check
 #[test]
 fn test_ts2564_definite_assignment_assertion_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name!: string;
@@ -21918,8 +20824,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21953,8 +20858,6 @@ class Foo {
 /// Test that properties with initializers skip TS2564 check
 #[test]
 fn test_ts2564_property_with_initializer_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name: string = "default";
@@ -21962,8 +20865,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -21997,8 +20899,6 @@ class Foo {
 /// Test that static properties skip TS2564 check (static fields have different semantics)
 #[test]
 fn test_ts2564_static_property_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     static name: string;
@@ -22006,8 +20906,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22041,8 +20940,6 @@ class Foo {
 /// Test that properties assigned directly in constructor skip TS2564 check
 #[test]
 fn test_ts2564_simple_constructor_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name: string;
@@ -22054,8 +20951,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22093,8 +20989,6 @@ class Foo {
 /// Test that switch statements without default case emit TS2564
 #[test]
 fn test_ts2564_switch_without_default_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -22112,8 +21006,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22160,8 +21053,6 @@ class Foo {
 /// Test that switch statements with default case pass TS2564 check
 #[test]
 fn test_ts2564_switch_with_default_passes() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -22178,8 +21069,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22220,8 +21110,6 @@ class Foo {
 /// Test that destructuring assignments to this.* are tracked
 #[test]
 fn test_ts2564_destructuring_assignment_passes() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     a: number;
@@ -22232,8 +21120,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22274,8 +21161,6 @@ class Foo {
 /// Test that array destructuring assignments to this.* are tracked
 #[test]
 fn test_ts2564_array_destructuring_assignment_passes() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     a: number;
@@ -22286,8 +21171,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22328,8 +21212,6 @@ class Foo {
 /// Test that properties assigned only in loop body emit TS2564
 #[test]
 fn test_ts2564_loop_assignment_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -22341,8 +21223,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22388,8 +21269,6 @@ class Foo {
 /// Test that properties assigned in do-while loop pass (executes at least once)
 #[test]
 fn test_ts2564_do_while_assignment_passes() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -22401,8 +21280,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22443,8 +21321,6 @@ class Foo {
 /// Test that while loop with false condition doesn't count as definite assignment
 #[test]
 fn test_ts2564_while_loop_false_condition_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -22456,8 +21332,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22503,8 +21378,6 @@ class Foo {
 /// Test that computed properties with identifier keys emit TS2564
 #[test]
 fn test_ts2564_computed_property_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const key1 = "computedKey";
 class Foo {
@@ -22512,8 +21385,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22559,8 +21431,6 @@ class Foo {
 /// Test that computed properties initialized in constructor pass TS2564 check
 #[test]
 fn test_ts2564_computed_property_initialized_passes() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const key2 = "initInConstructor";
 class Foo {
@@ -22571,8 +21441,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22612,8 +21481,6 @@ class Foo {
 
 #[test]
 fn test_recursive_mapped_type_stack_guard() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Circular<T> = { [P in keyof T]: Circular<T> };
 type Obj = { a: number };
@@ -22621,8 +21488,7 @@ declare let foo: Circular<Obj>;
 foo.a;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22647,8 +21513,6 @@ foo.a;
 
 #[test]
 fn test_recursive_mapped_type_list_widget_guard() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type NonOptionalKeys<T> = { [P in keyof T]: undefined extends T[P] ? never : P }[keyof T];
 type Child<T> = { [P in NonOptionalKeys<T>]: T[P] };
@@ -22667,8 +21531,7 @@ declare let x: ListChild;
 x.type;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22693,8 +21556,6 @@ x.type;
 
 #[test]
 fn test_abstract_constructor_type_parses() {
-    use crate::parser::ParserState;
-
     // Test that abstract constructor types parse correctly (no TS1005/TS1109 errors)
     let source = r#"
 function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass) {
@@ -22704,8 +21565,7 @@ function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass:
 type AbstractConstructor<T> = abstract new (...args: any[]) => T;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     // Check for parser errors (TS1005 = ';' expected, TS1109 = Expression expected)
     let parse_errors: Vec<_> = parser
@@ -22740,7 +21600,6 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
 #[test]
 fn test_unterminated_template_expression_reports_parse_error() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = "var v = `foo ${ a ";
 
@@ -22757,7 +21616,6 @@ fn test_unterminated_template_expression_reports_parse_error() {
 #[test]
 fn test_global_augmentation_binds_to_file_scope() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -22767,8 +21625,7 @@ declare global {
 augmented;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22800,7 +21657,6 @@ augmented;
 #[test]
 fn test_namespace_merging_resolves_prior_exports() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Utils { export const x = 1; }
@@ -22808,8 +21664,7 @@ namespace Utils { export const y = x; }
 const z = Utils.y;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22841,7 +21696,6 @@ const z = Utils.y;
 #[test]
 fn test_module_augmentation_merges_exports() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 declare module "pkg" {
@@ -22852,8 +21706,7 @@ declare module "pkg" {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22889,7 +21742,6 @@ declare module "pkg" {
 #[test]
 fn test_circular_type_alias_ts2456() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 // Direct circular reference - should emit TS2456
@@ -22901,8 +21753,7 @@ type Recurse = {
 declare let x: Recurse;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -22941,7 +21792,6 @@ declare let x: Recurse;
 fn test_builtin_type_references_only_emit_ts2304_for_missing_dom_globals() {
     // Regression test: Global types like Promise, Array, Map should not cause
     // TS2304 "Cannot find name" errors when lib.d.ts is not loaded.
-    use crate::parser::ParserState;
 
     let source = r#"
 // Type references with type arguments
@@ -22987,8 +21837,7 @@ interface MyError extends Error {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23076,7 +21925,6 @@ interface MyError extends Error {
 fn test_builtin_types_in_type_literal_only_emit_ts2304_for_missing_dom_globals() {
     // Ensure true lib types still resolve in type literals while missing DOM globals
     // continue to route through plain TS2304.
-    use crate::parser::ParserState;
 
     let source = r#"
 type Box<T> = { value: T };
@@ -23090,8 +21938,7 @@ type Foo = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23149,8 +21996,6 @@ type Foo = {
 
 #[test]
 fn test_switch_case_param_reference_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: number }) {
     switch (s.kind) {
@@ -23164,8 +22009,7 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23196,8 +22040,6 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
 
 #[test]
 fn test_type_predicate_param_type_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Wat {
     set p1(x: this is string) {}
@@ -23205,8 +22047,7 @@ class Wat {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     // Parser correctly rejects type predicates in setter parameter position
     // (same as tsc which emits TS1005), so we only check that the checker
     // doesn't add a spurious TS2304 on top of the parse errors.
@@ -23235,8 +22076,6 @@ class Wat {
 
 #[test]
 fn test_type_predicate_return_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 declare function isString(value: unknown): value is string;
 declare function assertIsString(value: unknown): asserts value is string;
@@ -23244,8 +22083,7 @@ declare function assertDefined<T>(value: T): asserts value;
 const assertFn: (value: unknown) => asserts value = value => {};
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23276,8 +22114,6 @@ const assertFn: (value: unknown) => asserts value = value => {};
 
 #[test]
 fn test_type_predicate_this_return_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo {
     ok: boolean;
@@ -23290,8 +22126,7 @@ const obj = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23322,14 +22157,11 @@ const obj = {
 
 #[test]
 fn test_exports_reference_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 exports.foo = 1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23360,8 +22192,6 @@ exports.foo = 1;
 
 #[test]
 fn test_mapped_type_param_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Types = "boolean" | "string";
 type Properties<T extends { [key: string]: Types }> = {
@@ -23369,8 +22199,7 @@ type Properties<T extends { [key: string]: Types }> = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -23396,8 +22225,6 @@ type Properties<T extends { [key: string]: Types }> = {
 
 #[test]
 fn test_accessor_modifier_declaration_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface I1 {
     accessor a: number;
@@ -23408,8 +22235,7 @@ accessor var V1: any;
 accessor export default V1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -23436,7 +22262,6 @@ accessor export default V1;
 #[test]
 fn test_namespace_sibling_export_resolves() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Utils {
@@ -23448,8 +22273,7 @@ namespace Utils {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23481,7 +22305,6 @@ namespace Utils {
 #[test]
 fn test_namespace_type_literal_resolves_members() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace A {
@@ -23493,8 +22316,7 @@ namespace A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23526,7 +22348,6 @@ namespace A {
 #[test]
 fn test_namespace_type_query_resolves_alias() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace A {
@@ -23540,8 +22361,7 @@ namespace C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23573,7 +22393,6 @@ namespace C {
 #[test]
 fn test_declare_global_merges_into_global_scope() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -23586,8 +22405,7 @@ declare global {
 const x = globalValue;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23619,7 +22437,6 @@ const x = globalValue;
 #[test]
 fn test_ambient_module_declaration_resolves_import() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 declare module "foo" {
@@ -23630,8 +22447,7 @@ import { Options } from "foo";
 const opts: Options = { value: 1 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23663,7 +22479,6 @@ const opts: Options = { value: 1 };
 #[test]
 fn test_extends_expression_with_type_args_instantiates_base() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 interface Base<T, U> {
@@ -23698,8 +22513,7 @@ class D3 extends getBase() <string, number> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23731,7 +22545,6 @@ class D3 extends getBase() <string, number> {
 #[test]
 fn test_contextual_array_literal_uses_element_type() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class Base { foo: string = ""; }
@@ -23744,8 +22557,7 @@ declare const d2: Derived2;
 const r: Base[] = [d1, d2];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23777,7 +22589,6 @@ const r: Base[] = [d1, d2];
 #[test]
 fn test_indexed_access_resolves_class_property_type() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -23789,8 +22600,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23822,7 +22632,6 @@ class C {
 #[test]
 fn test_static_private_fields_ignored_in_constructor_assignability() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class A {
@@ -23833,8 +22642,7 @@ class A {
 const willErrorSomeDay: typeof A = class {};
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23866,7 +22674,6 @@ const willErrorSomeDay: typeof A = class {};
 #[test]
 fn test_assignment_expression_condition_narrows_discriminant() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 type D = { done: true, value: 1 } | { done: false, value: 2 };
@@ -23877,8 +22684,7 @@ if ((o = fn()).done) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23911,7 +22717,6 @@ if ((o = fn()).done) {
 #[test]
 fn test_destructuring_assignment_default_order_narrows() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 let a: 0 | 1 = 0;
@@ -23920,8 +22725,7 @@ let b: 0 | 1 | 9;
 const bb: 0 = b;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23953,7 +22757,6 @@ const bb: 0 = b;
 #[test]
 fn test_in_operator_const_name_narrows_union() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const a = "a";
@@ -23965,8 +22768,7 @@ if (a in c) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -23998,7 +22800,6 @@ if (a in c) {
 #[test]
 fn test_instanceof_type_param_narrows_to_intersection() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 class C { prop: string = ""; }
@@ -24010,8 +22811,7 @@ function f<T>(x: T) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24043,7 +22843,6 @@ function f<T>(x: T) {
 #[test]
 fn test_optional_chain_discriminant_narrows_union() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 declare const o: { x: 1, y: string } | { x: 2, y: number } | undefined;
@@ -24052,8 +22851,7 @@ if (o?.x === 1) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24088,8 +22886,6 @@ if (o?.x === 1) {
 
 #[test]
 fn test_class_inheritance_property_access() {
-    use crate::parser::ParserState;
-
     // Tests that accessing inherited instance properties doesn't produce TS2339
     let source = r#"
 class Base {
@@ -24100,8 +22896,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24133,8 +22928,6 @@ class Derived extends Base {
 
 #[test]
 fn test_mixin_inheritance_property_access() {
-    use crate::parser::ParserState;
-
     // This test is related to test_abstract_mixin_intersection_ts2339 and requires
     // fixing type parameter scope handling for nested classes in generic functions.
     let source = r#"
@@ -24162,8 +22955,7 @@ d.baseMethod();
 d.mixinMethod();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24197,8 +22989,6 @@ d.mixinMethod();
 
 #[test]
 fn test_mixin_return_type_preserves_base_properties() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type Constructor<T> = new (...args: any[]) => T;
 
@@ -24241,8 +23031,7 @@ class Thing3 extends Thing2 {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24276,8 +23065,6 @@ class Thing3 extends Thing2 {
 
 #[test]
 fn test_class_extends_class_like_constructor_properties() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base<T, U> {
     x: T;
@@ -24318,8 +23105,7 @@ class D3 extends getBase() <string, number> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24351,8 +23137,6 @@ class D3 extends getBase() <string, number> {
 
 #[test]
 fn test_interface_extension_property_access_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that accessing properties from extended interface doesn't produce TS2339
     let source = r#"
 interface A { a: string; }
@@ -24362,8 +23146,7 @@ function f(obj: B) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24395,8 +23178,6 @@ function f(obj: B) {
 
 #[test]
 fn test_multi_level_inheritance_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that multi-level class inheritance properly resolves properties
     let source = r#"
 class A {
@@ -24410,8 +23191,7 @@ class C extends B {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24443,8 +23223,6 @@ class C extends B {
 
 #[test]
 fn test_implements_clause_resolution_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that accessing interface properties via typed parameter works
     // Note: 'implements' itself doesn't contribute to 'this' type lookup,
     // but a parameter typed as the interface should resolve properties
@@ -24454,8 +23232,7 @@ class C implements I { x: number = 0; }
 function f(i: I) { return i.x; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24487,8 +23264,6 @@ function f(i: I) { return i.x; }
 
 #[test]
 fn test_multi_level_interface_extension_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that multi-level interface extension properly resolves properties
     let source = r#"
 interface A { a: string; }
@@ -24499,8 +23274,7 @@ function f(obj: C) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24532,8 +23306,6 @@ function f(obj: C) {
 
 #[test]
 fn test_inherited_method_call_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that calling inherited methods doesn't produce TS2339
     let source = r#"
 class Base {
@@ -24544,8 +23316,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24577,8 +23348,6 @@ class Derived extends Base {
 
 #[test]
 fn test_intersection_type_typeof_declare_classes_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that property access works on intersection types of declare class constructors
     // Regression test for: typeof M1 & typeof C1 should resolve properties from both sides
     let source = r#"
@@ -24601,8 +23370,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24636,8 +23404,6 @@ function f() {
 
 #[test]
 fn test_intersection_type_three_way_constructor_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that three-way intersection types work correctly
     let source = r#"
 declare class C1 {
@@ -24665,8 +23431,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24700,8 +23465,6 @@ function f() {
 
 #[test]
 fn test_class_extends_intersection_type_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that classes extending intersection types can access properties from both sides
     let source = r#"
 declare class C1 {
@@ -24725,8 +23488,7 @@ class C2 extends Mixed1 {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24760,8 +23522,6 @@ class C2 extends Mixed1 {
 
 #[test]
 fn test_abstract_mixin_intersection_ts2339() {
-    use crate::parser::ParserState;
-
     // Tests that abstract mixin patterns with intersection types resolve properties
     // This requires fixing type parameter scope handling when computing parameter types
     // for heritage clauses in nested classes inside generic functions.
@@ -24789,8 +23549,7 @@ wasConcrete.baseMethod();
 wasConcrete.mixinMethod();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24824,8 +23583,6 @@ wasConcrete.mixinMethod();
 
 #[test]
 fn test_intersection_type_lowercase() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Base {
     x: number;
@@ -24847,8 +23604,7 @@ class Derived extends getBase() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -24880,8 +23636,6 @@ class Derived extends getBase() {
 
 #[test]
 fn test_incomplete_property_access_no_ts2339() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     method() {
@@ -24890,8 +23644,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().iter().any(|d| d.code == 1003),
         "Expected parse error TS1003 for missing identifier, got: {:?}",
@@ -24923,8 +23676,6 @@ class Foo {
 
 #[test]
 fn test_interface_extends_class_no_recursion_crash() {
-    use crate::parser::ParserState;
-
     // Regression test for crash: interface extending a class with private fields
     // should not cause infinite recursion during type checking
     let source = r#"
@@ -24941,8 +23692,7 @@ function func(x: I) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -24966,8 +23716,6 @@ function func(x: I) {
 
 #[test]
 fn test_no_implicit_returns_ts7030_function() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitReturns: true
 function maybeReturn(x: boolean) {
@@ -24978,8 +23726,7 @@ function maybeReturn(x: boolean) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25024,8 +23771,6 @@ function maybeReturn(x: boolean) {
 
 #[test]
 fn test_no_implicit_returns_disabled() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitReturns: false
 function maybeReturn(x: boolean) {
@@ -25036,8 +23781,7 @@ function maybeReturn(x: boolean) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25074,8 +23818,6 @@ function maybeReturn(x: boolean) {
 
 #[test]
 fn test_no_implicit_returns_ts7030_method() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitReturns: true
 class Example {
@@ -25088,8 +23830,7 @@ class Example {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25134,8 +23875,6 @@ class Example {
 
 #[test]
 fn test_no_implicit_returns_ts7030_getter() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // @noImplicitReturns: true
 class Example {
@@ -25149,8 +23888,7 @@ class Example {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25196,7 +23934,6 @@ class Example {
 #[test]
 fn test_ts2695_comma_operator_side_effects() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 let a = 1;
@@ -25207,8 +23944,7 @@ function aFn() {}
 aFn(), b;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25256,7 +23992,6 @@ aFn(), b;
 #[test]
 fn test_ts2695_comma_operator_edge_cases() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 declare function eval(input: string): any;
@@ -25278,8 +24013,7 @@ void a, b;
 (0, obj["method"])();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25328,8 +24062,6 @@ void a, b;
 
 #[test]
 fn test_variadic_tuple_rest_param_no_ts2769() {
-    use crate::parser::ParserState;
-
     // Regression test for TS2769 false positives with variadic tuple rest parameters
     // https://github.com/microsoft/TypeScript/issues/...
     // For signature: foo<T extends unknown[]>(x: number, ...args: [...T, number]): T
@@ -25346,8 +24078,7 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
         }
     "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -25381,8 +24112,6 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
 
 #[test]
 fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
-    use crate::parser::ParserState;
-
     let source = r#"
         declare function ft3<T extends unknown[]>(t: [...T]): T;
         declare function f20<T extends unknown[] = []>(args: [...T, number?]): T;
@@ -25406,8 +24135,7 @@ fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
         }
     "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -25441,8 +24169,6 @@ fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
 
 #[test]
 fn test_recursive_mapped_types_no_crash() {
-    use crate::parser::ParserState;
-
     // Regression test for recursive mapped type stack overflow
     // Tests that simple recursive mapped types don't cause infinite loops or crashes
     let code = r#"
@@ -25467,8 +24193,7 @@ type tup = [number, number];
 declare var x: Circular<tup>;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -25494,8 +24219,6 @@ declare var x: Circular<tup>;
 
 #[test]
 fn test_recursive_mapped_property_access_no_crash() {
-    use crate::parser::ParserState;
-
     // Regression test for recursive mapped type property access
     let code = r#"
 type Transform<T> = { [K in keyof T]: Transform<T[K]> };
@@ -25508,8 +24231,7 @@ declare var product: Transform<Product>;
 product.users;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -25532,8 +24254,6 @@ product.users;
 }
 #[test]
 fn test_object_destructuring_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { x: number, y: string } = { x: 10, y: "hello" };
 
@@ -25541,8 +24261,7 @@ let obj: { x: number, y: string } = { x: 10, y: "hello" };
 let { x, y }: { x: string, y: string } = obj;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25596,8 +24315,6 @@ let { x, y }: { x: string, y: string } = obj;
 
 #[test]
 fn test_array_destructuring_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let arr: [number, string] = [10, "hello"];
 
@@ -25605,8 +24322,7 @@ let arr: [number, string] = [10, "hello"];
 let [a, b]: [number, number] = arr;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25660,8 +24376,6 @@ let [a, b]: [number, number] = arr;
 
 #[test]
 fn test_destructuring_with_default_values_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { x?: number } = {};
 
@@ -25670,8 +24384,7 @@ let obj: { x?: number } = {};
 let { x = 42 }: { x: string } = obj;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25725,8 +24438,6 @@ let { x = 42 }: { x: string } = obj;
 
 #[test]
 fn test_nested_destructuring_assignability() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let obj: { a: { b: number } } = { a: { b: 10 } };
 
@@ -25734,8 +24445,7 @@ let obj: { a: { b: number } } = { a: { b: 10 } };
 let { a: { b } }: { a: { b: string } } = obj;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25789,16 +24499,13 @@ let { a: { b } }: { a: { b: string } } = obj;
 
 #[test]
 fn test_destructuring_binding_element_default_value_mismatch() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // The default value 42 (number) should trigger TS2322: Type 'number' is not assignable to type 'string'
 let obj: { x?: string } = {};
 let { x = 42 }: { x: string } = obj;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25852,8 +24559,6 @@ let { x = 42 }: { x: string } = obj;
 
 #[test]
 fn test_binding_element_default_value_isolated_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // The initializer {} is valid for { x?: number } (x is optional)
 // But the default value "hello" (string) should NOT be assignable to number
@@ -25861,8 +24566,7 @@ fn test_binding_element_default_value_isolated_check() {
 let { x = "hello" }: { x?: number } = {};
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -25922,8 +24626,6 @@ let { x = "hello" }: { x?: number } = {};
 /// but this is not being detected correctly for recursive mapped types.
 #[test]
 fn test_recursive_mapped_type_no_crash_and_ts2456() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // TS2456: Type alias 'DirectCircular' circularly references itself
 type DirectCircular = DirectCircular;
@@ -25970,8 +24672,7 @@ type tpl = [string, [string, [string]]];
 type t1 = DeepMap<tpl, number>;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -26022,8 +24723,6 @@ type t1 = DeepMap<tpl, number>;
 
 #[test]
 fn test_type_parameter_in_function_body_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function identity<T>(x: T): T {
     const y: T = x;
@@ -26031,8 +24730,7 @@ function identity<T>(x: T): T {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -26069,8 +24767,6 @@ function identity<T>(x: T): T {
 
 #[test]
 fn test_static_private_field_access_no_ts2339() {
-    use crate::parser::ParserState;
-
     // Regression test for static private field access
     // Previously failed with TS2339 because static private members were excluded from constructor type
     let source = r#"
@@ -26085,8 +24781,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -26126,8 +24821,6 @@ class C {
 
 #[test]
 fn test_static_private_accessor_access_no_ts2339() {
-    use crate::parser::ParserState;
-
     // Regression test for static private accessor access
     let source = r#"
 class A {
@@ -26144,8 +24837,7 @@ class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -26184,8 +24876,6 @@ class A {
 
 #[test]
 fn test_type_parameter_in_type_query() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Type parameters should be resolved in typeof type queries
 function identity<T>(x: T): T {
@@ -26201,8 +24891,7 @@ function extract<T>(x: Extract<T, typeof identity>): T {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26243,16 +24932,13 @@ function extract<T>(x: Extract<T, typeof identity>): T {
 
 #[test]
 fn test_constrained_type_parameter_in_types_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
     return "hello";
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -26286,8 +24972,6 @@ function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
 
 #[test]
 fn test_self_referential_type_constraint_no_ts2304() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Box<T> {
     item: T;
@@ -26302,8 +24986,7 @@ function g1<T extends Box<T> | undefined>(x: T) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -26337,8 +25020,6 @@ function g1<T extends Box<T> | undefined>(x: T) {
 
 #[test]
 fn test_generic_control_flow_narrowing() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function f1<T extends string | undefined>(x: T): string {
     if (x) {
@@ -26348,8 +25029,7 @@ function f1<T extends string | undefined>(x: T): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26406,8 +25086,7 @@ class A2 {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -26444,8 +25123,6 @@ class A2 {
 
 #[test]
 fn test_class_constructor_without_new_emits_ts2348() {
-    use crate::parser::ParserState;
-
     // Regression test for TS2348: calling class constructor without 'new'
     // When a class constructor is called without 'new', should emit TS2348
     // (Cannot invoke an expression whose type lacks a call signature)
@@ -26467,8 +25144,7 @@ class MyClass {
 var instance = MyClass();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -26532,8 +25208,6 @@ var instance = MyClass();
 
 #[test]
 fn test_generic_control_flow_narrowing_property_access() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function f1<T extends string | undefined>(y: { a: T }): string {
     if (y.a) {
@@ -26543,8 +25217,7 @@ function f1<T extends string | undefined>(y: { a: T }): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26591,8 +25264,6 @@ function f1<T extends string | undefined>(y: { a: T }): string {
 
 #[test]
 fn test_ts2339_optional_chaining_no_error() {
-    use crate::parser::ParserState;
-
     // Optional chaining (?.) should NOT emit TS2339 when property might not exist
     let source = r#"
 interface A { a: string; }
@@ -26604,8 +25275,7 @@ function test(obj: A | B | null) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26645,8 +25315,6 @@ function test(obj: A | B | null) {
 
 #[test]
 fn test_ts2339_union_all_members_need_property() {
-    use crate::parser::ParserState;
-
     // For union types, property must exist on ALL non-nullable members
     let source = r#"
 interface A { a: string; }
@@ -26663,8 +25331,7 @@ function test2(obj: A | B) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26703,8 +25370,6 @@ function test2(obj: A | B) {
 
 #[test]
 fn test_ts2339_private_accessor_in_closure() {
-    use crate::parser::ParserState;
-
     // Test that private accessors are accessible from closures in the class
     let source = r#"
 class C {
@@ -26725,8 +25390,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26765,8 +25429,6 @@ class C {
 
 #[test]
 fn test_ts2339_static_private_accessor_access() {
-    use crate::parser::ParserState;
-
     // Test that static private accessors are accessible through the class name
     let source = r#"
 class C {
@@ -26787,8 +25449,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26827,8 +25488,6 @@ class C {
 
 #[test]
 fn test_ts2339_union_shared_property_no_error() {
-    use crate::parser::ParserState;
-
     // Property that exists on ALL union members should NOT produce TS2339
     let source = r#"
 interface A { common: string; a: string; }
@@ -26840,8 +25499,7 @@ function test(obj: A | B) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26881,8 +25539,6 @@ function test(obj: A | B) {
 
 #[test]
 fn test_ts2339_index_signature_allows_any_property() {
-    use crate::parser::ParserState;
-
     // String/number index signatures should allow any property access
     let source = r#"
 interface StringIndexed {
@@ -26908,8 +25564,7 @@ function test2(obj: NumberIndexed) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -26949,8 +25604,6 @@ function test2(obj: NumberIndexed) {
 
 #[test]
 fn test_ts2339_no_index_signature_error() {
-    use crate::parser::ParserState;
-
     // Without index signature, accessing non-existent property should produce TS2339
     let source = r#"
 interface NoIndex {
@@ -26963,8 +25616,7 @@ function test(obj: NoIndex) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -27004,8 +25656,6 @@ function test(obj: NoIndex) {
 
 #[test]
 fn test_ts2339_nullable_union_with_optional_chaining() {
-    use crate::parser::ParserState;
-
     // Test union with null/undefined using optional chaining
     let source = r#"
 interface A { a: string; }
@@ -27020,8 +25670,7 @@ function test(obj: A | null) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -27061,8 +25710,6 @@ function test(obj: A | null) {
 
 #[test]
 fn test_ts2339_intersection_property_access() {
-    use crate::parser::ParserState;
-
     // Test property access on intersection types
     let source = r#"
 type A = { a: string };
@@ -27082,8 +25729,7 @@ function test2(obj: A & { c: boolean }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -27123,8 +25769,6 @@ function test2(obj: A & { c: boolean }) {
 
 #[test]
 fn test_overload_arg_count_exceeds_all_only_ts2554_not_ts2769() {
-    use crate::parser::ParserState;
-
     // Regression test for overload calls where argument count exceeds ALL signatures
     // When all overloads fail due to argument count mismatch, should emit TS2554 only, not TS2769
     let code = r#"
@@ -27136,8 +25780,7 @@ declare function mixed(x: number, y: number): void;
 mixed(42, 99, 100);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27195,8 +25838,6 @@ mixed(42, 99, 100);
 
 #[test]
 fn test_ts2555_expected_at_least_arguments() {
-    use crate::parser::ParserState;
-
     // Test TS2554 vs TS2555: tsc uses TS2554 ("Expected N-M arguments") for
     // functions with optional params, and TS2555 ("Expected at least N") only
     // for rest params. This test verifies that behavior.
@@ -27210,8 +25851,7 @@ function foo(a: number, b: string, c?: boolean): void {}
 foo(1);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27267,8 +25907,6 @@ foo(1);
 
 #[test]
 fn test_ts2554_expected_exact_arguments() {
-    use crate::parser::ParserState;
-
     // Test TS2554: Expected N arguments, but got M.
     // This error should be emitted when a function has no optional parameters
     // and the wrong number of arguments are provided.
@@ -27279,8 +25917,7 @@ function bar(a: number, b: string): void {}
 bar(1);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27331,8 +25968,6 @@ bar(1);
 
 #[test]
 fn test_ts2345_argument_type_mismatch() {
-    use crate::parser::ParserState;
-
     // Test TS2345: Argument of type 'X' is not assignable to parameter of type 'Y'.
     let code = r#"
 function baz(a: number): void {}
@@ -27341,8 +25976,7 @@ function baz(a: number): void {}
 baz("hello");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27389,8 +26023,6 @@ baz("hello");
 
 #[test]
 fn test_ts2366_arrow_function_missing_return() {
-    use crate::parser::ParserState;
-
     // Test error 2366 for arrow functions with explicit return type
     let source = r#"
 // Arrow function with number return type that can fall through
@@ -27419,8 +26051,7 @@ const noAnnotation = () => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27456,8 +26087,6 @@ const noAnnotation = () => {
 
 #[test]
 fn test_ts2366_function_expression_missing_return() {
-    use crate::parser::ParserState;
-
     // Test error 2366 for function expressions with explicit return type
     let source = r#"
 // Function expression with string return type that can fall through
@@ -27481,8 +26110,7 @@ const noAnnotation = function() {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27518,8 +26146,6 @@ const noAnnotation = function() {
 
 #[test]
 fn test_ts2366_nested_arrow_functions() {
-    use crate::parser::ParserState;
-
     // Test error 2366 for nested arrow functions
     let source = r#"
 function outer(): (x: number) => string {
@@ -27532,8 +26158,7 @@ function outer(): (x: number) => string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27569,8 +26194,6 @@ function outer(): (x: number) => string {
 
 #[test]
 fn test_ts2366_arrow_function_switch_statement() {
-    use crate::parser::ParserState;
-
     // Test error 2366 for arrow functions with switch statements
     let source = r#"
 // Arrow function with switch missing default case
@@ -27594,8 +26217,7 @@ const switchWithDefault = (value: number): string => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27631,8 +26253,6 @@ const switchWithDefault = (value: number): string => {
 
 #[test]
 fn test_ts2366_arrow_function_switch_grouped_cases() {
-    use crate::parser::ParserState;
-
     // Regression: grouped switch cases should not trigger TS2366 when all paths return.
     let source = r#"
 const groupedSwitchReturns = (value: string | number): number => {
@@ -27646,8 +26266,7 @@ const groupedSwitchReturns = (value: string | number): number => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27681,8 +26300,6 @@ const groupedSwitchReturns = (value: string | number): number => {
 
 #[test]
 fn test_ts2366_arrow_function_try_catch() {
-    use crate::parser::ParserState;
-
     // Test error 2366 for arrow functions with try/catch
     let source = r#"
 // Arrow function with try/catch - both branches can fall through
@@ -27710,8 +26327,7 @@ const tryFinallyFallthrough = (): number => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27747,8 +26363,6 @@ const tryFinallyFallthrough = (): number => {
 
 #[test]
 fn test_ts7027_unreachable_code_after_return() {
-    use crate::parser::ParserState;
-
     // Test TS7027 for unreachable code after return
     let source = r#"
 function test1(): number {
@@ -27770,8 +26384,7 @@ function test3(): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27807,8 +26420,6 @@ function test3(): string {
 
 #[test]
 fn test_ts7027_unreachable_code_after_throw() {
-    use crate::parser::ParserState;
-
     // Test TS7027 for unreachable code after throw
     let source = r#"
 function test1(): never {
@@ -27822,8 +26433,7 @@ function test2(): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27859,8 +26469,6 @@ function test2(): number {
 
 #[test]
 fn test_ts7027_unreachable_after_never_expression() {
-    use crate::parser::ParserState;
-
     // Test TS7027 for unreachable code after never-type expressions
     let source = r#"
 declare function fail(): never;
@@ -27876,8 +26484,7 @@ function test2(): void {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27913,8 +26520,6 @@ function test2(): void {
 
 #[test]
 fn test_ts2366_conditional_returns_all_paths() {
-    use crate::parser::ParserState;
-
     // Test that functions with conditional returns that cover all paths don't error
     let source = r#"
 function test1(flag: boolean): number {
@@ -27947,8 +26552,7 @@ function test3(x: number): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -27978,8 +26582,6 @@ function test3(x: number): number {
 
 #[test]
 fn test_ts2366_early_return() {
-    use crate::parser::ParserState;
-
     // Test that early returns are handled correctly
     let source = r#"
 function test1(x: number): number {
@@ -28000,8 +26602,7 @@ function test2(x: number): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -28031,8 +26632,6 @@ function test2(x: number): number {
 
 #[test]
 fn test_ts2366_throw_as_exit() {
-    use crate::parser::ParserState;
-
     // Test that throw statements are treated as exits
     let source = r#"
 function test1(x: number): number {
@@ -28057,8 +26656,7 @@ function test3(x: number): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -28088,8 +26686,6 @@ function test3(x: number): number {
 
 #[test]
 fn test_function_overload_no_ts2366() {
-    use crate::parser::ParserState;
-
     // Test that function overloads (signatures without bodies) don't trigger TS2366
     let source = r#"
 function overloaded(x: number): number;
@@ -28107,8 +26703,7 @@ class MyClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
@@ -28139,7 +26734,6 @@ class MyClass {
 #[test]
 fn test_function_overload_implementation_return_type_mismatch_reports_ts2322() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
 
     let source = r#"
@@ -28154,8 +26748,7 @@ function foo([x]: { a:number | string }[]): string | number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty());
 
     let arena = parser.get_arena();
@@ -28218,8 +26811,6 @@ function foo([x]: { a:number | string }[]): string | number {
 /// TS1064 fires for 4 async functions with non-Promise return types.
 #[test]
 fn test_async_function_returns_promise() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Promise<T> {}
 
@@ -28241,8 +26832,7 @@ async function corge(): Promise<void> { console.log("test"); }
 const arrowPromise = async (): Promise<string> => "test";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28289,8 +26879,6 @@ const arrowPromise = async (): Promise<string> => "test";
 /// type with a non-Promise return type, and the initializer is async, tsc emits TS1064.
 #[test]
 fn test_ts1064_jsdoc_type_function_async() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Promise<T> {}
 
@@ -28351,8 +26939,6 @@ const b = async () => {
 
 #[test]
 fn test_duplicate_class_members() {
-    use crate::parser::ParserState;
-
     // Simplified test - just duplicate properties
     let source = r#"
 class DuplicateProperties {
@@ -28361,8 +26947,7 @@ class DuplicateProperties {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28398,8 +26983,6 @@ class DuplicateProperties {
 
 #[test]
 fn test_duplicate_object_literal_properties() {
-    use crate::parser::ParserState;
-
     // Test duplicate properties in object literal (TS1117 only fires for ES5 target)
     let source = r#"
 const obj = {
@@ -28408,8 +26991,7 @@ const obj = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28449,8 +27031,6 @@ const obj = {
 
 #[test]
 fn test_duplicate_object_literal_mixed_properties() {
-    use crate::parser::ParserState;
-
     // Test duplicate properties with different syntax (shorthand, method)
     // TS1117 only fires for ES5 target
     let source = r#"
@@ -28469,8 +27049,7 @@ const obj2 = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28511,7 +27090,6 @@ const obj2 = {
 #[test]
 fn test_global_augmentation_tracks_interface_declarations() {
     // Test that interface declarations inside `declare global` are tracked as augmentations
-    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -28526,8 +27104,7 @@ declare global {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28573,7 +27150,6 @@ declare global {
 fn test_global_augmentation_interface_no_ts2304() {
     // Test that augmented interfaces inside `declare global` don't cause TS2304 errors
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -28589,8 +27165,7 @@ const win: Window = {} as Window;
 const prop = win.myCustomProperty;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28626,16 +27201,13 @@ const prop = win.myCustomProperty;
 /// Test that class expressions emit TS2564 for uninitialized properties
 #[test]
 fn test_ts2564_class_expression_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const MyClass = class {
     value: number;  // Should emit TS2564
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28675,8 +27247,6 @@ const MyClass = class {
 /// Test that class expressions with constructor assignments skip TS2564
 #[test]
 fn test_ts2564_class_expression_constructor_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const MyClass = class {
     value: number;
@@ -28687,8 +27257,7 @@ const MyClass = class {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28728,16 +27297,13 @@ const MyClass = class {
 /// Test that named class expressions emit TS2564 for uninitialized properties
 #[test]
 fn test_ts2564_named_class_expression_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const MyClass = class NamedClass {
     value: string;  // Should emit TS2564
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28777,8 +27343,6 @@ const MyClass = class NamedClass {
 /// Test that class expressions extending a base class emit TS2564
 #[test]
 fn test_ts2564_class_expression_derived_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Base {
     baseValue: number = 0;
@@ -28789,8 +27353,7 @@ const Derived = class extends Base {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28830,8 +27393,6 @@ const Derived = class extends Base {
 /// Test that abstract classes skip TS2564 check entirely
 #[test]
 fn test_ts2564_abstract_class_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 abstract class AbstractBase {
     name: string;  // No error - abstract class can't be instantiated
@@ -28839,8 +27400,7 @@ abstract class AbstractBase {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28874,8 +27434,6 @@ abstract class AbstractBase {
 /// Test TS2454 - Variable used before assignment (basic case)
 #[test]
 fn test_ts2454_variable_used_before_assignment() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function test() {
     let x: string;
@@ -28883,8 +27441,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28924,8 +27481,6 @@ function test() {
 /// Test TS2454 - Variable used in conditional (only one path assigns)
 #[test]
 fn test_ts2454_conditional_assignment_one_path() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function test() {
     let x: string;
@@ -28936,8 +27491,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -28977,8 +27531,6 @@ function test() {
 /// Test TS2454 - All paths assign (should NOT report error)
 #[test]
 fn test_ts2454_all_paths_assign() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function test() {
     let x: string;
@@ -28991,8 +27543,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29025,8 +27576,6 @@ function test() {
 /// Test TS2454 - Variable with initializer (should NOT report error)
 #[test]
 fn test_ts2454_variable_with_initializer() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function test() {
     let x: string = "hello";
@@ -29034,8 +27583,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29072,8 +27620,6 @@ function test() {
 /// Test that protected properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_protected_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     protected value: number;  // Should emit TS2564
@@ -29084,8 +27630,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29130,8 +27675,6 @@ class Foo {
 /// Test that protected properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_protected_property_initialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     protected value: number;
@@ -29142,8 +27685,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29183,8 +27725,6 @@ class Foo {
 /// Test that generic class properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_generic_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Container<T> {
     value: T;  // Should emit TS2564
@@ -29195,8 +27735,7 @@ class Container<T> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29243,8 +27782,6 @@ class Container<T> {
 /// Test that generic class properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_generic_property_initialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Container<T> {
     value: T;
@@ -29255,8 +27792,7 @@ class Container<T> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29296,8 +27832,6 @@ class Container<T> {
 /// Test that derived class without constructor still emits TS2564 for its properties
 #[test]
 fn test_ts2564_derived_class_no_constructor() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Base {
     constructor() {
@@ -29310,8 +27844,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29356,8 +27889,6 @@ class Derived extends Base {
 /// Test that derived class with constructor that initializes properties skips TS2564
 #[test]
 fn test_ts2564_derived_class_with_constructor() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Base {
     constructor() {
@@ -29375,8 +27906,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29416,8 +27946,6 @@ class Derived extends Base {
 /// Test that constructor overloads with property initialization work correctly
 #[test]
 fn test_ts2564_constructor_overloads() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -29430,8 +27958,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29471,8 +27998,6 @@ class Foo {
 /// Test that readonly properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_readonly_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     readonly value: number;  // Should emit TS2564
@@ -29483,8 +28008,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29529,8 +28053,6 @@ class Foo {
 /// Test that readonly properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_readonly_property_initialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     readonly value: number;
@@ -29541,8 +28063,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29582,8 +28103,6 @@ class Foo {
 /// Test that properties with union types emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_union_type_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: string | number;  // Should emit TS2564
@@ -29594,8 +28113,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29640,8 +28158,6 @@ class Foo {
 /// Test that properties with intersection types emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_intersection_type_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 type A = { x: number };
 type B = { y: number };
@@ -29655,8 +28171,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29701,8 +28216,6 @@ class Foo {
 /// Test that properties initialized in static blocks satisfy TS2564
 #[test]
 fn test_ts2564_static_block_initialization() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     static value: number;
@@ -29713,8 +28226,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29754,16 +28266,13 @@ class Foo {
 /// Test that static properties without initialization emit TS2564
 #[test]
 fn test_ts2564_static_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     static value: number;  // Should emit TS2564
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29800,8 +28309,6 @@ class Foo {
 /// Test that private properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_private_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     #value: number;  // Should emit TS2564
@@ -29812,8 +28319,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29858,8 +28364,6 @@ class Foo {
 /// Test that private properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_private_property_initialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     #value: number;
@@ -29870,8 +28374,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29911,8 +28414,6 @@ class Foo {
 /// Test that properties with null type emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_null_type_property_uninitialized() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number | null;  // Should emit TS2564 (null doesn't count as initialization)
@@ -29923,8 +28424,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -29969,8 +28469,6 @@ class Foo {
 /// Test that properties with any type skip TS2564
 #[test]
 fn test_ts2564_any_type_property_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: any;  // Should skip TS2564 (any is special)
@@ -29981,8 +28479,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30022,8 +28519,6 @@ class Foo {
 /// Test that properties with unknown type skip TS2564
 #[test]
 fn test_ts2564_unknown_type_property_skips_check() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: unknown;  // Should skip TS2564 (unknown is special)
@@ -30034,8 +28529,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30075,8 +28569,6 @@ class Foo {
 /// Test that properties assigned in try block emit TS2564 (might not execute)
 #[test]
 fn test_ts2564_try_block_assignment_emits_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -30091,8 +28583,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30137,8 +28628,6 @@ class Foo {
 /// Test that properties assigned in try/catch all paths pass
 #[test]
 fn test_ts2564_try_catch_all_paths_pass() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     value: number;
@@ -30153,8 +28642,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30195,8 +28683,6 @@ class Foo {
 /// Regression test: `apply_strict_defaults` was clobbering individual overrides
 #[test]
 fn test_ts2564_strict_property_init_false_suppresses_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name: string;
@@ -30204,8 +28690,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30248,8 +28733,6 @@ class Foo {
 /// tsc requires both strictNullChecks AND strictPropertyInitialization for TS2564
 #[test]
 fn test_ts2564_strict_null_checks_false_suppresses_error() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Foo {
     name: string;
@@ -30257,8 +28740,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30423,7 +28905,6 @@ fn test_tier_2_type_checker_accuracy_fixes() {
 #[test]
 fn test_unresolved_namespace_import_no_extra_ts2304() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     // Similar pattern to APISample tests
     let source = r#"
@@ -30439,8 +28920,7 @@ const version = ts.version;
 function process(node: ts.Node): void {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30498,7 +28978,6 @@ function process(node: ts.Node): void {}
 #[test]
 fn test_apisample_pattern_errors() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     // Pattern similar to APISample_Watch.ts
     let source = r#"
@@ -30520,8 +28999,7 @@ function createProgram(
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30593,15 +29071,13 @@ function createProgram(
 #[test]
 fn test_ts2362_left_hand_side_of_arithmetic() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const str = "hello";
 const result = str - 1;  // TS2362: left-hand side must be number/bigint/enum
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30638,7 +29114,6 @@ const result = str - 1;  // TS2362: left-hand side must be number/bigint/enum
 #[test]
 fn test_ts2363_right_hand_side_of_arithmetic() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const num = 10;
@@ -30646,8 +29121,7 @@ const str = "hello";
 const result = num - str;  // TS2363: right-hand side must be number/bigint/enum
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30684,7 +29158,6 @@ const result = num - str;  // TS2363: right-hand side must be number/bigint/enum
 #[test]
 fn test_ts2362_ts2363_both_operands_invalid() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const a = "hello";
@@ -30692,8 +29165,7 @@ const b = "world";
 const result = a * b;  // TS2362 and TS2363: both operands invalid
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30738,7 +29210,6 @@ const result = a * b;  // TS2362 and TS2363: both operands invalid
 #[test]
 fn test_arithmetic_valid_with_number_types() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const a = 10;
@@ -30749,8 +29220,7 @@ const result3 = a / b;
 const result4 = a % b;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30795,7 +29265,6 @@ const result4 = a % b;
 #[test]
 fn test_arithmetic_valid_with_any_type() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 declare const anyVal: any;
@@ -30804,8 +29273,7 @@ const result2 = 1 * anyVal;
 const result3 = anyVal / anyVal;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30850,7 +29318,6 @@ const result3 = anyVal / anyVal;
 #[test]
 fn test_arithmetic_valid_with_bigint() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const a: bigint = 10n;
@@ -30861,8 +29328,7 @@ const result3 = a / b;
 const result4 = a % b;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30907,7 +29373,6 @@ const result4 = a % b;
 #[test]
 fn test_arithmetic_valid_with_enum() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     // Note: This test is ignored because enum member type resolution
     // doesn't currently return the numeric literal types that would
@@ -30928,8 +29393,7 @@ const b = Direction.Down;
 const result = a - b;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -30974,15 +29438,13 @@ const result = a - b;
 #[test]
 fn test_ts2362_with_boolean() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const flag = true;
 const result = flag - 1;  // TS2362: boolean is not a valid arithmetic operand
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -31019,15 +29481,13 @@ const result = flag - 1;  // TS2362: boolean is not a valid arithmetic operand
 #[test]
 fn test_ts2363_with_object() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const obj = { x: 1 };
 const result = 10 / obj;  // TS2363: object is not a valid arithmetic operand
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -31064,7 +29524,6 @@ const result = 10 / obj;  // TS2363: object is not a valid arithmetic operand
 #[test]
 fn test_ts2362_ts2363_all_arithmetic_operators() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const str = "hello";
@@ -31075,8 +29534,7 @@ const r3 = str / num;  // TS2362
 const r4 = str % num;  // TS2362
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -31120,7 +29578,6 @@ fn test_iterator_for_of_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31130,8 +29587,7 @@ for (const x of num) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31168,7 +29624,6 @@ fn test_iterator_for_of_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31178,8 +29633,7 @@ for (const x of arr) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31216,7 +29670,6 @@ fn test_iterator_for_of_string_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31226,8 +29679,7 @@ for (const ch of str) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31264,7 +29716,6 @@ fn test_iterator_spread_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31272,8 +29723,7 @@ const num: number = 42;
 const arr = [...num];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31310,7 +29760,6 @@ fn test_iterator_spread_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31318,8 +29767,7 @@ const arr1: number[] = [1, 2, 3];
 const arr2 = [...arr1];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31356,7 +29804,6 @@ fn test_iterator_spread_in_call_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31365,8 +29812,7 @@ const obj: { x: number } = { x: 1 };
 foo(...obj);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31403,7 +29849,6 @@ fn test_iterator_for_of_boolean_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31413,8 +29858,7 @@ for (const x of b) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31451,7 +29895,6 @@ fn test_iterator_for_of_tuple_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31461,8 +29904,7 @@ for (const x of tuple) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31499,7 +29941,6 @@ fn test_iterator_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31507,8 +29948,7 @@ const num: number = 42;
 const [a, b] = num;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31545,7 +29985,6 @@ fn test_iterator_array_destructuring_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31553,8 +29992,7 @@ const arr: number[] = [1, 2, 3];
 const [a, b] = arr;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31595,7 +30033,6 @@ fn test_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31603,8 +30040,7 @@ const num: number = 42;
 const [a, b] = num;  // TS2488: number is not iterable
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31641,7 +30077,6 @@ fn test_array_destructuring_boolean_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31649,8 +30084,7 @@ const flag: boolean = true;
 const [x] = flag;  // TS2488: boolean is not iterable
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31687,7 +30121,6 @@ fn test_array_destructuring_object_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31695,8 +30128,7 @@ const obj = { a: 1, b: 2 };
 const [x, y] = obj;  // TS2488: object is not iterable
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31733,7 +30165,6 @@ fn test_array_destructuring_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31741,8 +30172,7 @@ const arr: number[] = [1, 2, 3];
 const [a, b, c] = arr;  // OK: array is iterable
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31779,7 +30209,6 @@ fn test_array_destructuring_string_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31787,8 +30216,7 @@ const str: string = "hello";
 const [a, b, c] = str;  // OK: string is iterable
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31827,7 +30255,6 @@ fn test_array_destructuring_union_non_iterable_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31835,8 +30262,7 @@ const val: string | number = "hello";
 const [a] = val;  // TS2488: union with non-iterable member is not iterable
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31874,7 +30300,6 @@ fn test_array_destructuring_tuple_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31882,8 +30307,7 @@ const tuple: [number, string] = [1, "hello"];
 const [a, b] = tuple;  // OK: tuple is iterable
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31920,7 +30344,6 @@ fn test_array_destructuring_nested_pattern_iterability() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31928,8 +30351,7 @@ const num: number = 42;
 const [[a]] = [num];  // TS2488: inner array contains non-iterable number
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -31975,7 +30397,6 @@ fn test_async_iterator_for_await_of_number_emits_ts2495_without_asynciter_lib() 
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -31987,8 +30408,7 @@ async function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -32023,7 +30443,6 @@ fn test_async_iterator_for_await_of_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32035,8 +30454,7 @@ async function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -32071,7 +30489,6 @@ fn test_async_iterator_for_await_of_boolean_emits_ts2495_without_asynciter_lib()
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32083,8 +30500,7 @@ async function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -32122,7 +30538,6 @@ fn test_async_iterator_for_await_of_object_emits_ts2495_without_asynciter_lib() 
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32134,8 +30549,7 @@ async function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -32174,7 +30588,6 @@ fn test_required_param_after_optional_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32183,8 +30596,7 @@ function foo(a?: number, b: string) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32228,15 +30640,13 @@ fn test_required_param_after_optional_arrow_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
 const fn = (a?: number, b: string) => a;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32280,7 +30690,6 @@ fn test_required_param_after_optional_method_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32291,8 +30700,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32336,7 +30744,6 @@ fn test_required_param_after_optional_constructor_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32345,8 +30752,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32390,7 +30796,6 @@ fn test_no_ts1016_for_proper_parameter_order() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32399,8 +30804,7 @@ function foo(a: number, b?: string, c?: boolean) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32444,7 +30848,6 @@ fn test_no_ts1016_for_param_with_default_after_optional() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32453,8 +30856,7 @@ function foo(a?: number, b: string = "default") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32498,7 +30900,6 @@ fn test_no_ts1016_for_rest_param_after_optional() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32507,8 +30908,7 @@ function foo(a?: number, ...rest: string[]) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32552,7 +30952,6 @@ fn test_multiple_required_params_after_optional_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32561,8 +30960,7 @@ function foo(a?: number, b: string, c: boolean) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32609,7 +31007,6 @@ function foo(a?: number, b: string, c: boolean) {
 fn test_contextual_typing_destructuring_param_object() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32621,8 +31018,7 @@ const handler: Handler = ({ x, y }) => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32663,7 +31059,6 @@ const handler: Handler = ({ x, y }) => {
 fn test_contextual_typing_destructuring_param_array() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
-    use crate::parser::ParserState;
     use tsz_solver::TypeInterner;
 
     let source = r#"
@@ -32675,8 +31070,7 @@ const handler: Handler = ([first, second]) => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32727,8 +31121,7 @@ let y: number = "hello";
 let z: boolean = null;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32785,8 +31178,7 @@ function getBoolean(): boolean {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32835,8 +31227,7 @@ class Example {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32890,8 +31281,7 @@ const p: Person = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -32938,8 +31328,7 @@ const arr: number[] = [1, 2, "three", 4];
 const arr2: string[] = ["a", "b", 3, "d"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -33003,8 +31392,7 @@ class Valid {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -33054,8 +31442,7 @@ function compute(value: number = "hello") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -33102,8 +31489,7 @@ const x: string = 42;
 const y: number = "hello";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -33150,8 +31536,7 @@ let x: string | number = true;
 let y: "a" | "b" = "c";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -33197,8 +31582,7 @@ fn test_ts2322_tuple_type_mismatch() {
 let tuple: [string, number] = [1, "hello"];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -33249,8 +31633,7 @@ const stringBox: Box<string> = { value: 42 };
 const numberBox: Box<number> = { value: "hello" };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -33294,15 +31677,12 @@ const numberBox: Box<number> = { value: "hello" };
 /// Test that TS2304 is emitted for an undeclared variable in a function call argument.
 #[test]
 fn test_ts2304_undeclared_var_in_function_call() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function foo(x: number) {}
 foo(undeclaredArg);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33330,14 +31710,11 @@ foo(undeclaredArg);
 /// Test that TS2304 is emitted for an undeclared variable in a binary expression.
 #[test]
 fn test_ts2304_undeclared_var_in_binary_expression() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const result = undeclaredValue + 1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33365,8 +31742,6 @@ const result = undeclaredValue + 1;
 /// Test that TS2304 is emitted for a variable used outside its block scope.
 #[test]
 fn test_ts2304_out_of_scope_block_variable() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function test() {
     if (true) {
@@ -33376,8 +31751,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33406,15 +31780,13 @@ function test() {
 #[test]
 fn test_ts2304_typo_with_suggestion() {
     use crate::checker::diagnostics::diagnostic_codes;
-    use crate::parser::ParserState;
 
     let source = r#"
 const myVariable = 5;
 const result = myVarible + 1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33445,16 +31817,13 @@ const result = myVarible + 1;
 /// Test that TS2304 is emitted for an undeclared variable in a return statement.
 #[test]
 fn test_ts2304_undeclared_var_in_return() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function getValue(): number {
     return missingVariable;
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33482,14 +31851,11 @@ function getValue(): number {
 /// Test that TS2304 is emitted for undeclared variable in array spread.
 #[test]
 fn test_ts2304_undeclared_var_in_array_spread() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const arr = [1, 2, ...undeclaredArray];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33517,8 +31883,6 @@ const arr = [1, 2, ...undeclaredArray];
 /// Test that TS2304 is emitted for undeclared variable in object property value.
 #[test]
 fn test_ts2304_undeclared_var_in_object_literal() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const obj = {
     name: undeclaredName,
@@ -33526,8 +31890,7 @@ const obj = {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33555,14 +31918,11 @@ const obj = {
 /// Test that TS2304 is emitted for undeclared variable in conditional (ternary) expression.
 #[test]
 fn test_ts2304_undeclared_var_in_conditional() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const result = true ? undeclaredTrue : 0;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33590,14 +31950,11 @@ const result = true ? undeclaredTrue : 0;
 /// Test that TS2304 is emitted for undeclared class in extends clause.
 #[test]
 fn test_ts2304_undeclared_class_in_extends() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class Child extends MissingParent {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33625,14 +31982,11 @@ class Child extends MissingParent {}
 /// Test that TS2304 is emitted for undeclared interface in implements clause.
 #[test]
 fn test_ts2304_undeclared_interface_in_implements() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class MyClass implements MissingInterface {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33660,14 +32014,11 @@ class MyClass implements MissingInterface {}
 /// Test that TS2304 is emitted for undeclared variable in template literal expression.
 #[test]
 fn test_ts2304_undeclared_var_in_template_literal() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const msg = `Hello ${undeclaredName}!`;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33695,16 +32046,13 @@ const msg = `Hello ${undeclaredName}!`;
 /// Test that TS2304 is emitted for undeclared variable in for-of loop.
 #[test]
 fn test_ts2304_undeclared_var_in_for_of() {
-    use crate::parser::ParserState;
-
     let source = r#"
 for (const item of undeclaredIterable) {
     let x = item;
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33732,15 +32080,12 @@ for (const item of undeclaredIterable) {
 /// Test that no TS2304 is emitted for a properly declared variable.
 #[test]
 fn test_no_ts2304_for_declared_variable() {
-    use crate::parser::ParserState;
-
     let source = r#"
 const declaredVar = 5;
 const result = declaredVar + 1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33767,8 +32112,6 @@ const result = declaredVar + 1;
 /// Test that no TS2304 is emitted for hoisted function declaration.
 #[test]
 fn test_no_ts2304_for_hoisted_function() {
-    use crate::parser::ParserState;
-
     let source = r#"
 // Call before declaration (should work due to hoisting)
 const result = hoistedFn();
@@ -33778,8 +32121,7 @@ function hoistedFn() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33806,8 +32148,6 @@ function hoistedFn() {
 /// Test that no TS2304 is emitted for var used after declaration.
 #[test]
 fn test_no_ts2304_for_var_used_after_declaration() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function test() {
     var x = 5;
@@ -33815,8 +32155,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33847,8 +32186,6 @@ function test() {
 /// Test that function overloads do NOT emit TS2300
 #[test]
 fn test_function_overloads_no_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 function foo(x: string): void;
 function foo(x: number): void;
@@ -33857,8 +32194,7 @@ function foo(x: string | number): void {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33885,8 +32221,6 @@ function foo(x: string | number): void {
 /// Test that interface merging does NOT emit TS2300
 #[test]
 fn test_interface_merging_no_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface Foo {
     a: string;
@@ -33897,8 +32231,7 @@ interface Foo {
 const x: Foo = { a: "hello", b: 42 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33925,8 +32258,6 @@ const x: Foo = { a: "hello", b: 42 };
 /// Test that namespace + function merging does NOT emit TS2300
 #[test]
 fn test_namespace_function_merging_no_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace MyUtils {
     export function helper(): void {
@@ -33938,8 +32269,7 @@ function MyUtils() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -33966,8 +32296,6 @@ function MyUtils() {
 /// Test that namespace + class merging does NOT emit TS2300
 #[test]
 fn test_namespace_class_merging_no_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 namespace MyNamespace {
     export class MyClass {
@@ -33979,8 +32307,7 @@ class MyNamespace {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34007,8 +32334,6 @@ class MyNamespace {
 /// Test that class + interface merging does NOT emit TS2300
 #[test]
 fn test_class_interface_merging_no_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface MyInterface {
     method(): void;
@@ -34020,8 +32345,7 @@ class MyInterface {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34048,15 +32372,12 @@ class MyInterface {
 /// Test that duplicate variable declarations DO emit TS2451 (block-scoped variable redeclaration)
 #[test]
 fn test_duplicate_variables_emits_ts2451() {
-    use crate::parser::ParserState;
-
     let source = r#"
 let x = 1;
 let x = 2;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34083,15 +32404,12 @@ let x = 2;
 /// Test that duplicate var declarations are allowed (function-scoped hoisting)
 #[test]
 fn test_duplicate_var_allowed() {
-    use crate::parser::ParserState;
-
     let source = r#"
 var x = 1;
 var x = 2;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34119,8 +32437,6 @@ var x = 2;
 /// Test that duplicate class declarations DO emit TS2300
 #[test]
 fn test_duplicate_class_emits_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class MyClass {
     x: number = 1;
@@ -34130,8 +32446,7 @@ class MyClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34158,8 +32473,6 @@ class MyClass {
 /// Test that method overloads do NOT emit TS2300
 #[test]
 fn test_method_overloads_no_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class MyClass {
     method(x: string): void;
@@ -34170,8 +32483,7 @@ class MyClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34209,8 +32521,6 @@ class MyClass {
 /// Test that static and instance members with the same name do NOT emit TS2300
 #[test]
 fn test_static_instance_member_no_ts2300() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class MyClass {
     static x: number = 1;
@@ -34218,8 +32528,7 @@ class MyClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34259,8 +32568,7 @@ const arr: Array<number> = [1, 2, 3];
 const obj: Object = {};
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -34342,8 +32650,7 @@ fn test_lib_merge_consistent_symbol_resolution() {
     ];
 
     let source = "const x = 1;"; // Minimal source
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.merge_lib_contexts_into_binder(&lib_contexts);
@@ -34391,8 +32698,7 @@ type UserId = string;
 const x: UserId = "user123";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -34436,8 +32742,7 @@ class Foo {
 const obj: Foo = new Foo();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -34482,8 +32787,7 @@ interface Point {
 const p: Point = { x: 1, y: 2 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -34524,8 +32828,7 @@ type Box<T> = { value: T };
 const x: Box<string> = { value: "hello" };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -34584,8 +32887,7 @@ type List<T> = { value: T; next: List<T> | null };
 const list: List<number> = { value: 1, next: { value: 2, next: null } };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -34623,8 +32925,7 @@ interface Derived {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -34675,8 +32976,7 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -34724,8 +33024,7 @@ interface Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -34780,8 +33079,7 @@ declare module "moduleC" {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -34833,8 +33131,7 @@ declare module "moduleB" {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -35405,7 +33702,6 @@ fn test_reverse_mapped_type_validate_preserves_optional() {
 fn test_abstract_class_5plus_missing_uses_ts2655_truncation() {
     // When 5+ abstract members are missing, TSC uses TS2655 (class declaration)
     // with "and N more" truncation instead of TS2654 (lists all).
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class A {
@@ -35419,8 +33715,7 @@ abstract class A {
 class B extends A { }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -35466,7 +33761,6 @@ class B extends A { }
 #[test]
 fn test_abstract_class_expression_5plus_missing_uses_ts2650() {
     // When 5+ abstract members are missing on a class expression, TSC uses TS2650.
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class A {
@@ -35479,8 +33773,7 @@ abstract class A {
 const C = class extends A {};
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -35520,7 +33813,6 @@ const C = class extends A {};
 #[test]
 fn test_abstract_class_4_missing_still_uses_ts2654() {
     // When 4 or fewer abstract members are missing, TSC uses TS2654 (lists all).
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class A {
@@ -35532,8 +33824,7 @@ abstract class A {
 class B extends A { }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -35574,7 +33865,6 @@ class B extends A { }
 fn test_abstract_constructor_emits_ts1242() {
     // 'abstract' on a constructor should emit TS1242, not TS1244.
     // TSC anchors at the 'abstract' keyword.
-    use crate::parser::ParserState;
 
     let source = r#"
 abstract class A {
@@ -35582,8 +33872,7 @@ abstract class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -35628,8 +33917,7 @@ class StringFoo3 implements IFoo<string> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -35671,8 +33959,7 @@ interface Shape { area(): number; }
 interface Circle extends Shape { radius: number; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -35733,8 +34020,7 @@ class Report implements Printable, Loggable {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -35786,8 +34072,7 @@ class Beta<T> { value: T; }
 abstract class Gamma {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -35870,8 +34155,7 @@ function myFunc(): void {}
 const myVar: number = 42;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -35985,8 +34269,6 @@ export const myVar: number = 42;
 /// Regression test for conformance: privateNamesAndStaticFields.ts
 #[test]
 fn test_super_call_no_false_ts2346_with_private_static_fields() {
-    use crate::parser::ParserState;
-
     let source = r#"
 class A {
     static #foo: number;
@@ -36004,8 +34286,7 @@ class B extends A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -36057,8 +34338,6 @@ class B extends A {
 /// Regression test for conformance: classSideInheritance2.ts
 #[test]
 fn test_super_call_no_false_ts2346_with_forward_reference() {
-    use crate::parser::ParserState;
-
     let source = r#"
 interface IText {
     foo: number;
@@ -36080,8 +34359,7 @@ class TextBase implements IText {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",
@@ -36133,8 +34411,6 @@ class TextBase implements IText {
 
 #[test]
 fn test_type_predicate_narrowing_no_redundant_intersection() {
-    use crate::parser::ParserState;
-
     // Regression test: type predicate narrowing with conditional type utilities
     // like Extract<T, Function> should produce Extract<T, Function> directly,
     // not the redundant intersection T & Extract<T, Function>.
@@ -36164,8 +34440,7 @@ function f12(x: string | (() => string) | undefined) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(code);
     assert!(
         parser.get_diagnostics().is_empty(),
         "Parse errors: {:?}",

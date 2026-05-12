@@ -22,6 +22,29 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 TypeScript is intentionally unsound. `tsz` keeps a sound core solver and layers a compatibility
 engine on top to match TypeScript behavior while preserving correctness where possible.
 
+## Install
+
+> [!WARNING]
+> `tsz` is pre-release software and not yet a drop-in replacement for `tsc`.
+> Diagnostics, inference, and emit may differ from TypeScript today. Use for
+> experimentation only.
+
+**macOS & Linux**
+
+```sh
+curl -fsSL https://tsz.dev/install | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://tsz.dev/install.ps1 | iex
+```
+
+Browse the install page at <https://tsz.dev/install.html> for options, supported
+targets, and a manual-download flow. See [`scripts/install.sh`](scripts/install.sh)
+for the source of the installer.
+
 ### Status
 
 > [!NOTE]

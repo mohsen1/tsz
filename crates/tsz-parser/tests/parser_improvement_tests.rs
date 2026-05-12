@@ -2242,6 +2242,27 @@ export const foo: typeof import("./module");
 }
 
 #[test]
+fn test_typeof_import_non_string_literal_reports_ts1141() {
+    let source = r#"
+type ImportByKey<K extends string> = typeof import(K);
+type MappedImport<T extends string[]> = {
+    [K in T[number]]: typeof import(K);
+};
+"#;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1141_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::STRING_LITERAL_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1141_count, 2,
+        "Expected TS1141 for both typeof import(K) type queries, got {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_import_type_without_typeof() {
     // import("...").Type should parse without typeof
     let source = r#"

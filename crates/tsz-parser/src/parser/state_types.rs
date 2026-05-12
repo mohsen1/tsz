@@ -1452,8 +1452,11 @@ impl ParserState {
             // diagnostics (e.g. `'with' expected`) instead of expression fallback.
             let saved_import_type_options_context = self.in_import_type_options_context;
             self.in_import_type_options_context = true;
+            let diag_count_before = self.parse_diagnostics.len();
             let parsed = self.parse_import_expression();
             self.in_import_type_options_context = saved_import_type_options_context;
+            let had_parse_errors = self.parse_diagnostics.len() > diag_count_before;
+            self.check_import_type_argument_is_string_literal(parsed, had_parse_errors);
             parsed
         } else {
             self.parse_entity_name_allow_reserved()
@@ -1518,27 +1521,7 @@ impl ParserState {
         self.in_import_type_options_context = saved_import_type_options_context;
         let had_parse_errors = self.parse_diagnostics.len() > diag_count_before;
 
-        // Check that the argument is a string literal (TS1141)
-        // Only emit if the import expression parsed without errors — if there are
-        // already parse errors (e.g. during error recovery on garbage input), the
-        // TS1141 would be cascading noise that tsc does not emit.
-        if !had_parse_errors
-            && let Some(call_node) = self.arena.get(argument)
-            && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
-            && let Some(call_data) = self.arena.get_call_expr(call_node)
-            && let Some(args) = &call_data.arguments
-            && let Some(&first_arg) = args.nodes.first()
-            && let Some(arg_node) = self.arena.get(first_arg)
-            && arg_node.kind != SyntaxKind::StringLiteral as u16
-        {
-            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.parse_error_at(
-                arg_node.pos,
-                arg_node.end.saturating_sub(arg_node.pos),
-                diagnostic_messages::STRING_LITERAL_EXPECTED,
-                diagnostic_codes::STRING_LITERAL_EXPECTED,
-            );
-        }
+        self.check_import_type_argument_is_string_literal(argument, had_parse_errors);
 
         // Parse member access after import: import("./a").Type.SubType
         let mut qualifier = argument;
@@ -1581,6 +1564,33 @@ impl ParserState {
                 type_arguments,
             },
         )
+    }
+
+    fn check_import_type_argument_is_string_literal(
+        &mut self,
+        import_call: NodeIndex,
+        had_parse_errors: bool,
+    ) {
+        // Only emit if the import expression parsed without errors — if there are
+        // already parse errors (e.g. during error recovery on garbage input), the
+        // TS1141 would be cascading noise that tsc does not emit.
+        if !had_parse_errors
+            && let Some(call_node) = self.arena.get(import_call)
+            && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call_data) = self.arena.get_call_expr(call_node)
+            && let Some(args) = &call_data.arguments
+            && let Some(&first_arg) = args.nodes.first()
+            && let Some(arg_node) = self.arena.get(first_arg)
+            && arg_node.kind != SyntaxKind::StringLiteral as u16
+        {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at(
+                arg_node.pos,
+                arg_node.end.saturating_sub(arg_node.pos),
+                diagnostic_messages::STRING_LITERAL_EXPECTED,
+                diagnostic_codes::STRING_LITERAL_EXPECTED,
+            );
+        }
     }
 
     /// Parse keyof type: keyof T
