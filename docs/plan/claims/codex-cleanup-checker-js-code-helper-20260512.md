@@ -1,4 +1,4 @@
-# [WIP] chore(checker-tests): share JS diagnostic code helper
+# chore(checker-tests): share JS diagnostic code helper
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-checker-js-code-helper-20260512`
