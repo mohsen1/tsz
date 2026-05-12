@@ -1,10 +1,6 @@
 //! Tests for TS2428, TS2411, TS2413: interface declaration merging diagnostics.
 
-use crate::test_utils::check_source_code_messages;
-
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source_code_messages(source)
-}
+use crate::test_utils::check_source_code_messages as get_diagnostics;
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
