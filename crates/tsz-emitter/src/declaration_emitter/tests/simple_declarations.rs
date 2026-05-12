@@ -948,6 +948,25 @@ const test = dibbity => dibbity
 }
 
 #[test]
+fn test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @type {Array.<number>} */
+const values = [];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const values: Array<number>;"),
+        "Expected legacy JSDoc dot-generic form to normalize to standard generic syntax: {output}"
+    );
+    assert!(
+        !output.contains(": Array.<number>;"),
+        "Did not expect invalid legacy dot-generic syntax in emitted type annotation: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -1165,6 +1184,93 @@ export function inJs(l) {
     assert!(
         output.contains("export type IFn = <T>(m: T) => T;"),
         "Expected the JSDoc typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@type {IFn}"),
+        "Did not expect implementation-only @type comment in declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_commas() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(x: [T, number], y: { items: [T, string] }) => [T, string]} IFn
+ */
+
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export function inJs<T>(x: [T, number], y: { items: [T, string] }): [T, string];"
+        ),
+        "Expected nested tuple/object commas in JSDoc function typedef to parse as a single signature: {output}"
+    );
+    assert!(
+        output.contains("export type IFn = <T>(x: [T, number], y: {")
+            && output.contains("items: [T, string];")
+            && output.contains("}) => [T, string];"),
+        "Expected nested tuple/object commas to be preserved in emitted typedef alias structure: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_function_param() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {(cb: (x: number) => string, value: number) => void} IFn2
+ */
+
+/** @type {IFn2} */
+export function inJs(cb, value) {
+  cb(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs(cb: (x: number) => string, value: number): void;"),
+        "Expected nested function parameter type to parse through closing paren matching: {output}"
+    );
+    assert!(
+        output.contains("export type IFn2 = (cb: (x: number) => string, value: number) => void;"),
+        "Expected emitted typedef alias to preserve nested function parameter type: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_type_alias_signature_preserves_non_type_jsdoc_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(m : T) => T} IFn
+ */
+
+/**
+ * Keep this function-level JSDoc.
+ * @deprecated use next
+ */
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs<T>(m: T): T;"),
+        "Expected JSDoc @type function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("@deprecated use next"),
+        "Expected non-@type JSDoc comments to remain in declaration output: {output}"
     );
     assert!(
         !output.contains("@type {IFn}"),
@@ -3067,6 +3173,29 @@ export class Factory {
     assert!(
         output.contains("static create<T>(value: T): T;"),
         "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_property_type_resolves_semicolon_typedef_alias() {
+    let output = emit_js_dts(
+        r#"
+export class Box {
+    /** @typedef {{ id: string }} Prop */
+    ;
+    /** @type {Prop} */
+    value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value: { id: string };"),
+        "Expected class property JSDoc @type alias to resolve from nearby semicolon-only typedef: {output}"
+    );
+    assert!(
+        !output.contains("value: Prop;"),
+        "Expected class property type to emit resolved typedef body, not unresolved alias name: {output}"
     );
 }
 

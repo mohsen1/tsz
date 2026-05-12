@@ -241,6 +241,16 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         let has_type_annotation = type_annotation.is_some();
         let has_initializer = initializer.is_some();
+        let jsdoc_type_text = self
+            .source_is_js_file
+            .then(|| {
+                self.jsdoc_name_like_type_expr_for_pos(stmt_pos)
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
+                    .or_else(|| self.jsdoc_type_text_for_node(decl_idx))
+                    .or_else(|| self.jsdoc_type_text_for_node(decl_name))
+            })
+            .flatten();
         let const_asserted_enum_member = has_initializer
             .then(|| self.const_asserted_enum_access_member_text(initializer))
             .flatten();
@@ -251,12 +261,7 @@ impl<'a> DeclarationEmitter<'a> {
             .then(|| self.simple_enum_access_base_name_text(initializer))
             .flatten();
         // For JS files with JSDoc @type, named type takes precedence over literal narrowing.
-        let js_has_jsdoc_type = self.source_is_js_file
-            && self
-                .jsdoc_name_like_type_expr_for_pos(stmt_pos)
-                .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
-                .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
-                .is_some();
+        let js_has_jsdoc_type = jsdoc_type_text.is_some();
         let exported_call_initializer = self.variable_declaration_has_effective_export(decl_idx)
             && self
                 .arena
@@ -335,13 +340,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&enum_type_text);
             } else if self.source_is_js_file
-                && let Some(type_text) = self
-                    .jsdoc_name_like_type_expr_for_pos(stmt_pos)
-                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
-                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
+                && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(&type_text);
+                self.write(type_text);
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)

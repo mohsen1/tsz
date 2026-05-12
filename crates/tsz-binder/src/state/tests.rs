@@ -7346,3 +7346,15 @@ fn binder_state_round_trips_empty_program() {
     assert_eq!(restored.symbols.len(), binder.symbols.len());
     assert_eq!(restored.file_locals.len(), binder.file_locals.len());
 }
+
+#[test]
+fn next_persistent_scope_id_reserves_none_sentinel() {
+    assert!(
+        super::core::next_persistent_scope_id((u32::MAX as usize) - 1).is_some(),
+        "largest representable persistent scope id should remain usable"
+    );
+    assert!(
+        super::core::next_persistent_scope_id(u32::MAX as usize).is_none(),
+        "ScopeId::NONE sentinel (u32::MAX) must remain reserved"
+    );
+}

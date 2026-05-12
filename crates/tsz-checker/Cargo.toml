@@ -957,5 +957,9 @@ path = "tests/class_implements_predicate_inference_tests.rs"
 name = "issue_3768_outer_call_inference_regression_tests"
 path = "tests/issue_3768_outer_call_inference_regression_tests.rs"
 
+[[test]]
+name = "source_file_index_signatures_rewrite_tests"
+path = "tests/source_file_index_signatures_rewrite_tests.rs"
+
 [lints]
 workspace = true
