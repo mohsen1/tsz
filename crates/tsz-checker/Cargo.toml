@@ -150,6 +150,10 @@ name = "ts1239_parameter_decorator_tests"
 path = "tests/ts1239_parameter_decorator_tests.rs"
 
 [[test]]
+name = "ts2636_method_bivariance_tests"
+path = "tests/ts2636_method_bivariance_tests.rs"
+
+[[test]]
 name = "ts6133_unused_type_params_tests"
 path = "tests/ts6133_unused_type_params_tests.rs"
 
