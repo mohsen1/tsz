@@ -4,7 +4,7 @@ use crate::inference::infer::InferenceContext;
 use crate::inference::infer::InferenceVar;
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{FunctionShape, TupleElement, TypeData, TypeId};
+use crate::types::{FunctionShape, TupleElement, TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 
@@ -34,6 +34,11 @@ fn with_return_context_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -
         }
     });
     r
+}
+
+#[inline]
+fn sort_type_params_by_name(type_params: &mut [TypeParamInfo]) {
+    type_params.sort_unstable_by_key(|type_param| type_param.name);
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -110,6 +115,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 hoisted.push(info);
             }
         }
+        sort_type_params_by_name(&mut hoisted);
 
         if hoisted.is_empty() {
             return return_type;
@@ -1015,5 +1021,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let result = self.resolve_generic_call_inner(func, arg_types);
         self.defaulted_placeholders = previous_defaulted;
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sort_type_params_by_name;
+    use crate::types::{TypeId, TypeParamInfo};
+    use tsz_common::interner::Atom;
+
+    const fn tp(name: u32) -> TypeParamInfo {
+        TypeParamInfo {
+            name: Atom(name),
+            constraint: Some(TypeId::UNKNOWN),
+            default: Some(TypeId::ERROR),
+            is_const: false,
+        }
+    }
+
+    #[test]
+    fn sort_type_params_by_name_orders_ascending_atom_ids() {
+        let mut type_params = vec![tp(7), tp(1), tp(3)];
+        sort_type_params_by_name(&mut type_params);
+
+        let names: Vec<_> = type_params
+            .iter()
+            .map(|type_param| type_param.name)
+            .collect();
+        assert_eq!(names, vec![Atom(1), Atom(3), Atom(7)]);
     }
 }
