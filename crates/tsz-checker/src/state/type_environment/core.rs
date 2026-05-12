@@ -1823,7 +1823,7 @@ impl<'a> CheckerState<'a> {
                         };
                         let params = if let Some(memo) = cached {
                             tsz_common::perf_counters::record_cross_file_type_params_cache_hit();
-                            memo
+                            Some(memo)
                         } else if Self::enter_cross_arena_delegation() {
                             tsz_common::perf_counters::record_cross_file_type_params_cache_miss();
                             let decl_binder = self
@@ -1854,13 +1854,15 @@ impl<'a> CheckerState<'a> {
                                 &sym_escaped_name,
                             );
                             Self::leave_cross_arena_delegation();
-                            if let (Some(file_idx), Some(cache)) = (
-                                cache_file_idx,
-                                self.ctx.cross_file_type_params_cache.as_ref(),
-                            ) {
+                            if let Some(ref params) = result
+                                && let (Some(file_idx), Some(cache)) = (
+                                    cache_file_idx,
+                                    self.ctx.cross_file_type_params_cache.as_ref(),
+                                )
+                            {
                                 cache
                                     .entry((file_idx, decl_idx))
-                                    .or_insert_with(|| result.clone());
+                                    .or_insert_with(|| params.clone());
                             }
                             result
                         } else {
@@ -1939,7 +1941,7 @@ impl<'a> CheckerState<'a> {
                         });
                     let params = if let Some(memo) = cached {
                         tsz_common::perf_counters::record_cross_file_type_params_cache_hit();
-                        memo
+                        Some(memo)
                     } else if Self::enter_cross_arena_delegation() {
                         tsz_common::perf_counters::record_cross_file_type_params_cache_miss();
                         let decl_binder = self
@@ -1968,10 +1970,12 @@ impl<'a> CheckerState<'a> {
                             &sym_escaped_name,
                         );
                         Self::leave_cross_arena_delegation();
-                        if let Some(ref cache) = self.ctx.cross_file_type_params_cache {
+                        if let Some(ref params) = result
+                            && let Some(ref cache) = self.ctx.cross_file_type_params_cache
+                        {
                             cache
                                 .entry((file_idx as u32, decl_idx))
-                                .or_insert_with(|| result.clone());
+                                .or_insert_with(|| params.clone());
                         }
                         result
                     } else {

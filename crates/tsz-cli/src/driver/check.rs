@@ -1224,7 +1224,8 @@ pub(super) fn collect_diagnostics(
         program_module_exports: Some(program_module_exports),
         program_cross_file_node_symbols: Some(program_cross_file_node_symbols),
         program_alias_partners: Some(program_alias_partners),
-        cross_file_type_params_cache: Some(Arc::new(dashmap::DashMap::new())),
+        cross_file_type_params_cache: std::env::var_os("TSZ_CROSS_FILE_TYPE_PARAMS_CACHE")
+            .map(|_| Arc::new(dashmap::DashMap::new())),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.

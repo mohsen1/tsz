@@ -72,7 +72,7 @@ use tsz_parser::parser::node::NodeArena;
 /// the slow path. Shared across every checker via `Arc` so the second
 /// caller sees the first caller's work.
 pub type CrossFileTypeParamsCache =
-    Arc<dashmap::DashMap<(u32, NodeIndex), Option<Vec<tsz_solver::TypeParamInfo>>>>;
+    Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
