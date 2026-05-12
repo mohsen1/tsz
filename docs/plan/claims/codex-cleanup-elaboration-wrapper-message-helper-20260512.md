@@ -4,8 +4,8 @@
 - **Branch**: `codex/cleanup-elaboration-wrapper-message-helper-20260512`
 - **Base**: `origin/main`
 - **Issue**: n/a
-- **PR**: tbd
-- **Status**: claim
+- **PR**: [#5974](https://github.com/mohsen1/tsz/pull/5974)
+- **Status**: ready
 - **Labels**: `DRY`, `checker-tests`
 
 ## Intent
