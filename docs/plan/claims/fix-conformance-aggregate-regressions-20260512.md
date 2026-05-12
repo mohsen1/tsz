@@ -67,3 +67,19 @@ Additional targeted checks:
 - `./scripts/conformance/conformance.sh run --filter "recursiveTypeReferences1" --verbose` -> still fingerprint-only; extra expanded recursive alias TS2322 display
 
 Next likely slice: diagnostic display alias preservation for type-alias unions/keyof results, not semantic checking.
+
+## 2026-05-12 update: enum-member union alias display
+
+Fixed the fingerprint-only drift in:
+- `TypeScript/tests/cases/conformance/types/literal/enumLiteralAssignableToEnumInsideUnion.ts`
+- `TypeScript/tests/cases/conformance/types/literal/enumLiteralTypes3.ts`
+- `TypeScript/tests/cases/conformance/types/literal/stringEnumLiteralTypes3.ts`
+
+The assignability diagnostic formatter now allows enum-member union bodies to recover a matching type alias even when the union's direct definition maps to a non-alias definition. It also collapses complete enum-member unions back to the enum name when rendering mixed unions. This preserves target display such as `YesNo` instead of expanding to `Choice.No | Choice.Yes`, and `boolean | Foo` instead of `boolean | Foo.A | Foo.B`.
+
+Verification:
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo fmt --all -- --check` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --lib enum_member_union_alias_display_preserves_alias_name_in_ts2322 -- --nocapture` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target ./scripts/conformance/conformance.sh run --filter "enumLiteralAssignableToEnumInsideUnion" --verbose` -> 1/1 passed
+- `./scripts/conformance/conformance.sh run --filter "enumLiteralTypes3" --verbose` -> 1/1 passed
+- `./scripts/conformance/conformance.sh run --filter "stringEnumLiteralTypes3" --verbose` -> 1/1 passed
