@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/enum-literal-types3-fingerprints-20260512`
 - **Base**: `main`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/5773
 - **Status**: claim
 - **Workstream**: conformance
 
