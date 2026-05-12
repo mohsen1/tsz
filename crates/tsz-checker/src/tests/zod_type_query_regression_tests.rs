@@ -574,6 +574,11 @@ import { partialUtil } from "./helpers/partialUtil";
 type ParseReturnType<T> = T;
 type SyncParseReturnType<T> = T;
 type AsyncParseReturnType<T> = Promise<T>;
+type Partial<T> = { [K in keyof T]?: T[K] };
+interface Promise<T> {}
+declare var Promise: {
+  resolve<T>(value: T): Promise<T>;
+};
 type ZodParsedType = "string";
 interface ParseContext {}
 interface ParseParamsNoData {

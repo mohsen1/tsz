@@ -1813,11 +1813,11 @@ impl<'a> CheckerState<'a> {
                 && cached != TypeId::ANY
                 && cached != TypeId::ERROR
             {
+                let cached_count = object_property_count(self, cached);
                 if let Some(&in_progress) = self.ctx.class_instance_type_cache.get(&class_idx)
                     && in_progress != TypeId::ANY
                     && in_progress != TypeId::ERROR
-                    && object_property_count(self, in_progress)
-                        > object_property_count(self, cached)
+                    && object_property_count(self, in_progress) > cached_count
                 {
                     if let Some(info) = self.ctx.enclosing_class.as_mut()
                         && info.class_idx == class_idx
@@ -1833,8 +1833,7 @@ impl<'a> CheckerState<'a> {
                     let prescan = self.quick_prescan_class_members(class_idx, class);
                     if prescan != TypeId::ANY
                         && prescan != TypeId::ERROR
-                        && object_property_count(self, prescan)
-                            > object_property_count(self, cached)
+                        && object_property_count(self, prescan) > cached_count
                     {
                         if let Some(info) = self.ctx.enclosing_class.as_mut()
                             && info.class_idx == class_idx
