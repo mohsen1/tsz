@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-wasm-ast-child-push-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5829
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -19,4 +19,4 @@ WASM API surface.
 
 ## Verification
 
-- `cargo nextest run -p tsz-wasm --no-fail-fast`
+- `cargo nextest run -p tsz-wasm --no-fail-fast` (46 tests pass)
