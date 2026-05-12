@@ -1270,8 +1270,22 @@ impl<'a> TypeFormatter<'a> {
             // union form, matching tsc behavior.
             let use_keyof_alias =
                 if let Some(TypeData::KeyOf(keyof_operand)) = self.interner.lookup(alias_origin) {
-                    self.def_store
-                        .is_some_and(|ds| ds.find_def_for_type(keyof_operand).is_some())
+                    self.def_store.is_some_and(|ds| {
+                        ds.find_def_for_type(keyof_operand).is_some()
+                            || matches!(
+                                self.interner.lookup(keyof_operand),
+                                Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                            )
+                            || self.interner.get_display_alias(keyof_operand).is_some_and(
+                                |operand_alias| {
+                                    ds.find_def_for_type(operand_alias).is_some()
+                                        || matches!(
+                                            self.interner.lookup(operand_alias),
+                                            Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                                        )
+                                },
+                            )
+                    })
                 } else {
                     false
                 };
