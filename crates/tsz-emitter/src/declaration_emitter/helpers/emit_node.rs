@@ -396,7 +396,6 @@ impl<'a> DeclarationEmitter<'a> {
                 let k = stmt_node.kind;
                 k == syntax_kind_ext::IMPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                     || self.stmt_has_export_modifier(stmt_node)
             })

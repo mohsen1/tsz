@@ -1792,6 +1792,37 @@ export = a;
 }
 
 #[test]
+fn test_js_export_equals_keeps_function_expando_members() {
+    let source = r#"
+function send() {}
+send.extra = 1;
+export = send;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export = send;"),
+        "Expected export= root to be emitted: {output}"
+    );
+    assert!(
+        output.contains("declare function send(): void;"),
+        "Expected export= function root declaration to be emitted: {output}"
+    );
+    assert!(
+        output.contains("declare namespace send {\n    export { extra };\n}"),
+        "Expected function expando to be preserved as a namespace export under export=: {output}"
+    );
+    assert!(
+        output.contains("declare var extra: number;"),
+        "Expected expando declaration to be emitted under export=: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_emits_before_target_declaration() {
     let source = r#"
 const a = {};

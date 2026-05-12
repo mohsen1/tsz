@@ -57,10 +57,11 @@
     5753,
     5811,
     5830,
+    5845,
     5899,
     5901
   ],
-  "candidate_count": 47,
+  "candidate_count": 45,
   "candidates": [
     {
       "pr_number": 4944,
@@ -729,38 +730,6 @@
       "line": 799,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...` / `flat2...` markers are found. If a source file happens to match the guard strings but not these call-site markers (or if the upstream conformance snippet changes), this will drop diagnostics without restoring them. Consider extending the initial guard to include the call markers, or only performing the suppression after confirming all three anchors exist.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5845,
-      "pr_title": "fix(dts): ignore cjs exports in esm js modules",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5845",
-      "merged_at": "2026-05-12T12:22:05Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BZ_S_",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs",
-      "line": 403,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`source_file_has_native_esm_syntax` walks every top-level statement; it\u2019s called multiple times during per-file setup (e.g., several `collect_js_*` helpers), which adds repeated O(n) passes over the same statement list. Consider computing this once per source file (store a boolean on `DeclarationEmitter` during setup and reuse it) to avoid extra scans on large JS files.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5845,
-      "pr_title": "fix(dts): ignore cjs exports in esm js modules",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5845",
-      "merged_at": "2026-05-12T12:22:05Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BZ_Tu",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs",
-      "line": 401,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`source_file_has_native_esm_syntax` treats any `EXPORT_ASSIGNMENT` as \u201cnative ESM\u201d, but in this codebase JS files can contain `export =` (see existing `test_js_export_equals_emits_before_target_declaration`). That means a JS file using `export =` will be misclassified as \u201cnative ESM\u201d and will now skip CommonJS export synthesis/analysis guarded by this helper. Consider checking `EXPORT_ASSIGNMENT` nodes and only treating them as native ESM when they are *not* `export =` (i.e., `export default`), so `export =` JS files keep their CommonJS behavior.",
       "score": 1,
       "reasons": [
         "detailed-thread"

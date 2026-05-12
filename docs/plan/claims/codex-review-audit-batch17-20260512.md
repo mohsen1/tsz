@@ -98,6 +98,13 @@ initializer relation path performs an additional raw initializer re-check.
     ambiguity in transformed namespace output.
   - added namespace regression coverage for malformed
     `function f() => <any>{ ... }` in both ES5 and ES2015 emit paths.
+- review comments left on #5845:
+  - corrected JS declaration-emit `native ESM` detection so `export =` is no
+    longer treated as native ESM syntax for CommonJS helper gating.
+  - this keeps `export =` files on the CommonJS declaration path and preserves
+    function expando namespace members under export-equals roots.
+  - added regression coverage for `function send() {}; send.extra = 1; export = send;`
+    to ensure `declare namespace send { export { extra }; }` remains emitted.
 
 ## Files Touched
 
@@ -119,6 +126,8 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-emitter/src/emitter/declarations/namespace.rs`
 - `crates/tsz-emitter/src/transforms/ir_printer.rs`
 - `crates/tsz-emitter/src/emitter/declarations/namespace/tests.rs`
+- `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs`
+- `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -140,5 +149,6 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-checker --test this_type_tests class_expression_explicit_this_keeps_missing_property_diagnostic -- --nocapture`
 - `cargo test -p tsz-checker --test this_type_tests test_nonexistent_property_still_errors -- --nocapture`
 - `cargo test -p tsz-emitter namespace_recovered_arrow_object_literal_is_parenthesized -- --nocapture`
+- `cargo test -p tsz-emitter test_js_export_equals_ -- --nocapture`
 - `cargo fmt --all --check`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=47`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=45`)

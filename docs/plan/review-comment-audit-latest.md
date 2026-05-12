@@ -2,14 +2,14 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 53
-- Potential important unresolved threads: 47
+- PRs excluded as already followed-up: 54
+- Potential important unresolved threads: 45
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 19
 - `docs`: 10
-- `crates/tsz-emitter`: 9
+- `crates/tsz-emitter`: 7
 - `crates/tsz-parser`: 3
 - `crates/tsz-solver`: 2
 - `scripts`: 2
@@ -27,7 +27,6 @@
 - [#5677](https://github.com/mohsen1/tsz/pull/5677) fix(dts): expand returned rest tuple aliases: 2
 - [#5701](https://github.com/mohsen1/tsz/pull/5701) fix(dts): map js default typedef aliases: 2
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) fix(checker): align recursiveTypeReferences1 array diagnostics: 2
-- [#5845](https://github.com/mohsen1/tsz/pull/5845) fix(dts): ignore cjs exports in esm js modules: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
@@ -38,6 +37,7 @@
 - [#5009](https://github.com/mohsen1/tsz/pull/5009) perf(solver): gate-once the intern_* helper counter sites: 1
 - [#5040](https://github.com/mohsen1/tsz/pull/5040) perf(checker): T2.1.A.2 — empty lifetime-class shell types: 1
 - [#5048](https://github.com/mohsen1/tsz/pull/5048) perf(checker): T2.2 prep — typed CrossFileQueryKey + Answer: 1
+- [#5060](https://github.com/mohsen1/tsz/pull/5060) perf(solver): T2.4 — wrap auxiliary-interner write-locks with time_shard_write: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -125,10 +125,6 @@
   - The diagnostic suppression here is based only on exact `message_text` matches, so it will remove *any* TS2322 in this file with one of these messages, even if it comes from an unrelated assignment. To keep this rewrit...
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) `crates/tsz-checker/src/state/state_checking/source_file.rs:799` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...
-- [#5845](https://github.com/mohsen1/tsz/pull/5845) `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs:403` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `source_file_has_native_esm_syntax` walks every top-level statement; it’s called multiple times during per-file setup (e.g., several `collect_js_*` helpers), which adds repeated O(n) passes over the same statement lis...
-- [#5845](https://github.com/mohsen1/tsz/pull/5845) `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs:401` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `source_file_has_native_esm_syntax` treats any `EXPORT_ASSIGNMENT` as “native ESM”, but in this codebase JS files can contain `export =` (see existing `test_js_export_equals_emits_before_target_declaration`). That mea...
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) `crates/tsz-emitter/src/declaration_emitter/helpers/late_bound_function_analysis.rs:848` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `reserved_names` is documented as tracking names taken in the *top-level scope* of the file. Inserting namespace member locals into this set (including when no alias is needed) can force unrelated later top-level impo...
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) `crates/tsz-emitter/src/declaration_emitter/helpers/late_bound_function_analysis.rs:840` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
