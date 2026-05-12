@@ -1,9 +1,9 @@
 # fix(emitter): emit TS2883 for symlinked-monorepo nested-package inferred types
 
 - **Date**: 2026-04-30
-- **Branch**: `worktree-fix-ts2883-symbol-link-decl-emit-module-names`
+- **Branch**: `fix/ts2883-symbol-link-import-ref-20260512`
 - **PR**: TBD
-- **Status**: ready
+- **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
