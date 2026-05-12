@@ -1,9 +1,8 @@
-//! Tests for TS7030 suppression when the declared return type includes `undefined`.
+//! Tests for TS7030 handling when the declared return type includes `undefined`.
 //!
 //! When `noImplicitReturns` is enabled, TS7030 ("Not all code paths return a value")
-//! must be suppressed for functions/methods whose annotated return type contains
-//! `undefined`. An implicit fall-through returns `undefined`, which is type-safe
-//! when `undefined` is part of the declared return type.
+//! is suppressed for top-level `undefined`, `void`, `any`, and unions containing
+//! `void` or `any`. A union containing `undefined` alone still reports TS7030.
 //!
 //! Related issue: #5949
 
@@ -23,10 +22,9 @@ fn check_with_no_implicit_returns(source: &str) -> Vec<u32> {
         .collect()
 }
 
-/// `string | undefined` return type: falling through returns implicit `undefined`,
-/// which is type-safe. TS7030 must not be emitted.
+/// `string | undefined` return type: TS7030 is still emitted.
 #[test]
-fn ts7030_suppressed_for_string_or_undefined_return() {
+fn ts7030_emitted_for_string_or_undefined_return() {
     let source = r#"
 function maybeReturn(x: string | null): string | undefined {
     if (x !== null) {
@@ -37,14 +35,14 @@ function maybeReturn(x: string | null): string | undefined {
 "#;
     let codes = check_with_no_implicit_returns(source);
     assert!(
-        !codes.contains(&7030),
-        "TS7030 must not be emitted when return type is string | undefined; got: {codes:?}"
+        codes.contains(&7030),
+        "TS7030 must be emitted when return type is string | undefined; got: {codes:?}"
     );
 }
 
-/// `number | undefined` return type in a regular function: same suppression rule.
+/// `number | undefined` return type in a regular function: same rule.
 #[test]
-fn ts7030_suppressed_for_number_or_undefined_return() {
+fn ts7030_emitted_for_number_or_undefined_return() {
     let source = r#"
 declare const cond: boolean;
 function f(): number | undefined {
@@ -55,8 +53,8 @@ function f(): number | undefined {
 "#;
     let codes = check_with_no_implicit_returns(source);
     assert!(
-        !codes.contains(&7030),
-        "TS7030 must not be emitted when return type is number | undefined; got: {codes:?}"
+        codes.contains(&7030),
+        "TS7030 must be emitted when return type is number | undefined; got: {codes:?}"
     );
 }
 
@@ -82,7 +80,7 @@ function f() {
 
 /// Arrow function with `string | undefined` return type annotation.
 #[test]
-fn ts7030_suppressed_for_arrow_function_with_undefined_union() {
+fn ts7030_emitted_for_arrow_function_with_undefined_union() {
     let source = r#"
 declare const cond: boolean;
 const f = (): string | undefined => {
@@ -93,7 +91,7 @@ const f = (): string | undefined => {
 "#;
     let codes = check_with_no_implicit_returns(source);
     assert!(
-        !codes.contains(&7030),
-        "TS7030 must not be emitted for arrow with string | undefined return; got: {codes:?}"
+        codes.contains(&7030),
+        "TS7030 must be emitted for arrow with string | undefined return; got: {codes:?}"
     );
 }
