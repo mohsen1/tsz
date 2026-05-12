@@ -111,6 +111,11 @@ initializer relation path performs an additional raw initializer re-check.
     `callable_type_after_display_evaluation(...)` work when `depth != 0`.
   - preserves behavior while skipping redundant evaluation passes in nested
     mismatch rendering where strict-callback elision cannot trigger.
+- review comments left on #4944:
+  - verified `intersection_index_signature_fingerprint_tests::diagnostic_messages`
+    already caches default libs via `static LIBS: OnceLock<Vec<Arc<LibFile>>>`
+    and `get_or_init(load_default_lib_files)`, so repeated per-test lib parsing
+    no longer occurs in this file.
 - supporting harness stability while touching checker paths:
   - `load_compiled_lib_files(...)` now falls back to bundled lib assets by
     stripping the `lib.` prefix when compiled TypeScript `lib.*.d.ts` roots
@@ -181,4 +186,4 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-checker --test global_this_const_property_tests -- --nocapture`
 - `cargo test -p tsz-checker --test intersection_primitive_member_assignability_tests -- --nocapture`
 - `cargo fmt --all --check`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=44`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=43`)

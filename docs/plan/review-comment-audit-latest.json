@@ -6,6 +6,7 @@
     "truncated_thread_prs": []
   },
   "excluded_followed_up_prs": [
+    4944,
     4949,
     4951,
     4952,
@@ -62,24 +63,8 @@
     5899,
     5901
   ],
-  "candidate_count": 44,
+  "candidate_count": 43,
   "candidates": [
-    {
-      "pr_number": 4944,
-      "pr_title": "fix(checker): expand index-signature alias receiver display",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4944",
-      "merged_at": "2026-05-10T08:53:40Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A4kzn",
-      "path": "crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs",
-      "line": 19,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`diagnostic_messages` calls `load_default_lib_files()` on every invocation, and this helper is used by multiple tests in this file. Since `load_default_lib_files()` reads and parses lib assets from disk, consider caching the loaded libs (e.g., a `OnceLock<Vec<Arc<LibFile>>>`) so the test suite doesn\u2019t repeatedly reload the same lib bundle.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
     {
       "pr_number": 4956,
       "pr_title": "fix(parser): recover unicode escaped astral identifiers",
