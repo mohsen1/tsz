@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `codex/perf-post-5863-attribution-20260513`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6071
+- **Status**: ready
 - **Workstream**: `PERFORMANCE_PLAN.md` §7 Tier 2.2 decision input
 
 ## Intent
@@ -20,6 +20,19 @@ and `TypeId` visibility hypotheses.
   construction counters.
 - Update the performance plan/decision-record docs with the chosen next T2.2
   target.
+
+## Result
+
+The 2026-05-13 run is checked in at
+`docs/plan/perf-runs/2026-05-13-post-5863-attribution.md`. The new
+`cross_file_cache_miss_causes` rows are present but all zero: the hot
+`DelegateCrossArenaSymbol` misses bypass the canonical `cached_cross_file_*`
+readers because they come from `binder.symbol_arenas`, not
+`resolve_symbol_file_index`.
+
+Next target: route symbol-arena-sourced source-file delegations through the
+canonical cross-file query bucket before changing cache keys or `TypeId`
+validation.
 
 ## Verification Plan
 
