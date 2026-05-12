@@ -344,11 +344,8 @@ const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
 // dead code (the `mark_known_conformance_debt` branch only fires on `Fail`).
 // Periodically prune patterns whose only matches now PASS — entries below
 // are the live set as of 2026-05-12.
-const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
-    "recursiveConditionalTypes",
-    "isolatedDeclarationErrorsObjects",
-    "mixinAccessModifiers",
-];
+const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] =
+    &["recursiveConditionalTypes", "mixinAccessModifiers"];
 
 fn known_conformance_debt_reason(test_key: &str) -> Option<&'static str> {
     PRODUCTION_SUPPRESSION_DEBT_PATTERNS
