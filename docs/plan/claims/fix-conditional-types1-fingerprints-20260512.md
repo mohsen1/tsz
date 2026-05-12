@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/conditional-types1-fingerprints-20260512`
 - **Base**: `fix/index-signatures1-fingerprint-clean-20260512`
-- **PR**: https://github.com/mohsen1/tsz/pull/5722
+- **PR**: https://github.com/mohsen1/tsz/pull/5727
 - **Status**: ready
 - **Workstream**: conformance
 
