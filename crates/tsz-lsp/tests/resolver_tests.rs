@@ -1,15 +1,18 @@
 use crate::resolver::ScopeWalker;
 use tsz_binder::{BinderState, symbol_flags};
-use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_scanner::SyntaxKind;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_resolve_simple_variable() {
     // const x = 1; x + 1;
     let source = "const x = 1; x + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -27,8 +30,7 @@ export { foo as "__<alias>" };
 import { "__<alias>" as bar } from "./foo";
 bar;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -97,8 +99,7 @@ bar;
 #[test]
 fn test_resolve_function_name() {
     let source = "function greet() {}\ngreet();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -115,8 +116,7 @@ fn test_resolve_function_name() {
 fn test_resolve_variable_in_nested_scope() {
     // Variable declared inside a function body
     let source = "function outer() {\n  const inner = 1;\n  return inner;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -137,8 +137,7 @@ fn test_resolve_variable_in_nested_scope() {
 #[test]
 fn test_resolve_class_name() {
     let source = "class MyClass {\n  method() {}\n}\nconst c = new MyClass();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -157,8 +156,7 @@ fn test_resolve_class_name() {
 #[test]
 fn test_resolve_interface_name() {
     let source = "interface IFoo {\n  bar: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -173,8 +171,7 @@ fn test_resolve_interface_name() {
 #[test]
 fn test_resolve_enum_name() {
     let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -190,8 +187,7 @@ fn test_resolve_enum_name() {
 fn test_resolve_parameter_stays_in_function_scope() {
     // Parameters should be scoped to their function, not in file_locals
     let source = "function add(a: number, b: number) { return a + b; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -216,8 +212,7 @@ fn test_resolve_parameter_stays_in_function_scope() {
 fn test_scope_walker_resolve_identifier_usage() {
     // Use ScopeWalker to resolve an identifier usage back to its declaration
     let source = "const x = 10;\nconst y = x + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -255,8 +250,7 @@ fn test_scope_walker_resolve_identifier_usage() {
 #[test]
 fn test_find_references_variable_multiple_usages() {
     let source = "const val = 1;\nconst a = val;\nconst b = val;\nconst c = val;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -279,8 +273,7 @@ fn test_find_references_variable_multiple_usages() {
 #[test]
 fn test_find_references_function_multiple_calls() {
     let source = "function doWork() {}\ndoWork();\ndoWork();\ndoWork();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -305,8 +298,7 @@ fn test_find_references_function_multiple_calls() {
 #[test]
 fn test_no_resolution_for_undefined_symbol() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -322,8 +314,7 @@ fn test_no_resolution_for_undefined_symbol() {
 #[test]
 fn test_resolve_type_alias_name() {
     let source = "type StringOrNumber = string | number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -345,8 +336,7 @@ fn test_resolve_node_cached_returns_same_as_uncached() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 10;\nconst y = x + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -393,8 +383,7 @@ fn test_resolve_node_cached_hits_on_second_call() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 10;\nconst y = x + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -436,8 +425,7 @@ fn test_resolve_node_cached_hits_on_second_call() {
 #[test]
 fn test_get_scope_chain_at_file_level() {
     let source = "const a = 1;\nconst b = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -478,8 +466,7 @@ fn test_get_scope_chain_at_file_level() {
 #[test]
 fn test_get_scope_chain_inside_function() {
     let source = "const outer = 1;\nfunction foo() {\n  const inner = 2;\n  return inner;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -531,8 +518,7 @@ fn test_get_scope_chain_cached_returns_same_as_uncached() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 1;\nfunction f() { const y = x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -590,8 +576,7 @@ function foo() {
     return hoisted;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -638,8 +623,7 @@ const fn1 = (x: number) => {
     return inner;
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -673,8 +657,7 @@ for (let i = 0; i < 10; i++) {
     const x = i;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -699,8 +682,7 @@ for (const key in obj) {
     const val = key;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -725,8 +707,7 @@ try {
     const msg = err;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -757,8 +738,7 @@ function factory() {
     return new Inner();
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -785,8 +765,7 @@ function foo() {
 }
 const y = x;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -828,8 +807,7 @@ const y = x;
 #[test]
 fn test_find_references_no_matching_references() {
     let source = "const x = 1;\nconst y = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -863,8 +841,7 @@ function bar() {
     return x;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -889,8 +866,7 @@ namespace MyModule {
     const internal = "hidden";
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -917,8 +893,7 @@ fn test_export_declaration_resolution() {
 export const exported = 1;
 export function exportedFn() {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -948,8 +923,7 @@ fn test_resolve_node_for_declaration_node_directly() {
     // When resolve_node is called on a declaration node, it should return
     // the symbol directly from node_symbols without walking
     let source = "const directDecl = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -993,8 +967,7 @@ for (const item of items) {
     const doubled = item * 2;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1029,8 +1002,7 @@ if (true) {
 }
 const z = x;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1082,8 +1054,7 @@ function test() {
     return a + b;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1137,8 +1108,7 @@ try {
 }
 const result = e;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1187,8 +1157,7 @@ class Foo {
 }
 const z = x;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1211,8 +1180,7 @@ fn test_multiple_functions_same_named_parameters() {
 function foo(x: number) { return x; }
 function bar(x: string) { return x; }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1266,8 +1234,7 @@ const outer = 1;
 const fn1 = (a: number, b: number) => a + b;
 const fn2 = (a: string) => a;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1293,8 +1260,7 @@ export function exported() { return 1; }
 export class ExportedClass {}
 export interface ExportedInterface { x: number; }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1324,8 +1290,7 @@ namespace Outer {
     const local = 2;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1364,8 +1329,7 @@ class MyClass {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1403,8 +1367,7 @@ class Counter {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1452,8 +1415,7 @@ for (const key in obj) {
     const value = obj[key];
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1498,8 +1460,7 @@ for (const item of items) {
     const doubled = item * 2;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1550,8 +1511,7 @@ function outer() {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1595,8 +1555,7 @@ fn test_resolve_node_cached_with_none_stats() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 10;\nconst y = x + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1634,8 +1593,7 @@ fn test_resolve_node_cached_with_none_stats() {
 fn test_resolve_non_identifier_node() {
     // Resolving a node that is not an identifier should return None
     let source = "const x = 1 + 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1669,8 +1627,7 @@ function foo() { return shared; }
 function bar() { return shared + 1; }
 const baz = () => shared;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1698,8 +1655,7 @@ fn test_scope_chain_cached_second_call_hits() {
     use rustc_hash::FxHashMap;
 
     let source = "function f() { const a = 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1754,8 +1710,7 @@ function outer() {
     return deepVar;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1777,8 +1732,7 @@ try {
     console.log(message, code);
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1805,8 +1759,7 @@ fn test_resolve_node_cached_for_non_identifier() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 123;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1847,8 +1800,7 @@ class Foo {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1896,8 +1848,7 @@ class Foo {
 #[test]
 fn test_resolve_type_alias_in_file_locals() {
     let source = "type Callback = () => void;\ntype Result<T> = { ok: T };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1916,8 +1867,7 @@ fn test_resolve_type_alias_in_file_locals() {
 #[test]
 fn test_const_enum_in_file_locals() {
     let source = "const enum Direction { Up, Down, Left, Right }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1937,8 +1887,7 @@ while (true) {
     break;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1957,8 +1906,7 @@ do {
     const doVar = 1;
 } while (false);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1984,8 +1932,7 @@ switch (x) {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2014,8 +1961,7 @@ if (true) {
     const elseVar = 2;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2038,8 +1984,7 @@ const fn1 = function namedExpr() {
     return namedExpr;
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2059,8 +2004,7 @@ const fn1 = function namedExpr() {
 #[test]
 fn test_multiple_declarations_same_scope() {
     let source = "const a = 1;\nlet b = 2;\nvar c = 3;\nfunction d() {}\nclass E {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2080,8 +2024,7 @@ class MyClass {}
 const a: MyClass = new MyClass();
 function foo(x: MyClass) {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2112,8 +2055,7 @@ const fn1 = (x: number) => {
     return inner;
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2164,8 +2106,7 @@ try {
     const finallyVar = 2;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2188,8 +2129,7 @@ try {
 #[test]
 fn test_resolve_interface_in_file_locals() {
     let source = "interface Foo { x: number; }\ninterface Bar extends Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2208,8 +2148,7 @@ fn test_resolve_interface_in_file_locals() {
 #[test]
 fn test_resolve_enum_members_not_in_file_locals() {
     let source = "enum Direction { Up, Down, Left, Right }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2229,8 +2168,7 @@ fn test_resolve_enum_members_not_in_file_locals() {
 #[test]
 fn test_resolve_class_in_file_locals() {
     let source = "class Animal { name: string = ''; }\nclass Dog extends Animal {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2255,8 +2193,7 @@ outer: for (let i = 0; i < 10; i++) {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2279,8 +2216,7 @@ fn test_resolve_variable_in_template_literal() {
 const name = "world";
 const greeting = `hello ${name}`;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2325,8 +2261,7 @@ const greeting = `hello ${name}`;
 #[test]
 fn test_resolve_default_parameter_value() {
     let source = "function greet(name: string = 'world') { return name; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2347,8 +2282,7 @@ fn test_resolve_default_parameter_value() {
 #[test]
 fn test_resolve_rest_parameter() {
     let source = "function sum(...nums: number[]) { return nums.reduce((a, b) => a + b, 0); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2374,8 +2308,7 @@ interface Config {
 const cfg: Config = { host: "localhost", port: 3000 };
 function setup(c: Config) {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2403,8 +2336,7 @@ function foo() {
     return hoisted;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2423,8 +2355,7 @@ fn test_resolve_computed_property_no_crash() {
 const key = "hello";
 const obj = { [key]: 1 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2469,8 +2400,7 @@ const obj = { [key]: 1 };
 #[test]
 fn test_namespace_members_in_file_locals() {
     let source = "namespace MyNS { export const inner = 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2499,8 +2429,7 @@ const outer = () => {
     };
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2546,8 +2475,7 @@ const outer = () => {
 #[test]
 fn test_resolve_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2563,8 +2491,7 @@ fn test_resolve_empty_source() {
 #[test]
 fn test_resolve_destructuring_array_declaration() {
     let source = "const [first, second, ...rest] = [1, 2, 3, 4, 5];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2581,8 +2508,7 @@ fn test_resolve_destructuring_array_declaration() {
 #[test]
 fn test_resolve_destructuring_object_declaration() {
     let source = "const { name, age } = { name: 'Alice', age: 30 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2600,8 +2526,7 @@ fn test_resolve_destructuring_object_declaration() {
 #[test]
 fn test_abstract_class_in_file_locals() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2616,8 +2541,7 @@ fn test_abstract_class_in_file_locals() {
 #[test]
 fn test_class_with_private_constructor_in_file_locals() {
     let source = "class Singleton {\n  private static instance: Singleton;\n  private constructor() {}\n  static getInstance() { return new Singleton(); }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2637,8 +2561,7 @@ const result = (() => {
     return inner;
 })();
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2664,8 +2587,7 @@ function foo() {
     return x;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2685,8 +2607,7 @@ function foo() {
 #[test]
 fn test_resolve_export_default_class() {
     let source = "export default class DefaultClass {\n  value = 1;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2707,8 +2628,7 @@ class MathUtils {
     static multiply(a: number, b: number) { return a * b; }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2736,8 +2656,7 @@ enum Status { Active, Inactive }
 const s: Status = Status.Active;
 function check(status: Status) { return status; }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2766,8 +2685,7 @@ class Counter {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2812,8 +2730,7 @@ class Counter {
 #[test]
 fn test_resolve_const_enum_name() {
     let source = "const enum Direction { Up, Down, Left, Right }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2829,8 +2746,7 @@ fn test_resolve_const_enum_name() {
 fn test_resolve_generic_class_name() {
     let source =
         "class Container<T> {\n  value: T;\n  constructor(val: T) { this.value = val; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2845,8 +2761,7 @@ fn test_resolve_generic_class_name() {
 #[test]
 fn test_resolve_async_function_name() {
     let source = "async function fetchData() {\n  return await Promise.resolve(1);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2861,8 +2776,7 @@ fn test_resolve_async_function_name() {
 #[test]
 fn test_resolve_generator_function_name() {
     let source = "function* counter() {\n  let i = 0;\n  while (true) { yield i++; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2881,8 +2795,7 @@ fn test_let_not_hoisted_out_of_block() {
     let blockScoped = 1;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2901,8 +2814,7 @@ if (true) {
     const inner = 42;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2921,8 +2833,7 @@ fn test_resolve_multiple_interfaces_same_name() {
 interface Opts { x: number; }
 interface Opts { y: string; }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2944,8 +2855,7 @@ class Config {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2990,8 +2900,7 @@ type Point = { x: number; y: number };
 const origin: Point = { x: 0, y: 0 };
 function move(p: Point): Point { return p; }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3018,8 +2927,7 @@ namespace Outer {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3043,8 +2951,7 @@ namespace Outer {
 #[test]
 fn test_resolve_abstract_class_name() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3064,8 +2971,7 @@ class Calculator {
     subtract(a: number, b: number) { return a - b; }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3085,8 +2991,7 @@ class Calculator {
 #[test]
 fn test_resolve_arrow_function_variable_in_file_locals() {
     let source = "const transform = (x: number) => x * 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3109,8 +3014,7 @@ const fn1 = () => {
     };
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3151,8 +3055,7 @@ const fn1 = () => {
 #[test]
 fn test_resolve_enum_not_in_file_locals_members() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3172,8 +3075,7 @@ fn test_resolve_enum_not_in_file_locals_members() {
 #[test]
 fn test_resolve_export_const_in_file_locals() {
     let source = "export const API_KEY = 'abc123';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();

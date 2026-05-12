@@ -1,13 +1,16 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_prepare_on_class_declaration() {
     let source = "class Animal {\n  speak() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -34,8 +37,7 @@ fn test_prepare_on_class_declaration() {
 #[test]
 fn test_prepare_on_interface_declaration() {
     let source = "interface Shape {\n  area(): number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -62,8 +64,7 @@ fn test_prepare_on_interface_declaration() {
 #[test]
 fn test_prepare_not_on_type_declaration() {
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -86,8 +87,7 @@ fn test_prepare_not_on_type_declaration() {
 #[test]
 fn test_supertypes_class_extends() {
     let source = "class Base {\n  method() {}\n}\nclass Derived extends Base {\n  method() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -109,8 +109,7 @@ fn test_supertypes_class_extends() {
 #[test]
 fn test_supertypes_class_implements_interface() {
     let source = "interface Walkable {\n  walk(): void;\n}\nclass Person implements Walkable {\n  walk() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -132,8 +131,7 @@ fn test_supertypes_class_implements_interface() {
 #[test]
 fn test_supertypes_interface_extends_interface() {
     let source = "interface Base {\n  id: number;\n}\ninterface Extended extends Base {\n  name: string;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -155,8 +153,7 @@ fn test_supertypes_interface_extends_interface() {
 #[test]
 fn test_supertypes_multiple() {
     let source = "interface A {}\ninterface B {}\nclass C implements A, B {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -179,8 +176,7 @@ fn test_supertypes_multiple() {
 #[test]
 fn test_supertypes_no_heritage() {
     let source = "class Standalone {\n  value: number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -203,8 +199,7 @@ fn test_supertypes_no_heritage() {
 #[test]
 fn test_subtypes_class_extended_by_class() {
     let source = "class Base {\n  method() {}\n}\nclass Derived extends Base {\n  method() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -227,8 +222,7 @@ fn test_subtypes_class_extended_by_class() {
 fn test_subtypes_interface_implemented_by_class() {
     let source =
         "interface Animal {\n  speak(): void;\n}\nclass Dog implements Animal {\n  speak() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -250,8 +244,7 @@ fn test_subtypes_interface_implemented_by_class() {
 #[test]
 fn test_subtypes_interface_extended_by_interface() {
     let source = "interface Base {\n  id: number;\n}\ninterface Extended extends Base {\n  name: string;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -273,8 +266,7 @@ fn test_subtypes_interface_extended_by_interface() {
 #[test]
 fn test_subtypes_multiple_implementors() {
     let source = "interface Shape {\n  area(): number;\n}\nclass Circle implements Shape {\n  area() { return 0; }\n}\nclass Square implements Shape {\n  area() { return 0; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -297,8 +289,7 @@ fn test_subtypes_multiple_implementors() {
 #[test]
 fn test_subtypes_no_subtypes() {
     let source = "class Lonely {\n  value: number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -321,8 +312,7 @@ fn test_subtypes_no_subtypes() {
 #[test]
 fn test_class_chain_subtypes() {
     let source = "class A {}\nclass B extends A {}\nclass C extends B {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -347,8 +337,7 @@ fn test_class_chain_subtypes() {
 #[test]
 fn test_class_chain_supertypes() {
     let source = "class A {}\nclass B extends A {}\nclass C extends B {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -373,8 +362,7 @@ fn test_class_chain_supertypes() {
 #[test]
 fn test_class_extends_and_implements() {
     let source = "interface Flyable {\n  fly(): void;\n}\nclass Vehicle {}\nclass FlyingCar extends Vehicle implements Flyable {\n  fly() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -401,8 +389,7 @@ fn test_class_extends_and_implements() {
 #[test]
 fn test_prepare_returns_correct_ranges() {
     let source = "class MyClass {\n  value: number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -432,8 +419,7 @@ fn test_prepare_returns_correct_ranges() {
 #[test]
 fn test_prepare_uri_is_set() {
     let source = "class Foo {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -458,8 +444,7 @@ fn test_prepare_uri_is_set() {
 #[test]
 fn test_supertypes_with_extends() {
     let source = "class Animal {}\nclass Dog extends Animal {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -483,8 +468,7 @@ fn test_supertypes_with_extends() {
 #[test]
 fn test_supertypes_no_extends() {
     let source = "class Standalone {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -505,8 +489,7 @@ fn test_supertypes_no_extends() {
 #[test]
 fn test_subtypes_with_extends() {
     let source = "class Base {}\nclass Child extends Base {}\nclass Other extends Base {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -534,8 +517,7 @@ fn test_subtypes_with_extends() {
 #[test]
 fn test_prepare_on_abstract_class() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -557,8 +539,7 @@ fn test_prepare_on_abstract_class() {
 #[test]
 fn test_interface_supertypes_with_extends() {
     let source = "interface Printable { print(): void; }\ninterface Loggable extends Printable { log(): void; }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -580,8 +561,7 @@ fn test_interface_supertypes_with_extends() {
 #[test]
 fn test_prepare_on_non_declaration() {
     let source = "const x = 42;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -604,8 +584,7 @@ fn test_prepare_on_non_declaration() {
 fn test_class_implements_interface_supertypes() {
     let source =
         "interface Runnable { run(): void; }\nclass Task implements Runnable {\n  run() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -633,8 +612,7 @@ fn test_class_implements_interface_supertypes() {
 #[test]
 fn test_prepare_on_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -652,8 +630,7 @@ fn test_prepare_on_empty_source() {
 #[test]
 fn test_prepare_on_function_declaration() {
     let source = "function doStuff() {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -675,8 +652,7 @@ fn test_prepare_on_function_declaration() {
 #[test]
 fn test_prepare_on_type_alias() {
     let source = "type MyType = string | number;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -696,8 +672,7 @@ fn test_prepare_on_type_alias() {
 #[test]
 fn test_prepare_on_enum_declaration() {
     let source = "enum Color { Red, Green, Blue }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -717,8 +692,7 @@ fn test_prepare_on_enum_declaration() {
 #[test]
 fn test_subtypes_abstract_class_extended() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}\nclass Circle extends Shape {\n  area() { return 0; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -743,8 +717,7 @@ fn test_subtypes_abstract_class_extended() {
 #[test]
 fn test_interface_extends_multiple_interfaces() {
     let source = "interface A { a(): void; }\ninterface B { b(): void; }\ninterface C extends A, B { c(): void; }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -771,8 +744,7 @@ fn test_interface_extends_multiple_interfaces() {
 #[test]
 fn test_prepare_position_past_end_of_source() {
     let source = "class X {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -792,8 +764,7 @@ fn test_prepare_position_past_end_of_source() {
 #[test]
 fn test_subtypes_interface_with_both_class_and_interface_subtypes() {
     let source = "interface Base { id: number; }\nclass Impl implements Base { id = 0; }\ninterface Extended extends Base { name: string; }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -820,8 +791,7 @@ fn test_subtypes_interface_with_both_class_and_interface_subtypes() {
 #[test]
 fn test_prepare_on_class_with_generic_params() {
     let source = "class Container<T> {\n  value: T;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -848,8 +818,7 @@ fn test_prepare_on_class_with_generic_params() {
 fn test_supertypes_on_class_not_in_file() {
     // Class with no heritage, querying supertypes should return empty
     let source = "interface ISerializable { serialize(): string; }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -873,8 +842,7 @@ fn test_supertypes_on_class_not_in_file() {
 fn test_subtypes_multiple_levels_only_direct() {
     let source =
         "interface Root {}\ninterface Mid extends Root {}\ninterface Leaf extends Mid {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -899,8 +867,7 @@ fn test_subtypes_multiple_levels_only_direct() {
 #[test]
 fn test_prepare_on_interface_with_generic_params() {
     let source = "interface Comparable<T> {\n  compareTo(other: T): number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -926,8 +893,7 @@ fn test_prepare_on_interface_with_generic_params() {
 #[test]
 fn test_prepare_on_class_with_static_members() {
     let source = "class Registry {\n  static instance: Registry;\n  static create() { return new Registry(); }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -950,8 +916,7 @@ fn test_prepare_on_class_with_static_members() {
 #[test]
 fn test_subtypes_deep_class_chain_middle() {
     let source = "class A {}\nclass B extends A {}\nclass C extends B {}\nclass D extends C {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -972,8 +937,7 @@ fn test_subtypes_deep_class_chain_middle() {
 #[test]
 fn test_supertypes_deep_class_chain_middle() {
     let source = "class A {}\nclass B extends A {}\nclass C extends B {}\nclass D extends C {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -998,8 +962,7 @@ fn test_supertypes_deep_class_chain_middle() {
 #[test]
 fn test_prepare_on_interface_with_methods() {
     let source = "interface Repository {\n  find(id: number): void;\n  save(item: any): void;\n  delete(id: number): void;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1021,8 +984,7 @@ fn test_prepare_on_interface_with_methods() {
 #[test]
 fn test_class_implements_multiple_interfaces() {
     let source = "interface Readable { read(): void; }\ninterface Writable { write(): void; }\ninterface Closeable { close(): void; }\nclass Stream implements Readable, Writable, Closeable {\n  read() {}\n  write() {}\n  close() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1046,8 +1008,7 @@ fn test_class_implements_multiple_interfaces() {
 #[test]
 fn test_subtypes_interface_with_no_implementors() {
     let source = "interface Orphan {\n  method(): void;\n}\nclass Unrelated {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1069,8 +1030,7 @@ fn test_subtypes_interface_with_no_implementors() {
 #[test]
 fn test_prepare_on_whitespace_only_source() {
     let source = "   \n   \n   ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1088,8 +1048,7 @@ fn test_prepare_on_whitespace_only_source() {
 #[test]
 fn test_abstract_class_subtypes_with_concrete() {
     let source = "abstract class EventEmitter {\n  abstract emit(event: string): void;\n}\nclass NodeEmitter extends EventEmitter {\n  emit(event: string) {}\n}\nclass BrowserEmitter extends EventEmitter {\n  emit(event: string) {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1111,8 +1070,7 @@ fn test_abstract_class_subtypes_with_concrete() {
 #[test]
 fn test_class_extends_and_implements_multiple() {
     let source = "interface Serializable { serialize(): string; }\ninterface Cloneable { clone(): any; }\nclass Base { id: number; }\nclass Entity extends Base implements Serializable, Cloneable {\n  serialize() { return ''; }\n  clone() { return this; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1140,8 +1098,7 @@ fn test_class_extends_and_implements_multiple() {
 #[test]
 fn test_prepare_on_class_inside_body() {
     let source = "class Outer {\n  method() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1161,8 +1118,7 @@ fn test_prepare_on_class_inside_body() {
 #[test]
 fn test_interface_subtypes_both_class_and_interface() {
     let source = "interface Iterable { next(): any; }\nclass ArrayIter implements Iterable { next() { return null; } }\ninterface AsyncIterable extends Iterable { nextAsync(): any; }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1188,8 +1144,7 @@ fn test_interface_subtypes_both_class_and_interface() {
 #[test]
 fn test_prepare_detail_for_class() {
     let source = "class Widget {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1210,8 +1165,7 @@ fn test_prepare_detail_for_class() {
 #[test]
 fn test_prepare_detail_for_interface() {
     let source = "interface Handler {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1236,8 +1190,7 @@ fn test_prepare_detail_for_interface() {
 #[test]
 fn test_prepare_on_class_with_constructor() {
     let source = "class Point {\n  constructor(public x: number, public y: number) {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1260,8 +1213,7 @@ fn test_prepare_on_class_with_constructor() {
 #[test]
 fn test_subtypes_class_with_only_implements() {
     let source = "interface Logger { log(msg: string): void; }\nclass ConsoleLogger implements Logger {\n  log(msg: string) { }\n}\nclass FileLogger implements Logger {\n  log(msg: string) { }\n}\nclass NullLogger implements Logger {\n  log(msg: string) { }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1284,8 +1236,7 @@ fn test_subtypes_class_with_only_implements() {
 #[test]
 fn test_prepare_on_class_with_readonly_properties() {
     let source = "class Config {\n  readonly host: string = 'localhost';\n  readonly port: number = 3000;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1305,8 +1256,7 @@ fn test_prepare_on_class_with_readonly_properties() {
 #[test]
 fn test_supertypes_class_extends_generic_class() {
     let source = "class Collection<T> { items: T[] = []; }\nclass StringCollection extends Collection<string> {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1331,8 +1281,7 @@ fn test_supertypes_class_extends_generic_class() {
 #[test]
 fn test_prepare_on_class_at_start_of_name() {
     let source = "class MyWidget {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1353,8 +1302,7 @@ fn test_prepare_on_class_at_start_of_name() {
 #[test]
 fn test_prepare_on_class_at_end_of_name() {
     let source = "class Abc {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1374,8 +1322,7 @@ fn test_prepare_on_class_at_end_of_name() {
 #[test]
 fn test_subtypes_diamond_inheritance() {
     let source = "interface A {}\ninterface B extends A {}\ninterface C extends A {}\ninterface D extends B, C {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1402,8 +1349,7 @@ fn test_subtypes_diamond_inheritance() {
 #[test]
 fn test_supertypes_diamond_inheritance() {
     let source = "interface A {}\ninterface B extends A {}\ninterface C extends A {}\ninterface D extends B, C {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1430,8 +1376,7 @@ fn test_supertypes_diamond_inheritance() {
 #[test]
 fn test_prepare_on_interface_with_call_signature() {
     let source = "interface Callable {\n  (x: number): string;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1454,8 +1399,7 @@ fn test_prepare_on_interface_with_call_signature() {
 #[test]
 fn test_prepare_on_interface_with_index_signature() {
     let source = "interface Dict {\n  [key: string]: number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1478,8 +1422,7 @@ fn test_prepare_on_interface_with_index_signature() {
 #[test]
 fn test_subtypes_empty_class() {
     let source = "class Empty {}\nclass NotRelated {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1498,8 +1441,7 @@ fn test_subtypes_empty_class() {
 #[test]
 fn test_prepare_on_class_with_private_members() {
     let source = "class Encapsulated {\n  private secret: string = 'hidden';\n  #realSecret: number = 42;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1519,8 +1461,7 @@ fn test_prepare_on_class_with_private_members() {
 #[test]
 fn test_supertypes_single_class_no_parents() {
     let source = "class Root {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1542,8 +1483,7 @@ fn test_supertypes_single_class_no_parents() {
 #[test]
 fn test_prepare_multiple_classes_in_file() {
     let source = "class Alpha {}\nclass Beta {}\nclass Gamma {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1570,8 +1510,7 @@ fn test_prepare_multiple_classes_in_file() {
 #[test]
 fn test_prepare_on_class_with_multiple_type_params() {
     let source = "class MultiGeneric<K, V, E extends Error> {\n  map: Map<K, V> = new Map();\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1591,8 +1530,7 @@ fn test_prepare_on_class_with_multiple_type_params() {
 #[test]
 fn test_prepare_on_single_line_class() {
     let source = "class Tiny {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1616,8 +1554,7 @@ fn test_prepare_on_single_line_class() {
 #[test]
 fn test_subtypes_interface_extended_by_multiple_interfaces() {
     let source = "interface Disposable { dispose(): void; }\ninterface AutoDisposable extends Disposable { autoDispose(): void; }\ninterface LazyDisposable extends Disposable { lazyDispose(): void; }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1643,8 +1580,7 @@ fn test_subtypes_interface_extended_by_multiple_interfaces() {
 #[test]
 fn test_prepare_on_abstract_class_declaration() {
     let source = "abstract class Widget {\n  abstract render(): void;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1666,8 +1602,7 @@ fn test_prepare_on_abstract_class_declaration() {
 #[test]
 fn test_prepare_on_class_with_unicode_name() {
     let source = "class Événement {\n  type: string = '';\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1686,8 +1621,7 @@ fn test_prepare_on_class_with_unicode_name() {
 #[test]
 fn test_subtypes_class_implements_and_extends() {
     let source = "interface Serializable { serialize(): string; }\nclass Base {}\nclass Model extends Base implements Serializable {\n  serialize() { return ''; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1708,8 +1642,7 @@ fn test_subtypes_class_implements_and_extends() {
 #[test]
 fn test_supertypes_class_implements_multiple() {
     let source = "interface A { a(): void; }\ninterface B { b(): void; }\nclass AB implements A, B {\n  a() {}\n  b() {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1732,8 +1665,7 @@ fn test_supertypes_class_implements_multiple() {
 #[test]
 fn test_prepare_on_single_line_interface() {
     let source = "interface Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1755,8 +1687,7 @@ fn test_prepare_on_single_line_interface() {
 #[test]
 fn test_subtypes_three_level_class_chain() {
     let source = "class Grandparent {}\nclass Parent extends Grandparent {}\nclass Child extends Parent {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1779,8 +1710,7 @@ fn test_subtypes_three_level_class_chain() {
 #[test]
 fn test_supertypes_three_level_class_chain_leaf() {
     let source = "class Grandparent {}\nclass Parent extends Grandparent {}\nclass Child extends Parent {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1802,8 +1732,7 @@ fn test_supertypes_three_level_class_chain_leaf() {
 #[test]
 fn test_prepare_on_class_with_only_static_members() {
     let source = "class Utils {\n  static helper() {}\n  static readonly VERSION = '1.0';\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1825,8 +1754,7 @@ fn test_prepare_on_class_with_only_static_members() {
 #[test]
 fn test_subtypes_interface_implemented_by_multiple_classes() {
     let source = "interface Logger { log(msg: string): void; }\nclass ConsoleLogger implements Logger { log(msg: string) {} }\nclass FileLogger implements Logger { log(msg: string) {} }\nclass NullLogger implements Logger { log(msg: string) {} }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1849,8 +1777,7 @@ fn test_subtypes_interface_implemented_by_multiple_classes() {
 #[test]
 fn test_prepare_on_interface_with_optional_members() {
     let source = "interface Config {\n  debug?: boolean;\n  port?: number;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1872,8 +1799,7 @@ fn test_prepare_on_interface_with_optional_members() {
 #[test]
 fn test_prepare_on_class_with_getter_setter() {
     let source = "class Counter {\n  private _count = 0;\n  get count() { return this._count; }\n  set count(v: number) { this._count = v; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1895,8 +1821,7 @@ fn test_prepare_on_class_with_getter_setter() {
 #[test]
 fn test_supertypes_interface_extends_two_interfaces() {
     let source = "interface Readable { read(): void; }\ninterface Writable { write(): void; }\ninterface ReadWrite extends Readable, Writable {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1919,8 +1844,7 @@ fn test_supertypes_interface_extends_two_interfaces() {
 #[test]
 fn test_prepare_on_exported_class() {
     let source = "export class PublicApi {\n  endpoint(): string { return ''; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1942,8 +1866,7 @@ fn test_prepare_on_exported_class() {
 #[test]
 fn test_subtypes_abstract_class_with_multiple_concrete() {
     let source = "abstract class Shape { abstract area(): number; }\nclass Circle extends Shape { area() { return 0; } }\nclass Rect extends Shape { area() { return 0; } }\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1966,8 +1889,7 @@ fn test_subtypes_abstract_class_with_multiple_concrete() {
 fn test_prepare_on_class_with_async_methods() {
     let source =
         "class ApiClient {\n  async fetch() { return ''; }\n  async post(data: string) {}\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1989,8 +1911,7 @@ fn test_prepare_on_class_with_async_methods() {
 #[test]
 fn test_prepare_on_let_statement() {
     let source = "let x: number = 5;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2012,8 +1933,7 @@ fn test_prepare_on_let_statement() {
 #[test]
 fn test_type_hierarchy_generic_class() {
     let source = "class Container<T> { value: T; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2029,8 +1949,7 @@ fn test_type_hierarchy_generic_class() {
 #[test]
 fn test_type_hierarchy_abstract_class_with_method() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2046,8 +1965,7 @@ fn test_type_hierarchy_abstract_class_with_method() {
 #[test]
 fn test_type_hierarchy_class_with_constructor() {
     let source = "class Point {\n  constructor(public x: number, public y: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2063,8 +1981,7 @@ fn test_type_hierarchy_class_with_constructor() {
 #[test]
 fn test_type_hierarchy_enum_no_result() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2078,8 +1995,7 @@ fn test_type_hierarchy_enum_no_result() {
 #[test]
 fn test_type_hierarchy_interface_only() {
     let source = "interface Foo { x: number; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2093,8 +2009,7 @@ fn test_type_hierarchy_interface_only() {
 #[test]
 fn test_type_hierarchy_class_with_static_method() {
     let source = "class Factory {\n  static create() { return new Factory(); }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2110,8 +2025,7 @@ fn test_type_hierarchy_class_with_static_method() {
 #[test]
 fn test_type_hierarchy_class_expression() {
     let source = "const MyClass = class {\n  foo() {}\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2125,8 +2039,7 @@ fn test_type_hierarchy_class_expression() {
 #[test]
 fn test_type_hierarchy_class_with_getter_setter() {
     let source = "class Foo {\n  get x() { return 0; }\n  set x(v: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2142,8 +2055,7 @@ fn test_type_hierarchy_class_with_getter_setter() {
 #[test]
 fn test_type_hierarchy_function_not_class() {
     let source = "function foo() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2157,8 +2069,7 @@ fn test_type_hierarchy_function_not_class() {
 #[test]
 fn test_type_hierarchy_at_whitespace_between_classes() {
     let source = "class A {}\n\nclass B {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2172,8 +2083,7 @@ fn test_type_hierarchy_at_whitespace_between_classes() {
 #[test]
 fn test_type_hierarchy_class_with_index_signature() {
     let source = "class Dict {\n  [key: string]: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2189,8 +2099,7 @@ fn test_type_hierarchy_class_with_index_signature() {
 #[test]
 fn test_type_hierarchy_class_implements_multiple() {
     let source = "interface A {}\ninterface B {}\nclass Foo implements A, B {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2206,8 +2115,7 @@ fn test_type_hierarchy_class_implements_multiple() {
 #[test]
 fn test_type_hierarchy_exported_class() {
     let source = "export class Service {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2223,8 +2131,7 @@ fn test_type_hierarchy_exported_class() {
 #[test]
 fn test_type_hierarchy_at_end_of_class_name() {
     let source = "class FooBar {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2238,8 +2145,7 @@ fn test_type_hierarchy_at_end_of_class_name() {
 #[test]
 fn test_type_hierarchy_class_with_private_members() {
     let source = "class Secret {\n  private key: string = '';\n  #value: number = 0;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2255,8 +2161,7 @@ fn test_type_hierarchy_class_with_private_members() {
 #[test]
 fn test_type_hierarchy_deeply_nested_class() {
     let source = "namespace A { namespace B { class Deep {} } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2270,8 +2175,7 @@ fn test_type_hierarchy_deeply_nested_class() {
 #[test]
 fn test_type_hierarchy_class_with_readonly_properties() {
     let source = "class Config {\n  readonly host: string = 'localhost';\n  readonly port: number = 3000;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2287,8 +2191,7 @@ fn test_type_hierarchy_class_with_readonly_properties() {
 #[test]
 fn test_type_hierarchy_empty_class() {
     let source = "class Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
