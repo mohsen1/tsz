@@ -1,6 +1,7 @@
 use super::super::Printer;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::{JsxEmit, ModuleKind};
+use crate::output::source_writer::SourceWriter;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
@@ -1573,18 +1574,21 @@ impl<'a> Printer<'a> {
         decorators: &[NodeIndex],
         members: &[NodeIndex],
     ) {
-        let before_len = self.writer.len();
+        let mut temp_writer = SourceWriter::with_capacity(256);
+        temp_writer.set_new_line_kind(self.ctx.options.new_line);
+        temp_writer.set_indent_level(self.writer.indent_level());
+        std::mem::swap(&mut self.writer, &mut temp_writer);
+
         self.emit_legacy_class_decorator_assignment(
             class_name, decorators, false, false, false, members,
         );
-        let after_len = self.writer.len();
-        if after_len == before_len {
+
+        std::mem::swap(&mut self.writer, &mut temp_writer);
+        let emitted = temp_writer.take_output();
+        if emitted.is_empty() {
             return;
         }
 
-        let full_output = self.writer.get_output().to_string();
-        let emitted = full_output[before_len..after_len].to_string();
-        self.writer.truncate(before_len);
         let assignment = emitted
             .trim_start()
             .trim_end()
