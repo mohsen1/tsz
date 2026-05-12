@@ -3071,9 +3071,9 @@ fn apply_cli_overrides_with_config_options(
     }
     if args.strict {
         options.checker.strict = true;
-        // Expand --strict to individual flags (matching TypeScript behavior)
+        // Expand --strict to individual flags (matching TypeScript behavior).
+        // NOTE: noImplicitReturns is NOT part of --strict in TypeScript.
         options.checker.no_implicit_any = true;
-        options.checker.no_implicit_returns = true;
         options.checker.strict_null_checks = true;
         options.checker.strict_function_types = true;
         options.checker.strict_bind_call_apply = true;
@@ -3096,7 +3096,7 @@ fn apply_cli_overrides_with_config_options(
         // still keeps `strict_null_checks = true` (issue #3861).
         options.checker.strict = false;
         options.checker.no_implicit_any = false;
-        options.checker.no_implicit_returns = false;
+        // noImplicitReturns is NOT part of the strict family; do not reset it here.
         options.checker.strict_null_checks = false;
         options.checker.strict_function_types = false;
         options.checker.strict_bind_call_apply = false;

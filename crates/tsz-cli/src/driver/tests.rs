@@ -523,6 +523,19 @@ fn test_cli_strict_expands_strict_builtin_iterator_return() {
     );
 }
 
+#[test]
+fn test_cli_strict_does_not_enable_no_implicit_returns() {
+    let args = CliArgs::try_parse_from(["tsz", "--strict"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.checker.no_implicit_returns = false;
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert!(
+        !options.checker.no_implicit_returns,
+        "--strict must NOT enable no_implicit_returns (not part of the strict family)"
+    );
+}
+
 /// An explicit `--strictBuiltinIteratorReturn=false` after `--strict` must still
 /// disable the option — individual flag overrides win over the strict expansion.
 #[test]
