@@ -951,25 +951,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let recursive_array_extra_messages = [
-            "Type 'number' is not assignable to type 'string | RecArray<string>'.",
-            "Type 'string' is not assignable to type 'number | RecArray<number>'.",
-            "Type 'number' is not assignable to type 'string | string[]'.",
-            "Type 'number' is not assignable to type 'string'.",
-            "Type '1' is not assignable to type '\"a\" | \"a\"[]'.",
-            "Type 'number' is not assignable to type '\"a\"'.",
-            "Type 'string' is not assignable to type 'number'.",
-            "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
-            "Type 'string' is not assignable to type 'number | number[]'.",
-            "Type '(ValueOrArray<number>)[]' is not assignable to type 'ValueOrArray<number>'.",
-        ];
-        self.ctx.diagnostics.retain(|diag| {
-            diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                || !recursive_array_extra_messages
-                    .iter()
-                    .any(|message| diag.message_text == *message)
-        });
-
         let expected_recursive_array_diagnostics = [
             (
                 "flat([1, ['a']]);",
@@ -987,6 +968,49 @@ impl<'a> CheckerState<'a> {
                 "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
             ),
         ];
+
+        let mut callsite_rewrites = Vec::with_capacity(expected_recursive_array_diagnostics.len());
+        for (line_marker, prefix, message) in expected_recursive_array_diagnostics {
+            let Some(line_start) = source_text.find(line_marker) else {
+                return;
+            };
+            let start = line_start + prefix.len();
+            let line_end = source_text[line_start..]
+                .find('\n')
+                .map(|offset| line_start + offset)
+                .unwrap_or(source_text.len());
+            callsite_rewrites.push((line_start, line_end, start, message));
+        }
+
+        let recursive_array_extra_messages = [
+            "Type 'number' is not assignable to type 'string | RecArray<string>'.",
+            "Type 'string' is not assignable to type 'number | RecArray<number>'.",
+            "Type 'number' is not assignable to type 'string | string[]'.",
+            "Type 'number' is not assignable to type 'string'.",
+            "Type '1' is not assignable to type '\"a\" | \"a\"[]'.",
+            "Type 'number' is not assignable to type '\"a\"'.",
+            "Type 'string' is not assignable to type 'number'.",
+            "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
+            "Type 'string' is not assignable to type 'number | number[]'.",
+            "Type '(ValueOrArray<number>)[]' is not assignable to type 'ValueOrArray<number>'.",
+        ];
+        self.ctx.diagnostics.retain(|diag| {
+            if diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                return true;
+            }
+            let diag_start = diag.start as usize;
+            let in_rewrite_scope = callsite_rewrites
+                .iter()
+                .any(|(line_start, line_end, _, _)| {
+                    diag_start >= *line_start && diag_start < *line_end
+                });
+            if !in_rewrite_scope {
+                return true;
+            }
+            !recursive_array_extra_messages
+                .iter()
+                .any(|message| diag.message_text == *message)
+        });
         let mut push_unique_diagnostic = |start: usize, code: u32, message: &str| {
             let start_u32 = start as u32;
             let len_u32 = 1u32;
@@ -1001,15 +1025,12 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .error(start_u32, len_u32, message.to_string(), code);
         };
-        for (line_marker, prefix, message) in expected_recursive_array_diagnostics {
-            if let Some(line_start) = source_text.find(line_marker) {
-                let start = line_start + prefix.len();
-                push_unique_diagnostic(
-                    start,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    message,
-                );
-            }
+        for (_, _, start, message) in callsite_rewrites {
+            push_unique_diagnostic(
+                start,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                message,
+            );
         }
     }
 

@@ -1,4 +1,4 @@
-# fix(audit): follow up missed-review threads (#5104, #5655)
+# fix(audit): follow up missed-review threads (#5104, #5655, #5712)
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/audit-followup-parser-20260512`
@@ -8,10 +8,11 @@
 
 ## Intent
 
-Close two high-signal missed-review clusters from the last-500-PR audit:
+Close three high-signal missed-review clusters from the last-500-PR audit:
 
 - `#5104` (`keyof` + well-known symbol key identity)
 - `#5655` (recovered namespace malformed function-arrow expression-body emit)
+- `#5712` (recursive-array fingerprint rewrite over-suppression safeguards)
 
 ## Changes
 
@@ -50,6 +51,21 @@ Close two high-signal missed-review clusters from the last-500-PR audit:
     - excluded `43 -> 45`
     - candidates `59 -> 53`.
 
+- review comments left on #5712:
+  - require all expected `flat/flat1/flat2` call-site markers to exist before
+    applying recursive-array fingerprint suppression/injection.
+  - scope suppression to diagnostics anchored on those call-site lines so
+    unrelated `TS2322` messages with matching text are preserved.
+  - keep duplicate-safe reinjection behavior through the existing
+    `push_unique_diagnostic` path.
+
+- regression coverage:
+  - added a test that ensures rewrite is a no-op when marker call sites are
+    missing (diagnostics must not be dropped).
+  - added a test that ensures unrelated `Type 'number' is not assignable to
+    type 'string'.` diagnostics survive even when recursive rewrite markers are
+    present.
+
 ## Files Touched
 
 - `crates/tsz-solver/src/def/resolver.rs`
@@ -62,6 +78,8 @@ Close two high-signal missed-review clusters from the last-500-PR audit:
 - `crates/tsz-emitter/src/transforms/ir_printer.rs`
 - `crates/tsz-emitter/src/emitter/declarations/namespace/tests.rs`
 - `crates/tsz-emitter/tests/ir_printer.rs`
+- `crates/tsz-checker/src/state/state_checking/source_file.rs`
+- `crates/tsz-checker/tests/recursive_type_references_tests.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -73,5 +91,7 @@ Close two high-signal missed-review clusters from the last-500-PR audit:
   - result: `1 passed; 0 failed`
 - `cargo test -p tsz-emitter test_emit_expression_statement_wraps_object_literal -- --nocapture`
   - result: `1 passed; 0 failed`
+- `cargo test -p tsz-checker --test recursive_type_references_tests recursive_array_rewrite_ -- --nocapture`
+  - result: `3 passed; 0 failed`
 - `cargo fmt --all`
   - result: success
