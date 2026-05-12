@@ -25,7 +25,10 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
-    fn resolve_literal_index_access_property_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+    pub(crate) fn resolve_literal_index_access_property_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
         let (object_type, index_type) =
             crate::query_boundaries::common::index_access_parts(self.ctx.types, type_id)?;
         let atom = crate::query_boundaries::type_computation::access::literal_property_name(
@@ -42,7 +45,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn reduce_literal_index_access_property_types(&mut self, type_id: TypeId) -> TypeId {
+    pub(crate) fn reduce_literal_index_access_property_types(&mut self, type_id: TypeId) -> TypeId {
         if let Some(resolved) = self.resolve_literal_index_access_property_type(type_id) {
             return resolved;
         }

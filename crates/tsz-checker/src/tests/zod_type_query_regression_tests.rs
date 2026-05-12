@@ -385,6 +385,7 @@ declare function pathFromArray(arr: ParsePathComponent[]): unknown;
 
 function test(params: Partial<ParseParamsNoData>) {
     pathFromArray(params.path || []);
+    pathFromArray(params.path ?? []);
 }
 "#,
     );
@@ -432,7 +433,7 @@ function test(params: Partial<ParseParamsNoData>) {
 
     assert!(
         diags.is_empty(),
-        "Expected lib-backed `Partial<Omit<...>>` to contextually type `params.path || []`, got: {:?}",
+        "Expected lib-backed `Partial<Omit<...>>` to contextually type `params.path || []` and `params.path ?? []`, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))

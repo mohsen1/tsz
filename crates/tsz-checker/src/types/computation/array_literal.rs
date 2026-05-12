@@ -366,29 +366,7 @@ impl<'a> CheckerState<'a> {
                         resolved = evaluated;
                     }
                 }
-                if let Some((object_type, index_type)) =
-                    crate::query_boundaries::common::index_access_parts(self.ctx.types, resolved)
-                    && let Some(atom) =
-                        crate::query_boundaries::type_computation::access::literal_property_name(
-                            self.ctx.types,
-                            index_type,
-                        )
-                {
-                    let property_name = self.ctx.types.resolve_atom(atom);
-                    let property_type = self
-                        .contextual_object_literal_property_type(
-                            object_type,
-                            property_name.as_ref(),
-                        )
-                        .or_else(|| {
-                            self.ctx
-                                .types
-                                .contextual_property_type(object_type, property_name.as_ref())
-                        });
-                    if let Some(property_type) = property_type {
-                        resolved = property_type;
-                    }
-                }
+                resolved = self.reduce_literal_index_access_property_types(resolved);
                 resolved = self.resolve_index_access_base_constraint(resolved);
                 resolved = self.resolve_type_for_property_access(resolved);
                 if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
