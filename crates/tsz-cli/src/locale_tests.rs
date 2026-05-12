@@ -28,6 +28,35 @@ fn test_normalize_locale() {
 }
 
 #[test]
+fn test_is_valid_locale_shape_matches_typescript_rule() {
+    for locale in ["en", "ja-jp", "ja_jp", "ZH-Hans", "pt_BR"] {
+        assert!(
+            is_valid_locale_shape(locale),
+            "{locale} should be a valid locale shape"
+        );
+    }
+
+    for locale in [
+        "",
+        " ja",
+        "ja ",
+        "does-not-exist",
+        "en-",
+        "-en",
+        "en--us",
+        "en-123",
+        "en.us",
+        "en_us_posix",
+        "é",
+    ] {
+        assert!(
+            !is_valid_locale_shape(locale),
+            "{locale:?} should be an invalid locale shape"
+        );
+    }
+}
+
+#[test]
 fn test_load_japanese_locale() {
     let locale = LocaleMessages::load("ja").expect("ja locale should load");
     assert_eq!(locale.locale_id(), "ja");

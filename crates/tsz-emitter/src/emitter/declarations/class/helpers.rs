@@ -261,6 +261,50 @@ impl<'a> Printer<'a> {
         false
     }
 
+    pub(in crate::emitter) fn class_has_decorators(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        if class.modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+            })
+        }) {
+            return true;
+        }
+
+        class.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            let modifiers = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|member| member.modifiers.as_ref()),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|member| member.modifiers.as_ref()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .and_then(|member| member.modifiers.as_ref())
+                }
+                _ => None,
+            };
+            modifiers.is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+        })
+    }
+
     pub(in crate::emitter) fn emit_auto_accessor_methods(
         &mut self,
         node: &Node,
