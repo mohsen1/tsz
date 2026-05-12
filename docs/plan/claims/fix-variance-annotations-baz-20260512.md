@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/variance-annotations-baz-20260512`
 - **Base**: `fix/variance-annotations-anon-class-20260512`
-- **PR**: https://github.com/mohsen1/tsz/pull/5710
+- **PR**: https://github.com/mohsen1/tsz/pull/5714
 - **Status**: ready
 - **Workstream**: conformance
 
