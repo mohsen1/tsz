@@ -8,6 +8,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, Visibility};
@@ -121,13 +122,6 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
-                // For merged VALUE+TYPE_ALIAS symbols (e.g., `const X = {...}; type X = typeof X[...]`),
-                // pre-compute the VALUE-side type and stash it in `merged_value_types` before
-                // the alias body is lowered. During lowering, `symbol_types[X]` holds a
-                // Lazy(DefId) placeholder for the type alias, so `get_type_from_type_query`
-                // would incorrectly return that placeholder for `typeof X`. By pre-populating
-                // `merged_value_types[X]` here, we give `get_type_from_type_query` a way to
-                // return the real VALUE type and avoid the false TS2456.
                 if (flags & symbol_flags::VALUE != 0)
                     && !self.ctx.merged_value_types.contains_key(&sym_id)
                     && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
@@ -135,10 +129,6 @@ impl<'a> CheckerState<'a> {
                     self.ctx.merged_value_types.insert(sym_id, val_type);
                 }
 
-                // When a local type alias has no own type parameters but is
-                // inside a generic function (e.g., `function foo<T>() { type X = T extends ... }`),
-                // the enclosing function's type parameters must be in scope during lowering.
-                // Push them before lowering and pop after.
                 let enclosing_tp_updates = if type_alias.type_parameters.is_none() {
                     self.push_enclosing_type_params_for_node(decl_arena, decl_idx)
                 } else {
@@ -191,10 +181,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.get_type_from_type_node(type_alias.type_node)
                     };
-                    // Resolve TypeQuery references with flow narrowing while type
-                    // parameters are still in scope. This prevents false TS2304
-                    // errors for type params used as type arguments in typeof
-                    // expressions (e.g. `type Alias<U> = typeof Foo<U>`).
                     if std::ptr::eq(decl_arena, self.ctx.arena) {
                         alias_type =
                             self.resolve_type_queries_with_flow(alias_type, type_alias.type_node);
@@ -203,15 +189,8 @@ impl<'a> CheckerState<'a> {
                     (alias_type, params)
                 };
 
-                // Pop enclosing type parameters that were pushed for local type aliases.
                 self.pop_type_parameters(enclosing_tp_updates);
 
-                // Eagerly evaluate non-generic type aliases whose body is a concrete
-                // evaluable meta-type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`
-                // to `1` and `type V = Obj[keyof Obj]` to the union of value types during alias
-                // resolution.  We do the same here: if the alias has no type parameters AND
-                // the body is evaluable (Conditional, IndexAccess, KeyOf, etc.) AND it does not
-                // contain deferred type parameters, evaluate it now.
                 if params.is_empty() {
                     let db = self.ctx.types;
                     if crate::query_boundaries::common::is_evaluable_meta_type(db, alias_type)
@@ -219,27 +198,20 @@ impl<'a> CheckerState<'a> {
                             db, alias_type,
                         )
                     {
-                        alias_type = self.evaluate_type_with_env(alias_type);
+                        let evaluated = self.evaluate_type_with_env(alias_type);
+                        if evaluated != alias_type {
+                            let mark_computed = !self.type_node_contains_kind(
+                                type_alias.type_node,
+                                syntax_kind_ext::TYPE_QUERY,
+                            );
+                            alias_type = evaluated;
+                            if mark_computed {
+                                self.ctx.definition_store.mark_body_as_computed(alias_type);
+                            }
+                        }
                     }
                 }
 
-                // Check for invalid circular reference (TS2456)
-                // A type alias circularly references itself if it resolves to itself
-                // without structural wrapping (e.g., `type A = B; type B = A;`)
-                //
-                // Three detection paths:
-                // 1. is_direct_circular_reference: same-file cycles via symbol_resolution_set
-                // 2. circular_type_aliases: marked by a previous cycle member
-                // 3. is_cross_file_circular_alias: cross-file cycles by following
-                //    Lazy → body → Lazy chain through shared DefinitionStore
-                // Suppress circularity checking when the type alias declaration
-                // contains parse errors. tsc skips TS2456 for malformed
-                // declarations (e.g. `type T1<in in> = T1`) where syntax errors
-                // take priority over semantic circularity detection.
-                // Check two signals:
-                // 1. node_contains_any_parse_error (from parser error positions)
-                // 2. Empty type parameter names (parser recovery creates empty
-                //    identifiers when reserved words like `in` appear as names)
                 let has_empty_tp_name =
                     type_alias.type_parameters.as_ref().is_some_and(|tp_list| {
                         tp_list.nodes.iter().any(|&tp_idx| {
@@ -291,24 +263,11 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
 
-                    // Mark this alias as circular so downstream checks (TS2313)
-                    // can detect constraints referencing it.
                     self.ctx.circular_type_aliases.insert(sym_id);
-                    // Also mark in the shared DefinitionStore for cross-file visibility.
                     if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                         self.ctx.definition_store.mark_circular_def(def_id);
                     }
 
-                    // Suppress TS2456 when the file has parse errors — the
-                    // circularity may be an artifact of parser recovery (e.g.,
-                    // malformed type parameter lists).  tsc does the same:
-                    // it skips semantic circularity errors when syntax errors
-                    // are present.
-                    // Suppress TS2456 when:
-                    // 1. The file has parse errors (syntax errors take priority)
-                    // 2. The type alias has an import alias partner — the apparent
-                    //    circularity is caused by the name conflict (TS2440 will
-                    //    be emitted instead during statement checking).
                     let has_import_partner = self
                         .ctx
                         .alias_partner_for(self.ctx.binder, sym_id)
@@ -1986,16 +1945,10 @@ impl<'a> CheckerState<'a> {
         (TypeId::ANY, Vec::new())
     }
 
-    /// Compute the VALUE-side type for a merged `VALUE+TYPE_ALIAS` symbol.
-    ///
-    /// Used to pre-populate `ctx.merged_value_types` before the type alias body is
-    /// lowered, so `get_type_from_type_query` can return the VALUE type when it sees
-    /// `typeof X` where X is the symbol being resolved as a type alias.
     fn compute_value_type_for_merged_alias(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let mut decl = symbol.value_declaration;
 
-        // value_declaration may point to the identifier node within a VariableDeclaration
         if let Some(decl_node) = self.ctx.arena.get(decl)
             && decl_node.kind == SyntaxKind::Identifier as u16
         {
@@ -2008,7 +1961,6 @@ impl<'a> CheckerState<'a> {
         }
         let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
 
-        // Prefer an explicit type annotation: compute it without touching the initializer
         if var_decl.type_annotation.is_some() {
             let ann_type = self.get_type_from_type_node(var_decl.type_annotation);
             if ann_type != TypeId::ERROR && ann_type != TypeId::ANY {
@@ -2016,10 +1968,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Fall back to the initializer type. For typical merged cases like
-        // `const X = { ... } as const; type X = typeof X[keyof typeof X]`,
-        // the initializer is a plain object literal that does not reference X,
-        // so this is recursion-safe.
         if var_decl.initializer.is_some() {
             let init_type = self.get_type_of_node(var_decl.initializer);
             if init_type != TypeId::ERROR && init_type != TypeId::UNKNOWN {
@@ -2028,5 +1976,21 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn type_node_contains_kind(&self, root: NodeIndex, kind: u16) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if self
+                .ctx
+                .arena
+                .get(idx)
+                .is_some_and(|node| node.kind == kind)
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(idx));
+        }
+        false
     }
 }

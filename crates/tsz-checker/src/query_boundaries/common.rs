@@ -1089,8 +1089,6 @@ pub(crate) fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::is_conditional_type(db, type_id)
 }
 
-/// Returns true when `type_id` is a meta-type that can be eagerly evaluated for a
-/// non-generic alias: `Conditional`, `IndexAccess`, or `KeyOf`.
 pub(crate) fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_conditional_type(db, type_id)
         || is_index_access_type(db, type_id)
