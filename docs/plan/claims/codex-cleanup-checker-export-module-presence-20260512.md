@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-checker-export-module-presence-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5689
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -20,7 +20,10 @@ condition easier to scan.
 
 ## Verification
 
-- Planned: `cargo fmt --check`
-- Planned: `cargo nextest run -p tsz-checker namespace`
-- Planned: `cargo clippy -p tsz-checker --all-targets -- -D warnings`
+- `cargo fmt --check` passed.
+- `cargo nextest run -p tsz-checker namespace` attempted first and failed during
+  local test-binary linking with `No space left on device` before tests ran.
+- `cargo nextest run -p tsz-checker --lib namespace` passed: 86 passed, 3758
+  skipped.
+- `cargo clippy -p tsz-checker --all-targets -- -D warnings` passed.
 - Planned CI: unit, conformance, fourslash, emit, lint, dist, wasm, wasm-web

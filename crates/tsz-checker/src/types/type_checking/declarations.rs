@@ -1670,7 +1670,7 @@ impl<'a> CheckerState<'a> {
                 // `export { x } from "mod"` re-exports a binding from another
                 // module. Without resolving the foreign module's symbols here
                 // we keep the parser's conservative answer (treat as runtime).
-                if !export_decl.module_specifier.is_none() {
+                if export_decl.module_specifier.is_some() {
                     return true;
                 }
                 let Some(clause) = self.ctx.arena.get(export_decl.export_clause) else {
