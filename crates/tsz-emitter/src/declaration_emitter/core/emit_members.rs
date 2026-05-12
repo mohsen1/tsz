@@ -2094,6 +2094,14 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         "let"
                     } else if js_var_promoted_to_const {
+                        let is_named_js_export =
+                            regular_decls[group_start..group_end]
+                                .iter()
+                                .any(|(_, _, _, decl)| {
+                                    self.get_identifier_text(decl.name).is_some_and(|name| {
+                                        self.js_named_export_names.contains(&name)
+                                    })
+                                });
                         let has_jsdoc = regular_decls[group_start..group_end].iter().any(
                             |(_, decl_idx, _, decl)| {
                                 self.jsdoc_name_like_type_expr_for_node(*decl_idx).is_some()
@@ -2102,7 +2110,11 @@ impl<'a> DeclarationEmitter<'a> {
                         ) || self
                             .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
                             .is_some();
-                        if has_jsdoc { "var" } else { keyword }
+                        if has_jsdoc || is_named_js_export {
+                            "var"
+                        } else {
+                            keyword
+                        }
                     } else {
                         keyword
                     };
@@ -2138,7 +2150,7 @@ impl<'a> DeclarationEmitter<'a> {
                             // Emitted function type directly from AST
                         } else {
                             self.emit_variable_decl_type_or_initializer(
-                                keyword,
+                                effective_keyword,
                                 stmt_node.pos,
                                 *decl_idx,
                                 decl.name,

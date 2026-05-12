@@ -2030,13 +2030,21 @@ impl<'a> DeclarationEmitter<'a> {
                     // For JS `var` promoted to `const`, revert to `var` if
                     // any declaration has a JSDoc @type annotation.
                     let effective_keyword = if js_var_promoted_to_const {
+                        let is_named_js_export = regular_decls.iter().any(|(_, decl)| {
+                            self.get_identifier_text(decl.name)
+                                .is_some_and(|name| self.js_named_export_names.contains(&name))
+                        });
                         let has_jsdoc = regular_decls.iter().any(|(decl_idx, decl)| {
                             self.jsdoc_name_like_type_expr_for_node(*decl_idx).is_some()
                                 || self.jsdoc_name_like_type_expr_for_node(decl.name).is_some()
                         }) || self
                             .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
                             .is_some();
-                        if has_jsdoc { "var" } else { keyword }
+                        if has_jsdoc || is_named_js_export {
+                            "var"
+                        } else {
+                            keyword
+                        }
                     } else {
                         keyword
                     };

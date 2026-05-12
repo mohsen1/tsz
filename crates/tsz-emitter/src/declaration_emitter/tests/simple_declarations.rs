@@ -1788,6 +1788,47 @@ exports.for = "loop";
 }
 
 #[test]
+fn test_js_module_exports_object_keyword_name_and_namespace_members() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+var x = 12;
+module.exports = {
+    extends: "base",
+    more: {
+        others: ["strs"]
+    },
+    x
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export var x: number;"),
+        "Expected shorthand object export to keep JS var widening: {output}"
+    );
+    assert!(
+        output.contains("declare let _extends: string;"),
+        "Expected reserved object export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace more {\n    let others: string[];\n}"),
+        "Expected nested object member to emit as an export namespace: {output}"
+    );
+    assert!(
+        output.contains("export { _extends as extends };"),
+        "Expected reserved object export alias to be grouped: {output}"
+    );
+    assert!(
+        !output.contains("export const x: 12;"),
+        "Did not expect the JS var export to remain const-narrowed: {output}"
+    );
+    assert!(
+        !output.contains("export const extends"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

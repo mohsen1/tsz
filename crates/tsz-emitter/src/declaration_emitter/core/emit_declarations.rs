@@ -388,6 +388,9 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {
+                if let Some(initializer) = self.js_module_exports_assignment_initializer(stmt_idx) {
+                    self.emit_js_anonymous_module_exports_object_members(initializer);
+                }
                 continue;
             }
             if self

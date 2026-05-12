@@ -1295,6 +1295,13 @@ impl<'a> DeclarationEmitter<'a> {
                     let Some(prop) = self.arena.get_property_assignment(member_node) else {
                         continue;
                     };
+                    if let Some(prop_name) = self.get_identifier_text(prop.name)
+                        && let Some(init_name) = self.get_identifier_text(prop.initializer)
+                        && prop_name == init_name
+                        && self.js_named_export_names.contains(&prop_name)
+                    {
+                        continue;
+                    }
                     if self
                         .emit_js_named_export_object_literal_namespace(prop.name, prop.initializer)
                     {
@@ -1540,6 +1547,19 @@ impl<'a> DeclarationEmitter<'a> {
         type_text: &str,
         keyword: &'static str,
     ) {
+        if let Some((export_name, local_name)) = self.js_reserved_export_local_text(name) {
+            self.write_indent();
+            self.write(keyword);
+            self.write(&local_name);
+            self.write(": ");
+            self.write(type_text);
+            self.write(";");
+            self.write_line();
+            self.js_cjs_export_aliases.push((export_name, local_name));
+            self.emitted_module_indicator = true;
+            return;
+        }
+
         self.write_indent();
         self.write("export ");
         self.write(keyword);
@@ -1549,6 +1569,21 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(";");
         self.write_line();
         self.emitted_module_indicator = true;
+    }
+
+    fn js_reserved_export_local_text(&mut self, export_name: &str) -> Option<(String, String)> {
+        if !token_is_reserved_word(string_to_token(export_name)) {
+            return None;
+        }
+
+        let base = format!("_{export_name}");
+        let local_name = if self.reserved_names.contains(&base) {
+            self.generate_unique_name(&base)
+        } else {
+            base
+        };
+        self.reserved_names.insert(local_name.clone());
+        Some((export_name.to_string(), local_name))
     }
 
     pub(in crate::declaration_emitter) fn emit_js_named_export_object_literal_namespace(
@@ -2349,6 +2384,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => Some("boolean".to_string()),
             k if k == SyntaxKind::NullKeyword as u16 => Some("null".to_string()),
             k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined".to_string()),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.infer_fallback_type_text(initializer)
+            }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(initializer)
             }

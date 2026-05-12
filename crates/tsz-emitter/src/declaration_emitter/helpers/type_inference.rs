@@ -6104,10 +6104,13 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 }
             }
-            let elem_type = self.preferred_expression_type_text(elem_idx).or_else(|| {
-                self.get_node_type_or_names(&[elem_idx])
-                    .map(|type_id| self.print_type_id(type_id))
-            })?;
+            let elem_type = self
+                .preferred_expression_type_text(elem_idx)
+                .or_else(|| {
+                    self.get_node_type_or_names(&[elem_idx])
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+                .or_else(|| self.infer_fallback_type_text_at(elem_idx, self.indent_level + 1))?;
             element_types.push(elem_type);
         }
 

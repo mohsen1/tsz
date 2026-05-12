@@ -2030,6 +2030,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => true,
             k if k == SyntaxKind::NullKeyword as u16 => true,
             k if k == SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
             k if k == syntax_kind_ext::NEW_EXPRESSION => true,
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 self.is_negative_literal(init_node)

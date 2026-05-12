@@ -335,6 +335,23 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|node| node.kind == SyntaxKind::NullKeyword as u16)
             {
                 self.write(": null");
+            } else if self.source_is_js_file
+                && keyword != "const"
+                && has_initializer
+                && !js_has_jsdoc_type
+                && self.arena.get(initializer).is_some_and(|node| {
+                    let kind = node.kind;
+                    kind == SyntaxKind::NumericLiteral as u16
+                        || kind == SyntaxKind::StringLiteral as u16
+                        || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        || kind == SyntaxKind::TrueKeyword as u16
+                        || kind == SyntaxKind::FalseKeyword as u16
+                        || kind == SyntaxKind::BigIntLiteral as u16
+                })
+                && let Some(type_text) = self.infer_fallback_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if has_initializer
                 && let Some(type_text) =
                     self.previous_duplicate_variable_declaration_type_text(decl_idx, decl_name)
