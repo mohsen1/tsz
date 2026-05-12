@@ -163,8 +163,20 @@ jobs:
         if: matrix.shell == 'pwsh'
         shell: pwsh
         run: |
+          # The installer's internal `$ErrorActionPreference = "Stop"` turns the
+          # 404 from a nonexistent release into a terminating error that
+          # discards in-pipeline buffered stdout. Tee-Object streams each line
+          # to disk as it is emitted, so we can read the partial log after the
+          # script aborts.
           $ErrorActionPreference = 'Continue'
-          $out = & { .\scripts\install.ps1 -Version 'v0.0.0-no-such-release' } *>&1 | Out-String
+          $logFile = New-TemporaryFile
+          try {
+              & .\scripts\install.ps1 -Version 'v0.0.0-no-such-release' *>&1 |
+                  Tee-Object -FilePath $logFile.FullName | Out-Null
+          } catch {
+              Write-Host "(install.ps1 exited with terminating error, which is expected for a missing tag)"
+          }
+          $out = Get-Content $logFile.FullName -Raw
           Write-Host $out
           if (-not ($out -match 'target:')) { Write-Error 'installer did not detect target'; exit 1 }
           if (-not ($out -match 'install dir:')) { Write-Error 'installer did not resolve install dir'; exit 1 }
