@@ -89,6 +89,51 @@ Close remaining high-signal parser review-audit threads by:
   - added solver regression tests proving pre-existing application occurrences
     are not repainted while still preserving aliasing for newly introduced
     intermediates.
+- review comments left on #5002:
+  - verified `recover_orphan_case_assignment_before_if` in
+    `state_statements.rs` bounds orphan-case recovery on semicolon, close brace,
+    EOF, and line-break boundaries, so recovery does not consume outer block
+    structure.
+- review comments left on #5102:
+  - verified `skip_invalid_conditional_branch_to_colon` in
+    `state_declarations_exports.rs` tracks paren/brace/bracket nesting and only
+    treats semicolon as a terminator at top-level depth.
+  - confirmed nested branch semicolon handling is covered by
+    `block_bodied_arrow_statement_conditional_tail_ignores_nested_branch_semicolons`
+    in `parser_improvement_tests`.
+- review comments left on #4958:
+  - verified `state_statements_class.rs` gates repeated for-expression comma
+    reports with `reported_for_expression_start_comma`.
+  - verified `pending_const_binding_name_colon` state is explicitly reset on
+    non-matching tokens, preventing leaked `':' expected.` cascades.
+  - confirmed parser regression coverage remains in
+    `state_statement_tests.rs` for both state-leak and duplicate-comma cases.
+- review comments left on #5089:
+  - verified `ParserState::u32_from_usize` clamps overflow to `u32::MAX` with a
+    one-shot warning, and `u16_from_node_flags` truncates overflowed high bits
+    with warning instead of panicking.
+  - confirmed parser unit coverage:
+    `u32_from_usize_clamps_overflow_without_panicking` and
+    `u16_from_node_flags_truncates_overflow_without_panicking`.
+- review comments left on #4967:
+  - verified solver constraint fallback now builds literal-candidate unions via
+    `union_from_slice` and uses `constraint_fallback_display_types` for
+    display-only fallback diagnostics.
+  - retired stale thread tied to the old clone-heavy/alias-mutation path that
+    is no longer present in `generic_call/resolve.rs`.
+- review comments left on #4973:
+  - verified checker generic-construct mismatch detection now computes
+    construct/generic flags through callable/function shape queries in
+    `construct_signature_flags_for_type`, avoiding clone-heavy signature
+    materialization for boolean checks.
+- review comments left on #4989:
+  - verified the same `construct_signature_flags` shape-query path now covers
+    the previously flagged construct-signature checks in `call_finalize.rs`;
+    stale thread retired against current code.
+- review comments left on #5954:
+  - dropped from this workstream; PR #5954
+    (`https://github.com/mohsen1/tsz/pull/5954`) was closed unmerged on
+    2026-05-12 and superseded by this bundled follow-up track.
 
 ## Files Touched
 
@@ -102,7 +147,9 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-parser/src/parser/state_declarations.rs`
 - `crates/tsz-parser/src/parser/state_declarations_exports.rs`
 - `crates/tsz-parser/src/parser/state.rs`
+- `crates/tsz-parser/src/parser/state_statements_class.rs`
 - `crates/tsz-parser/tests/parser_improvement_tests.rs`
+- `crates/tsz-parser/tests/state_statement_tests.rs`
 - `crates/tsz-common/src/perf_counters.rs`
 - `crates/tsz-checker/src/context/mod.rs`
 - `docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md`
@@ -114,6 +161,7 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-checker/src/types/computation/call_finalize.rs`
 - `crates/tsz-solver/src/evaluation/evaluate.rs`
 - `crates/tsz-solver/tests/evaluate_tests.rs`
+- `crates/tsz-solver/src/operations/generic_call/resolve.rs`
 
 ## Verification
 
@@ -123,4 +171,15 @@ Close remaining high-signal parser review-audit threads by:
 - `cargo test -p tsz-checker --test ts2344_class_constructor_constraint -- --nocapture`
 - `cargo test -p tsz-solver --lib intermediate_application_alias_ -- --nocapture`
 - `cargo test -p tsz-solver --lib application_display_alias_can_name_intermediate_application -- --nocapture`
+- `cargo test -p tsz-parser block_bodied_arrow_statement_conditional_tail_ignores_nested_branch_semicolons -- --nocapture`
+- `cargo test -p tsz-parser definite_assignment_recovery_does_not_leak_const_binding_name_state -- --nocapture`
+- `cargo test -p tsz-parser definite_assignment_recovery_reports_for_expression_comma_once_before_close_paren -- --nocapture`
+- `cargo test -p tsz-parser u32_from_usize_clamps_overflow_without_panicking -- --nocapture`
+- `cargo test -p tsz-parser u16_from_node_flags_truncates_overflow_without_panicking -- --nocapture`
+- `cargo test -p tsz-checker --test generic_call_inference_tests self_referential_constraint_fallback_displays_literal_union_candidates -- --nocapture`
+- `cargo test -p tsz-checker --test generic_call_inference_tests self_referential_constraint_fallback_preserves_literal_union_after_contextual_assignment -- --nocapture`
+- `cargo test -p tsz-checker --test generic_call_inference_tests self_referential_constraint_fallback_anchors_first_argument_after_contextual_assignment -- --nocapture`
+- `cargo test -p tsz-solver test_infer_generic_constraint_fallback -- --nocapture`
+- `cargo test -p tsz-solver test_generic_parameter_without_constraint_fallback_to_unknown -- --nocapture`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` is currently blocked by GitHub GraphQL rate-limit exhaustion until reset at `2026-05-12T21:09:52Z`.
