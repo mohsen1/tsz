@@ -497,6 +497,39 @@ function assign(single: Single, count: Count, offset: Offset) {
 }
 
 #[test]
+fn test_ts2322_same_enum_member_union_source_display_preserved() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+enum E {
+    A = "a",
+    B = "b",
+}
+declare let both: E.A | E.B;
+let onlyA: E.A = both;
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("is not assignable to type 'E.A'.")
+        })
+        .expect("expected TS2322 for assigning E.A | E.B to E.A");
+
+    let message = ts2322.1.as_str();
+    assert!(
+        message.contains("Type 'E.A | E.B' is not assignable to type 'E.A'.")
+            || message.contains("Type 'E.B | E.A' is not assignable to type 'E.A'."),
+        "expected enum member union source display in TS2322, got: {message}"
+    );
+    assert!(
+        !message.contains("Type 'E' is not assignable to type 'E.A'."),
+        "enum-member union source should not collapse to parent enum in TS2322, got: {message}"
+    );
+}
+
+#[test]
 fn test_ts2322_numeric_literal_union_alias_source_display_preserved_for_property_assignment() {
     let diagnostics = get_all_diagnostics(
         r#"

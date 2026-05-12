@@ -684,6 +684,15 @@ function f6<A, B extends A>(a: InvariantFalse<A>, b: InvariantFalse<B>) {
             .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>()
     );
+    assert_eq!(
+        diagnostics.len(),
+        8,
+        "conditional keyof variance fixture should not emit extra non-TS2322 diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
 }
 
 /// Test that indexed access types in conditional contexts work correctly.

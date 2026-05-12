@@ -338,14 +338,20 @@ interface Comparer {
     <T extends Comparable<T>>(x: T, y: T): T;
 }
 var max2: Comparer = (x, y) => { return (x.compareTo(y) > 0) ? x : y };
-var maxResult = max2(1, 2);
+    var maxResult = max2(1, 2);
 "#;
     let diagnostics = compile_and_get_raw_diagnostics(source);
-    let ts2345 = diagnostics
-        .iter()
-        .find(|diag| diag.code == 2345)
-        .unwrap_or_else(|| panic!("expected TS2345 for max2(1, 2); got: {diagnostics:#?}"));
     let first_arg_start = source.find("max2(1, 2)").expect("expected call") + "max2(".len();
+    let matching_ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345 && diag.start == first_arg_start as u32)
+        .collect();
+    assert_eq!(
+        matching_ts2345.len(),
+        1,
+        "expected exactly one TS2345 anchored at max2's first argument. Got: {diagnostics:#?}"
+    );
+    let ts2345 = matching_ts2345[0];
 
     assert_eq!(
         ts2345.start, first_arg_start as u32,

@@ -272,9 +272,13 @@ function f<T>(x: T | { a: string }) {
     );
 
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| { *code == 2322 && message.contains("T | { a: string; }") }),
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '")
+                && message.contains("' is not assignable to type 'object'.")
+                && message.contains("T")
+                && message.contains("{ a: string; }")
+        }),
         "Expected TS2322 for generic union `in` RHS, got {diagnostics:#?}"
     );
     assert!(

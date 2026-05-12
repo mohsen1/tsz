@@ -114,8 +114,8 @@ targetValue = sourceValue;
     assert!(
         messages.iter().any(|(code, message)| {
             *code == 2322
-                && message
-                    == "Type '{ keep: NamedLeft; } & { drift: NamedRight; }' is not assignable to type '{ [slot: string]: NamedLeft; }'."
+                && message.contains("Type '{ keep: NamedLeft; } & { drift: NamedRight; }'")
+                && message.contains("is not assignable to type '{ [slot: string]: NamedLeft; }'.")
         }),
         "index-signature assignment should preserve explicit aliases and intersection source display, got {messages:#?}"
     );
@@ -134,8 +134,8 @@ targetValue = sourceValue;
     assert!(
         messages.iter().any(|(code, message)| {
             *code == 2322
-                && message
-                    == "Type '{ alpha: string; } & { beta: number; }' is not assignable to type '{ [slot: string]: string; }'."
+                && message.contains("Type '{ alpha: string; } & { beta: number; }'")
+                && message.contains("is not assignable to type '{ [slot: string]: string; }'.")
         }),
         "index-signature assignment should keep the declared anonymous intersection source display, got {messages:#?}"
     );

@@ -284,6 +284,20 @@ fn system_exported_legacy_decorated_class_exports_decorator_assignment() {
         output.contains("var __decorate = (this && this.__decorate) || function"),
         "System wrapper should inline __decorate inside the register callback.\nOutput:\n{output}"
     );
+    let register_pos = output
+        .find("System.register(")
+        .expect("System output should include System.register");
+    let strict_pos = output[register_pos..]
+        .find("\"use strict\";")
+        .map(|idx| register_pos + idx)
+        .expect("System.register callback should include \"use strict\";");
+    let decorate_pos = output
+        .find("var __decorate = (this && this.__decorate) || function")
+        .expect("System output should include __decorate helper");
+    assert!(
+        decorate_pos > strict_pos,
+        "__decorate helper should be emitted inside the System.register callback after \"use strict\".\nOutput:\n{output}"
+    );
     assert!(
         output.contains("exports_1(\"A\", A);"),
         "System wrapper should preserve the pre-decorator live export.\nOutput:\n{output}"
