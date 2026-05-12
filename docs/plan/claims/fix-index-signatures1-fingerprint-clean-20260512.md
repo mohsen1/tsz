@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/index-signatures1-fingerprint-clean-20260512`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/5720
 - **Status**: ready
 - **Workstream**: conformance
 
