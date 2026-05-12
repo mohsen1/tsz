@@ -1227,6 +1227,39 @@ export function inJs(cb, value) {
 }
 
 #[test]
+fn test_js_function_declaration_type_alias_signature_preserves_non_type_jsdoc_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(m : T) => T} IFn
+ */
+
+/**
+ * Keep this function-level JSDoc.
+ * @deprecated use next
+ */
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs<T>(m: T): T;"),
+        "Expected JSDoc @type function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("@deprecated use next"),
+        "Expected non-@type JSDoc comments to remain in declaration output: {output}"
+    );
+    assert!(
+        !output.contains("@type {IFn}"),
+        "Did not expect implementation-only @type comment in declaration output: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_fold_into_declarations() {
     let source = r#"
 const x = 1;

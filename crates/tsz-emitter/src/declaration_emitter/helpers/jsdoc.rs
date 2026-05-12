@@ -1090,6 +1090,24 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    fn jsdoc_contains_type_tag(jsdoc: &str) -> bool {
+        jsdoc.lines().any(|raw_line| {
+            let line = raw_line.trim_start_matches('*').trim();
+            line.strip_prefix("@type")
+                .is_some_and(|rest| !rest.trim_start().starts_with("def"))
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
+        chain: &[String],
+    ) -> Vec<String> {
+        chain
+            .iter()
+            .filter(|jsdoc| !Self::jsdoc_contains_type_tag(jsdoc))
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn emit_js_function_variable_declaration_if_possible(
         &mut self,
         decl_idx: NodeIndex,
