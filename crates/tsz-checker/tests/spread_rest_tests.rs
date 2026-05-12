@@ -1502,6 +1502,65 @@ type T2 = [number, ...string[], boolean?];
     assert_eq!(ts1266_count, 1, "Expected 1 TS1266, got {ts1266_count}");
 }
 
+/// Spreading fixed-length literal tuples (`...[1, 2]`) is valid at any position.
+/// Each spread inlines its elements, so there is no "rest after rest" violation.
+/// Regression test for issue #5807.
+#[test]
+fn test_ts1265_not_emitted_for_fixed_length_tuple_spreads() {
+    let source = r#"
+type Spread = [...[1, 2], ...[3, 4]];
+const sp: Spread = [1, 2, 3, 4];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostics,
+        Vec::new(),
+        "Fixed-length literal tuple spreads should not produce diagnostics"
+    );
+}
+
+/// Readonly wrappers should not make fixed-length tuple spreads look variadic.
+#[test]
+fn test_ts1265_not_emitted_for_readonly_fixed_length_tuple_spreads() {
+    let source = r#"
+type Spread = [...readonly [1, 2], ...[3, 4]];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostics,
+        Vec::new(),
+        "Readonly fixed-length tuple spreads should not produce diagnostics"
+    );
+}
+
+/// Spreading more than two fixed-length tuples is also valid.
+#[test]
+fn test_ts1265_not_emitted_for_multiple_fixed_length_tuple_spreads() {
+    let source = r#"
+type Triple = [...[1, 2], ...[3, 4], ...[5, 6]];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    assert_eq!(
+        ts1265_count, 0,
+        "TS1265 must not fire for three fixed-length tuple spreads, got {ts1265_count}: {diagnostics:?}"
+    );
+}
+
+/// A variadic spread (array) after a variable-length tuple spread still emits TS1265.
+#[test]
+fn test_ts1265_still_fires_for_array_after_variable_length_tuple_spread() {
+    let source = r#"
+type T = [...[string, ...number[]], ...boolean[]];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    assert_eq!(
+        ts1265_count, 1,
+        "TS1265 must fire when a variadic spread follows a variable-length tuple spread, got {ts1265_count}: {diagnostics:?}"
+    );
+}
+
 /// TS2698 must NOT be emitted for rest elements in destructuring patterns.
 /// `{ ...x }` on the LHS of `=` or in a for-of initializer is a rest
 /// assignment target, not a value spread.
