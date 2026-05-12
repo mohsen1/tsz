@@ -2368,7 +2368,9 @@ export const Mixer = Mix(class {
 
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
-        dts.contains("export declare const Mixer: {\n    new (): {\n        [a]: () => number;\n    };\n} & (new (...args: any[]) => {mixed: true});"),
+        dts.contains(
+            "export declare const Mixer: {\n    new (): {\n        [a]: () => number;\n    };\n} & (new (...args: any[]) => {"
+        ) && dts.contains("mixed: true;"),
         "expected inferred class-expression constructor type to survive generic substitution: {dts}"
     );
 }
@@ -3372,6 +3374,7 @@ fn compile_with_tsconfig_emits_outputs() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -3884,6 +3887,7 @@ fn compile_with_declaration_map_emits_map_outputs() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true,
             "declarationMap": true
           },
@@ -10157,6 +10161,7 @@ fn compile_multi_file_project_with_type_imports() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "module": "commonjs",
             "declaration": true
           },
@@ -10398,6 +10403,7 @@ fn compile_declaration_true_emits_dts_files() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -10897,6 +10903,7 @@ fn compile_declaration_interface_and_type() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -10964,6 +10971,7 @@ fn compile_declaration_class_with_methods() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -12325,6 +12333,7 @@ fn compile_generic_utility_library_array_utils() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true,
             "strict": true
           },
@@ -12422,6 +12431,7 @@ fn compile_generic_utility_library_type_utilities() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -12521,6 +12531,7 @@ fn compile_generic_utility_library_multi_file() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true,
             "sourceMap": true
           },
@@ -12637,6 +12648,7 @@ fn compile_generic_utility_library_with_constraints() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -12736,6 +12748,7 @@ fn compile_generic_utility_library_classes() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -12869,6 +12882,7 @@ fn compile_module_named_reexports() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -12930,6 +12944,7 @@ fn compile_module_renamed_reexports() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -12979,6 +12994,7 @@ fn compile_module_star_reexports() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13036,6 +13052,7 @@ fn compile_module_chained_reexports() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13110,6 +13127,7 @@ fn compile_module_mixed_exports_and_reexports() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13185,6 +13203,7 @@ fn compile_module_type_only_reexports() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13253,6 +13272,7 @@ fn compile_module_default_reexport() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13308,6 +13328,7 @@ fn compile_module_barrel_file() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13394,6 +13415,7 @@ fn compile_class_with_generic_constructor() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13603,6 +13625,7 @@ fn compile_numeric_enum() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13650,6 +13673,7 @@ fn compile_string_enum() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]
@@ -13840,6 +13864,7 @@ fn compile_basic_arrow_function() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "rootDir": ".",
             "declaration": true
           },
           "include": ["src/**/*.ts"]

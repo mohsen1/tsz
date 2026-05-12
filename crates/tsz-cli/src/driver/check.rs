@@ -93,6 +93,21 @@ fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
 
+#[cfg(test)]
+thread_local! {
+    static FILE_SESSION_REUSE_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn file_session_reuse_requested() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = FILE_SESSION_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some()
+}
+
 fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
     importing_file
         .components()
@@ -1280,22 +1295,25 @@ pub(super) fn collect_diagnostics(
     } else {
         FxHashSet::default()
     };
-    let baseline_lib_datetimeformatpart_diagnostics =
-        if !options.no_check && !baseline_lib_datetimeformatpart_interfaces.is_empty() {
-            let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
-                program,
-                options,
-                checker_libs,
-                &baseline_lib_datetimeformatpart_interfaces,
-                &FxHashSet::default(),
-                &program_context,
-                &[2552],
-            );
-            diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
-            diagnostics
-        } else {
-            Vec::new()
-        };
+    let baseline_lib_datetimeformatpart_diagnostics = if !options.no_check
+        && !options.lib_is_default
+        && should_preserve_datetimeformatpart_spelling_baseline(checker_libs)
+        && !baseline_lib_datetimeformatpart_interfaces.is_empty()
+    {
+        let mut diagnostics = collect_checker_lib_baseline_diagnostics_for_codes(
+            program,
+            options,
+            checker_libs,
+            &baseline_lib_datetimeformatpart_interfaces,
+            &FxHashSet::default(),
+            &program_context,
+            &[2552],
+        );
+        diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
+        diagnostics
+    } else {
+        Vec::new()
+    };
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
@@ -1448,9 +1466,8 @@ pub(super) fn collect_diagnostics(
             // exactly the bench/profiling scenario T2.1.B is built
             // for, so this restriction matches the use case rather
             // than narrowing it.
-            let use_file_session_reuse = use_sequential_checking
-                && !extract_type_cache
-                && std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some();
+            let use_file_session_reuse =
+                use_sequential_checking && !extract_type_cache && file_session_reuse_requested();
             if use_file_session_reuse {
                 check_files_sequentially_with_reuse(
                     &work_items,
@@ -3759,6 +3776,25 @@ fn baseline_lib_datetimeformatpart_spelling_interface_names(
     interfaces
 }
 
+fn should_preserve_datetimeformatpart_spelling_baseline(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_datetimeformatpart_spelling_baseline_trigger_lib)
+    })
+}
+
+fn is_datetimeformatpart_spelling_baseline_trigger_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.esnext.date.d.ts"
+            | "esnext.date.d.ts"
+            | "lib.esnext.temporal.d.ts"
+            | "esnext.temporal.d.ts"
+    )
+}
+
 fn is_datetimeformatpart_spelling_baseline_lib(file_name: &str) -> bool {
     matches!(
         file_name,
@@ -3985,6 +4021,27 @@ mod tests {
         .diagnostics
     }
 
+    struct FileSessionReuseOverrideGuard;
+
+    impl Drop for FileSessionReuseOverrideGuard {
+        fn drop(&mut self) {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(None));
+        }
+    }
+
+    fn collect_test_diagnostics_with_file_session_reuse(
+        files: &[(&str, &str)],
+        enabled: bool,
+    ) -> Vec<Diagnostic> {
+        FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(enabled)));
+        let _guard = FileSessionReuseOverrideGuard;
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            ..ResolvedCompilerOptions::default()
+        };
+        collect_test_diagnostics_with_options(files, &options, std::path::Path::new("/"))
+    }
+
     fn checker_lib_set_for_test(libs: &[(&str, &str)]) -> CheckerLibSet {
         let files = libs
             .iter()
@@ -4054,6 +4111,36 @@ mod tests {
             resolved.checker.module = ModuleKind::ES2015;
         }
         resolved
+    }
+
+    #[test]
+    fn file_session_reuse_preserves_multifile_diagnostics() {
+        let files = [
+            (
+                "a.ts",
+                "interface Alpha { kind: \"alpha\"; count: number }\nconst a: Alpha = { kind: \"alpha\", count: \"nope\" };\n",
+            ),
+            (
+                "b.ts",
+                "interface Beta { kind: \"beta\"; count: number }\nconst b: Beta = { kind: \"beta\", count: \"nope\" };\n",
+            ),
+            (
+                "c.ts",
+                "interface Gamma { kind: \"gamma\"; count: number }\nconst c: Gamma = { kind: \"gamma\", count: \"nope\" };\n",
+            ),
+        ];
+
+        let default_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, false);
+        let reused_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, true);
+
+        assert_eq!(
+            reused_diagnostics, default_diagnostics,
+            "file-session reuse must preserve byte-identical diagnostics"
+        );
+        assert!(
+            !default_diagnostics.is_empty(),
+            "fixture should exercise real checker diagnostics"
+        );
     }
 
     #[test]
@@ -4154,16 +4241,26 @@ mod tests {
 
     #[test]
     fn collect_diagnostics_preserves_builtin_lib_ts2552_spelling_baseline() {
-        let checker_libs = checker_lib_set_for_test(&[(
-            "lib.esnext.intl.d.ts",
-            r#"
+        let checker_libs = checker_lib_set_for_test(&[
+            (
+                "lib.esnext.intl.d.ts",
+                r#"
 declare namespace Intl {
     interface DateTimeFormat {
         formatToParts(): DateTimeFormatPart[];
     }
 }
 "#,
-        )]);
+            ),
+            (
+                "lib.esnext.temporal.d.ts",
+                r#"
+declare namespace Temporal {
+    interface Instant {}
+}
+"#,
+            ),
+        ]);
 
         let diagnostics = collect_test_diagnostics_with_checker_libs(
             &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
@@ -4186,6 +4283,30 @@ declare namespace Intl {
             "expected DateTimeFormatPart spelling suggestion, got: {ts2552:?}"
         );
         assert_eq!(ts2552[0].file, "lib.esnext.intl.d.ts");
+    }
+
+    #[test]
+    fn collect_diagnostics_skips_builtin_lib_ts2552_without_temporal_trigger_lib() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.esnext.intl.d.ts",
+            r#"
+declare namespace Intl {
+    interface DateTimeFormat {
+        formatToParts(): DateTimeFormatPart[];
+    }
+}
+"#,
+        )]);
+
+        let diagnostics = collect_test_diagnostics_with_checker_libs(
+            &[("test.ts", "const value = new Intl.DateTimeFormat();\n")],
+            &checker_libs,
+        );
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2552),
+            "expected DateTimeFormatPart baseline to require Temporal/Date libs, got: {diagnostics:?}"
+        );
     }
 
     #[test]
