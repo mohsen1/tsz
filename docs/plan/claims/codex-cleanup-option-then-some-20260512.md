@@ -1,9 +1,9 @@
-# [WIP] chore(checker): simplify option filters
+# chore(checker): simplify option filters
 
 - **Date**: 2026-05-11
 - **Branch**: `codex/cleanup-option-then-some-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5659
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -21,5 +21,5 @@ limited to checker helper code.
 
 ## Verification
 
-- Planned: `cargo fmt --check`
-- Planned: targeted checker nextest filters for tuple/property access helpers
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker large_tuple property_access` (103 passed, 7407 skipped)
