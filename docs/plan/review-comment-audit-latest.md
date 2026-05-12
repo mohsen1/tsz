@@ -2,13 +2,13 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 43
-- Potential important unresolved threads: 59
+- PRs excluded as already followed-up: 44
+- Potential important unresolved threads: 57
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 30
-- `crates/tsz-emitter`: 14
+- `crates/tsz-emitter`: 12
 - `crates/tsz-solver`: 5
 - `docs`: 3
 - `crates/tsz-parser`: 2
@@ -27,7 +27,6 @@
 - [#4949](https://github.com/mohsen1/tsz/pull/4949) fix(cli): anchor TS2578 at comment range, not at line start: 2
 - [#5110](https://github.com/mohsen1/tsz/pull/5110) fix(checker): report class-expression field this misses: 2
 - [#5677](https://github.com/mohsen1/tsz/pull/5677) fix(dts): expand returned rest tuple aliases: 2
-- [#5701](https://github.com/mohsen1/tsz/pull/5701) fix(dts): map js default typedef aliases: 2
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) fix(checker): align recursiveTypeReferences1 array diagnostics: 2
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) fix(dts): ignore cjs exports in esm js modules: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
@@ -140,9 +139,7 @@
   - The verification command includes an absolute local path (`/Users/...`) which is machine-specific and embeds a username. Prefer a repo-relative path, a variable (e.g. `$TS_TESTS_DIR`), or a short note describing the i...
 - [#5693](https://github.com/mohsen1/tsz/pull/5693) `crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs:933` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `parse_jsdoc_function_type_signature` finds the parameter list close-paren via `after_params.find(')')`, which stops at the first `)` and will mis-parse valid function types when a parameter type contains nested paren...
-- [#5701](https://github.com/mohsen1/tsz/pull/5701) `crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs:1500` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - Emitting the JSDoc `@typedef ... default` as `export type {alias_name} = ...` can produce an invalid `.d.ts` when `{alias_name}` already has a type declaration (e.g. a `class` creates a type). In the test case here, t...
-- [#5701](https://github.com/mohsen1/tsz/pull/5701) `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs:4317` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This test currently expects output that includes both `export type Cls = ...` and `declare class Cls ...`. A class declaration introduces a type named `Cls`, so also emitting a type alias named `Cls` would make the ge...
 - [#5703](https://github.com/mohsen1/tsz/pull/5703) `crates/tsz-checker/src/state/state_checking/source_file.rs:756` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This rewrite matches via `contains(...)` but then overwrites the entire `message_text`. If the TS2322 message ever includes additional elaboration lines (e.g. "Type ...\n Property ..." patterns used elsewhere), this w...

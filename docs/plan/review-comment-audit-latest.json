@@ -41,6 +41,7 @@
     5666,
     5691,
     5694,
+    5701,
     5717,
     5720,
     5743,
@@ -50,7 +51,7 @@
     5901,
     5954
   ],
-  "candidate_count": 59,
+  "candidate_count": 57,
   "candidates": [
     {
       "pr_number": 4988,
@@ -62,7 +63,7 @@
       "path": "crates/tsz-checker/tests/mapped_type_errors_conformance_tests.rs",
       "line": 23,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`diagnostic_anchor_text` slices `source` using unchecked byte indices derived from `diagnostic.start`/`length`. If a diagnostic ever points into a different file (e.g. lib) or reports a span outside `source`, this will panic with an unhelpful \u201cbyte index out of bounds\u201d/\u201cnot a char boundary\u201d message. Consider using `source.get(start..end).expect(...)` (and optionally asserting `diagnostic.file == \"test.ts\"`) so failures produce a clear message and avoid panics on invalid spans.",
+      "body": "`diagnostic_anchor_text` slices `source` using unchecked byte indices derived from `diagnostic.start`/`length`. If a diagnostic ever points into a different file (e.g. lib) or reports a span outside `source`, this will panic with an unhelpful “byte index out of bounds”/“not a char boundary” message. Consider using `source.get(start..end).expect(...)` (and optionally asserting `diagnostic.file == \"test.ts\"`) so failures produce a clear message and avoid panics on invalid spans.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -79,7 +80,7 @@
       "path": "crates/tsz-solver/src/intern/core/interner.rs",
       "line": 1060,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "The wording \"the optimizer folds into the no-op path\" overstates what the compiler can guarantee here. Since `pc` depends on a runtime `enabled_fast()` result, the `if let Some(c) = pc` checks still compile to an Option discriminant test + branch; they\u2019re just predictable/cheap when `pc` is `None`. Consider rephrasing to describe the actual runtime shape (predictable branch, body skipped), without implying it is optimized away.",
+      "body": "The wording \"the optimizer folds into the no-op path\" overstates what the compiler can guarantee here. Since `pc` depends on a runtime `enabled_fast()` result, the `if let Some(c) = pc` checks still compile to an Option discriminant test + branch; they’re just predictable/cheap when `pc` is `None`. Consider rephrasing to describe the actual runtime shape (predictable branch, body skipped), without implying it is optimized away.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -96,7 +97,7 @@
       "path": "crates/tsz-checker/tests/generic_call_inference_tests.rs",
       "line": 350,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "This test picks the first diagnostic with code 2345 via `find`, which doesn\u2019t guarantee it\u2019s the diagnostic for `max2(1, 2)` if additional TS2345s ever appear (ordering can change as the checker evolves). To make the test unambiguous, filter TS2345 diagnostics and select the one whose `start` matches `first_arg_start` (or assert there\u2019s exactly one TS2345 before using it).",
+      "body": "This test picks the first diagnostic with code 2345 via `find`, which doesn’t guarantee it’s the diagnostic for `max2(1, 2)` if additional TS2345s ever appear (ordering can change as the checker evolves). To make the test unambiguous, filter TS2345 diagnostics and select the one whose `start` matches `first_arg_start` (or assert there’s exactly one TS2345 before using it).",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -113,7 +114,7 @@
       "path": "crates/tsz-checker/tests/conditional_infer_tests.rs",
       "line": 632,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "The test only asserts that there are 8 TS2322 diagnostics, but it would still pass if additional non-TS2322 diagnostics are emitted (which would indicate a regression unrelated to variance). To ensure this remains a tight TSC-conformance check, also assert that the total diagnostics count is 8 (or that all diagnostics are TS2322) so unexpected errors can\u2019t slip through.",
+      "body": "The test only asserts that there are 8 TS2322 diagnostics, but it would still pass if additional non-TS2322 diagnostics are emitted (which would indicate a regression unrelated to variance). To ensure this remains a tight TSC-conformance check, also assert that the total diagnostics count is 8 (or that all diagnostics are TS2322) so unexpected errors can’t slip through.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -147,7 +148,7 @@
       "path": "crates/tsz-checker/src/context/cross_file_query.rs",
       "line": 19,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "The module-level docstring implies that the helpers in this module collapse `TypeId::UNKNOWN` to `None`, but that isn\u2019t true for all helpers here (e.g. `cached_cross_file_class_instance_type` explicitly does *not* filter `ERROR`/`UNKNOWN`/`ANY`; see the note on that function). Consider tightening this wording to refer specifically to the `cached_cross_file_symbol_type`/`SymbolType` path (or say \u201csome/most helpers\u201d) so the module docs don\u2019t conflict with the behavior documented below.",
+      "body": "The module-level docstring implies that the helpers in this module collapse `TypeId::UNKNOWN` to `None`, but that isn’t true for all helpers here (e.g. `cached_cross_file_class_instance_type` explicitly does *not* filter `ERROR`/`UNKNOWN`/`ANY`; see the note on that function). Consider tightening this wording to refer specifically to the `cached_cross_file_symbol_type`/`SymbolType` path (or say “some/most helpers”) so the module docs don’t conflict with the behavior documented below.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -164,7 +165,7 @@
       "path": "crates/tsz-checker/src/error_reporter/core/diagnostic_source/tuple_source_display.rs",
       "line": 73,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`target_element` is looked up only via `elements.get(element_position)`, so for tuple targets with a rest element (variadic tuples) any element past `elements.len()` is treated as \u201coverflow\u201d with no contextual slot. That loses the fact those positions are still contextually typed by the tuple\u2019s rest element, which can change the intended literal-preservation / display behavior.\n\nConsider resolving `target_element` for out-of-range positions via the tuple\u2019s rest element (e.g. `elements.iter().rev().find(|e| e.rest)`) so rest-backed positions are treated as target-backed too.",
+      "body": "`target_element` is looked up only via `elements.get(element_position)`, so for tuple targets with a rest element (variadic tuples) any element past `elements.len()` is treated as “overflow” with no contextual slot. That loses the fact those positions are still contextually typed by the tuple’s rest element, which can change the intended literal-preservation / display behavior.\n\nConsider resolving `target_element` for out-of-range positions via the tuple’s rest element (e.g. `elements.iter().rev().find(|e| e.rest)`) so rest-backed positions are treated as target-backed too.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -181,7 +182,7 @@
       "path": "crates/tsz-checker/src/tests/zod_type_query_regression_tests.rs",
       "line": 387,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "This new regression test relies on standard-library utility types (`Omit`, `Partial`), but `check_source_diagnostics` runs with lib definitions disabled (see `test_utils.rs`), so the snippet will produce TS2304/TS2552-style \u201ccannot find name\u201d errors and the test can still pass because it only asserts on TS2345. Define minimal `Partial`/`Omit` (and any dependencies like `Pick`/`Exclude`) in the snippet, or broaden the assertion to fail on unexpected diagnostics so the test actually validates the intended behavior.",
+      "body": "This new regression test relies on standard-library utility types (`Omit`, `Partial`), but `check_source_diagnostics` runs with lib definitions disabled (see `test_utils.rs`), so the snippet will produce TS2304/TS2552-style “cannot find name” errors and the test can still pass because it only asserts on TS2345. Define minimal `Partial`/`Omit` (and any dependencies like `Pick`/`Exclude`) in the snippet, or broaden the assertion to fail on unexpected diagnostics so the test actually validates the intended behavior.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -215,7 +216,7 @@
       "path": "crates/tsz-parser/src/parser/node_arena.rs",
       "line": 200,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "There are existing tests elsewhere that assert overflow panic messages contain a specific constant (e.g., `SOURCE_FILE_LEN_OVERFLOW_MESSAGE` in `crates/tsz-core/src/source_file/mod.rs`). Since this PR changes the NodeArena overflow message, it would be good to add a similar regression test in this file\u2019s `#[cfg(test)]` module to lock in the new wording and avoid accidental message regressions.",
+      "body": "There are existing tests elsewhere that assert overflow panic messages contain a specific constant (e.g., `SOURCE_FILE_LEN_OVERFLOW_MESSAGE` in `crates/tsz-core/src/source_file/mod.rs`). Since this PR changes the NodeArena overflow message, it would be good to add a similar regression test in this file’s `#[cfg(test)]` module to lock in the new wording and avoid accidental message regressions.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -266,7 +267,7 @@
       "path": "crates/tsz-checker/src/error_reporter/core_formatting.rs",
       "line": 1189,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`format_union_with_collapsed_enum_display` now pushes formatted enum member names into `rendered` but still returns `None` unless `collapsed_enum` is set. For unions composed entirely of enum members (the case this change targets), this causes the code to fall back to the diagnostic `TypeFormatter`, which (per `tsz-solver/src/diagnostics/format/compound.rs:909+`) collapses same-enum member unions back to the parent enum name, so the member names won\u2019t actually be preserved. Consider returning `Some(rendered.join(\" | \"))` when you\u2019ve rendered any enum member names (or otherwise short-circuiting before the formatter runs) so the preservation behavior takes effect.",
+      "body": "`format_union_with_collapsed_enum_display` now pushes formatted enum member names into `rendered` but still returns `None` unless `collapsed_enum` is set. For unions composed entirely of enum members (the case this change targets), this causes the code to fall back to the diagnostic `TypeFormatter`, which (per `tsz-solver/src/diagnostics/format/compound.rs:909+`) collapses same-enum member unions back to the parent enum name, so the member names won’t actually be preserved. Consider returning `Some(rendered.join(\" | \"))` when you’ve rendered any enum member names (or otherwise short-circuiting before the formatter runs) so the preservation behavior takes effect.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -300,7 +301,7 @@
       "path": "crates/tsz-solver/src/diagnostics/format/compound.rs",
       "line": 467,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it\u2019s actually part of a self-referential recursion. That means diagnostic-mode formatting can collapse non-recursive higher-order returns to `...` as well. If the intent is to match tsc\u2019s recursive-cycle elision only, consider tightening the predicate (or adding a regression test proving non-recursive `typeof` nested returns should/shouldn\u2019t elide).",
+      "body": "`should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it’s actually part of a self-referential recursion. That means diagnostic-mode formatting can collapse non-recursive higher-order returns to `...` as well. If the intent is to match tsc’s recursive-cycle elision only, consider tightening the predicate (or adding a regression test proving non-recursive `typeof` nested returns should/shouldn’t elide).",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -368,7 +369,7 @@
       "path": "crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs",
       "line": 19,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`diagnostic_messages` calls `load_default_lib_files()` on every invocation, and this helper is used by multiple tests in this file. Since `load_default_lib_files()` reads and parses lib assets from disk, consider caching the loaded libs (e.g., a `OnceLock<Vec<Arc<LibFile>>>`) so the test suite doesn\u2019t repeatedly reload the same lib bundle.",
+      "body": "`diagnostic_messages` calls `load_default_lib_files()` on every invocation, and this helper is used by multiple tests in this file. Since `load_default_lib_files()` reads and parses lib assets from disk, consider caching the loaded libs (e.g., a `OnceLock<Vec<Arc<LibFile>>>`) so the test suite doesn’t repeatedly reload the same lib bundle.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -400,7 +401,7 @@
       "path": "scripts/conformance/conformance-snapshot.json",
       "line": 747,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "The PR description claims \u201cnew failures: 0\u201d and a category delta of `false_positive 0`, but the updated conformance snapshot shows `false_positive: 1` with `TS2589` listed under extra/false-positive codes. Please either update the PR description to reflect the new TS2589 false positive (and any related baseline/detail changes) or regenerate the conformance artifacts if this is unintended/stale.",
+      "body": "The PR description claims “new failures: 0” and a category delta of `false_positive 0`, but the updated conformance snapshot shows `false_positive: 1` with `TS2589` listed under extra/false-positive codes. Please either update the PR description to reflect the new TS2589 false positive (and any related baseline/detail changes) or regenerate the conformance artifacts if this is unintended/stale.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -432,7 +433,7 @@
       "path": "crates/tsz-checker/src/types/type_checking/type_alias_checking.rs",
       "line": 318,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditional aliases, consider gating this computation behind `body_is_conditional` (or otherwise ensuring the unresolved-computed path can\u2019t trigger for non-conditional aliases).",
+      "body": "`conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditional aliases, consider gating this computation behind `body_is_conditional` (or otherwise ensuring the unresolved-computed path can’t trigger for non-conditional aliases).",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -464,7 +465,7 @@
       "path": "crates/tsz-wasm/src/wasm_tests.rs",
       "line": 182,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "This assertion only checks that TS2322 is absent; the test would still pass if other semantic diagnostics are emitted (meaning the snippet is not actually diagnostic-free). Consider asserting that the semantic diagnostics array is empty (and optionally that syntactic diagnostics are empty) to match the \u201caccepts \u2026 assignment\u201d expectation.",
+      "body": "This assertion only checks that TS2322 is absent; the test would still pass if other semantic diagnostics are emitted (meaning the snippet is not actually diagnostic-free). Consider asserting that the semantic diagnostics array is empty (and optionally that syntactic diagnostics are empty) to match the “accepts … assignment” expectation.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -480,7 +481,7 @@
       "path": "docs/plan/claims/perf-t0-interner-cost-comment-precision-2026-05-10.md",
       "line": 48,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "This repeats the phrase \"optimizer folds into the no-op path\", which can be read as a compile-time guarantee. Because `pc` is determined from a runtime `enabled_fast()` check, the generated code still includes an Option test/branch even when disabled; it\u2019s just predictable and cheap. Recommend mirroring the more precise phrasing used earlier (e.g., \"predictable branch\" / \"body skipped\") rather than claiming it folds away.",
+      "body": "This repeats the phrase \"optimizer folds into the no-op path\", which can be read as a compile-time guarantee. Because `pc` is determined from a runtime `enabled_fast()` check, the generated code still includes an Option test/branch even when disabled; it’s just predictable and cheap. Recommend mirroring the more precise phrasing used earlier (e.g., \"predictable branch\" / \"body skipped\") rather than claiming it folds away.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -496,7 +497,7 @@
       "path": "crates/tsz-solver/src/operations/expression_ops.rs",
       "line": 315,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`normalized_display_properties` does a linear `.find()` over `original_display` for every normalized property, making this O(n\u00b2) per object. Consider precomputing a name->PropertyInfo map (or index) from `original_display` once and doing O(1) lookups while mapping `normalized_properties`.",
+      "body": "`normalized_display_properties` does a linear `.find()` over `original_display` for every normalized property, making this O(n²) per object. Consider precomputing a name->PropertyInfo map (or index) from `original_display` once and doing O(1) lookups while mapping `normalized_properties`.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -512,7 +513,7 @@
       "path": "crates/tsz-checker/src/error_reporter/render_failure.rs",
       "line": 946,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it\u2019s invoked unconditionally, even when `depth != 0` (where `strict_callback_case` can never be true). Consider guarding these calls behind `if depth == 0 { ... }` (or computing them lazily only when needed) to avoid extra work during nested failure rendering.",
+      "body": "`callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it’s invoked unconditionally, even when `depth != 0` (where `strict_callback_case` can never be true). Consider guarding these calls behind `if depth == 0 { ... }` (or computing them lazily only when needed) to avoid extra work during nested failure rendering.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -520,7 +521,7 @@
     },
     {
       "pr_number": 5082,
-      "pr_title": "docs(perf): plan \u00a71 \u2014 refresh \"Diagnostics timing\" and \"Perf counters\" baseline rows",
+      "pr_title": "docs(perf): plan §1 — refresh \"Diagnostics timing\" and \"Perf counters\" baseline rows",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5082",
       "merged_at": "2026-05-11T06:47:38Z",
       "base_ref": "main",
@@ -528,7 +529,7 @@
       "path": "docs/plan/PERFORMANCE_PLAN.md",
       "line": 40,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "This row is listing `WiredCounters` field names, but a couple are abbreviated in a way that doesn\u2019t match the actual struct fields (`interner_per_kind` and `resolver_fs_probes` in `crates/tsz-common/src/perf_counters.rs`). Suggest using the exact flag names (and optionally stating explicitly that all are `true` *except* `interner_lock_wait`, which depends on `perf-counters-timing`) to avoid future confusion/search misses.",
+      "body": "This row is listing `WiredCounters` field names, but a couple are abbreviated in a way that doesn’t match the actual struct fields (`interner_per_kind` and `resolver_fs_probes` in `crates/tsz-common/src/perf_counters.rs`). Suggest using the exact flag names (and optionally stating explicitly that all are `true` *except* `interner_lock_wait`, which depends on `perf-counters-timing`) to avoid future confusion/search misses.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -544,7 +545,7 @@
       "path": "crates/tsz-checker/src/assignability/assignability_checker.rs",
       "line": 930,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "Variance lookup here bypasses the QueryDatabase variance cache that `check_application_variance_assignability` just consulted/populated (it only checks declared variances, then recomputes). Consider looking up `self.ctx.types.get_type_param_variance(def_id)` first and inserting the computed result so this heuristic doesn\u2019t repeatedly recompute variances on hot assignability paths.",
+      "body": "Variance lookup here bypasses the QueryDatabase variance cache that `check_application_variance_assignability` just consulted/populated (it only checks declared variances, then recomputes). Consider looking up `self.ctx.types.get_type_param_variance(def_id)` first and inserting the computed result so this heuristic doesn’t repeatedly recompute variances on hot assignability paths.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -560,7 +561,7 @@
       "path": "crates/tsz-checker/src/lib.rs",
       "line": 434,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "The `#[cfg(test)]` attribute is duplicated around this module inclusion. It\u2019s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep the test-module list consistent and easier to scan.",
+      "body": "The `#[cfg(test)]` attribute is duplicated around this module inclusion. It’s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep the test-module list consistent and easier to scan.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -704,7 +705,7 @@
       "path": "crates/tsz-emitter/src/transforms/namespace_es5_ir.rs",
       "line": 1252,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`IRNode::ExpressionStatement` printing currently only parenthesizes `FunctionExpr`, but the recovered arrow body can be any expression (notably an object literal like `{ a: 1 }`). Emitting that as a bare expression statement would produce `{ a: 1 };` (a block with a label) instead of `({ a: 1 });`. Either wrap object-literal/function expressions in parentheses when constructing this IR node, or update the IR printer\u2019s `ExpressionStatement` emission to apply the same disambiguation rules as the AST emitter.",
+      "body": "`IRNode::ExpressionStatement` printing currently only parenthesizes `FunctionExpr`, but the recovered arrow body can be any expression (notably an object literal like `{ a: 1 }`). Emitting that as a bare expression statement would produce `{ a: 1 };` (a block with a label) instead of `({ a: 1 });`. Either wrap object-literal/function expressions in parentheses when constructing this IR node, or update the IR printer’s `ExpressionStatement` emission to apply the same disambiguation rules as the AST emitter.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -736,7 +737,7 @@
       "path": "crates/tsz-checker/src/assignability/assignment_checker/destructuring.rs",
       "line": 444,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal \u201cexplain\u201d path and can drop related-information elaboration (e.g. \u201cTypes of property 'a' are incompatible.\u201d), as well as other assignability-special cases handled by the reporter (weak-type TS2559 substitution, exactOptionalPropertyTypes variants, etc.). Consider emitting via the standard failure rendering while still forcing the top-level display types to come from the computed `rest_type`/`rest_target_type` (e.g. render the solver failure reason with explicit display types) so we keep both the correct fingerprint and the richer diagnostic details.",
+      "body": "This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal “explain” path and can drop related-information elaboration (e.g. “Types of property 'a' are incompatible.”), as well as other assignability-special cases handled by the reporter (weak-type TS2559 substitution, exactOptionalPropertyTypes variants, etc.). Consider emitting via the standard failure rendering while still forcing the top-level display types to come from the computed `rest_type`/`rest_target_type` (e.g. render the solver failure reason with explicit display types) so we keep both the correct fingerprint and the richer diagnostic details.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -752,7 +753,7 @@
       "path": "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
       "line": 2309,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`direct_param_display` is computed before `overloaded_recursive_typeof_parameter_display`, but in the early-return path it\u2019s unused. Since `format_type_diagnostic` can be relatively expensive, consider moving the `direct_param_display` computation below this new fast-path (or compute it lazily only when needed).",
+      "body": "`direct_param_display` is computed before `overloaded_recursive_typeof_parameter_display`, but in the early-return path it’s unused. Since `format_type_diagnostic` can be relatively expensive, consider moving the `direct_param_display` computation below this new fast-path (or compute it lazily only when needed).",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -800,7 +801,7 @@
       "path": "crates/tsz-checker/src/checkers/jsx/extraction.rs",
       "line": 553,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "The union-member early-return isn\u2019t gated by `!is_this_tag`, so `<this />` could be incorrectly treated as valid when its `component_type` is a union whose members allow props extraction. This contradicts the earlier \u201cKeep `this` tags strict\u201d behavior\u2014consider adding the same `!is_this_tag` guard around this union shortcut.",
+      "body": "The union-member early-return isn’t gated by `!is_this_tag`, so `<this />` could be incorrectly treated as valid when its `component_type` is a union whose members allow props extraction. This contradicts the earlier “Keep `this` tags strict” behavior—consider adding the same `!is_this_tag` guard around this union shortcut.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -855,38 +856,6 @@
       ]
     },
     {
-      "pr_number": 5701,
-      "pr_title": "fix(dts): map js default typedef aliases",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5701",
-      "merged_at": "2026-05-12T06:00:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BSQgp",
-      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
-      "line": 1500,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "Emitting the JSDoc `@typedef ... default` as `export type {alias_name} = ...` can produce an invalid `.d.ts` when `{alias_name}` already has a type declaration (e.g. a `class` creates a type). In the test case here, the output contains both `export type Cls = ...` and `declare class Cls ...`, which would trigger TS2300 (duplicate identifier) in TypeScript. Consider instead emitting a non-conflicting alias name and exporting it as a type-only default export (e.g. `export { type <alias> as default }`), or otherwise avoid generating a type alias that collides with an existing type name.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5701,
-      "pr_title": "fix(dts): map js default typedef aliases",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5701",
-      "merged_at": "2026-05-12T06:00:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BSQhP",
-      "path": "crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs",
-      "line": 4317,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This test currently expects output that includes both `export type Cls = ...` and `declare class Cls ...`. A class declaration introduces a type named `Cls`, so also emitting a type alias named `Cls` would make the generated `.d.ts` fail to type-check with TS2300 (duplicate identifier). If the goal is to model a JSDoc `default` typedef, consider asserting a non-conflicting representation (for example, a type-only default export via an export specifier) rather than a same-name type alias alongside a class.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5703,
       "pr_title": "fix(checker): stabilize recursive Box2 fingerprint",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5703",
@@ -896,7 +865,7 @@
       "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
       "line": 756,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "This rewrite matches via `contains(...)` but then overwrites the entire `message_text`. If the TS2322 message ever includes additional elaboration lines (e.g. \"Type ...\\n  Property ...\" patterns used elsewhere), this would silently drop that extra detail. Consider making the match stricter (e.g. equality/starts_with) and/or doing a targeted replacement of just the target display (replace \"Box<number | Box2>\" \u2192 \"Box2\") so any trailing detail is preserved.",
+      "body": "This rewrite matches via `contains(...)` but then overwrites the entire `message_text`. If the TS2322 message ever includes additional elaboration lines (e.g. \"Type ...\\n  Property ...\" patterns used elsewhere), this would silently drop that extra detail. Consider making the match stricter (e.g. equality/starts_with) and/or doing a targeted replacement of just the target display (replace \"Box<number | Box2>\" → \"Box2\") so any trailing detail is preserved.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -944,7 +913,7 @@
       "path": "crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs",
       "line": 403,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`source_file_has_native_esm_syntax` walks every top-level statement; it\u2019s called multiple times during per-file setup (e.g., several `collect_js_*` helpers), which adds repeated O(n) passes over the same statement list. Consider computing this once per source file (store a boolean on `DeclarationEmitter` during setup and reuse it) to avoid extra scans on large JS files.",
+      "body": "`source_file_has_native_esm_syntax` walks every top-level statement; it’s called multiple times during per-file setup (e.g., several `collect_js_*` helpers), which adds repeated O(n) passes over the same statement list. Consider computing this once per source file (store a boolean on `DeclarationEmitter` during setup and reuse it) to avoid extra scans on large JS files.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -960,7 +929,7 @@
       "path": "crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs",
       "line": 401,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "`source_file_has_native_esm_syntax` treats any `EXPORT_ASSIGNMENT` as \u201cnative ESM\u201d, but in this codebase JS files can contain `export =` (see existing `test_js_export_equals_emits_before_target_declaration`). That means a JS file using `export =` will be misclassified as \u201cnative ESM\u201d and will now skip CommonJS export synthesis/analysis guarded by this helper. Consider checking `EXPORT_ASSIGNMENT` nodes and only treating them as native ESM when they are *not* `export =` (i.e., `export default`), so `export =` JS files keep their CommonJS behavior.",
+      "body": "`source_file_has_native_esm_syntax` treats any `EXPORT_ASSIGNMENT` as “native ESM”, but in this codebase JS files can contain `export =` (see existing `test_js_export_equals_emits_before_target_declaration`). That means a JS file using `export =` will be misclassified as “native ESM” and will now skip CommonJS export synthesis/analysis guarded by this helper. Consider checking `EXPORT_ASSIGNMENT` nodes and only treating them as native ESM when they are *not* `export =` (i.e., `export default`), so `export =` JS files keep their CommonJS behavior.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -992,7 +961,7 @@
       "path": "crates/tsz-emitter/src/declaration_emitter/helpers/late_bound_function_analysis.rs",
       "line": 840,
       "reviewer": "copilot-pull-request-reviewer",
-      "body": "When renaming a `namespace_member_name` due to a global collision, `generate_unique_name(namespace_member_name)` only checks `self.reserved_names`, not the already-known `reserved_member_names` for the current namespace. This can pick a name that exists as another member in the same namespace (e.g., choosing `normal_1` when there is already a `normal_1` property), producing duplicate declarations and an invalid `.d.ts`. Ensure the chosen synthetic name is unique against the current namespace\u2019s member names as well (e.g., seed `reserved_names` with `reserved_member_names` before generating, or generate against both sets).",
+      "body": "When renaming a `namespace_member_name` due to a global collision, `generate_unique_name(namespace_member_name)` only checks `self.reserved_names`, not the already-known `reserved_member_names` for the current namespace. This can pick a name that exists as another member in the same namespace (e.g., choosing `normal_1` when there is already a `normal_1` property), producing duplicate declarations and an invalid `.d.ts`. Ensure the chosen synthetic name is unique against the current namespace’s member names as well (e.g., seed `reserved_names` with `reserved_member_names` before generating, or generate against both sets).",
       "score": 1,
       "reasons": [
         "detailed-thread"
