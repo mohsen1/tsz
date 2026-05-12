@@ -385,6 +385,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
+                self.emit_js_cjs_export_aliases();
                 continue;
             }
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {

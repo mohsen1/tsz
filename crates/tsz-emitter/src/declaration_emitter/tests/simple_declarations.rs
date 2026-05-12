@@ -505,6 +505,23 @@ module.exports.j = function j() {}
 }
 
 #[test]
+fn test_js_cjs_export_aliases_emit_at_first_alias_statement() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.apply = undefined;
+function a() {}
+exports.apply = a;
+"#,
+    );
+
+    let expected = "export { a as apply };\ndeclare function a(): void;\n";
+    assert_eq!(
+        output, expected,
+        "Expected CJS alias group to keep the first alias statement position"
+    );
+}
+
+#[test]
 fn test_private_set_accessor_omits_type_and_uses_value_param_name() {
     let source = r#"
 declare class C {
