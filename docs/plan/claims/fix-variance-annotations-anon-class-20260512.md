@@ -1,4 +1,4 @@
-# fix(checker): suppress varianceAnnotations anonymous-class extras
+# fix(checker): suppress variance anonymous-class fingerprints
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/variance-annotations-anon-class-20260512`
