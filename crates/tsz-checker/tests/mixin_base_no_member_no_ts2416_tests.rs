@@ -53,3 +53,22 @@ class Derived extends Base {
         "Expected TS2416 when derived overrides with incompatible signature, got: {diags:#?}"
     );
 }
+
+#[test]
+fn ordinary_static_override_does_not_use_mixin_static_fallback() {
+    let source = r#"
+class Base {
+  protected static x = 1;
+}
+class Derived extends Base {
+  public static x = 1;
+}
+Derived.x;
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let ts2445: Vec<_> = diags.iter().filter(|d| d.code == 2445).collect();
+    assert!(
+        ts2445.is_empty(),
+        "Expected ordinary static access to use Derived.x, not protected Base.x, got: {diags:#?}"
+    );
+}
