@@ -19,6 +19,17 @@ use tsz_parser::parser::ParserState;
 /// Uses the given `CheckerOptions` and file name. Calls `set_lib_contexts(Vec::new())`
 /// so tests run without lib definitions (preventing spurious TS2318 errors).
 pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    check_source_with_file_is_esm(source, file_name, options, None)
+}
+
+/// Parse, bind, and type-check a source string with an explicit Node module
+/// file format classification.
+pub fn check_source_with_file_is_esm(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    file_is_esm: Option<bool>,
+) -> Vec<Diagnostic> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
@@ -36,6 +47,7 @@ pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> V
     checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_lib_contexts(Vec::new());
+    checker.ctx.file_is_esm = file_is_esm;
     checker.check_source_file(source_file);
     checker.ctx.diagnostics.clone()
 }

@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-checker-node-esm-test-helper-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5914
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -19,4 +19,6 @@ This PR adds a focused test utility for that setup and migrates the small TS1203
 
 ## Verification
 
-- Pending
+- `cargo fmt --check`
+- `cargo clippy -p tsz-checker --lib -- -D warnings`
+- `cargo nextest run -p tsz-checker --test ts1203_node_esm_tests --test ts2725_tests --no-fail-fast` (19 passed)
