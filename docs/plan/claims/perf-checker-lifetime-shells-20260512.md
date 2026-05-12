@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `perf/checker-lifetime-shells-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6022
+- **Status**: shipped
 - **Workstream**: 5 / T2.1.A (checker lifetime split before pooling)
 
 ## Intent
@@ -22,4 +22,5 @@ and per-file reset state without changing checker behavior in this slice.
 
 ## Verification
 
-- Pending
+- `cargo fmt --all --check`
+- `cargo test -p tsz-checker worker_context_starts_empty_file_session -- --nocapture`
