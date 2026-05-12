@@ -7,7 +7,6 @@
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -403,27 +402,8 @@ impl<'a> CheckerState<'a> {
             if (node.kind == syntax_kind_ext::AS_EXPRESSION
                 || node.kind == syntax_kind_ext::TYPE_ASSERTION)
                 && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
-                && let Some(type_node) = self.ctx.arena.get(assertion.type_node)
             {
-                if type_node.kind == SyntaxKind::ConstKeyword as u16 {
-                    return true;
-                }
-                if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
-                    && self
-                        .ctx
-                        .arena
-                        .get_type_ref(type_node)
-                        .is_some_and(|type_ref| {
-                            type_ref.type_arguments.is_none()
-                                && self
-                                    .ctx
-                                    .arena
-                                    .get_identifier_text(type_ref.type_name)
-                                    .is_some_and(|name| name == "const")
-                        })
-                {
-                    return true;
-                }
+                return self.is_const_assertion_type_node(assertion.type_node);
             }
             return false;
         }

@@ -11,19 +11,14 @@
 use crate::context::CheckerOptions;
 
 fn diagnostics_for_js(source: &str) -> Vec<u32> {
-    crate::test_utils::check_source(
+    crate::test_utils::check_js_source_codes_with_options(
         source,
         "repro.js",
         CheckerOptions {
-            allow_js: true,
-            check_js: true,
             no_implicit_any: true,
             ..CheckerOptions::default()
         },
     )
-    .into_iter()
-    .map(|d| d.code)
-    .collect()
 }
 
 /// `/** @type {*} */(...)` — JSDoc-specific "any" alias. The cast
