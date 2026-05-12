@@ -135,6 +135,10 @@ pub struct DeclarationEmitter<'a> {
     /// JS local statements skipped at their original position and re-emitted at
     /// a later `export { ... }` clause to preserve declaration order.
     pub(super) js_deferred_named_export_statements: FxHashSet<NodeIndex>,
+    /// JS enum declarations exported by local `export { ... }` clauses. These
+    /// are emitted near the trailing alias group to match declaration transform
+    /// ordering for JS enum syntax.
+    pub(super) js_deferred_local_export_enum_statements: FxHashSet<NodeIndex>,
     /// JS local renamed export declarations emitted as one trailing alias group.
     pub(super) js_local_export_aliases: Vec<NodeIndex>,
     /// JS local renamed export declarations skipped at their source position.
