@@ -41,12 +41,12 @@ pub mod node_flags {
     // Type-only imports/exports
     pub const TYPE_ONLY: u32 = 1_073_741_824; // 1 << 30
 
-    /// Returns `true` if the flags represent an `await using` declaration.
-    /// Since `AWAIT_USING == CONST | USING`, both bits must be set.
+    /// Returns `true` if the declaration-kind bits represent an `await using`
+    /// declaration. Higher context bits may also be present on the node.
     #[inline]
     #[must_use]
     pub const fn is_await_using(flags: u32) -> bool {
-        (flags & AWAIT_USING) == AWAIT_USING
+        (flags & (LET | CONST | USING)) == AWAIT_USING
     }
 
     /// Returns `true` if the declaration is block-scoped via `let` or `const`

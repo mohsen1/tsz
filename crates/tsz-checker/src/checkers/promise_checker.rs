@@ -1053,16 +1053,14 @@ impl<'a> CheckerState<'a> {
     /// Check if TS7030 (noImplicitReturns) should be skipped for this return type.
     ///
     /// TSC skips TS7030 for functions whose return type is or contains `void` or `any`.
-    /// Top-level `undefined` also causes a skip. For non-generator functions, `undefined`
-    /// in a union also causes a skip because an implicit fall-through returns `undefined`,
-    /// which is type-safe when `undefined` is in the declared return type.
+    /// Top-level `undefined` also causes a skip, but `undefined` in a union does not.
     /// For unannotated functions, we only check top-level types because our inferred
     /// return types use `void` for implicit fall-through (TSC uses `undefined`).
     pub fn should_skip_no_implicit_return_check(
         &self,
         return_type: TypeId,
         has_type_annotation: bool,
-        is_generator: bool,
+        _is_generator: bool,
     ) -> bool {
         if return_type == TypeId::VOID
             || return_type == TypeId::ANY
@@ -1078,10 +1076,7 @@ impl<'a> CheckerState<'a> {
             && let Some(members) = query::union_members(self.ctx.types, return_type)
         {
             for member in &members {
-                if *member == TypeId::VOID
-                    || *member == TypeId::ANY
-                    || (!is_generator && *member == TypeId::UNDEFINED)
-                {
+                if *member == TypeId::VOID || *member == TypeId::ANY {
                     return true;
                 }
             }
