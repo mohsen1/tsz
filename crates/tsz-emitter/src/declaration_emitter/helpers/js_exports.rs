@@ -135,11 +135,13 @@ impl<'a> DeclarationEmitter<'a> {
             names.insert(ident.escaped_text.clone());
         }
 
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(name) = self.js_commonjs_export_equals_name(stmt_idx) else {
-                continue;
-            };
-            names.insert(name);
+        if !self.source_file_has_native_esm_syntax(source_file) {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(name) = self.js_commonjs_export_equals_name(stmt_idx) else {
+                    continue;
+                };
+                names.insert(name);
+            }
         }
 
         names
@@ -693,6 +695,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_file_is_js(source_file) {
             return empty;
         }
+        if self.source_file_has_native_esm_syntax(source_file) {
+            return empty;
+        }
         if !self.js_export_equals_names.is_empty() {
             return empty;
         }
@@ -1077,6 +1082,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_file_is_js(source_file) || js_export_equals_names.is_empty() {
             return declarations;
         }
+        if self.source_file_has_native_esm_syntax(source_file) {
+            return declarations;
+        }
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some((root_name, member_name, initializer, kind)) =
@@ -1264,6 +1272,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_file_is_js(source_file) {
             return (exported_names, function_statements, value_statements);
         }
+        if self.source_file_has_native_esm_syntax(source_file) {
+            return (exported_names, function_statements, value_statements);
+        }
         if !self.js_export_equals_names.is_empty() {
             return (exported_names, function_statements, value_statements);
         }
@@ -1311,6 +1322,9 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> (FxHashSet<String>, FxHashSet<NodeIndex>) {
         let empty = (FxHashSet::default(), FxHashSet::default());
         if !self.source_file_is_js(source_file) {
+            return empty;
+        }
+        if self.source_file_has_native_esm_syntax(source_file) {
             return empty;
         }
 

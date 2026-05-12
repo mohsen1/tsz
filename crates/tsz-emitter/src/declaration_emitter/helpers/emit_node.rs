@@ -386,6 +386,22 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(crate) fn source_file_has_native_esm_syntax(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                let k = stmt_node.kind;
+                k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    || self.stmt_has_export_modifier(stmt_node)
+            })
+        })
+    }
+
     pub(crate) fn source_file_is_js(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
