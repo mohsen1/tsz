@@ -80,6 +80,44 @@ fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
 }
 
 #[test]
+fn generic_call_parameter_display_trims_unmatched_trailing_type_arg_close() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare class StateNode<TContext, in out TEvent extends { type: string }> {
+    _storedEvent: TEvent;
+    _action: ActionObject<TEvent>;
+    _state: StateNode<TContext, any>;
+}
+
+interface ActionObject<TEvent extends { type: string }> {
+    exec: (meta: StateNode<any, TEvent>) => void;
+}
+
+declare function createMachine<TEvent extends { type: string }>(action: ActionObject<TEvent>): StateNode<any, any>;
+declare const qq: ActionObject<{ type: "PLAY"; value: number }>;
+
+createMachine<{ type: "PLAY"; value: number } | { type: "RESET" }>(qq);
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains(
+            "parameter of type 'ActionObject<{ type: \"PLAY\"; value: number; } | { type: \"RESET\"; }>'."
+        ),
+        "expected balanced ActionObject target display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("}>>'."),
+        "TS2345 target display must not include an unmatched trailing `>`: {diag:?}"
+    );
+}
+
+#[test]
 fn emits_ts2721_for_calling_null() {
     let diagnostics = check_source_with_strict_null("null();");
     assert!(
