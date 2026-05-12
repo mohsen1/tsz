@@ -351,7 +351,6 @@ const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
     "jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne",
     "instantiationExpressionErrorNoCrash",
     "styledComponentsInstantiaionLimitNotReached",
-    "intersectionsOfLargeUnions2",
     "isolatedModulesReExportType",
     "isolatedDeclarationErrorsObjects",
     "mixinAccessModifiers",
