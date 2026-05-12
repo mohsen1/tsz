@@ -8,15 +8,17 @@
   "excluded_followed_up_prs": [
     4954,
     4955,
+    4956,
     4960,
     5003,
+    5094,
     5743,
     5753,
     5811,
     5830,
     5901
   ],
-  "candidate_count": 141,
+  "candidate_count": 138,
   "candidates": [
     {
       "pr_number": 5089,
@@ -1060,22 +1062,6 @@
       ]
     },
     {
-      "pr_number": 4956,
-      "pr_title": "fix(parser): recover unicode escaped astral identifiers",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4956",
-      "merged_at": "2026-05-10T10:07:13Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A49qr",
-      "path": "crates/tsz-parser/src/parser/state_statements.rs",
-      "line": 240,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the other. Consider extracting a small helper (e.g., `recover_after_unknown_token(&mut self, previous_statement_was_block: &mut bool) -> bool`) so the two loops share the exact same recovery behavior.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 4958,
       "pr_title": "fix(parser): align reachability recovery diagnostics",
       "pr_url": "https://github.com/mohsen1/tsz/pull/4958",
@@ -1598,38 +1584,6 @@
       "line": 434,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The `#[cfg(test)]` attribute is duplicated around this module inclusion. It\u2019s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep the test-module list consistent and easier to scan.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5094,
-      "pr_title": "Fix braced unicode escape identifier tail recovery",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5094",
-      "merged_at": "2026-05-11T09:20:42Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BAoMe",
-      "path": "crates/tsz-parser/src/parser/state_declarations.rs",
-      "line": 2943,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`consume_unknown_specifier_identifier_tail` stops when it detects `\\u{...}` debris by consuming only `\\` + `u` and leaving the parser positioned at `{`, relying on the caller to handle the rest of the braced escape. In this PR, that follow-up handling exists in `parse_named_imports`, but other call sites of `parse_import_or_export_specifier` (notably named exports) don\u2019t appear to have equivalent `{...}` consumption, which can leave the `{` in the token stream and prematurely terminate the list/recovery. Consider either consuming through the matching `}` here (when the debris pattern is detected) or adding the same debris-tail handling to the named-exports list logic.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5094,
-      "pr_title": "Fix braced unicode escape identifier tail recovery",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5094",
-      "merged_at": "2026-05-11T09:20:42Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BAoNF",
-      "path": "crates/tsz-parser/src/parser/state.rs",
-      "line": 170,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "New parser state (`current_specifier_recovered_braced_unicode_escape_debris`) is initialized in `new_with_language_version`, but `ParserState::reset()` doesn\u2019t currently clear it. If a `ParserState` instance is reused across parses, this flag could retain a stale value and influence later named-import recovery. Recommend resetting it alongside the other recovery flags in `reset()` for consistency and safety.",
       "score": 1,
       "reasons": [
         "detailed-thread"

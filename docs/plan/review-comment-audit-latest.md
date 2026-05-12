@@ -2,15 +2,15 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 9
-- Potential important unresolved threads: 141
+- PRs excluded as already followed-up: 11
+- Potential important unresolved threads: 138
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 50
 - `crates/tsz-emitter`: 34
 - `docs`: 23
-- `crates/tsz-parser`: 14
+- `crates/tsz-parser`: 11
 - `crates/tsz-solver`: 9
 - `scripts`: 6
 - `crates/tsz-cli`: 2
@@ -167,8 +167,6 @@
   - This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible...
 - [#4952](https://github.com/mohsen1/tsz/pull/4952) `docs/plan/perf-runs/raw/monorepo-006-diag.json:27` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible...
-- [#4956](https://github.com/mohsen1/tsz/pull/4956) `crates/tsz-parser/src/parser/state_statements.rs:240` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the...
 - [#4958](https://github.com/mohsen1/tsz/pull/4958) `crates/tsz-parser/src/parser/state_statements_class.rs:192` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - Inside the `for await` header recovery, `pending_for_expression_comma` remains true after emitting the first `"," expected."` on an identifier (it’s only cleared on the closing `)` case). This means a complex `of` exp...
 - [#4967](https://github.com/mohsen1/tsz/pull/4967) `crates/tsz-solver/src/operations/generic_call/resolve.rs:2317` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -235,11 +233,13 @@
   - Variance lookup here bypasses the QueryDatabase variance cache that `check_application_variance_assignability` just consulted/populated (it only checks declared variances, then recomputes). Consider looking up `self.c...
 - [#5092](https://github.com/mohsen1/tsz/pull/5092) `crates/tsz-checker/src/lib.rs:434` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The `#[cfg(test)]` attribute is duplicated around this module inclusion. It’s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep ...
-- [#5094](https://github.com/mohsen1/tsz/pull/5094) `crates/tsz-parser/src/parser/state_declarations.rs:2943` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `consume_unknown_specifier_identifier_tail` stops when it detects `\u{...}` debris by consuming only `\` + `u` and leaving the parser positioned at `{`, relying on the caller to handle the rest of the braced escape. I...
-- [#5094](https://github.com/mohsen1/tsz/pull/5094) `crates/tsz-parser/src/parser/state.rs:170` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - New parser state (`current_specifier_recovered_braced_unicode_escape_debris`) is initialized in `new_with_language_version`, but `ParserState::reset()` doesn’t currently clear it. If a `ParserState` instance is reused...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:318` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `conditional_body_has_unresolved_computed_recursive_alias_ref` is now evaluated unconditionally for every type alias, even when `has_stable_recursive_ref` is false. This is an extra full AST walk compared to the previ...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:632` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The new stability check only looks for identifiers in `type_parameter_scope` via `type_arg_nodes_contain_scoped_type_parameter_for_depth_check`, but `type_node_is_deferred_passthrough_for_depth_check` also treats encl...
+- [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs:97` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `property_name_to_key_type` treats symbol-named properties as string-literal keys unless the name is a synthetic `__unique_<id>` atom. This means well-known computed symbol keys like `[Symbol.iterator]` (which are mar...
+- [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-checker/src/state/type_resolution/symbol_types.rs:1136` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `precompute_computed_property_names` currently encodes every `unique symbol` computed name as a synthetic `"__unique_<id>"` atom. Elsewhere (e.g. `get_property_name_resolved`) unique symbols that are members of the gl...
+- [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-checker/src/state/type_resolution/symbol_types.rs:937` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `precompute_symbol_named_computed_property_names` re-traverses the same declarations as `precompute_computed_property_names` and recomputes `get_type_of_node` for each computed property expression. This duplicates pot...
