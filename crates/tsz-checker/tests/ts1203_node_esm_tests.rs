@@ -117,6 +117,34 @@ fn ts1203_still_emitted_for_esnext() {
 }
 
 #[test]
+fn export_equals_with_named_export_emits_ts2309_even_when_ts1203_fires() {
+    let source = "export const named = 1;\nexport = {};\n";
+    let codes = get_codes(source, ModuleKind::ESNext, None);
+    assert!(
+        codes.contains(&1203),
+        "TS1203 should still fire for export= in ESNext, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2309),
+        "TS2309 should fire alongside TS1203 when export= is mixed with named exports, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_equals_with_named_export_emits_ts2309_in_commonjs() {
+    let source = "export const named = 1;\nexport = {};\n";
+    let codes = get_codes(source, ModuleKind::CommonJS, None);
+    assert!(
+        !codes.contains(&1203),
+        "TS1203 should not fire for export= in CommonJS, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2309),
+        "TS2309 should fire when export= is mixed with named exports in CommonJS, got: {codes:?}"
+    );
+}
+
+#[test]
 fn export_assignment_identifier_does_not_emit_ts2686_for_umd_definition_site() {
     let source = r#"
 declare namespace React {

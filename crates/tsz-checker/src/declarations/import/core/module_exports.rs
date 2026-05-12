@@ -342,7 +342,6 @@ impl<'a> CheckerState<'a> {
         let is_node_esm_file = self.ctx.compiler_options.module.is_node_module()
             && (self.ctx.file_is_esm == Some(true) || is_mts_file);
 
-        let mut emitted_ts1203 = false;
         if (is_es_module || is_system_module || is_node_esm_file)
             && !is_preserve
             && !is_exempt_declaration_file
@@ -356,7 +355,6 @@ impl<'a> CheckerState<'a> {
             let is_d_mts = self.ctx.file_name.ends_with(".d.mts");
             for &export_idx in &export_assignment_indices {
                 if is_d_mts || !self.is_ambient_declaration(export_idx) {
-                    emitted_ts1203 = true;
                     if is_system_module {
                         self.error_at_node(
                             export_idx,
@@ -402,20 +400,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS2309: Check for export assignment with other exports
+        // TS2309: Check for export assignment with other exports.
         // Skip in `preserve` mode — it allows mixing CJS (`export =`) and ESM syntax.
-        // When TS1203 already flags `export =` as invalid, tsc suppresses TS2309 for
-        // ESNext/Node module modes. For ES2015 targets, tsc emits both TS1203 and TS2309.
-        let suppress_ts2309 = emitted_ts1203
-            && !matches!(
-                self.ctx.compiler_options.module,
-                tsz_common::common::ModuleKind::ES2015
-            );
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
             && !is_preserve
-            && !suppress_ts2309
         {
             self.check_export_assignment_target_member_duplicates(statements, export_idx);
             self.error_at_node(
