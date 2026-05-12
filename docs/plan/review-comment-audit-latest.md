@@ -24,7 +24,7 @@
 - [#5717](https://github.com/mohsen1/tsz/pull/5717) fix(emit): decorate system class exports: 5
 - [#5003](https://github.com/mohsen1/tsz/pull/5003) fix(checker): preserve unique symbol keys in keyof: 5
 - [#5089](https://github.com/mohsen1/tsz/pull/5089) fix(parser): guard u32/u16 conversion panics with better error messages: 4
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
+- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit `type X = any` aliases: 4
 - [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
 - [#4973](https://github.com/mohsen1/tsz/pull/4973) fix(checker): preserve object literal normalization diagnostics: 3
 - [#4992](https://github.com/mohsen1/tsz/pull/4992) fix(checker): harden explicit-any alias detection: 3
