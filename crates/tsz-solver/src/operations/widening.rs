@@ -31,6 +31,17 @@ fn propagate_display_alias(db: &dyn crate::TypeDatabase, original: TypeId, widen
     }
 }
 
+fn readonly_property_preserves_top_level_type(
+    db: &dyn crate::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_))
+    ) || type_id == TypeId::BOOLEAN_TRUE
+        || type_id == TypeId::BOOLEAN_FALSE
+}
+
 /// Public API to widen a literal type to its primitive.
 ///
 /// This is the main entry point for type widening in the checker.
@@ -368,8 +379,19 @@ fn widen_type_cached(
                 widen_object_union_members && shape.flags.contains(ObjectFlags::FRESH_LITERAL);
 
             for prop in &shape.properties {
-                // Rule: Readonly properties are NOT widened
-                let widened_type = if prop.readonly {
+                // Rule: Readonly properties preserve their *own* primitive
+                // literal type (so `class C { readonly x = 1 }` keeps
+                // `readonly x = 1` in the .d.ts), but compound types
+                // (objects, arrays, tuples) must still recurse to widen
+                // their inner literals — tsc widens nested literals even
+                // through readonly:
+                //   class C { readonly n = { p: 1 } }    // → { p: number }
+                //   class C { readonly a = [1, 2, 3] }   // → number[]
+                // Likewise, the unique-symbol primitive carve-out remains
+                // for readonly props: `readonly s: unique symbol` stays.
+                let preserve_readonly_top_level =
+                    prop.readonly && readonly_property_preserves_top_level_type(db, prop.type_id);
+                let widened_type = if preserve_readonly_top_level {
                     prop.type_id
                 } else {
                     widen_type_cached(
@@ -383,8 +405,10 @@ fn widen_type_cached(
                     )
                 };
 
-                // Write type follows read type logic
-                let widened_write_type = if prop.readonly {
+                // Write type follows read type logic.
+                let preserve_readonly_top_level_write = prop.readonly
+                    && readonly_property_preserves_top_level_type(db, prop.write_type);
+                let widened_write_type = if preserve_readonly_top_level_write {
                     prop.write_type
                 } else {
                     widen_type_cached(

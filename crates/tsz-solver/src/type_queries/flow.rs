@@ -924,6 +924,12 @@ fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    if type_param_primitive_comparable_with_constraint(db, target, source)
+        || type_param_primitive_comparable_with_constraint(db, source, target)
+    {
+        return true;
+    }
+
     // The `object` primitive overlaps with any non-primitive type, including
     // `{}` and arbitrary object/array shapes. tsc's `isTypeComparableTo`
     // treats `object` as a supertype of all object-like values for assertion
@@ -975,6 +981,23 @@ fn types_are_comparable_for_assertion_inner(
     // For type assertions, only check that overlapping properties are comparable.
     // Do NOT require all target properties to exist in the source.
     types_have_common_properties_relaxed(db, source, target, depth)
+}
+
+fn type_param_primitive_comparable_with_constraint(
+    db: &dyn TypeDatabase,
+    type_param: TypeId,
+    other: TypeId,
+) -> bool {
+    let Some(TypeData::TypeParameter(info)) = db.lookup(type_param) else {
+        return false;
+    };
+    let Some(constraint) = info
+        .constraint
+        .filter(|&c| c != TypeId::ANY && c != TypeId::UNKNOWN)
+    else {
+        return false;
+    };
+    is_primitive_comparable(db, other, constraint) || is_primitive_comparable(db, constraint, other)
 }
 
 fn callable_signatures_overlap_for_assertion(
