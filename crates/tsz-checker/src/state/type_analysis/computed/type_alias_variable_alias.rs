@@ -9,6 +9,7 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
@@ -120,6 +121,20 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
+                // For merged VALUE+TYPE_ALIAS symbols (e.g., `const X = {...}; type X = typeof X[...]`),
+                // pre-compute the VALUE-side type and stash it in `merged_value_types` before
+                // the alias body is lowered. During lowering, `symbol_types[X]` holds a
+                // Lazy(DefId) placeholder for the type alias, so `get_type_from_type_query`
+                // would incorrectly return that placeholder for `typeof X`. By pre-populating
+                // `merged_value_types[X]` here, we give `get_type_from_type_query` a way to
+                // return the real VALUE type and avoid the false TS2456.
+                if (flags & symbol_flags::VALUE != 0)
+                    && !self.ctx.merged_value_types.contains_key(&sym_id)
+                    && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
+                {
+                    self.ctx.merged_value_types.insert(sym_id, val_type);
+                }
+
                 // When a local type alias has no own type parameters but is
                 // inside a generic function (e.g., `function foo<T>() { type X = T extends ... }`),
                 // the enclosing function's type parameters must be in scope during lowering.
@@ -192,22 +207,20 @@ impl<'a> CheckerState<'a> {
                 self.pop_type_parameters(enclosing_tp_updates);
 
                 // Eagerly evaluate non-generic type aliases whose body is a concrete
-                // conditional type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`
-                // to `1` during alias resolution so that diagnostics print the resolved
-                // type.  We do the same here: if the alias has no type parameters AND
-                // the body is evaluable (Conditional, IndexAccess, Mapped, etc.) AND it
-                // does not contain deferred type parameters, evaluate it now.
-                if params.is_empty()
-                    && crate::query_boundaries::common::is_conditional_type(
-                        self.ctx.types,
-                        alias_type,
-                    )
-                    && !crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types,
-                        alias_type,
-                    )
-                {
-                    alias_type = self.evaluate_type_with_env(alias_type);
+                // evaluable meta-type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`
+                // to `1` and `type V = Obj[keyof Obj]` to the union of value types during alias
+                // resolution.  We do the same here: if the alias has no type parameters AND
+                // the body is evaluable (Conditional, IndexAccess, KeyOf, etc.) AND it does not
+                // contain deferred type parameters, evaluate it now.
+                if params.is_empty() {
+                    let db = self.ctx.types;
+                    if crate::query_boundaries::common::is_evaluable_meta_type(db, alias_type)
+                        && !crate::query_boundaries::common::contains_type_parameters(
+                            db, alias_type,
+                        )
+                    {
+                        alias_type = self.evaluate_type_with_env(alias_type);
+                    }
                 }
 
                 // Check for invalid circular reference (TS2456)
@@ -1971,5 +1984,49 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    /// Compute the VALUE-side type for a merged `VALUE+TYPE_ALIAS` symbol.
+    ///
+    /// Used to pre-populate `ctx.merged_value_types` before the type alias body is
+    /// lowered, so `get_type_from_type_query` can return the VALUE type when it sees
+    /// `typeof X` where X is the symbol being resolved as a type alias.
+    fn compute_value_type_for_merged_alias(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl = symbol.value_declaration;
+
+        // value_declaration may point to the identifier node within a VariableDeclaration
+        if let Some(decl_node) = self.ctx.arena.get(decl)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+        {
+            decl = self.ctx.arena.get_extended(decl)?.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+
+        // Prefer an explicit type annotation: compute it without touching the initializer
+        if var_decl.type_annotation.is_some() {
+            let ann_type = self.get_type_from_type_node(var_decl.type_annotation);
+            if ann_type != TypeId::ERROR && ann_type != TypeId::ANY {
+                return Some(ann_type);
+            }
+        }
+
+        // Fall back to the initializer type. For typical merged cases like
+        // `const X = { ... } as const; type X = typeof X[keyof typeof X]`,
+        // the initializer is a plain object literal that does not reference X,
+        // so this is recursion-safe.
+        if var_decl.initializer.is_some() {
+            let init_type = self.get_type_of_node(var_decl.initializer);
+            if init_type != TypeId::ERROR && init_type != TypeId::UNKNOWN {
+                return Some(init_type);
+            }
+        }
+
+        None
     }
 }

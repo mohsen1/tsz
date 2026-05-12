@@ -1055,6 +1055,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // TS2693: typeof requires a value binding. If the resolved symbol is
             // type-only (e.g., an interface or type alias without a value component),
             // emit an error instead of creating a TypeQuery.
+            //
+            // For merged VALUE+TYPE_ALIAS symbols (e.g. `const X = {...} as const;
+            // type X = typeof X[keyof typeof X]`), `typeof X` accesses the VALUE
+            // namespace and must return the const's own type, NOT the type-alias body.
+            // `symbol_types[X]` holds either a Lazy(DefId) placeholder (during alias
+            // resolution) or the evaluated alias body type (after resolution). Both are
+            // wrong for a `typeof X` query; we need the VALUE-side type stored in
+            // `merged_value_types` (pre-populated before the alias body is lowered).
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 let flags = symbol.flags;
                 let has_value = flags & tsz_binder::symbol_flags::VALUE != 0;
@@ -1063,6 +1071,55 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     let escaped_name = symbol.escaped_name.clone();
                     self.emit_type_query_type_only_error(&escaped_name, type_query.expr_name);
                     return TypeId::ERROR;
+                }
+
+                let is_merged_value_and_alias =
+                    (flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0) && has_value;
+                if is_merged_value_and_alias {
+                    if let Some(&val_type) = self.ctx.merged_value_types.get(&sym_id) {
+                        if let Some(type_arguments) = &type_arguments {
+                            return self.apply_instantiation_expression_type_arguments(
+                                val_type,
+                                type_arguments,
+                            );
+                        }
+                        return val_type;
+                    }
+                    // `merged_value_types` not yet populated (i.e. `get_type_from_type_query` is
+                    // called during `check_type_alias_declaration` before `compute_type_of_symbol`
+                    // runs). Extract the annotation type directly from the const declaration. We
+                    // intentionally skip the initializer here: computing `get_type_of_node` on it
+                    // during early alias processing risks re-entrant symbol resolution. The caller
+                    // will fall through and create a deferred TypeQuery instead, which is safe.
+                    let val_type_from_annotation = (|| {
+                        let mut decl = symbol.value_declaration;
+                        let decl_node = self.ctx.arena.get(decl)?;
+                        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                            decl = self.ctx.arena.get_extended(decl)?.parent;
+                        }
+                        let decl_node = self.ctx.arena.get(decl)?;
+                        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                            return None;
+                        }
+                        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                        if var_decl.type_annotation.is_some() {
+                            Some(var_decl.type_annotation)
+                        } else {
+                            None
+                        }
+                    })();
+                    if let Some(ann_idx) = val_type_from_annotation {
+                        let ann_type = self.check(ann_idx);
+                        if ann_type != TypeId::ERROR && ann_type != TypeId::ANY {
+                            if let Some(type_arguments) = &type_arguments {
+                                return self.apply_instantiation_expression_type_arguments(
+                                    ann_type,
+                                    type_arguments,
+                                );
+                            }
+                            return ann_type;
+                        }
+                    }
                 }
             }
 

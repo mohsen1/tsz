@@ -1832,25 +1832,36 @@ impl<'a> CheckerState<'a> {
             // the constructor/value type, so overwriting would corrupt the cached interface
             // type. Value-position resolution (`new Error()`) is handled separately by
             // `get_type_of_identifier` which has its own merged-symbol path.
+            //
+            // EXCEPT: For merged type-alias+variable symbols (e.g.,
+            // `const X = {...} as const; type X = typeof X[keyof typeof X]`),
+            // `symbol_types[X]` must hold the TYPE ALIAS body type (the result of
+            // evaluating the alias), not the VALUE type of the const declaration.
+            // Type-position references (`const d: X = 0`) must resolve to the alias
+            // body type; value-position `typeof X` resolution is handled separately
+            // through `merged_value_types` in `get_type_from_type_query`.
             {
-                let is_merged_interface = self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
-                    s.flags & tsz_binder::symbol_flags::INTERFACE != 0
-                        && s.flags
-                            & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
-                                | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
-                            != 0
-                });
-                let is_canonical_value_declaration = self
+                let (is_merged_named_type_with_variable, is_canonical_value_declaration) = self
                     .ctx
                     .binder
                     .get_symbol(sym_id)
-                    .is_some_and(|s| s.value_declaration == decl_idx);
+                    .map(|s| {
+                        let merged = (s.flags & tsz_binder::symbol_flags::INTERFACE != 0
+                            || s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                            && s.flags
+                                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                                != 0;
+                        let canonical = s.value_declaration == decl_idx;
+                        (merged, canonical)
+                    })
+                    .unwrap_or((false, false));
                 // For var redeclarations, do NOT overwrite the symbol type.
                 // The first declaration's type is canonical. Overwriting with a
                 // subsequent declaration's inferred type can corrupt recursive
                 // type resolution chains (e.g., `typeof k` indexers resolve to
                 // `any` after the symbol type is overwritten by a redeclaration).
-                if !is_merged_interface
+                if !is_merged_named_type_with_variable
                     && (is_canonical_value_declaration || is_js_require_binding)
                     && (!is_redeclaration || is_js_require_binding)
                 {
