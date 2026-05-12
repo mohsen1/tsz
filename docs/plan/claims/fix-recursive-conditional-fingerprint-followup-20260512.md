@@ -25,6 +25,13 @@ codes with mismatched line, column, or message fingerprints.
 - Add or update focused regression coverage in the owning crate when the root
   cause is isolated.
 
+## Files Touched
+
+- `crates/tsz-checker/src/diagnostics/message_rewriting.rs`
+- `crates/tsz-checker/tests/conditional_infer_tests.rs`
+- `crates/tsz-solver/src/operations/conditional.rs`
+- `docs/plan/claims/fix-recursive-conditional-fingerprint-followup-20260512.md`
+
 ## Verification Plan
 
 - `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`
@@ -39,9 +46,11 @@ codes with mismatched line, column, or message fingerprints.
 - Fixed recursive conditional fingerprint drift by preserving scoped bare type
   parameter display in TS2322 message rewriting and anchoring the recursive
   wrapper TS2589 at the conditional alias application use site.
-- Verification:
-  - `cargo fmt --all`
-  - `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`
-    - `FINAL RESULTS: 2/2 passed (100.0%)`
-  - `cargo test -p tsz-checker --test conditional_infer_tests recursive_awaited -- --nocapture`
-    - `2 passed`
+
+## Verification
+
+- `cargo fmt --all`
+- `./scripts/conformance/conformance.sh run --filter "recursiveConditionalTypes" --verbose`
+  - `FINAL RESULTS: 2/2 passed (100.0%)`
+- `cargo test -p tsz-checker --test conditional_infer_tests recursive_awaited -- --nocapture`
+  - `2 passed`

@@ -211,6 +211,7 @@ type __Awaited<T> =
 type MyPromise<T> = {
     then<U>(f: ((value: T) => U | PromiseLike<U>) | null | undefined): MyPromise<U>;
 }
+type InfinitePromise<T> = Promise<InfinitePromise<T>>;
 
 type P0 = __Awaited<Promise<string | Promise<MyPromise<number> | null> | undefined>>;
 type P1 = __Awaited<any>;
