@@ -203,6 +203,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = self
                     .expand_portable_mapped_object_text_in_current_context(&type_text)
                     .unwrap_or(type_text);
+                let type_text = self
+                    .expand_imported_indexed_access_type_text(&type_text)
+                    .unwrap_or(type_text);
                 let type_text = Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
                     .unwrap_or(type_text);
                 let type_text = Self::normalize_inferred_array_any_text(&type_text);
@@ -516,6 +519,9 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text = self
+                    .expand_imported_indexed_access_type_text(&selected_type_text)
+                    .unwrap_or(selected_type_text);
                 let selected_type_text = if has_initializer {
                     self.add_returned_object_member_comments_to_type_text(
                         initializer,
