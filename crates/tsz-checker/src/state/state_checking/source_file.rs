@@ -947,16 +947,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        for diag in &mut self.ctx.diagnostics {
-            if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag
-                    .message_text
-                    .contains("Type 'number' is not assignable to type 'Box<number | Box2>'.")
-            {
-                diag.message_text = "Type 'number' is not assignable to type 'Box2'.".to_string();
-            }
-        }
-
         let recursive_array_extra_messages = [
             "Type 'number' is not assignable to type 'string | RecArray<string>'.",
             "Type 'string' is not assignable to type 'number | RecArray<number>'.",

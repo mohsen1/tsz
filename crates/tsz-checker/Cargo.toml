@@ -961,5 +961,9 @@ path = "tests/issue_3768_outer_call_inference_regression_tests.rs"
 name = "source_file_index_signatures_rewrite_tests"
 path = "tests/source_file_index_signatures_rewrite_tests.rs"
 
+[[test]]
+name = "recursive_type_references_tests"
+path = "tests/recursive_type_references_tests.rs"
+
 [lints]
 workspace = true
