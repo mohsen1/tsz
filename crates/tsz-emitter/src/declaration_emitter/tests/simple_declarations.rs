@@ -3125,6 +3125,25 @@ module.exports = class {
 }
 
 #[test]
+fn test_js_array_subclass_emits_array_any_and_constructors() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class ElementsArray extends Array {
+    static {
+        this.isArray = (arg) => Array.isArray(arg);
+    }
+}
+"#,
+    );
+
+    let expected = "declare class ElementsArray extends Array<any> {\n    constructor();\n    constructor(arrayLength: number);\n    constructor(...items: any[]);\n}";
+    assert!(
+        output.contains(expected),
+        "Expected bare JS Array subclasses to inherit Array constructor overloads: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_function_like_export_preserves_constructor_jsdoc_block() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
