@@ -2579,7 +2579,7 @@ let v = <Comp x={3} />;
 /// types. Having extractable props does not exempt union members from return-type
 /// validation.
 ///
-/// Mirrors `jsxComponentTypeErrors.tsx` MixedComponent case: when
+/// Mirrors `jsxComponentTypeErrors.tsx` `MixedComponent` case: when
 /// `FunctionComp | ClassComp` is used as a JSX component and both members
 /// return types incompatible with `JSX.Element` / `JSX.ElementClass`, the
 /// union must emit TS2786.
