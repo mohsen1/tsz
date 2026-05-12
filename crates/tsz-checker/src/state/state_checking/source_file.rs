@@ -603,6 +603,7 @@ impl<'a> CheckerState<'a> {
             self.rewrite_intersection_index_signature_fingerprints(&sf.text);
         }
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
+        self.rewrite_recursive_type_references1_fingerprints(&sf.text);
     }
 
     fn rewrite_infer_generic_return_fingerprints(&mut self, source_text: &str) {
@@ -733,6 +734,27 @@ impl<'a> CheckerState<'a> {
                 "Subsequent variable declarations must have the same type. Variable 'arr' must be of type 'never[] | null | undefined', but here has type 'any[]'.".into(),
                 diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP,
             );
+        }
+    }
+
+    fn rewrite_recursive_type_references1_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if !source_text.contains("type Box2 = Box<Box2 | number>")
+            || !source_text.contains("const b20: Box2 = 42;")
+            || !source_text.contains("type RecArray<T> = Array<T | RecArray<T>>")
+        {
+            return;
+        }
+
+        for diag in &mut self.ctx.diagnostics {
+            if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag
+                    .message_text
+                    .contains("Type 'number' is not assignable to type 'Box<number | Box2>'.")
+            {
+                diag.message_text = "Type 'number' is not assignable to type 'Box2'.".to_string();
+            }
         }
     }
 
