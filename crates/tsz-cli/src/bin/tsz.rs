@@ -14,6 +14,7 @@ use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz_cli::args::CliArgs;
 use tsz_cli::help::{self, TSC_VERSION};
 use tsz_cli::{driver, locale, reporter::Reporter, watch};
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
 /// tsc exit status codes (matching TypeScript's `ExitStatus` enum)
 const EXIT_SUCCESS: i32 = 0;
@@ -64,6 +65,20 @@ fn main() -> Result<()> {
 }
 
 fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
+    if let Some(locale_id) = args.locale.as_deref()
+        && !locale::is_valid_locale_shape(locale_id)
+    {
+        let message =
+            diagnostic_messages::LOCALE_MUST_BE_OF_THE_FORM_LANGUAGE_OR_LANGUAGE_TERRITORY_FOR_EXAMPLE_OR
+                .replace("{0}", "en")
+                .replace("{1}", "ja-jp");
+        println!(
+            "error TS{}: {message}",
+            diagnostic_codes::LOCALE_MUST_BE_OF_THE_FORM_LANGUAGE_OR_LANGUAGE_TERRITORY_FOR_EXAMPLE_OR
+        );
+        std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+    }
+
     // Initialize locale for i18n message translation
     locale::init_locale(args.locale.as_deref());
 
