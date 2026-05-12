@@ -134,6 +134,17 @@ Close remaining high-signal parser review-audit threads by:
   - dropped from this workstream; PR #5954
     (`https://github.com/mohsen1/tsz/pull/5954`) was closed unmerged on
     2026-05-12 and superseded by this bundled follow-up track.
+- review comments left on #4952:
+  - verified `perf-t0.4-attribution-decision-record.md` now records
+    `PR: #4952`, `Status: shipped`, and a populated `Findings` section (no
+    template placeholders remain).
+  - verified the same claim explicitly documents that `large-ts-repo` was
+    deferred for this round due to OOM/stack-overflow behavior, matching the
+    associated decision record and summary docs.
+  - verified committed raw `monorepo-00{1..6}-diag.json` files now carry
+    populated `fixture.*` attribution metadata and sanitized portable
+    `command_line[0]` values (`tsz`), so the original provenance/path-leak
+    threads are stale on current code/docs.
 
 ## Files Touched
 
@@ -154,7 +165,10 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-checker/src/context/mod.rs`
 - `docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md`
 - `docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md`
+- `docs/plan/claims/perf-t0.4-attribution-decision-record.md`
 - `docs/plan/PERFORMANCE_PLAN.md`
+- `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`
+- `docs/plan/perf-runs/raw/monorepo-00{1..6}-diag.json`
 - `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
 - `scripts/arch/check-checker-boundaries.sh`
 - `scripts/arch/arch_guard.py`
@@ -181,5 +195,6 @@ Close remaining high-signal parser review-audit threads by:
 - `cargo test -p tsz-checker --test generic_call_inference_tests self_referential_constraint_fallback_anchors_first_argument_after_contextual_assignment -- --nocapture`
 - `cargo test -p tsz-solver test_infer_generic_constraint_fallback -- --nocapture`
 - `cargo test -p tsz-solver test_generic_parameter_without_constraint_fallback_to_unknown -- --nocapture`
+- `for f in docs/plan/perf-runs/raw/monorepo-00{1..6}-diag.json; do jq -r '.fixture,.command_line[0]' "$f"; done`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` is currently blocked by GitHub GraphQL rate-limit exhaustion until reset at `2026-05-12T21:09:52Z`.
