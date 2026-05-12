@@ -23,9 +23,9 @@ TS2786 for a JSX tag-name union case while tsc expects no diagnostics.
 
 ## Files Touched
 
-- `crates/tsz-checker/src/checkers/jsx/extraction.rs`
-- `crates/tsz-checker/src/checkers/jsx/tests.rs`
-- `docs/plan/claims/fix-calls-complex-signatures-ts2786-regression-20260512.md`
+- `crates/tsz-checker/src/checkers/jsx/extraction.rs` (JSX component return-type validation)
+- `crates/tsz-checker/src/checkers/jsx/tests.rs` (focused JSX regression coverage)
+- `docs/plan/claims/fix-calls-complex-signatures-ts2786-regression-20260512.md` (claim metadata)
 
 ## Verification Plan
 
@@ -37,16 +37,23 @@ TS2786 for a JSX tag-name union case while tsc expects no diagnostics.
 
 ## Progress
 
-- Restored the JSX union component return-type guard for union members that are
-  already accepted by JSX props extraction.
+- Restored JSX union component return-type validation by expanding evaluated
+  union members and structurally checking class-component `render` compatibility.
+- Removed the display-name `ComponentType` / `ReactType` heuristic from checker
+  control flow.
+- Added a regression guard that user-defined aliases named `ComponentType` still
+  receive TS2786 when their return types are invalid.
 - Verified the focused conformance regression now matches tsc.
 - Verified the existing invalid JSX union guard still emits TS2786.
 
 ## Verification
 
-- `cargo fmt --all` - passed
-- `cargo test -p tsz-checker jsx_union_component_with_invalid_return_emits_ts2786 -- --nocapture` - passed
-- `cargo test -p tsz-checker jsx_react_component_type_union_does_not_emit_ts2786 -- --nocapture` - passed
-- `cargo test -p tsz-checker jsx_union_of_invalid_function_and_class_component_emits_ts2786 -- --nocapture` - passed
-- `./scripts/conformance/conformance.sh run --filter "callsOnComplexSignatures" --verbose` - `FINAL RESULTS: 1/1 passed (100.0%)`
-- `./scripts/conformance/conformance.sh run --filter "jsxComponentTypeErrors" --verbose` - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `cargo fmt -p tsz-checker` - passed
+- `cargo test -p tsz-checker --lib jsx_user_named_component_type_alias_union_still_checks_returns -- --nocapture` - passed
+- `cargo test -p tsz-checker --lib jsx_react_component_type_union_does_not_emit_ts2786 -- --nocapture` - passed
+- `cargo test -p tsz-checker --lib jsx_react_type_union_with_string_does_not_emit_ts2786 -- --nocapture` - passed
+- `cargo test -p tsz-checker --lib jsx_union_of_invalid_function_and_class_component_emits_ts2786 -- --nocapture` - passed
+- `cargo test -p tsz-checker --lib jsx_union_component_with_invalid_return_emits_ts2786 -- --nocapture` - passed
+- `cargo build --profile dist-fast -p tsz-cli -p tsz-conformance` - passed
+- `.target/dist-fast/tsz-conformance --filter callsOnComplexSignatures --verbose --print-fingerprints --workers 1 --no-batch` - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `.target/dist-fast/tsz-conformance --filter jsxComponentTypeErrors --verbose --print-fingerprints --workers 1 --no-batch` - `FINAL RESULTS: 1/1 passed (100.0%)`

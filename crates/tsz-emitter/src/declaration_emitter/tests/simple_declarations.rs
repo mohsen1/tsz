@@ -453,6 +453,35 @@ export function j() {}
 }
 
 #[test]
+fn test_js_local_enum_exports_are_deferred_before_alias_group() {
+    let source = r#"
+export enum A {}
+enum B {}
+export { B };
+enum CC {}
+export { CC as C };
+export enum D {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let expected = r#"export enum A {
+}
+export enum D {
+}
+export enum B {
+}
+declare enum CC {
+}
+export { CC as C };
+"#;
+
+    assert_eq!(
+        output, expected,
+        "Expected local enum exports to match tsc order"
+    );
+}
+
+#[test]
 fn test_js_cjs_export_aliases_are_grouped_in_source_order() {
     let source = r#"
 function hh() {}
@@ -1138,6 +1167,48 @@ function format(x) {
 }
 
 #[test]
+fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
+    let output = emit_js_dts(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/**
+ * @satisfies {(a: string, ...args: never) => void}
+ * @param {string} a
+ */
+export const fn2 = (a, b) => {};
+
+/** @satisfies {(uuid: string) => void} */
+export function fn3(uuid) {}
+"#,
+    );
+
+    assert!(
+        !output.contains("@satisfies {(uuid: string) => void} */\nexport function fn1"),
+        "Expected synthetic function-variable JSDoc @satisfies comment to be stripped: {output}"
+    );
+    assert!(
+        !output.contains("@satisfies {(a: string, ...args: never) => void}"),
+        "Expected multiline synthetic function-variable @satisfies comment to be stripped: {output}"
+    );
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to remain active: {output}"
+    );
+    assert!(
+        output.contains("export function fn2(a: string, b: never): void;"),
+        "Expected @param plus @satisfies inference to remain active: {output}"
+    );
+    assert!(
+        output.contains(
+            "/** @satisfies {(uuid: string) => void} */\nexport function fn3(uuid: any): void;"
+        ),
+        "Expected function declarations to preserve @satisfies comments: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
@@ -1674,6 +1745,37 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_function_with_typedef_members() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef Options
+ * @property {string} opt
+ */
+
+/**
+ * @param {Options} options
+ */
+module.exports = function loader(options) {}
+"#,
+    );
+
+    let expected = r#"declare namespace _exports {
+    export { Options };
+}
+declare function _exports(options: Options): void;
+export = _exports;
+type Options = {
+    opt: string;
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected export= function to retain local typedef namespace members: {output}"
+    );
+}
+
+#[test]
 fn test_export_equals_namespace_keeps_local_type_dependencies() {
     let source = r#"
 namespace X {
@@ -1787,6 +1889,47 @@ exports.for = "loop";
     );
     assert!(
         !output.contains("export const for"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_object_keyword_name_and_namespace_members() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+var x = 12;
+module.exports = {
+    extends: "base",
+    more: {
+        others: ["strs"]
+    },
+    x
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export var x: number;"),
+        "Expected shorthand object export to keep JS var widening: {output}"
+    );
+    assert!(
+        output.contains("declare let _extends: string;"),
+        "Expected reserved object export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace more {\n    let others: string[];\n}"),
+        "Expected nested object member to emit as an export namespace: {output}"
+    );
+    assert!(
+        output.contains("export { _extends as extends };"),
+        "Expected reserved object export alias to be grouped: {output}"
+    );
+    assert!(
+        !output.contains("export const x: 12;"),
+        "Did not expect the JS var export to remain const-narrowed: {output}"
+    );
+    assert!(
+        !output.contains("export const extends"),
         "Did not expect invalid keyword binding declaration: {output}"
     );
 }
@@ -3066,6 +3209,40 @@ class C {
     assert!(
         setter_pos < getter_pos,
         "Expected setter/getter pair to be emitted together even when getter appears first: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_define_property_prototype_accessors_emit() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export class D {}
+Object.defineProperty(D.prototype, "x", {
+    get() {
+        return 12;
+    },
+    /** @param {number} _arg */
+    set(_arg) {}
+});
+
+/** @param {number} v */
+const setter = (v) => {};
+export class E {}
+Object.defineProperty(E.prototype, "x", { set: setter });
+"#,
+    );
+
+    assert!(
+        output.contains("export class D {\n    set x(_arg: number);\n    get x(): number;\n}"),
+        "Expected descriptor getter/setter to fold into class D: {output}"
+    );
+    assert!(
+        output.contains("export class E {\n    set x(value: number);\n}"),
+        "Expected descriptor setter alias to fold into class E: {output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty"),
+        "Descriptor statements should not leak to declaration output: {output}"
     );
 }
 

@@ -532,16 +532,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_environment should use solver literal constructors, not TypeData::Literal"
     );
     assert!(
-        state_type_environment_src.contains("collect_referenced_types("),
-        "state_type_environment should use solver collect_referenced_types visitor helper for traversal preconditions"
-    );
-    assert!(
-        state_type_environment_src.contains("collect_lazy_def_ids("),
-        "state_type_environment should use solver collect_lazy_def_ids visitor helper for lazy DefId preconditions"
-    );
-    assert!(
-        state_type_environment_src.contains("collect_enum_def_ids("),
-        "state_type_environment should use solver collect_enum_def_ids visitor helper for enum DefId preconditions"
+        state_type_environment_src.contains("for_each_direct_referenced_type("),
+        "state_type_environment should use solver direct-child traversal for relation preconditions instead of repeatedly walking transitive subgraphs"
     );
     assert!(
         state_type_environment_src.contains("ensure_relation_input_ready("),

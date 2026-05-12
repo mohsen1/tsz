@@ -17,10 +17,6 @@ use super::assignability::{
 };
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
-    fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
-        query_utils::is_object_intrinsic_type(self.ctx.types, type_id)
-    }
-
     /// Resolve the parameter name at `param_index` in the first call
     /// signature of `callable_ty` (if any). Used to render TS2328
     /// "Types of parameters '_' and '_' are incompatible." messages.
@@ -1175,7 +1171,7 @@ impl<'a> CheckerState<'a> {
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
         if is_source_primitive {
-            let tgt_str = self.format_type_diagnostic(target_type);
+            let tgt_str = self.recursive_non_generic_alias_body_name(target_type);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&display_src_str, &tgt_str],
@@ -1908,7 +1904,7 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
         {
             let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = self.format_type_diagnostic(target_type);
+            let tgt_str = self.recursive_non_generic_alias_body_name(target_type);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],

@@ -1,5 +1,8 @@
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_default_lib_files};
+use crate::test_utils::{
+    check_multi_file, check_source_diagnostics, check_source_with_libs, load_default_lib_files,
+};
+use tsz_common::common::ModuleKind;
 
 #[test]
 fn generic_promise_then_flattens_promise_return_from_callback() {
@@ -434,6 +437,68 @@ function test(params: Partial<ParseParamsNoData>) {
     assert!(
         diags.is_empty(),
         "Expected lib-backed `Partial<Omit<...>>` to contextually type `params.path || []` and `params.path ?? []`, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn zod_cross_file_object_literal_reduces_partial_omit_property_read() {
+    let diags = check_multi_file(
+        &[
+            (
+                "zod-error-map-min.ts",
+                "export type ZodErrorMap = () => { message: string };\n",
+            ),
+            (
+                "zod-parse-util-min.ts",
+                r#"
+import { ZodErrorMap } from "./zod-error-map-min";
+
+export type Partial<T> = { [P in keyof T]?: T[P] };
+export type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+export type Exclude<T, U> = T extends U ? never : T;
+export type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+export type ParseParams = {
+    data: unknown;
+    errorMap: ZodErrorMap;
+};
+
+export type ParseParamsNoData = Omit<ParseParams, "data">;
+"#,
+            ),
+            (
+                "zod-types-min.ts",
+                r#"
+import { ParseParamsNoData, Partial } from "./zod-parse-util-min";
+import { ZodErrorMap } from "./zod-error-map-min";
+
+type ZodObjectContextTarget = { errorMap?: ZodErrorMap };
+declare function useContext(def: ZodObjectContextTarget): void;
+
+function createRootContext(params: Partial<ParseParamsNoData>) {
+    useContext({
+        errorMap: params.errorMap,
+    });
+}
+"#,
+            ),
+        ],
+        "zod-types-min.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diags.is_empty(),
+        "Expected cross-file object literal context to reduce `Partial<Omit<...>>` property reads, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))

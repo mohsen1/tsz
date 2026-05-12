@@ -21,6 +21,8 @@
 //! also designing the reset semantics at the same time.
 
 use super::CheckerContext;
+use crate::control_flow::FlowGraph;
+use crate::query_boundaries::common::TypeEnvironment;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
 
@@ -96,6 +98,13 @@ impl<'a> CheckerContext<'a> {
         // Diagnostic buffers.
         self.diagnostics.clear();
         self.emitted_diagnostics.clear();
+        self.callback_return_type_errors.clear();
+        self.modules_with_ts2307_emitted.clear();
+        self.deferred_truthiness_diagnostics.clear();
+        self.deferred_excess_property_implicit_any_diagnostics
+            .clear();
+        self.deferred_jsx_import_source_error = None;
+        self.jsx_import_source_checked = false;
 
         // Primary NodeIndex→TypeId cache. This is the cache that holds
         // the type of every checked AST node; without clearing it, a
@@ -114,6 +123,8 @@ impl<'a> CheckerContext<'a> {
         self.daa_error_nodes.clear();
         self.deferred_ts2454_errors.clear();
         self.type_only_nodes.clear();
+        self.closures_with_contextual_this_type.clear();
+        self.jsdoc_typedef_anchor_pos.set(u32::MAX);
         // Object-literal diagnostic elaboration state. All three
         // fields are file-local: `property_diag_targets` and
         // `contextual_targets` are `FxHashMap<NodeIndex, TypeId>`,
@@ -143,6 +154,10 @@ impl<'a> CheckerContext<'a> {
         self.base_constructor_expr_cache.borrow_mut().clear();
         self.base_instance_expr_cache.borrow_mut().clear();
         self.class_decl_miss_cache.borrow_mut().clear();
+        self.jsx_intrinsic_props_cache.clear();
+        self.jsx_namespace_symbol_cache = None;
+        self.jsx_intrinsic_elements_symbol_cache = None;
+        self.jsx_intrinsic_elements_type_cache = None;
 
         // Flow-analysis state (`FlowNodeId` and `(u32, u32)` position
         // keyed). All file-local; carrying entries across files yields
@@ -157,6 +172,7 @@ impl<'a> CheckerContext<'a> {
         self.flow_reference_match_cache.borrow_mut().clear();
         self.symbol_last_assignment_pos.borrow_mut().clear();
         self.symbol_flow_confirmed.borrow_mut().clear();
+        self.emitted_ts2454_errors.clear();
         // `CallPredicateMap` has no `.clear()`; replace with default.
         // `NarrowableIdentifierCache` is a `Vec<u8>`-backed dense cache;
         // replace with an empty one to drop the stored data without
@@ -169,20 +185,64 @@ impl<'a> CheckerContext<'a> {
         // resolution stack/set are asserted empty as an invariant).
         self.node_resolution_stack.clear();
         self.import_resolution_stack.clear();
+        self.typeof_resolution_stack.borrow_mut().clear();
+        self.symbol_resolution_depth.set(0);
 
         // Implicit-any tracking sets.
         self.implicit_any_checked_closures.clear();
         self.implicit_any_contextual_closures.clear();
         self.deferred_implicit_any_closures.clear();
         self.speculative_implicit_any_closures.clear();
+        self.pending_implicit_any_vars.clear();
+        self.reported_implicit_any_vars.clear();
+        self.deferred_excess_property_implicit_any_diagnostics
+            .clear();
 
         // Class checking state.
         self.checking_classes.clear();
         self.checked_classes.clear();
+        self.class_instance_resolution_set.clear();
+        self.class_constructor_resolution_set.clear();
+        self.circular_class_symbols.clear();
+        self.inheritance_graph.clear();
 
         // Pending-circular-return sites + no-overload call nodes.
         self.pending_circular_return_sites.clear();
         self.no_overload_call_nodes.clear();
+        self.non_closure_circular_return_tracking_depth = 0;
+
+        // Symbol/circularity state whose keys or values are file-local
+        // `SymbolId`s, plus string-name guards that are meaningful only inside
+        // the current file's resolution session.
+        self.circular_type_aliases.clear();
+        self.import_conflict_names.clear();
+        self.module_namespace_resolution_set.clear();
+        self.import_type_alias_types.clear();
+        self.jsdoc_enum_resolution_set.clear();
+        self.symbol_dependency_stack.clear();
+        self.symbol_dependencies.clear();
+        self.referenced_symbols.borrow_mut().clear();
+        self.written_symbols.borrow_mut().clear();
+        self.referenced_as_property.borrow_mut().clear();
+        self.destructured_bindings.clear();
+        self.next_binding_group_id = 0;
+        self.destructured_binding_sources.clear();
+
+        // Per-file type/evaluation state. `build_type_environment()` rebuilds
+        // these for the next file before statement checking.
+        self.type_environment.replace(TypeEnvironment::new());
+        self.type_env.replace(TypeEnvironment::new());
+        self.application_eval_set.clear();
+        self.mapped_eval_set.clear();
+        self.type_resolution_visiting.clear();
+        self.pruning_union_members = false;
+        self.jsdoc_typedef_resolving.borrow_mut().clear();
+        self.resolving_jsdoc_typedefs.borrow_mut().clear();
+        self.refs_resolved.clear();
+        self.application_symbols_resolved.clear();
+        self.application_symbols_resolution_set.clear();
+        self.namespace_module_names.clear();
+        self.env_eval_cache.borrow_mut().clear();
 
         // Depth counters: reset to their base depth and clear the
         // `exceeded` flag.
@@ -191,6 +251,62 @@ impl<'a> CheckerContext<'a> {
         self.overlap_depth.borrow_mut().reset();
         self.recursion_depth.borrow_mut().reset();
         self.instantiation_depth.set(0);
+        self.depth_exceeded.set(false);
+        self.relation_depth_exceeded.set(false);
+        self.skip_callable_type_param_suppression.set(false);
+        self.heritage_merge_depth.set(0);
+        self.type_resolution_fuel
+            .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
+
+        // Traversal/context stacks and transient flags should be empty between
+        // source files, matching a freshly constructed checker.
+        self.type_parameter_scope.clear();
+        self.in_conditional_extends_depth = 0;
+        self.typeof_param_scope.clear();
+        self.type_param_constraint_excluded_params.clear();
+        self.contextual_type = None;
+        self.contextual_type_is_assertion = false;
+        self.is_checking_statements = false;
+        self.is_in_ambient_declaration_file = false;
+        self.in_destructuring_target = false;
+        self.preserve_destructuring_initializer_overload_diagnostics = false;
+        self.skip_flow_narrowing = false;
+        self.return_type_stack.clear();
+        self.yield_type_stack.clear();
+        self.generator_next_type_stack.clear();
+        self.generator_yield_operand_types.clear();
+        self.generator_had_ts7057 = false;
+        self.this_type_stack.clear();
+        self.function_owned_this_stack.clear();
+        self.enclosing_class = None;
+        self.enclosing_class_chain.clear();
+        self.async_depth = 0;
+        self.inside_closure_depth = 0;
+        self.in_const_assertion = false;
+        self.preserve_literal_types = false;
+        self.use_declared_type_for_identifier = false;
+        self.skip_array_contextual_supertype_collapse = false;
+        self.generic_excess_skip = None;
+        self.iteration_depth = 0;
+        self.switch_depth = 0;
+        self.function_depth = 0;
+        self.is_unreachable = false;
+        self.has_reported_unreachable = false;
+        self.label_stack.clear();
+        self.had_outer_loop = false;
+        self.suppress_definite_assignment_errors = false;
+        self.js_body_uses_arguments = false;
+
+        // Module/export synthesis state is derived from the active file and
+        // may contain file-local symbol identities in its values.
+        self.js_export_surface_cache.clear();
+        self.js_export_surface_resolution_set.clear();
+        self.expando_property_resolution_set.clear();
+        self.module_augmentation_value_decls.clear();
+        self.module_augmentation_application_set
+            .borrow_mut()
+            .clear();
+        self.emitted_ts2411_for_iface_prop.clear();
 
         // Module-scoped thread-local memoisations that key by file-
         // local `NodeIndex`.
@@ -359,6 +475,7 @@ impl<'a> CheckerContext<'a> {
         self.binder = binder;
         self.file_name = file_name;
         self.current_file_idx = file_idx;
+        self.flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
         // Re-warm SymbolId-keyed caches from the shared
         // `DefinitionStore`. `ProgramContext::apply_to` calls this
         // helper once at construction; we just emptied the caches
