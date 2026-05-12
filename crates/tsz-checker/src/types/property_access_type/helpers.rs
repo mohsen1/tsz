@@ -515,8 +515,9 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier_at(name_node)?;
         let property_name = &ident.escaped_text;
         // tsc emits TS2339 on property access against `never` even when the
-        // property exists on the un-narrowed declared receiver. Only declared
-        // intersection receivers reduced by private conflicts can recover.
+        // property exists on the un-narrowed declared receiver. Recover only
+        // when the declared intersection annotation still exposes the property
+        // without a private-property conflict.
         if let Some(receiver) =
             self.declared_intersection_receiver_property_type(expression, property_name)
         {
