@@ -3,12 +3,12 @@
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
 - PRs excluded as already followed-up: 3
-- Potential important unresolved threads: 153
+- Potential important unresolved threads: 140
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 61
-- `crates/tsz-emitter`: 34
+- `crates/tsz-checker`: 53
+- `crates/tsz-emitter`: 29
 - `docs`: 23
 - `crates/tsz-parser`: 14
 - `crates/tsz-solver`: 10
@@ -24,7 +24,7 @@
 - [#5717](https://github.com/mohsen1/tsz/pull/5717) fix(emit): decorate system class exports: 5
 - [#5003](https://github.com/mohsen1/tsz/pull/5003) fix(checker): preserve unique symbol keys in keyof: 5
 - [#5089](https://github.com/mohsen1/tsz/pull/5089) fix(parser): guard u32/u16 conversion panics with better error messages: 4
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
+- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit `type X = any` aliases: 4
 - [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
 - [#4973](https://github.com/mohsen1/tsz/pull/4973) fix(checker): preserve object literal normalization diagnostics: 3
 - [#4992](https://github.com/mohsen1/tsz/pull/4992) fix(checker): harden explicit-any alias detection: 3
@@ -35,11 +35,11 @@
 - [#5691](https://github.com/mohsen1/tsz/pull/5691) fix(dts): inline semicolon class typedef tags: 3
 - [#5694](https://github.com/mohsen1/tsz/pull/5694) fix(dts): preserve generic jsdoc type tags: 3
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) fix(checker): align indexSignatures1 fingerprints: 3
-- [#5830](https://github.com/mohsen1/tsz/pull/5830) test(checker): load bundled DOM libs in JS constructor tests: 3
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
 - [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
+- [#5102](https://github.com/mohsen1/tsz/pull/5102) fix(parser): recover invalid arrow conditional tails: 2
 
 ## Candidate Threads (Top 100 by score)
 
@@ -129,24 +129,12 @@
   - This rewrite unconditionally appends new `Diagnostic::error` entries without checking whether an equivalent diagnostic (same code/start/length/message) already exists. If the checker later starts emitting any of these...
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) `crates/tsz-checker/src/state/state_checking/source_file.rs:969` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The span lookup falls back to `source_text.find(anchor_marker)` if `line_marker` isn't found. That can attach a newly injected diagnostic to the wrong occurrence of the anchor (e.g. a declaration earlier in the file) ...
-- [#5743](https://github.com/mohsen1/tsz/pull/5743) `crates/tsz-checker/src/checkers/jsx/tests.rs:431` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The new regression test’s doc comment says “all members have valid props”, but `BadClass` as declared has no constructor parameter and no `props` member, and there’s no `JSX.ElementAttributesProperty`; per `get_class_...
-- [#5743](https://github.com/mohsen1/tsz/pull/5743) `crates/tsz-checker/src/checkers/jsx/tests.rs:452` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - In `jsx_union_component_all_valid_no_ts2786`, the class member’s validity isn’t actually being asserted if `JSX.ElementClass` is absent: `check_jsx_component_return_type` treats construct signatures as valid when the ...
-- [#5753](https://github.com/mohsen1/tsz/pull/5753) `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs:1091` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - This regression assertion covers the non-export case, but it doesn’t exercise the `export =` / CommonJS export-equals path where `emit_pending_js_export_equals_for_name` may emit `export = send;` before the synthetic ...
-- [#5811](https://github.com/mohsen1/tsz/pull/5811) `crates/tsz-checker/src/checkers/jsx/tests.rs:860` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - This regression test only asserts that *some* TS2786 was produced. To make it more robust against unrelated TS2786s (or future changes that introduce additional TS2786s in the snippet), consider also asserting the TS2...
-- [#5830](https://github.com/mohsen1/tsz/pull/5830) `crates/tsz-checker/tests/js_constructor_property_tests.rs:172` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - If none of the lib roots resolve both ES5 and DOM, this returns `Vec::new()` and the tests will run without any libs. That can silently make some DOM-related assertions meaningless when running an individual test. Pre...
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md:6` score=3 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword
   - The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep wor...
 - [#5114](https://github.com/mohsen1/tsz/pull/5114) `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs:141` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
   - Same concern as the previous TS2322 test: asserting full message equality is likely to be brittle for TS2322 diagnostics. Prefer checking specific required substrings (e.g., that the source prints as an intersection a...
 - [#5717](https://github.com/mohsen1/tsz/pull/5717) `crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs:26` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
   - This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform S...
-- [#5811](https://github.com/mohsen1/tsz/pull/5811) `crates/tsz-checker/src/checkers/jsx/extraction.rs:1064` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
-  - `jsx_construct_return_satisfies_element_class_render` is used as an OR-condition when `check_ret` is *not* assignable to `JSX.ElementClass`. Because it only checks `render` compatibility, it can incorrectly treat an i...
 - [#5089](https://github.com/mohsen1/tsz/pull/5089) `crates/tsz-parser/src/parser/state.rs:265` score=2 reviewer=`copilot-pull-request-reviewer` reasons=action-language
   - As with the u32 helper, the phrase “must fit in u16::MAX” is awkward/ambiguous because `u16::MAX` is a single value. Consider “must be <= u16::MAX” and/or include the actual `value` that overflowed for easier debugging.
 - [#5102](https://github.com/mohsen1/tsz/pull/5102) `crates/tsz-parser/src/parser/state_declarations_exports.rs:2793` score=2 reviewer=`copilot-pull-request-reviewer` reasons=open-question,detailed-thread
@@ -243,3 +231,15 @@
   - Same as the class-instance delegate path: `enabled_fast()` is checked here and then `inc(...)` re-checks it. If the goal is avoiding `counters()` initialization when disabled, increment the atomic directly inside the ...
 - [#5062](https://github.com/mohsen1/tsz/pull/5062) `docs/plan/PERFORMANCE_PLAN.md:64` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This sentence appears to conflate the interner lock-wait histogram (`lock_wait_histogram_ns` / `interner_lock_wait_histogram_ns`) with the cross-arena delegate counter work in #5061. #5061 wires `delegate_cross_arena_...
+- [#5062](https://github.com/mohsen1/tsz/pull/5062) `docs/plan/PERFORMANCE_PLAN.md:70` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - The phrase “lock-wait increment sites are wrapped … and all cross-arena delegate paths (#5061)” is likely inaccurate: cross-arena delegate paths in #5061 add delegate counter increments / recursion-depth tracking, not...
+- [#5064](https://github.com/mohsen1/tsz/pull/5064) `docs/plan/claims/perf-delegate-cache-hits-counter-coverage-2026-05-11.md:65` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - The Verification section still contains placeholders ("to be run" / "confirmed before push"), but the PR description states these checks have already passed. Please update these lines to reflect the actual commands/re...
+- [#5075](https://github.com/mohsen1/tsz/pull/5075) `crates/tsz-checker/src/types/computation/call_finalize.rs:563` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `construct_signature_flags` calls `common::construct_signatures_for_type`, which builds a fresh `Vec<CallSignature>` (cloning signature data) just to compute two booleans. Even though this is on the mismatch path, it’...
+- [#5082](https://github.com/mohsen1/tsz/pull/5082) `docs/plan/PERFORMANCE_PLAN.md:40` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - This row is listing `WiredCounters` field names, but a couple are abbreviated in a way that doesn’t match the actual struct fields (`interner_per_kind` and `resolver_fs_probes` in `crates/tsz-common/src/perf_counters....
+- [#5083](https://github.com/mohsen1/tsz/pull/5083) `crates/tsz-checker/src/assignability/assignability_checker.rs:930` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - Variance lookup here bypasses the QueryDatabase variance cache that `check_application_variance_assignability` just consulted/populated (it only checks declared variances, then recomputes). Consider looking up `self.c...
+- [#5092](https://github.com/mohsen1/tsz/pull/5092) `crates/tsz-checker/src/lib.rs:434` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - The `#[cfg(test)]` attribute is duplicated around this module inclusion. It’s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep ...
