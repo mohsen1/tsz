@@ -6,6 +6,11 @@ use crate::printer::{
     print_with_source_map,
 };
 use crate::safe_slice;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // Basic Print Tests
@@ -14,8 +19,7 @@ use crate::safe_slice;
 #[test]
 fn test_print_to_string_basic() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
     assert!(output.contains("const x = 42"), "Output: {output}");
@@ -24,8 +28,7 @@ fn test_print_to_string_basic() {
 #[test]
 fn test_print_to_string_function() {
     let source = "function add(a: number, b: number): number { return a + b; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
     assert!(output.contains("function add"), "Output: {output}");
@@ -37,8 +40,7 @@ fn test_print_to_string_function() {
 #[test]
 fn test_print_to_string_class() {
     let source = "class Foo { constructor() {} }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
     assert!(output.contains("class Foo"), "Output: {output}");
@@ -52,8 +54,7 @@ fn test_print_to_string_class() {
 #[test]
 fn test_lower_and_print_es5_class() {
     let source = "class Foo { constructor() {} }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let result = lower_and_print(&parser.arena, root, PrintOptions::es5());
     // ES5 output should use function instead of class
@@ -67,8 +68,7 @@ fn test_lower_and_print_es5_class() {
 #[test]
 fn test_lower_and_print_es5_arrow() {
     let source = "const fn = (x) => x * 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let result = lower_and_print(&parser.arena, root, PrintOptions::es5());
     // ES5 output should convert arrow to function
@@ -79,8 +79,7 @@ fn test_lower_and_print_es5_arrow() {
 #[test]
 fn test_lower_and_print_es5_let_const() {
     let source = "let x = 1; const y = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let result = lower_and_print(&parser.arena, root, PrintOptions::es5());
     // ES5 output should use var
@@ -95,8 +94,7 @@ fn test_lower_and_print_es5_let_const() {
 #[test]
 fn test_print_with_source_map() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrintOptions {
         source_map: true,
@@ -123,8 +121,7 @@ fn test_print_with_source_map() {
 #[test]
 fn test_printer_struct() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -283,8 +280,7 @@ fn test_emit_produces_valid_javascript() {
     // Simple variable declaration
     {
         let source = "let x = 1;";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
         assert!(output.contains("let x = 1"), "Output: {output}");
     }
@@ -292,8 +288,7 @@ fn test_emit_produces_valid_javascript() {
     // Function with types stripped
     {
         let source = "function greet(name: string): string { return 'Hello, ' + name; }";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
         assert!(output.contains("function greet(name)"), "Output: {output}");
         assert!(
@@ -305,8 +300,7 @@ fn test_emit_produces_valid_javascript() {
     // Class
     {
         let source = "class Foo { x: number = 1; }";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
         assert!(output.contains("class Foo"), "Output: {output}");
     }

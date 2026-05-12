@@ -1,22 +1,7 @@
 //! Tests for TS1210 in class strict-mode JS contexts.
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::{check_source, check_source_code_messages};
-
-fn diagnostic_codes_for_js(source: &str) -> Vec<u32> {
-    check_source(
-        source,
-        "a.js",
-        CheckerOptions {
-            strict: true,
-            check_js: true,
-            ..CheckerOptions::default()
-        },
-    )
-    .into_iter()
-    .map(|d| d.code)
-    .collect()
-}
+use tsz_checker::test_utils::{check_js_source_codes_with_options, check_source_code_messages};
 
 #[test]
 fn class_method_local_arguments_emits_ts1210_not_ts1213() {
@@ -29,7 +14,14 @@ class A {
   get arguments() { return {}; }
 }
 "#;
-    let codes = diagnostic_codes_for_js(source);
+    let codes = check_js_source_codes_with_options(
+        source,
+        "a.js",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
     assert!(
         codes.contains(&1210),
         "expected TS1210 for class-local `arguments`, got: {codes:?}"
@@ -48,7 +40,14 @@ function f() {
   return arguments;
 }
 "#;
-    let codes = diagnostic_codes_for_js(source);
+    let codes = check_js_source_codes_with_options(
+        source,
+        "a.js",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
     assert!(
         !codes.contains(&1210),
         "did not expect TS1210 outside class body, got: {codes:?}"
