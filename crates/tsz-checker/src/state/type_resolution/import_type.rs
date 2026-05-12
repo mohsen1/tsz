@@ -205,15 +205,19 @@ impl<'a> CheckerState<'a> {
         segments: &[String],
     ) -> String {
         let display_name = self.import_type_display_name(module_specifier);
-        let base = if self.target_module_has_export_equals(module_specifier) {
-            format!("\"{display_name}\".export=")
-        } else {
-            format!("\"{display_name}\"")
-        };
         if segments.is_empty() {
-            base
+            // Simple direct-member missing: tsc includes `.export=` for export= modules.
+            // e.g. `import("mod").Q` missing → `"mod".export=`
+            if self.target_module_has_export_equals(module_specifier) {
+                format!("\"{display_name}\".export=")
+            } else {
+                format!("\"{display_name}\"")
+            }
         } else {
-            format!("{base}.{}", segments.join("."))
+            // Nested access: segments already traverse into the export= namespace,
+            // so `.export=` must not appear in the display string.
+            // e.g. `import("mod").Bar.Q` missing → `"mod".Bar` (not `"mod".export=.Bar`)
+            format!("\"{display_name}\".{}", segments.join("."))
         }
     }
 

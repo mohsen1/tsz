@@ -413,6 +413,50 @@ fn jsx_sfc_returning_incompatible_type_emits_ts2786() {
     );
 }
 
+/// TS2786 SHOULD fire for a union component where all members have valid props
+/// but at least one member returns an incompatible type. The props-extraction
+/// success must not suppress the return-type check.
+#[test]
+fn jsx_union_component_with_invalid_return_emits_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface IntrinsicElements { }
+        }
+        declare function BadFC(props: {}): { type: string };
+        declare class BadClass { render(): { type: string }; }
+        declare var MixedComponent: typeof BadFC | typeof BadClass;
+        <MixedComponent />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2786),
+        "Union component with invalid return types should emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+/// TS2786 should NOT fire for a union where every member is a valid JSX component.
+#[test]
+fn jsx_union_component_all_valid_no_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface IntrinsicElements { }
+        }
+        declare function GoodFC(props: {}): JSX.Element;
+        declare class GoodClass { render(): JSX.Element; }
+        declare var ValidUnion: typeof GoodFC | typeof GoodClass;
+        <ValidUnion />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2786),
+        "Union component with all valid return types should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
 /// TS2786 should NOT fire for call signatures returning `Element | null`.
 #[test]
 fn jsx_call_signature_returning_element_or_null_no_ts2786() {

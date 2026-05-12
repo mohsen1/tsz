@@ -1084,6 +1084,12 @@ const send = handlers => Promise.resolve(handlers);
         "Expected JSDoc-annotated JS function variable to emit as a function declaration: {output}"
     );
     assert!(
+        output.contains(
+            "/**\n * @param {ResolveRejectMap} handlers\n * @returns {Promise<any>}\n */\ndeclare function send"
+        ),
+        "Expected function variable JSDoc to stay attached to synthetic declaration: {output}"
+    );
+    assert!(
         output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
         "Expected multiline JSDoc typedef alias to be emitted as a local type alias: {output}"
     );
