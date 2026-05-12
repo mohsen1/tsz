@@ -15,15 +15,18 @@
     4988,
     4989,
     4992,
+    4993,
     4994,
     5002,
     5003,
     5051,
     5057,
+    5063,
     5067,
     5081,
     5086,
     5089,
+    5095,
     5096,
     5102,
     5108,
@@ -40,7 +43,7 @@
     5811,
     5830
   ],
-  "candidate_count": 85,
+  "candidate_count": 81,
   "candidates": [
     {
       "pr_number": 4967,
@@ -87,57 +90,6 @@
       "line": 5,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The PR description claims conformance has \u201cnew failures: 0\u201d and \u201cchanged failures: 0\u201d, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType.ts`, `.../narrowingMutualSubtypes.ts`, `.../contextualTypeWithTuple.ts`) and also shows previously failing tests now passing (e.g. `.../maxConstraints.ts`). Please reconcile this with the PR description (update the description or regenerate snapshots from the intended base).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4993,
-      "pr_title": "docs(solver): clarify interner perf-counter cost summary",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4993",
-      "merged_at": "2026-05-10T13:37:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5uq8",
-      "path": "crates/tsz-solver/src/intern/core/interner.rs",
-      "line": 1060,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The wording \"the optimizer folds into the no-op path\" overstates what the compiler can guarantee here. Since `pc` depends on a runtime `enabled_fast()` result, the `if let Some(c) = pc` checks still compile to an Option discriminant test + branch; they\u2019re just predictable/cheap when `pc` is `None`. Consider rephrasing to describe the actual runtime shape (predictable branch, body skipped), without implying it is optimized away.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5063,
-      "pr_title": "docs(checker): clarify cross-file-query helper module docstring",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5063",
-      "merged_at": "2026-05-10T23:00:25Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A79Yo",
-      "path": "crates/tsz-checker/src/context/cross_file_query.rs",
-      "line": 19,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The module-level docstring implies that the helpers in this module collapse `TypeId::UNKNOWN` to `None`, but that isn\u2019t true for all helpers here (e.g. `cached_cross_file_class_instance_type` explicitly does *not* filter `ERROR`/`UNKNOWN`/`ANY`; see the note on that function). Consider tightening this wording to refer specifically to the `cached_cross_file_symbol_type`/`SymbolType` path (or say \u201csome/most helpers\u201d) so the module docs don\u2019t conflict with the behavior documented below.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5095,
-      "pr_title": "fix(parser): guard NodeArena::len_u32 overflow with better error message",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5095",
-      "merged_at": "2026-05-11T08:53:18Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BAu62",
-      "path": "crates/tsz-parser/src/parser/node_arena.rs",
-      "line": 200,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "There are existing tests elsewhere that assert overflow panic messages contain a specific constant (e.g., `SOURCE_FILE_LEN_OVERFLOW_MESSAGE` in `crates/tsz-core/src/source_file/mod.rs`). Since this PR changes the NodeArena overflow message, it would be good to add a similar regression test in this file\u2019s `#[cfg(test)]` module to lock in the new wording and avoid accidental message regressions.",
       "score": 4,
       "reasons": [
         "important-keyword",
@@ -533,22 +485,6 @@
       "line": 182,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This assertion only checks that TS2322 is absent; the test would still pass if other semantic diagnostics are emitted (meaning the snippet is not actually diagnostic-free). Consider asserting that the semantic diagnostics array is empty (and optionally that syntactic diagnostics are empty) to match the \u201caccepts \u2026 assignment\u201d expectation.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4993,
-      "pr_title": "docs(solver): clarify interner perf-counter cost summary",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4993",
-      "merged_at": "2026-05-10T13:37:58Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5urC",
-      "path": "docs/plan/claims/perf-t0-interner-cost-comment-precision-2026-05-10.md",
-      "line": 48,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This repeats the phrase \"optimizer folds into the no-op path\", which can be read as a compile-time guarantee. Because `pc` is determined from a runtime `enabled_fast()` check, the generated code still includes an Option test/branch even when disabled; it\u2019s just predictable and cheap. Recommend mirroring the more precise phrasing used earlier (e.g., \"predictable branch\" / \"body skipped\") rather than claiming it folds away.",
       "score": 1,
       "reasons": [
         "detailed-thread"

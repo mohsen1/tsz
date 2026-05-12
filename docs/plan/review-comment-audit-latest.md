@@ -2,17 +2,17 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 33
-- Potential important unresolved threads: 85
+- PRs excluded as already followed-up: 36
+- Potential important unresolved threads: 81
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 33
+- `crates/tsz-checker`: 32
 - `crates/tsz-emitter`: 19
-- `docs`: 12
-- `crates/tsz-solver`: 8
-- `crates/tsz-parser`: 5
+- `docs`: 11
+- `crates/tsz-solver`: 7
 - `scripts`: 4
+- `crates/tsz-parser`: 4
 - `crates/tsz-cli`: 2
 - `crates/tsz-common`: 1
 - `crates/tsz-wasm`: 1
@@ -27,7 +27,6 @@
 - [#5061](https://github.com/mohsen1/tsz/pull/5061) perf(checker): close delegate-counter coverage gap for cross-arena delegations: 3
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) fix(checker): preserve unique symbol keys in keyof: 3
 - [#5655](https://github.com/mohsen1/tsz/pull/5655) fix(emit): recover namespace function arrow bodies: 3
-- [#4993](https://github.com/mohsen1/tsz/pull/4993) docs(solver): clarify interner perf-counter cost summary: 2
 - [#5663](https://github.com/mohsen1/tsz/pull/5663) fix(checker): align recursiveFunctionTypes display fingerprints: 2
 - [#4949](https://github.com/mohsen1/tsz/pull/4949) fix(cli): anchor TS2578 at comment range, not at line start: 2
 - [#5034](https://github.com/mohsen1/tsz/pull/5034) perf(checker): T2.1.A.1 — checker field-lifetime inventory + CI guard: 2
@@ -39,6 +38,7 @@
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) fix(checker): align recursiveTypeReferences1 array diagnostics: 2
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) fix(dts): ignore cjs exports in esm js modules: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
+- [#5690](https://github.com/mohsen1/tsz/pull/5690) fix(checker): report JS @type subclass assignment mismatch: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -48,12 +48,6 @@
   - `decl_node` may come from `ctx.arena`, `symbol_arenas`, or `declaration_arenas`, but the subsequent `get_type_alias(decl_node)` calls probe multiple arenas (starting with `ctx.arena`) using a `Node` value whose `data_...
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) `scripts/conformance/conformance-baseline.txt:5` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - The PR description claims conformance has “new failures: 0” and “changed failures: 0”, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType...
-- [#4993](https://github.com/mohsen1/tsz/pull/4993) `crates/tsz-solver/src/intern/core/interner.rs:1060` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The wording "the optimizer folds into the no-op path" overstates what the compiler can guarantee here. Since `pc` depends on a runtime `enabled_fast()` result, the `if let Some(c) = pc` checks still compile to an Opti...
-- [#5063](https://github.com/mohsen1/tsz/pull/5063) `crates/tsz-checker/src/context/cross_file_query.rs:19` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The module-level docstring implies that the helpers in this module collapse `TypeId::UNKNOWN` to `None`, but that isn’t true for all helpers here (e.g. `cached_cross_file_class_instance_type` explicitly does *not* fil...
-- [#5095](https://github.com/mohsen1/tsz/pull/5095) `crates/tsz-parser/src/parser/node_arena.rs:200` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - There are existing tests elsewhere that assert overflow panic messages contain a specific constant (e.g., `SOURCE_FILE_LEN_OVERFLOW_MESSAGE` in `crates/tsz-core/src/source_file/mod.rs`). Since this PR changes the Node...
 - [#5663](https://github.com/mohsen1/tsz/pull/5663) `crates/tsz-solver/src/diagnostics/format/compound.rs:467` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - `should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it’s actually part of a ...
 - [#5690](https://github.com/mohsen1/tsz/pull/5690) `crates/tsz-checker/src/state/variable_checking/core.rs:1193` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
@@ -102,8 +96,6 @@
   - `recursive_tuple_declared_assignment_types` special-cases by `def.name == "TupleOf"` but doesn't verify the definition kind. If a user defines an `interface TupleOf<...>` (or other non-alias DefKind) this branch can i...
 - [#4991](https://github.com/mohsen1/tsz/pull/4991) `crates/tsz-wasm/src/wasm_tests.rs:182` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - This assertion only checks that TS2322 is absent; the test would still pass if other semantic diagnostics are emitted (meaning the snippet is not actually diagnostic-free). Consider asserting that the semantic diagnos...
-- [#4993](https://github.com/mohsen1/tsz/pull/4993) `docs/plan/claims/perf-t0-interner-cost-comment-precision-2026-05-10.md:48` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - This repeats the phrase "optimizer folds into the no-op path", which can be read as a compile-time guarantee. Because `pc` is determined from a runtime `enabled_fast()` check, the generated code still includes an Opti...
 - [#4997](https://github.com/mohsen1/tsz/pull/4997) `crates/tsz-solver/src/operations/expression_ops.rs:315` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `normalized_display_properties` does a linear `.find()` over `original_display` for every normalized property, making this O(n²) per object. Consider precomputing a name->PropertyInfo map (or index) from `original_dis...
 - [#4999](https://github.com/mohsen1/tsz/pull/4999) `crates/tsz-checker/src/error_reporter/render_failure.rs:946` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
