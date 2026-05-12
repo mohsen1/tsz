@@ -1884,7 +1884,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn parse_jsdoc_default_typedef_alias_decl(
         jsdoc: &str,
-        alias_name: &str,
+        typedef_alias_name: &str,
     ) -> Option<JsdocTypeAliasDecl> {
         let type_params = Self::parse_jsdoc_template_params(jsdoc);
         let (name, type_text) = if Self::jsdoc_has_property_tags(jsdoc) {
@@ -1897,7 +1897,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(JsdocTypeAliasDecl {
-            name: alias_name.to_string(),
+            name: typedef_alias_name.to_string(),
             type_params,
             type_text,
             description_lines: Vec::new(),
@@ -1958,6 +1958,47 @@ impl<'a> DeclarationEmitter<'a> {
         };
         self.write(&rendered);
         if exported {
+            self.emitted_module_indicator = true;
+        }
+    }
+
+    fn jsdoc_default_typedef_alias_name(&self, default_export_name: &str) -> String {
+        let base = format!("{default_export_name}_default");
+        if !self.reserved_names.contains(&base) && !self.emitted_jsdoc_type_aliases.contains(&base)
+        {
+            return base;
+        }
+
+        let mut suffix = 1usize;
+        loop {
+            let candidate = format!("{base}_{suffix}");
+            if !self.reserved_names.contains(&candidate)
+                && !self.emitted_jsdoc_type_aliases.contains(&candidate)
+            {
+                return candidate;
+            }
+            suffix += 1;
+        }
+    }
+
+    fn emit_rendered_jsdoc_default_typedef_alias(
+        &mut self,
+        decl: JsdocTypeAliasDecl,
+        exported: bool,
+    ) {
+        if !self.emitted_jsdoc_type_aliases.insert(decl.name.clone()) {
+            return;
+        }
+        self.reserved_names.insert(decl.name.clone());
+        let Some(rendered) = Self::render_jsdoc_type_alias_decl(&decl, false) else {
+            return;
+        };
+        self.write(&rendered);
+        if exported {
+            self.write("export { type ");
+            self.write(&decl.name);
+            self.write(" as default };");
+            self.write_line();
             self.emitted_module_indicator = true;
         }
     }
@@ -2185,9 +2226,10 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file || self.js_export_default_names.len() != 1 {
             return;
         }
-        let Some(alias_name) = self.js_export_default_names.iter().next().cloned() else {
+        let Some(default_export_name) = self.js_export_default_names.iter().next().cloned() else {
             return;
         };
+        let typedef_alias_name = self.jsdoc_default_typedef_alias_name(&default_export_name);
 
         let exported = self.source_file_has_module_syntax(source_file)
             && self.js_export_equals_names.is_empty();
@@ -2198,9 +2240,9 @@ impl<'a> DeclarationEmitter<'a> {
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
                 if let Some(decl) =
-                    Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &alias_name)
+                    Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &typedef_alias_name)
                 {
-                    self.emit_rendered_jsdoc_type_alias(decl, exported);
+                    self.emit_rendered_jsdoc_default_typedef_alias(decl, exported);
                 }
             }
         }
@@ -2209,8 +2251,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            if let Some(decl) = Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &alias_name) {
-                self.emit_rendered_jsdoc_type_alias(decl, exported);
+            if let Some(decl) =
+                Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &typedef_alias_name)
+            {
+                self.emit_rendered_jsdoc_default_typedef_alias(decl, exported);
             }
         }
     }

@@ -1870,6 +1870,30 @@ export = a;
 }
 
 #[test]
+fn test_js_export_equals_keeps_commonjs_function_expando_namespace_members() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.label = "ok";
+export = foo;
+"#,
+    );
+
+    assert!(
+        output.contains("export = foo;"),
+        "Expected export= statement to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare namespace foo {"),
+        "Expected function expando declarations to emit a merged namespace under export=: {output}"
+    );
+    assert!(
+        output.contains("label: string;"),
+        "Expected function expando member to be emitted under export=: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_emits_before_target_declaration() {
     let source = r#"
 const a = {};
@@ -5286,12 +5310,18 @@ export default Cls;
     );
     let trimmed = output.trim();
     assert!(
-        trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
+        trimmed.starts_with(
+            "type Cls_default = string | number;\nexport { type Cls_default as default };\nexport default Cls;"
+        ),
         "Expected default typedef to emit before the hoisted default export: {trimmed}"
     );
     assert!(
         trimmed.contains("declare class Cls"),
         "Expected the exported class declaration to remain: {trimmed}"
+    );
+    assert!(
+        !trimmed.contains("export type Cls ="),
+        "Did not expect default typedef alias to collide with the class type name: {trimmed}"
     );
 }
 
