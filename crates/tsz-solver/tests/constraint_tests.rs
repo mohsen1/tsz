@@ -17,8 +17,23 @@ use crate::types::{
 // Helper: create a CallEvaluator + InferenceContext for constraint tests
 // =============================================================================
 
-/// Create a simple generic call scenario and collect constraints via `resolve_call`.
-/// This exercises the constraint collection pipeline end-to-end.
+// Create a simple generic call scenario and collect constraints via `resolve_call`.
+// This exercises the constraint collection pipeline end-to-end.
+
+/// Build an `InferenceContext` against `interner` and seed it with a single
+/// fresh type parameter named `"T"`. Captures the recurring 4-line
+/// `(TypeInterner, InferenceContext, intern("T"), fresh_type_param)` opener
+/// used by the simple constraint tests below. Tests that also need the
+/// interned `"T"` `Atom` can re-call `interner.intern_string("T")` — the
+/// interner returns the same atom for the same key.
+fn ctx_with_t_var(
+    interner: &TypeInterner,
+) -> (InferenceContext<'_>, crate::inference::infer::InferenceVar) {
+    let mut ctx = InferenceContext::new(interner);
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+    (ctx, var_t)
+}
 
 // =============================================================================
 // Simple Constraint Tests (via InferenceContext directly)
@@ -28,10 +43,7 @@ use crate::types::{
 fn test_constraint_simple_string() {
     // T extends string: verify that passing a string literal satisfies the constraint
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     // Simulate: T extends string
     ctx.add_upper_bound(var_t, TypeId::STRING);
@@ -48,10 +60,7 @@ fn test_constraint_simple_string() {
 fn test_constraint_simple_number() {
     // T extends number
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
     let forty_two = interner.literal_number(42.0);
@@ -65,10 +74,7 @@ fn test_constraint_simple_number() {
 fn test_constraint_simple_boolean() {
     // T extends boolean
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::BOOLEAN);
     let true_lit = interner.intern(TypeData::Literal(crate::types::LiteralValue::Boolean(true)));
@@ -86,10 +92,7 @@ fn test_constraint_simple_boolean() {
 fn test_constraint_union_string_or_number() {
     // T extends string | number
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let upper = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     ctx.add_upper_bound(var_t, upper);
@@ -105,10 +108,7 @@ fn test_constraint_union_string_or_number() {
 fn test_constraint_union_satisfies_with_literal() {
     // T extends string | number, pass "hello"
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let upper = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     ctx.add_upper_bound(var_t, upper);
@@ -125,10 +125,7 @@ fn test_constraint_union_satisfies_with_literal() {
 fn test_constraint_union_violates() {
     // T extends string | number, pass boolean - should fail
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let upper = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     ctx.add_upper_bound(var_t, upper);
@@ -150,10 +147,7 @@ fn test_constraint_union_violates() {
 fn test_constraint_object_extends() {
     // T extends { x: number }
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let name_x = interner.intern_string("x");
     let upper = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
@@ -175,10 +169,7 @@ fn test_constraint_object_extends() {
 fn test_constraint_object_violates() {
     // T extends { x: number }, pass { x: string }
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let name_x = interner.intern_string("x");
     let upper = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
@@ -198,10 +189,7 @@ fn test_constraint_object_violates() {
 fn test_constraint_object_missing_property() {
     // T extends { x: number, y: string }, pass { x: number }
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let name_x = interner.intern_string("x");
     let name_y = interner.intern_string("y");
@@ -230,10 +218,7 @@ fn test_constraint_function_extends() {
     // T extends (x: number) => string, pass (x: number) => string
     // Use matching signatures to work with the simplified subtype checker
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let param = ParamInfo {
         name: Some(interner.intern_string("x")),
@@ -273,11 +258,8 @@ fn test_constraint_function_extends() {
 fn test_constraint_function_extends_with_compat_checker() {
     // T extends (x: any) => any, using CompatChecker for proper any handling
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
     let mut checker = CompatChecker::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
 
     let upper = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -328,10 +310,7 @@ fn test_constraint_function_extends_with_compat_checker() {
 fn test_constraint_keyof_object() {
     // T extends keyof { x: number, y: string } => T extends "x" | "y"
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let name_x = interner.intern_string("x");
     let name_y = interner.intern_string("y");
@@ -424,10 +403,7 @@ fn test_constraint_multiple_params_one_violates() {
 fn test_constraint_unsatisfiable_never() {
     // T extends never - only never satisfies
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::NEVER);
 
@@ -445,10 +421,7 @@ fn test_constraint_unsatisfiable_never() {
 fn test_constraint_only_never_satisfies_never() {
     // T extends never, pass never - should succeed
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::NEVER);
     ctx.add_lower_bound(var_t, TypeId::NEVER);
@@ -461,10 +434,7 @@ fn test_constraint_only_never_satisfies_never() {
 fn test_constraint_contradictory_bounds() {
     // T extends string, but also T extends number (cannot satisfy both)
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::STRING);
     ctx.add_upper_bound(var_t, TypeId::NUMBER);
@@ -483,10 +453,8 @@ fn test_constraint_contradictory_bounds() {
 fn test_constraint_infer_from_array() {
     // function id<T>(arr: T[]): T; id([1,2,3]) => T = number
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
 
     let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -511,10 +479,8 @@ fn test_constraint_infer_from_array() {
 fn test_constraint_infer_from_object_property() {
     // function get<T>(obj: { value: T }): T; get({ value: "hello" }) => T = "hello"
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
 
     let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -613,10 +579,8 @@ fn test_constraint_infer_from_function() {
 fn test_constraint_recursive_self_referential() {
     // T extends Comparable<T> modeled as T extends { compareTo: (other: T) => number }
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
 
     let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -659,10 +623,8 @@ fn test_constraint_recursive_self_referential() {
 fn test_constraint_recursive_with_concrete_lower() {
     // T extends { next: T }, but lower bound is a concrete type
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
     let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
 
     let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
@@ -694,10 +656,7 @@ fn test_constraint_with_conditional_upper_bound() {
     // T extends (U extends string ? number : boolean)
     // This is a more complex constraint shape
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     // For simplicity, just use the result type as the upper bound
     // (conditional evaluation is handled by the evaluator)
@@ -945,10 +904,7 @@ fn test_constraint_call_generic_array_element() {
 #[test]
 fn test_declared_constraint_set_and_get() {
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.set_declared_constraint(var_t, TypeId::STRING);
 
@@ -959,10 +915,7 @@ fn test_declared_constraint_set_and_get() {
 #[test]
 fn test_declared_constraint_none_when_not_set() {
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     let constraint = ctx.get_declared_constraint(var_t);
     assert_eq!(constraint, None);
@@ -1026,10 +979,7 @@ fn test_constraint_empty_no_constraints() {
 #[test]
 fn test_contra_candidate_basic() {
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     // Add a contravariant candidate
     ctx.add_contra_candidate(var_t, TypeId::STRING, InferencePriority::NakedTypeVariable);
@@ -1049,10 +999,7 @@ fn test_contra_candidate_basic() {
 #[test]
 fn test_constraint_any_upper_bound() {
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::ANY);
     ctx.add_lower_bound(var_t, TypeId::STRING);
@@ -1065,10 +1012,7 @@ fn test_constraint_any_upper_bound() {
 #[test]
 fn test_constraint_unknown_upper_bound() {
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::UNKNOWN);
     ctx.add_lower_bound(var_t, TypeId::NUMBER);
@@ -1081,10 +1025,7 @@ fn test_constraint_unknown_upper_bound() {
 fn test_constraint_upper_bound_only_defaults() {
     // When only upper bound exists, should default to the upper bound
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_upper_bound(var_t, TypeId::STRING);
 
@@ -1096,10 +1037,7 @@ fn test_constraint_upper_bound_only_defaults() {
 fn test_constraint_no_bounds_defaults_unknown() {
     // When no bounds exist, should default to unknown
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     // No bounds at all - should resolve to unknown
     let result = ctx.resolve_with_constraints(var_t);
@@ -1124,10 +1062,7 @@ fn test_fix_current_variables_filters_unknown_with_informative_upper_bound() {
     // fix_current_variables should filter out `unknown` when `string` upper bound exists,
     // allowing the contra-candidate to drive inference → T = string.
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     // Covariant candidate: unknown (from empty array element type)
     ctx.add_candidate(var_t, TypeId::UNKNOWN, InferencePriority::NakedTypeVariable);
@@ -1153,10 +1088,7 @@ fn test_fix_current_variables_keeps_concrete_candidate_with_upper_bound() {
     // When the covariant candidate is concrete (not unknown/error), it should be preserved.
     // Simulates: f<T>(value: T[], func: (t: T) => void) called as f(["hello"], acceptStr)
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     // Covariant candidate: string (from ["hello"] element type)
     ctx.add_candidate(var_t, TypeId::STRING, InferencePriority::NakedTypeVariable);
@@ -1180,10 +1112,7 @@ fn test_fix_current_variables_unknown_without_upper_bound_stays_unknown() {
     // When there is no upper bound, unknown covariant candidate should NOT be filtered.
     // This ensures we don't break the case where T genuinely resolves to unknown.
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     // Only covariant candidate: unknown
     ctx.add_candidate(var_t, TypeId::UNKNOWN, InferencePriority::NakedTypeVariable);
@@ -1203,10 +1132,7 @@ fn test_contra_candidate_wins_when_only_unknown_covariant() {
     // Tests that resolve_with_constraints also properly handles contra-candidates
     // when the only covariant candidate is `unknown` with an informative upper bound.
     let interner = TypeInterner::new();
-    let mut ctx = InferenceContext::new(&interner);
-
-    let t_name = interner.intern_string("T");
-    let var_t = ctx.fresh_type_param(t_name, false);
+    let (mut ctx, var_t) = ctx_with_t_var(&interner);
 
     ctx.add_candidate(var_t, TypeId::UNKNOWN, InferencePriority::NakedTypeVariable);
     ctx.add_contra_candidate(var_t, TypeId::NUMBER, InferencePriority::NakedTypeVariable);
