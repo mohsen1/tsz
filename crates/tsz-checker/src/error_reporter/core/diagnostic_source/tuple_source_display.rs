@@ -72,10 +72,10 @@ impl<'a> CheckerState<'a> {
             literal_len,
         );
 
-        // Boolean literals are preserved only for positions that are actually
-        // contextually typed by the target tuple. Extra elements past a fixed
-        // target tuple are displayed through the normal widened fallback.
-        if target_element.is_some() {
+        // Boolean literals are preserved only for literal-sensitive tuple
+        // positions. Plain `boolean`/`number` targets display widened source
+        // elements in tsc diagnostics.
+        if target_element.is_some_and(|element| self.type_includes_literal_type(element.type_id)) {
             if display_element_node.kind == SyntaxKind::TrueKeyword as u16 {
                 return Some("true".to_string());
             }
