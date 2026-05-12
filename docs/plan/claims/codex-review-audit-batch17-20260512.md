@@ -63,6 +63,14 @@ initializer relation path performs an additional raw initializer re-check.
   - strengthened wasm regression assertion to require zero semantic diagnostics
     for the nested anonymous object-literal assignment case, instead of only
     checking TS2322 absence.
+- review comments left on #4949:
+  - verified `find_directive_in_text` still returns and consumes directive byte
+    offsets through `find_ts_directives` (`directive_start -> directive_line`)
+    for TS2578 anchoring behavior.
+  - reran directive-anchor regression tests for indented and multiline comment
+    forms in `tsz-cli` (`unused_expect_error_*`).
+  - historical PR-description/snapshot delta thread is stale relative to later
+    snapshot churn; no code-side follow-up remains.
 
 ## Files Touched
 
@@ -75,6 +83,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `docs/plan/claims/codex-review-audit-batch17-20260512.md`
 - `crates/tsz-checker/src/types/computation/call_result.rs`
 - `crates/tsz-wasm/src/wasm_tests.rs`
+- `crates/tsz-cli/src/driver/check_utils.rs` (verified current behavior; no edit needed)
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -88,5 +97,6 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-emitter regex_literal_preserves_non_ascii_flags -- --nocapture`
 - `cargo test -p tsz-emitter decimal_numeric_separators_with_exponents_downlevel_to_number_text -- --nocapture`
 - `cargo test -p tsz-wasm ts_program_accepts_nested_anonymous_object_literal_assignment -- --nocapture`
+- `cargo test -p tsz-cli unused_expect_error_ -- --nocapture`
 - `cargo fmt --all --check`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (last successful run: `candidate_count=56`; subsequent attempts blocked by GitHub GraphQL rate limit)
