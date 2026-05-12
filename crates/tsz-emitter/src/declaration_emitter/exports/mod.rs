@@ -1087,6 +1087,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.source_is_js_file {
+            self.emit_js_class_define_property_accessors_for_name(class.name);
+        }
 
         self.decrease_indent();
         self.write_indent();
@@ -1536,6 +1539,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.source_is_js_file {
+            self.emit_js_class_define_property_accessors_for_name(class.name);
+        }
 
         self.decrease_indent();
         self.write_indent();

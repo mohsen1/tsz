@@ -187,6 +187,12 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_class_like_prototype_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the class-like prototype heuristic (skipped during emit).
     pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
+    /// `Object.defineProperty(Class.prototype, "x", { get/set })` accessors
+    /// folded into matching JS class declarations.
+    pub(super) js_class_define_property_accessors:
+        FxHashMap<String, Vec<crate::declaration_emitter::helpers::JsClassDefinePropertyAccessor>>,
+    /// Expression statements consumed by the JS class defineProperty accessor collector.
+    pub(super) js_class_define_property_accessor_stmts: FxHashSet<NodeIndex>,
     /// JS `Clazz.method.prop = value` statements re-emitted as merged
     /// `namespace Clazz { function method(); namespace method { ... } }`.
     pub(super) js_static_method_augmentation_statements:

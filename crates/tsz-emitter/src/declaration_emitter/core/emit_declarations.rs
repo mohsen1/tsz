@@ -226,6 +226,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
         self.js_class_like_prototype_members = js_class_like.members;
         self.js_class_like_prototype_stmts = js_class_like.consumed_stmts;
+        let (js_class_define_property_accessors, js_class_define_property_accessor_stmts) =
+            self.collect_js_class_define_property_accessors(source_file);
+        self.js_class_define_property_accessors = js_class_define_property_accessors;
+        self.js_class_define_property_accessor_stmts = js_class_define_property_accessor_stmts;
         let js_static_method_augmentations =
             self.collect_js_class_static_method_augmentations(source_file);
         self.js_static_method_augmentation_statements = js_static_method_augmentations.statements;
@@ -640,6 +644,13 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         if self.js_class_like_prototype_stmts.contains(&stmt_idx) {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self
+            .js_class_define_property_accessor_stmts
+            .contains(&stmt_idx)
+        {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -1503,6 +1514,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.source_is_js_file {
+            self.emit_js_class_define_property_accessors_for_name(class.name);
+        }
 
         self.decrease_indent();
         self.write_indent();
