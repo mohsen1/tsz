@@ -1034,13 +1034,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return property_type;
         }
 
-        // Prefer the already-computed value-space type at this query site when available.
-        // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
         if use_flow_sensitive_query
             && let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
             && expr_type != TypeId::ERROR
         {
-            // Apply type arguments from `typeof expr<Args>` instantiation expressions.
             if let Some(type_arguments) = &type_arguments {
                 return self
                     .apply_instantiation_expression_type_arguments(expr_type, type_arguments);
@@ -1048,13 +1045,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return expr_type;
         }
 
-        // For qualified names (e.g., typeof M.F2), resolve the symbol through
-        // the binder's export tables. Simple identifiers are already handled by
-        // the node_types cache above, but qualified names need member resolution.
         if let Some(sym_id) = self.resolve_type_query_symbol(type_query.expr_name) {
-            // TS2693: typeof requires a value binding. If the resolved symbol is
-            // type-only (e.g., an interface or type alias without a value component),
-            // emit an error instead of creating a TypeQuery.
             let (sym_flags, type_only_name) =
                 self.ctx
                     .binder
@@ -1070,18 +1061,48 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return TypeId::ERROR;
             }
 
-            // For simple identifiers, try flow-sensitive narrowing. When `typeof c`
-            // appears inside a type alias within a control flow guard (e.g.,
-            // `if (typeof c === 'string') { type C = { [k: string]: typeof c }; }`),
-            // the declared type should be narrowed by the control flow context.
-            //
-            // First try the symbol_types cache, then fall back to resolving
-            // the type annotation from the variable declaration.
-            //
-            // Exception: a merged VALUE+TYPE_ALIAS symbol (e.g. `const X` + `type X`)
-            // has `Lazy(own_def_id)` in `symbol_types` while the type alias is being
-            // resolved. For `typeof X` inside that body, `typeof` refers to the VALUE
-            // namespace — returning the circular placeholder would cause a false TS2456.
+            if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                && sym_flags & tsz_binder::symbol_flags::VALUE != 0
+            {
+                if let Some(&val_type) = self.ctx.merged_value_types.get(&sym_id) {
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            val_type,
+                            type_arguments,
+                        );
+                    }
+                    return val_type;
+                }
+
+                if let Some(ann_idx) = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+                    let mut decl = symbol.value_declaration;
+                    let decl_node = self.ctx.arena.get(decl)?;
+                    if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        decl = self.ctx.arena.get_extended(decl)?.parent;
+                    }
+                    let decl_node = self.ctx.arena.get(decl)?;
+                    if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                        return None;
+                    }
+                    let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                    var_decl
+                        .type_annotation
+                        .is_some()
+                        .then_some(var_decl.type_annotation)
+                }) {
+                    let ann_type = self.check(ann_idx);
+                    if ann_type != TypeId::ERROR && ann_type != TypeId::ANY {
+                        if let Some(type_arguments) = &type_arguments {
+                            return self.apply_instantiation_expression_type_arguments(
+                                ann_type,
+                                type_arguments,
+                            );
+                        }
+                        return ann_type;
+                    }
+                }
+            }
+
             let mut declared_type: Option<TypeId> =
                 if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
                     && self.ctx.symbol_resolution_set.contains(&sym_id)
@@ -1096,8 +1117,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 };
 
             if declared_type.is_none() {
-                // symbol_types may not be populated yet (early phase).
-                // Extract and resolve the type annotation from the declaration.
                 let type_ann_idx = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
                     let decl = symbol.value_declaration;
                     if decl.is_none() {

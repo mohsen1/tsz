@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // 14. Numeric Literal Normalization
@@ -573,8 +578,7 @@ fn test_namespace_import_type_is_preserved_with_usage_analysis() {
     import * as ns from "pkg";
     export const value = ns;
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let source_file = parser
         .arena
@@ -661,8 +665,7 @@ fn test_call_expression_recovers_return_type_from_callee_type() {
     let source = r#"
     export const a = helper.x();
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let source_file = parser
         .arena
@@ -753,8 +756,7 @@ fn test_export_json_attributes_are_stripped_from_declarations() {
 fn test_inferred_printer_reduces_conditional_alias_applications() {
     use tsz_solver::types::{ConditionalType, TypeParamInfo};
 
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
 
     let mut foreign_parser = ParserState::new(
         "lib.d.ts".to_string(),
@@ -1191,8 +1193,7 @@ export default Op;
 #[test]
 fn test_destructuring_variable_declaration_groups_typed_bindings() {
     let source = r#"var [x, y] = [1, "hello"];"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let stmt_idx = parser
         .arena
@@ -1303,8 +1304,7 @@ fn test_inferred_object_return_preserves_destructured_typeof_alias_member() {
 #[test]
 fn test_destructuring_parameter_properties_emit_individual_class_properties() {
     let source = "class C { constructor(public [x, y]: [string, number]) {} }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let stmt_idx = parser
         .arena

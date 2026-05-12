@@ -787,6 +787,8 @@ pub struct CheckerContext<'a> {
     /// Populated during named import resolution in `compute_type_of_symbol`.
     /// Consumed by `type_reference_symbol_type` to return the type alias body in type contexts.
     pub import_type_alias_types: FxHashMap<SymbolId, TypeId>,
+    /// VALUE-side type for merged const/type-alias symbols while their alias body lowers.
+    pub merged_value_types: FxHashMap<SymbolId, TypeId>,
     /// O(1) lookup set for class instance type resolution to avoid recursion.
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.

@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // 5. Type Formatting
@@ -32,8 +37,7 @@ fn test_type_printer_preserves_union_display_origin() {
 #[test]
 fn test_type_printer_prints_named_unique_symbol_as_typeof() {
     let source = "export const x = Symbol();\nexport const y = Symbol();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -69,8 +73,7 @@ fn test_function_type_in_declaration() {
 #[test]
 fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
     let source = "class A {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, _root);
 
@@ -101,8 +104,7 @@ declare const createExperiment: <Name extends string>(
     options: Experiment<Name>
 ) => Experiment<Name>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -252,8 +254,7 @@ const foo = <T,>(x: T) => {
     return inner;
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let root_node = parser.arena.get(root).expect("missing root node");
@@ -295,8 +296,7 @@ export function needsRenameForShadowing<T>() {
   }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let func = parser
@@ -350,8 +350,7 @@ export function Timestamped<TBase extends Constructor>(Base: TBase) {
     };
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let source_file = parser
@@ -540,8 +539,7 @@ function test(fn) {
 #[test]
 fn test_any_dataview_new_expression_falls_back_to_generic_type() {
     let source = "const dataView = new DataView(new ArrayBuffer(80));";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -586,8 +584,7 @@ class C {
 }
 var methodValue = C.s2;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
@@ -662,8 +659,7 @@ const nPrivate = "private";
 export const o = (p1: typeof nImported, p2: typeof nNotImported, p3: typeof nPrivate) => null! as { foo: typeof nImported, bar: typeof nPrivate, baz: typeof nNotImported };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let source_file = parser
         .arena
@@ -742,8 +738,7 @@ type Box<T> = {
 declare function box<T>(value: T): Box<T>;
 const bn1 = box(0);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
@@ -824,8 +819,7 @@ fn test_non_null_call_initializer_recovers_return_type() {
 declare const fn: (() => string) | undefined;
 const a = fn!();
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);

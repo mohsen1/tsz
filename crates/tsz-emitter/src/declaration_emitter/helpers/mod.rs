@@ -215,6 +215,7 @@ mod portability_resolve;
 mod returned_function_initializer;
 mod synthetic_dependencies;
 mod type_inference;
+mod type_inference_accessor_property;
 mod type_inference_enum_access;
 mod type_inference_flat_map;
 mod type_inference_foreign_names;

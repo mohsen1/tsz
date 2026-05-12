@@ -167,6 +167,7 @@ impl<'a> CheckerContext<'a> {
             import_conflict_names: FxHashSet::default(),
             module_namespace_resolution_set: FxHashSet::default(),
             import_type_alias_types: FxHashMap::default(),
+            merged_value_types: FxHashMap::default(),
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: super::MAX_SYMBOL_RESOLUTION_DEPTH,
             class_instance_resolution_set: FxHashSet::default(),

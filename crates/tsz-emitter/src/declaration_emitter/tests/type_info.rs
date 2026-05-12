@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_same_file_symbol_module_path_is_none() {
@@ -8,8 +13,7 @@ namespace m1 {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let current_arena = Arc::new(parser.arena.clone());
@@ -47,8 +51,7 @@ export function middle() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -108,8 +111,7 @@ export function middle() {
 
 #[test]
 fn test_structural_setter_only_property_uses_write_type() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
 
     let interner = TypeInterner::new();
@@ -141,8 +143,7 @@ fn test_structural_setter_only_property_uses_write_type() {
 
 #[test]
 fn test_foreign_global_lazy_type_application_keeps_alias_name() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
 
     let mut foreign_parser = ParserState::new(
         "lib.es2019.array.d.ts".to_string(),
@@ -243,8 +244,7 @@ export function wrapClass(param: any) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -311,8 +311,7 @@ declare class Base {}
 export class Derived extends mixin(Base) {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -369,8 +368,7 @@ declare function getGreeterBase(): GreeterConstructor;
 export default class extends getGreeterBase() {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -424,8 +422,7 @@ declare function getBase(): any;
 export class Derived extends getBase()<string, number> {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -472,8 +469,7 @@ declare function getBase(): typeof LocalBase;
 export class Derived extends getBase()<string, number> {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -538,8 +534,7 @@ export class XmlElement2 extends Mixin(
     }) {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -644,8 +639,7 @@ declare function getLocalClass<T>(c: T): typeof LocalClass;
 export class MyClass extends getLocalClass<LocalInterface>(undefined)<string, number> {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -711,8 +705,7 @@ namespace Test {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -781,8 +774,7 @@ export class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -852,8 +844,7 @@ export class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -911,8 +902,7 @@ export class A {
 
 #[test]
 fn test_synthesized_computed_method_index_signatures_widen_nested_literal_returns() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
 
     let interner = TypeInterner::new();
@@ -1015,8 +1005,7 @@ const Value = class {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -1097,8 +1086,7 @@ export namespace C {
 export const value = null as any;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -1153,8 +1141,7 @@ export namespace C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -1195,8 +1182,7 @@ export namespace C {
 
 #[test]
 fn test_type_application_elides_trailing_default_type_argument() {
-    let mut parser = ParserState::new("test.ts".to_string(), "".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
 
     let interner = TypeInterner::new();
@@ -1314,8 +1300,7 @@ export function wrapper<T>(value: T) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
