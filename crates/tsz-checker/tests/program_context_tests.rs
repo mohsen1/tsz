@@ -143,6 +143,16 @@ fn global_declared_modules_insert_normalizes_and_deduplicates() {
 }
 
 #[test]
+fn global_declared_modules_builds_from_module_names() {
+    let module_names = ["\"my-module\"", "'*.css'", "*.css"];
+    let dm = GlobalDeclaredModules::from_module_names(module_names);
+
+    assert!(dm.exact.contains("my-module"));
+    assert_eq!(dm.patterns, vec!["*.css"]);
+    assert!(dm.matches_wildcard("./style.css"));
+}
+
+#[test]
 fn apply_to_populates_symbol_file_targets_fallback() {
     // Without global_symbol_file_index, entries go into the local overlay.
     let interner = TypeInterner::new();

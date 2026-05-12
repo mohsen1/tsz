@@ -36,6 +36,24 @@ impl GlobalDeclaredModules {
         me
     }
 
+    /// Build from raw module specifier names.
+    ///
+    /// Names may be quoted and may include wildcard patterns. This uses the
+    /// same normalization and finalization path as incremental insertion.
+    #[must_use]
+    pub fn from_module_names<I, S>(module_names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut me = Self::default();
+        for module_name in module_names {
+            me.insert_module_name(module_name.as_ref());
+        }
+        me.finish();
+        me
+    }
+
     /// Add a module name or wildcard pattern from binder state.
     ///
     /// Binder maps may carry quoted module specifiers; the global lookup index
