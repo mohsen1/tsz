@@ -12,6 +12,7 @@ use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -306,12 +307,18 @@ fn normalized_display_properties(
     normalized_properties: &[PropertyInfo],
 ) -> Vec<PropertyInfo> {
     let original_display = interner.get_display_properties(original_type);
+    let original_display_index = original_display.as_ref().map(|props| {
+        props
+            .iter()
+            .map(|prop| (prop.name, prop))
+            .collect::<FxHashMap<_, _>>()
+    });
     let mut display_props: Vec<PropertyInfo> = normalized_properties
         .iter()
         .map(|prop| {
-            let Some(display_prop) = original_display
+            let Some(display_prop) = original_display_index
                 .as_ref()
-                .and_then(|props| props.iter().find(|candidate| candidate.name == prop.name))
+                .and_then(|props| props.get(&prop.name))
             else {
                 return prop.clone();
             };

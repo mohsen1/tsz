@@ -63,6 +63,12 @@ initializer relation path performs an additional raw initializer re-check.
   - strengthened wasm regression assertion to require zero semantic diagnostics
     for the nested anonymous object-literal assignment case, instead of only
     checking TS2322 absence.
+- review comments left on #4997:
+  - replaced O(n²) per-property display-source lookup in
+    `normalized_display_properties` with a one-time `FxHashMap<Atom, PropertyInfo>`
+    index over original display properties.
+  - preserves property output order and display-type override behavior while
+    reducing lookup complexity to linear.
 - review comments left on #4949:
   - verified `find_directive_in_text` still returns and consumes directive byte
     offsets through `find_ts_directives` (`directive_start -> directive_line`)
@@ -91,6 +97,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-wasm/src/wasm_tests.rs`
 - `crates/tsz-cli/src/driver/check_utils.rs` (verified current behavior; no edit needed)
 - `crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs` (verified current behavior; no edit needed)
+- `crates/tsz-solver/src/operations/expression_ops.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -107,5 +114,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-cli unused_expect_error_ -- --nocapture`
 - `cargo test -p tsz-checker --test conditional_infer_tests recursive_tuple_alias_assignment_reports_both_directions -- --nocapture`
 - `cargo test -p tsz-checker --test conditional_infer_tests interface_tupleof_assignment_uses_constraint_directionality -- --nocapture`
+- `cargo test -p tsz-solver object_union_optionalization_in_default_mode -- --nocapture`
+- `cargo test -p tsz-solver object_union_no_optionalization_in_diagnostic_mode -- --nocapture`
 - `cargo fmt --all --check`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (last successful run: `candidate_count=56`; subsequent attempts blocked by GitHub GraphQL rate limit)
