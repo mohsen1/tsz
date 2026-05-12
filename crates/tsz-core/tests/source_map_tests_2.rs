@@ -6,6 +6,11 @@ use crate::lowering::LoweringPass;
 use crate::parser::ParserState;
 use crate::source_map_test_utils::decode_mappings;
 use serde_json::Value;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_source_map_generator_class_method() {
@@ -18,8 +23,7 @@ fn test_source_map_generator_class_method() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -79,8 +83,7 @@ fn test_source_map_generator_try_catch() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -135,8 +138,7 @@ fn test_source_map_generator_with_parameters() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -191,8 +193,7 @@ function* itemGenerator(): Generator<Item> {
     yield { id: 2, name: "second" };
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -249,8 +250,7 @@ fn test_source_map_generator_expression() {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -312,8 +312,7 @@ fn test_source_map_namespace_with_function() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -374,8 +373,7 @@ fn test_source_map_namespace_with_class() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -437,8 +435,7 @@ fn test_source_map_namespace_with_enum() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -494,8 +491,7 @@ fn test_source_map_nested_namespace_dot_notation() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -555,8 +551,7 @@ namespace Merged {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -614,8 +609,7 @@ fn test_source_map_namespace_with_variables() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -679,8 +673,7 @@ fn test_source_map_exported_namespace() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -740,8 +733,7 @@ fn test_source_map_namespace_nested_declaration() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -801,8 +793,7 @@ fn test_source_map_namespace_with_interface_only() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -864,8 +855,7 @@ fn test_source_map_namespace_mixed_content() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -923,8 +913,7 @@ fn test_source_map_rest_parameter_function() {
 }
 const result = sum(1, 2, 3, 4, 5);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -978,8 +967,7 @@ fn test_source_map_rest_parameter_arrow() {
 };
 const greeting = concat("Hello", " ", "World");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1034,8 +1022,7 @@ fn test_source_map_spread_function_call() {
 const nums = [2, 3, 4];
 const product = multiply(...nums);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1088,8 +1075,7 @@ fn test_source_map_spread_array_literal() {
 const second = [4, 5, 6];
 const combined = [...first, ...second, 7, 8, 9];"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1142,8 +1128,7 @@ fn test_source_map_spread_object_literal() {
 const overrides = { size: "large", color: "blue" };
 const merged = { ...defaults, ...overrides, custom: true };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1196,8 +1181,7 @@ fn test_source_map_rest_array_destructuring() {
 const [first, second, ...remaining] = numbers;
 console.log(first, second, remaining);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1250,8 +1234,7 @@ fn test_source_map_rest_object_destructuring() {
 const { name, age, ...details } = person;
 console.log(name, age, details);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1309,8 +1292,7 @@ fn test_source_map_rest_parameter_class_method() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1365,8 +1347,7 @@ fn test_source_map_spread_new_expression() {
 const coords = [1, 2, 3];
 const point = new Point(...coords);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1423,8 +1404,7 @@ const b = [3, 4];
 const c = [5, 6];
 const result = merge(a, b, c);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1480,8 +1460,7 @@ fn test_source_map_template_literal_simple() {
     let source = r#"const message = `Hello, World!`;
 console.log(message);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1534,8 +1513,7 @@ fn test_source_map_template_literal_with_expression() {
 const greeting = `Hello, ${name}!`;
 console.log(greeting);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1590,8 +1568,7 @@ const age = 30;
 const info = `Name: ${firstName} ${lastName}, Age: ${age}`;
 console.log(info);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1644,8 +1621,7 @@ fn test_source_map_template_literal_nested() {
 const outer = `Hello, ${`dear ${inner}`}!`;
 console.log(outer);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1701,8 +1677,7 @@ const name = "TypeScript";
 const result = highlight`Language: ${name}`;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1757,8 +1732,7 @@ fn test_source_map_template_literal_in_function() {
 const user = "Bob";
 greet(`Welcome, ${user}! Enjoy your stay.`);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1811,8 +1785,7 @@ fn test_source_map_template_literal_with_method_calls() {
 const result = `Uppercase: ${text.toUpperCase()}, Length: ${text.length}`;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1865,8 +1838,7 @@ fn test_source_map_template_literal_conditional() {
 const grade = `Grade: ${score >= 90 ? "A" : score >= 80 ? "B" : "C"}`;
 console.log(grade);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1923,8 +1895,7 @@ Status: Complete
 `;
 console.log(content);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1985,8 +1956,7 @@ fn test_source_map_template_literal_in_class() {
 const fmt = new Formatter("LOG");
 console.log(fmt.format("test message"));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2043,8 +2013,7 @@ fn test_source_map_destructuring_object_basic() {
 const { a, b, c } = obj;
 console.log(a, b, c);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2097,8 +2066,7 @@ fn test_source_map_destructuring_array_basic() {
 const [first, second, third] = arr;
 console.log(first, second, third);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2151,8 +2119,7 @@ fn test_source_map_destructuring_object_with_rename() {
 const { firstName: first, lastName: last } = person;
 console.log(first, last);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2205,8 +2172,7 @@ fn test_source_map_destructuring_array_with_skip() {
 const [first, , third, , fifth] = numbers;
 console.log(first, third, fifth);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2262,8 +2228,7 @@ fn test_source_map_destructuring_nested_object() {
 const { name, address: { city, zip } } = user;
 console.log(name, city, zip);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2316,8 +2281,7 @@ fn test_source_map_destructuring_nested_array() {
 const [[a, b], [c, d]] = matrix;
 console.log(a, b, c, d);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2370,8 +2334,7 @@ fn test_source_map_destructuring_object_with_defaults() {
 const { host, port = 3000, protocol = "http" } = config;
 console.log(host, port, protocol);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2424,8 +2387,7 @@ fn test_source_map_destructuring_array_with_defaults() {
 const [x = 0, y = 0, z = 0] = partial;
 console.log(x, y, z);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2483,8 +2445,7 @@ function processCoords([x, y]: [number, number]) {
 processUser({ name: "John", age: 30 });
 processCoords([10, 20]);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2540,8 +2501,7 @@ fn test_source_map_destructuring_mixed() {
 const { items: [first, second], meta: { count } } = data;
 console.log(first, second, count);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2598,8 +2558,7 @@ fn test_source_map_optional_chaining_property_access() {
 const city = user?.address?.city;
 console.log(city);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2654,8 +2613,7 @@ fn test_source_map_optional_chaining_method_call() {
 const result = obj?.greet?.("World");
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2710,8 +2668,7 @@ const obj = { items: ["a", "b", "c"] };
 const val = obj?.items?.[1];
 console.log(item, val);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2772,8 +2729,7 @@ fn test_source_map_optional_chaining_nested() {
 const result = data?.level1?.level2?.level3?.value;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2827,8 +2783,7 @@ const timeout = config?.timeout ?? 3000;
 const host = config?.host ?? "localhost";
 console.log(timeout, host);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2883,8 +2838,7 @@ fn test_source_map_optional_chaining_in_function() {
 const result = getCity({ address: { city: "NYC" } });
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2937,8 +2891,7 @@ fn test_source_map_optional_chaining_with_method_chain() {
 const result = str?.toUpperCase?.()?.toLowerCase?.();
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2991,8 +2944,7 @@ fn test_source_map_optional_chaining_delete() {
 delete obj?.prop;
 console.log(obj);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3045,8 +2997,7 @@ fn test_source_map_optional_chaining_call_expression() {
 const result = fn?.();
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3106,8 +3057,7 @@ const name = user?.profile?.getName?.() ?? "Anonymous";
 const theme = user?.profile?.settings?.[0]?.theme ?? "light";
 console.log(name, theme);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3164,8 +3114,7 @@ fn test_source_map_nullish_coalescing_basic() {
 const result = value ?? "default";
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3220,8 +3169,7 @@ fn test_source_map_nullish_coalescing_with_null() {
 const result = getValue() ?? "fallback";
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3274,8 +3222,7 @@ fn test_source_map_nullish_coalescing_with_undefined() {
 const port = config.port ?? 8080;
 console.log(port);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3330,8 +3277,7 @@ const c = "final";
 const result = a ?? b ?? c;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3387,8 +3333,7 @@ const input: string | null = null;
 const result = input ?? getDefault();
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3441,8 +3386,7 @@ fn test_source_map_nullish_coalescing_assignment() {
 value ??= 42;
 console.log(value);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3496,8 +3440,7 @@ const threshold = 10;
 const result = (input ?? 0) > threshold ? "above" : "below";
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3551,8 +3494,7 @@ const config: { host?: string; port?: number } | null = null;
 const merged = config ?? defaults;
 console.log(merged.host, merged.port);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3608,8 +3550,7 @@ fn test_source_map_nullish_coalescing_in_function() {
 const message = greet(null);
 console.log(message);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3671,8 +3612,7 @@ let retries: number | null = null;
 retries ??= 3;
 console.log(endpoint, timeout, retries);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3729,8 +3669,7 @@ fn test_source_map_logical_and_assignment_basic() {
 value &&= false;
 console.log(value);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3783,8 +3722,7 @@ fn test_source_map_logical_or_assignment_basic() {
 value ||= true;
 console.log(value);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3837,8 +3775,7 @@ fn test_source_map_logical_and_assignment_object_property() {
 obj.active &&= false;
 console.log(obj.active);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3891,8 +3828,7 @@ fn test_source_map_logical_or_assignment_object_property() {
 config.debug ||= true;
 console.log(config.debug);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3945,8 +3881,7 @@ fn test_source_map_logical_and_assignment_element_access() {
 arr[0] &&= false;
 console.log(arr);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3999,8 +3934,7 @@ fn test_source_map_logical_or_assignment_element_access() {
 flags[1] ||= true;
 console.log(flags);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4057,8 +3991,7 @@ b ||= true;
 c ??= "default";
 console.log(a, b, c);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4115,8 +4048,7 @@ fn test_source_map_logical_assignment_in_function() {
 const result = updateConfig({});
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4172,8 +4104,7 @@ let name: string | null = null;
 name ??= getDefault();
 console.log(name);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4233,8 +4164,7 @@ settings.timeout ??= 5000;
 settings.features![0].enabled &&= true;
 console.log(settings);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4290,8 +4220,7 @@ fn test_source_map_exponentiation_basic() {
     let source = r#"const result = 2 ** 10;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4345,8 +4274,7 @@ const exponent = 8;
 const result = base ** exponent;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4399,8 +4327,7 @@ fn test_source_map_exponentiation_assignment() {
 value **= 3;
 console.log(value);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4452,8 +4379,7 @@ fn test_source_map_exponentiation_chained() {
     let source = r#"const result = 2 ** 3 ** 2;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4505,8 +4431,7 @@ fn test_source_map_exponentiation_negative_exponent() {
     let source = r#"const result = 10 ** -2;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4560,8 +4485,7 @@ const b = 3;
 const result = a * (b ** 2) + 1;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4614,8 +4538,7 @@ fn test_source_map_exponentiation_precedence() {
 const b = 2 ** (3 ** 2);
 console.log(a, b);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4670,8 +4593,7 @@ fn test_source_map_exponentiation_in_function() {
 const result = power(2, 10);
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4727,8 +4649,7 @@ const base = 2;
 const result = base ** getExponent();
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4785,8 +4706,7 @@ const cubed = base ** 3;
 const complex = (squared ** 2) + (cubed ** 2);
 console.log(accumulator, squared, cubed, complex);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4842,8 +4762,7 @@ fn test_source_map_bigint_basic() {
     let source = r#"const value = 123n;
 console.log(value);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4897,8 +4816,7 @@ const b = 200n;
 const sum = a + b;
 console.log(sum);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4956,8 +4874,7 @@ const div = a / b;
 const mod = a % b;
 console.log(add, sub, mul, div, mod);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5013,8 +4930,7 @@ const isEqual = a === 10n;
 const isGreater = b > a;
 console.log(isLess, isEqual, isGreater);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5067,8 +4983,7 @@ fn test_source_map_bigint_constructor() {
 const fromString = BigInt("12345678901234567890");
 console.log(fromNumber, fromString);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5124,8 +5039,7 @@ fn test_source_map_bigint_in_function() {
 const result = factorial(10n);
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5179,8 +5093,7 @@ const veryLarge = 123456789012345678901234567890n;
 const sum = large + veryLarge;
 console.log(sum);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5234,8 +5147,7 @@ const alsoNegative = -100n;
 const result = negative + alsoNegative;
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5288,8 +5200,7 @@ fn test_source_map_bigint_in_array_object() {
 const obj = { small: 10n, large: 1000000000000000000n };
 console.log(arr, obj.small, obj.large);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5347,8 +5258,7 @@ for (let i = 0n; i < exponent; i++) {
 const asNumber = Number(power);
 console.log(power, asNumber);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5403,8 +5313,7 @@ fn test_source_map_dynamic_import_basic() {
     // Test basic dynamic import
     let source = r#"import("./module");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5456,8 +5365,7 @@ fn test_source_map_dynamic_import_variable_path() {
     let source = r#"const modulePath = "./utils";
 import(modulePath);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5510,8 +5418,7 @@ fn test_source_map_dynamic_import_then_chain() {
     console.log(mod);
 });"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5565,8 +5472,7 @@ fn test_source_map_dynamic_import_await() {
     return mod;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5620,8 +5526,7 @@ fn test_source_map_dynamic_import_in_function() {
 }
 loadLazy();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5675,8 +5580,7 @@ fn test_source_map_dynamic_import_destructuring() {
     return main(helper);
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5732,8 +5636,7 @@ if (isAdmin) {
     import("./user-module");
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5785,8 +5688,7 @@ fn test_source_map_dynamic_import_template_path() {
     let source = r#"const moduleName = "utils";
 import(`./modules/${moduleName}`);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5839,8 +5741,7 @@ fn test_source_map_dynamic_import_catch() {
     .then(mod => mod.init())
     .catch(err => console.error(err));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5899,8 +5800,7 @@ fn test_source_map_dynamic_import_combined() {
 }
 loadModules(["a", "b", "c"]);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5957,8 +5857,7 @@ fn test_source_map_private_field_basic() {
     #count = 0;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6013,8 +5912,7 @@ fn test_source_map_private_field_initialized() {
     #active = true;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6072,8 +5970,7 @@ fn test_source_map_private_field_constructor() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6134,8 +6031,7 @@ fn test_source_map_private_method() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6191,8 +6087,7 @@ fn test_source_map_private_field_access() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6251,8 +6146,7 @@ fn test_source_map_private_field_assignment() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6311,8 +6205,7 @@ fn test_source_map_private_static_field() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6370,8 +6263,7 @@ fn test_source_map_private_static_method() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6433,8 +6325,7 @@ class Derived extends Base {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6511,8 +6402,7 @@ fn test_source_map_private_field_combined() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6576,8 +6466,7 @@ class Service {
     name = "test";
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6637,8 +6526,7 @@ class Immutable {
     value = 42;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6698,8 +6586,7 @@ class Composed {
     method() {}
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6759,8 +6646,7 @@ class Utils {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6821,8 +6707,7 @@ class Config {
     static name = "App";
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6884,8 +6769,7 @@ class Data {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6947,8 +6831,7 @@ class Settings {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7009,8 +6892,7 @@ class Entity {
     age: number;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7072,8 +6954,7 @@ class Child extends Parent {
     childMethod() {}
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7152,8 +7033,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7214,8 +7094,7 @@ fn test_source_map_enum_const() {
 }
 const dir = Direction.Up;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7272,8 +7151,7 @@ fn test_source_map_enum_with_initializers() {
     G = "123".length
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7337,8 +7215,7 @@ function checkStatus(s: Status) {
     return "done";
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7398,8 +7275,7 @@ fn test_source_map_enum_in_namespace() {
 
 const level = App.LogLevel.Info;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7459,8 +7335,7 @@ enum Color {
     Orange = 5
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7518,8 +7393,7 @@ fn test_source_map_enum_reverse_mapping() {
 const statusCode = HttpStatus.OK;
 const statusName = HttpStatus[200];"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7573,8 +7447,7 @@ fn test_source_map_enum_heterogeneous() {
     Yes = "YES"
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7641,8 +7514,7 @@ class Task {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7710,8 +7582,7 @@ function getFruitColor(fruit: Fruit): string {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7788,8 +7659,7 @@ function hasPermission(perms: Permission, check: Permission): boolean {
 const status = InlineStatus.Active;
 const fileType = FileSystem.FileType.Directory;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7850,8 +7720,7 @@ fn test_source_map_class_expression_named() {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7905,8 +7774,7 @@ const Derived = class extends Base {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7962,8 +7830,7 @@ fn test_source_map_class_expression_static_methods() {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8030,8 +7897,7 @@ fn test_source_map_class_expression_accessors() {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8088,8 +7954,7 @@ fn test_source_map_class_expression_in_function() {
 const DynamicClass = createClass("Dynamic");
 const instance = new DynamicClass();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8153,8 +8018,7 @@ fn test_source_map_class_expression_with_constructor() {
 
 const rect = new Rectangle(10, 20);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8213,8 +8077,7 @@ const Computed = class {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8275,8 +8138,7 @@ fn test_source_map_class_expression_in_array() {
 
 const instance = new classes[0]();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8345,8 +8207,7 @@ fn test_source_map_class_expression_iife() {
     };
 })();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8429,8 +8290,7 @@ const registry = {
 const e1 = new registry.Entity(1, "test");
 const c1 = new registry.Counter();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8484,8 +8344,7 @@ import { Component, useState } from "react";
 const result = foo() + bar(baz);
 const comp = Component;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8538,8 +8397,7 @@ const element = React.createElement("div");
 const result = lodash.map([1, 2, 3], x => x * 2);
 myModule.init();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8592,8 +8450,7 @@ const result = utils.helper();
 const element = React.createElement("span");
 const joined = path.join("a", "b");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8652,8 +8509,7 @@ export class Calculator {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8707,8 +8563,7 @@ fn test_source_map_export_default() {
 const helper = () => "helper";
 export { helper };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8758,8 +8613,7 @@ export { default as MyDefault } from "./default";
 export * from "./utils";
 export * as namespace from "./namespace";"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8810,8 +8664,7 @@ import { Component as ReactComponent } from "react";
 const result = myFoo() + myBar();
 const comp = new ReactComponent();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8862,8 +8715,7 @@ import { type OnlyType, realValue } from "./mixed";
 const value: MyType = realValue;
 const data: MyInterface = { name: "test" };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8915,8 +8767,7 @@ import "reflect-metadata";
 
 console.log("Imports loaded");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8983,8 +8834,7 @@ export class DataProcessor extends Component {
 export default DataProcessor;
 export { helper as utilHelper };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9040,8 +8890,7 @@ const getUndefined = () => undefined;
 
 console.log(getTime(), getEmpty(), getNull(), getUndefined());"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9092,8 +8941,7 @@ const increment = num => num + 1;
 
 const result = [1, 2, 3].map(double).map(stringify);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9146,8 +8994,7 @@ const greeting = greet();
 const sum = add(5);
 const product = multiply(2, 3);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9199,8 +9046,7 @@ const log = (message: string, ...args: any[]) => console.log(message, ...args);
 const total = sum(1, 2, 3, 4, 5);
 const joined = concat("a", "b", "c");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9254,8 +9100,7 @@ const point = { x: 10, y: 20 };
 const arr = [1, 2, 3];
 const result = getXY(point) + getFirst(arr);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9319,8 +9164,7 @@ fn test_source_map_arrow_class_property() {
 const counter = new Counter();
 counter.increment();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9378,8 +9222,7 @@ const module = (() => {
 
 console.log(result1, result2, result3, module.getValue());"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9436,8 +9279,7 @@ const point = createPoint(10, 20);
 const rect = createRect(100, 50);
 const person = createPerson("Alice", 30);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9491,8 +9333,7 @@ const curriedAdd = curry(add);
 const add5 = curriedAdd(5);
 const result = add5(10);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9567,8 +9408,7 @@ const pipeline = [
 
 console.log(pipeline(5));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9625,8 +9465,7 @@ fn test_source_map_async_generator_basic() {
 const gen = basicAsyncGen();
 gen.next().then(console.log);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9681,8 +9520,7 @@ fn test_source_map_async_generator_with_await() {
 const urls = ["url1", "url2"];
 const gen = fetchSequence(urls);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9739,8 +9577,7 @@ async function* outerGen() {
 
 const gen = outerGen();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9798,8 +9635,7 @@ fn test_source_map_async_generator_try_catch() {
 
 const gen = safeGenerator();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9865,8 +9701,7 @@ fn test_source_map_async_generator_class_method() {
 const stream = new DataStream();
 const gen = stream.iterate();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9924,8 +9759,7 @@ async function* numberStream() {
 
 const processed = processStream(numberStream());"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9985,8 +9819,7 @@ async function consume() {
     console.log("Final:", result.value);
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10044,8 +9877,7 @@ const namedAsyncGen = async function* named() {
 const gen1 = asyncGen();
 const gen2 = namedAsyncGen();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10108,8 +9940,7 @@ async function collect() {
     return results;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10191,8 +10022,7 @@ async function* transform<T, U>(
 const queue = new AsyncQueue<number>();
 const doubled = transform(queue, async n => n * 2);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10254,8 +10084,7 @@ async function* numberGen() {
 
 processItems(numberGen());"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10317,8 +10146,7 @@ async function processData() {
 
 processData();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10383,8 +10211,7 @@ async function processNested() {
 
 processNested();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10448,8 +10275,7 @@ async function safeIterate() {
 
 safeIterate();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10513,8 +10339,7 @@ async function processWithControl() {
 
 processWithControl();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10578,8 +10403,7 @@ fn test_source_map_for_await_class_method() {
 const processor = new AsyncProcessor();
 processor.process(processor.generate());"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10641,8 +10465,7 @@ async function processWithFetch() {
 
 processWithFetch();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10702,8 +10525,7 @@ async function labeledLoop() {
 
 labeledLoop();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10764,8 +10586,7 @@ async function findFirst(): Promise<number | null> {
 
 findFirst().then(console.log);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10849,8 +10670,7 @@ stream.push("data", 2);
 stream.push("end", null);
 processEvents(stream);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10910,8 +10730,7 @@ fn test_source_map_try_catch_basic() {
 
 riskyOperation();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10975,8 +10794,7 @@ fn test_source_map_try_catch_finally() {
 
 withCleanup();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11037,8 +10855,7 @@ fn test_source_map_try_finally() {
 
 guaranteedCleanup();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11103,8 +10920,7 @@ fn test_source_map_try_catch_nested() {
 
 nestedTryCatch();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11169,8 +10985,7 @@ function handleTypedError() {
 
 handleTypedError();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11232,8 +11047,7 @@ try {
     console.log("Caught rethrown error:", e);
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11297,8 +11111,7 @@ fn test_source_map_try_catch_async() {
 
 fetchWithRetry("https://example.com");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11357,8 +11170,7 @@ fn test_source_map_try_catch_expression() {
 console.log(conditionalThrow(true));
 console.log(conditionalThrow(false));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11434,8 +11246,7 @@ const db = new DatabaseConnection();
 db.connect();
 db.query("SELECT * FROM users");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11527,8 +11338,7 @@ manager.processWithResource("test", async (data) => {
     console.log("Processing:", data);
 });"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11598,8 +11408,7 @@ fn test_source_map_switch_basic() {
 
 console.log(getDay(3));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11662,8 +11471,7 @@ fn test_source_map_switch_default() {
 
 console.log(classify(5));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11729,8 +11537,7 @@ fn test_source_map_switch_fallthrough() {
 
 console.log(isWeekend("Saturday"));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11798,8 +11605,7 @@ fn test_source_map_switch_break() {
 
 process("start");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11864,8 +11670,7 @@ fn test_source_map_switch_return() {
 const colors = [0, 1, 2, 3].map(getColor);
 console.log(colors);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11930,8 +11735,7 @@ fn test_source_map_switch_nested() {
 
 console.log(classify("animal", 1));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12000,8 +11804,7 @@ const asyncHandler = async (event: string): Promise<string> => {
 console.log(handler("click"));
 asyncHandler("load").then(console.log);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12068,8 +11871,7 @@ function checkPermission(mode: number): string {
 
 console.log(checkPermission(MODE_READ | MODE_WRITE));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12152,8 +11954,7 @@ const machine = new StateMachine();
 machine.transition("start");
 console.log(machine.getState());"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12258,8 +12059,7 @@ class HttpHandler {
 const handler = new HttpHandler();
 console.log(handler.handleResponse({ status: HttpStatus.OK, message: "Success" }));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12324,8 +12124,7 @@ fn test_source_map_labeled_basic() {
 
 findValue([[1, 2], [3, 4]], 3);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12387,8 +12186,7 @@ fn test_source_map_labeled_for_break() {
 const grid = [[".", "."], [".", "X"]];
 console.log(searchGrid(grid));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12454,8 +12252,7 @@ fn test_source_map_labeled_while_continue() {
 
 console.log(processItems([[1, 2], [-1, 3], [4, 5]]));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12520,8 +12317,7 @@ fn test_source_map_labeled_nested() {
 
 console.log(findPath([[0, 1], [2, 0]]));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12590,8 +12386,7 @@ fn test_source_map_labeled_block() {
 console.log(processData({ name: "test", value: 42 }));
 console.log(processData(null));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12659,8 +12454,7 @@ handleEvent([
     { type: "stop", data: 3 }
 ]);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12722,8 +12516,7 @@ async function asyncProcessor(items: Promise<number>[]): Promise<void> {
 processor([1, 2, -1, 3]);
 asyncProcessor([Promise.resolve(1), Promise.resolve(-1)]);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12791,8 +12584,7 @@ fn test_source_map_labeled_do_while() {
 
 retryOperation(5);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12870,8 +12662,7 @@ const processor = new DataProcessor();
 processor.setData([[1, 2, -3], [4, 150, 6]]);
 console.log(processor.process());"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12961,8 +12752,7 @@ const tasks: Task[] = [
 ];
 console.log(runner.run(tasks));"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
