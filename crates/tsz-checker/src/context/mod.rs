@@ -1831,12 +1831,7 @@ impl ProgramContext {
                     }
                 }
                 if let Some(ref mut dm) = declared_modules {
-                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(module_spec);
                 }
             }
             if let Some(ref mut dm) = declared_modules {
@@ -1845,12 +1840,7 @@ impl ProgramContext {
                     .iter()
                     .chain(binder.shorthand_ambient_modules.iter())
                 {
-                    let normalized = name.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(name);
                 }
             }
             // Phase 2 step 2: skip the per-binder module_augmentations loop
@@ -1904,9 +1894,7 @@ impl ProgramContext {
         }
 
         if let Some(mut dm) = declared_modules {
-            dm.patterns.sort();
-            dm.patterns.dedup();
-            dm.finalize();
+            dm.finish();
             self.skeleton_declared_modules = Some(Arc::new(dm));
         }
 
