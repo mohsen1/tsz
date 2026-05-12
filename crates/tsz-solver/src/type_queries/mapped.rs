@@ -7,6 +7,7 @@
 //! - Finite key collection and property type resolution
 //! - Modifier computation and property expansion
 
+use super::data::ExactLiteralPropertyKey;
 use crate::TypeDatabase;
 use crate::types::{MappedModifier, PropertyInfo, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -588,21 +589,22 @@ fn narrow_union_by_literal_discriminant_property(
     None
 }
 
-fn collect_mapped_property_names_from_source_keys(
+fn collect_mapped_property_keys_from_source_keys(
     db: &dyn TypeDatabase,
     mapped: &crate::types::MappedType,
-    source_keys: FxHashSet<Atom>,
-) -> Option<FxHashSet<Atom>> {
-    let mut property_names = FxHashSet::default();
+    source_keys: FxHashSet<ExactLiteralPropertyKey>,
+) -> Option<FxHashSet<ExactLiteralPropertyKey>> {
+    let mut property_keys = FxHashSet::default();
 
     for source_key in source_keys {
-        let key_literal = property_key_atom_to_type(db, source_key);
+        let key_literal = property_key_to_type(db, source_key);
         let mapped_key = remap_mapped_property_key(db, mapped, key_literal);
-        let mapped_names = super::data::collect_exact_literal_property_keys(db, mapped_key)?;
-        property_names.extend(mapped_names);
+        let mapped_keys =
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped_key)?;
+        property_keys.extend(mapped_keys);
     }
 
-    Some(property_names)
+    Some(property_keys)
 }
 
 /// Collect exact property names for a mapped type when its key constraint can be reduced
@@ -611,9 +613,20 @@ pub fn collect_finite_mapped_property_names(
     db: &dyn TypeDatabase,
     mapped_id: crate::types::MappedTypeId,
 ) -> Option<FxHashSet<Atom>> {
+    collect_finite_mapped_property_keys(db, mapped_id)
+        .map(|keys| keys.into_iter().map(|key| key.name).collect())
+}
+
+/// Collect exact property keys for a mapped type when its key constraint can be
+/// reduced to a finite set of literal property keys, preserving symbol metadata.
+pub fn collect_finite_mapped_property_keys(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+) -> Option<FxHashSet<ExactLiteralPropertyKey>> {
     let mapped = db.mapped_type(mapped_id);
-    let source_keys = super::data::collect_exact_literal_property_keys(db, mapped.constraint)?;
-    collect_mapped_property_names_from_source_keys(db, &mapped, source_keys)
+    let source_keys =
+        super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
+    collect_mapped_property_keys_from_source_keys(db, &mapped, source_keys)
 }
 
 /// Resolve the exact property type for a property on a mapped type when its key
@@ -635,15 +648,17 @@ pub fn get_finite_mapped_property_type_with_evaluator(
     mut evaluate: impl FnMut(TypeId) -> TypeId,
 ) -> Option<TypeId> {
     let mapped = db.mapped_type(mapped_id);
-    let source_keys = super::data::collect_exact_literal_property_keys(db, mapped.constraint)?;
+    let source_keys =
+        super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
     let target_atom = db.intern_string(property_name);
     let mut matches = Vec::new();
 
     for source_key in source_keys {
-        let key_literal = property_key_atom_to_type(db, source_key);
+        let key_literal = property_key_to_type(db, source_key);
         let remapped = remap_mapped_property_key(db, &mapped, key_literal);
-        let remapped_keys = super::data::collect_exact_literal_property_keys(db, remapped)?;
-        if !remapped_keys.contains(&target_atom) {
+        let remapped_keys =
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?;
+        if !remapped_keys.iter().any(|key| key.name == target_atom) {
             continue;
         }
 
@@ -686,15 +701,17 @@ pub fn get_finite_mapped_property_display_type(
     property_name: &str,
 ) -> Option<TypeId> {
     let mapped = db.mapped_type(mapped_id);
-    let source_keys = super::data::collect_exact_literal_property_keys(db, mapped.constraint)?;
+    let source_keys =
+        super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
     let target_atom = db.intern_string(property_name);
     let mut matches = Vec::new();
 
     for source_key in source_keys {
-        let key_literal = property_key_atom_to_type(db, source_key);
+        let key_literal = property_key_to_type(db, source_key);
         let remapped = remap_mapped_property_key(db, &mapped, key_literal);
-        let remapped_keys = super::data::collect_exact_literal_property_keys(db, remapped)?;
-        if !remapped_keys.contains(&target_atom) {
+        let remapped_keys =
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?;
+        if !remapped_keys.iter().any(|key| key.name == target_atom) {
             continue;
         }
 
@@ -740,9 +757,10 @@ pub fn get_finite_mapped_property_display_type(
     }
 }
 
-fn property_key_atom_to_type(db: &dyn TypeDatabase, key: Atom) -> TypeId {
-    let key_str = db.resolve_atom(key);
-    if let Some(symbol_ref) = key_str.strip_prefix("__unique_")
+fn property_key_to_type(db: &dyn TypeDatabase, key: ExactLiteralPropertyKey) -> TypeId {
+    let key_str = db.resolve_atom(key.name);
+    if key.is_symbol_named
+        && let Some(symbol_ref) = key_str.strip_prefix("__unique_")
         && let Ok(id) = symbol_ref.parse::<u32>()
     {
         return db.unique_symbol(crate::types::SymbolRef(id));
