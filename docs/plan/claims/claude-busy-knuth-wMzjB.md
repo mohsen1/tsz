@@ -1,8 +1,8 @@
-# fix: merged const+type alias false TS2456 and TS2322 (issue #5808)
+# fix(checker): eliminate false TS2456/TS2322 for merged const+type alias pattern (issue #5808)
 
 - **Date**: 2026-05-12
 - **Branch**: `claude/busy-knuth-wMzjB`
-- **PR**: TBD
+- **PR**: #5885
 - **Status**: ready
 - **Workstream**: checker conformance — merged symbol resolution
 
