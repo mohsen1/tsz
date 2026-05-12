@@ -323,6 +323,10 @@ pub struct Printer<'a> {
     /// Used for distributing comments to blocks and other nested constructs.
     pub(crate) all_comments: Vec<tsz_common::comments::CommentRange>,
 
+    /// Unfiltered source comments, collected once for recovery paths that need
+    /// to inspect comments even when `all_comments` was filtered for emit.
+    pub(crate) source_comment_ranges: Vec<tsz_common::comments::CommentRange>,
+
     /// Shared index into `all_comments`, monotonically advancing as comments are emitted.
     /// Used across `emit_source_file` and `emit_block` to prevent double-emission.
     pub(crate) comment_emit_idx: usize,
@@ -908,6 +912,7 @@ impl<'a> Printer<'a> {
             pending_source_pos: None,
             emit_recursion_depth: 0,
             all_comments: Vec::new(),
+            source_comment_ranges: Vec::new(),
             comment_emit_idx: 0,
             file_identifiers: FxHashSet::default(),
             helper_import_aliases: FxHashMap::default(),
@@ -1100,6 +1105,11 @@ impl<'a> Printer<'a> {
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+        self.source_comment_ranges = if self.ctx.options.remove_comments {
+            Vec::new()
+        } else {
+            tsz_common::comments::get_comment_ranges(text)
+        };
         self.line_map = Some(LineMap::new(text));
         let estimated = Self::estimate_output_capacity(text.len());
         self.writer.ensure_output_capacity(estimated);

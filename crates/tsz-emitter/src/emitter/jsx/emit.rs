@@ -1025,10 +1025,13 @@ impl<'a> Printer<'a> {
         if has_tracked_comment {
             return false;
         }
-        if let Some(text) = self.source_text
-            && tsz_common::comments::get_comment_ranges(text)
-                .iter()
-                .any(|c| c.pos >= node.pos && c.end <= node.end)
+        let first_unfiltered = self
+            .source_comment_ranges
+            .partition_point(|comment| comment.end <= node.pos);
+        if self.source_comment_ranges[first_unfiltered..]
+            .iter()
+            .take_while(|comment| comment.pos < node.end)
+            .any(|comment| comment.pos >= node.pos && comment.end <= node.end)
         {
             return false;
         }

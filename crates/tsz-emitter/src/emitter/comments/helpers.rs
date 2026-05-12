@@ -700,17 +700,17 @@ impl<'a> Printer<'a> {
             return (false, 0, false);
         };
 
-        let ranges = tsz_common::comments::get_comment_ranges(text);
-
         let mut emitted_any = false;
         let mut last_comment_end = 0u32;
         let mut last_comment_had_trailing_newline = false;
         let mut previous_comment_had_trailing_newline = normalize_leading_text;
         let mut cursor_pos = start_pos as usize;
-        let mut idx = 0usize;
+        let mut idx = self
+            .source_comment_ranges
+            .partition_point(|comment| comment.end <= start_pos);
 
-        while idx < ranges.len() {
-            let comment = &ranges[idx];
+        while idx < self.source_comment_ranges.len() {
+            let comment = &self.source_comment_ranges[idx];
             let comment_pos = comment.pos;
             let comment_end = comment.end;
             let comment_has_new_line = comment.has_trailing_new_line;
