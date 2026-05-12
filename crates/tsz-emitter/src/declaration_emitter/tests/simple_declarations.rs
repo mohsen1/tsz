@@ -2582,6 +2582,76 @@ export function Point(x, y) {
 }
 
 #[test]
+fn test_var_array_initializer_with_index_assignment_emits_valid_array_type() {
+    // Regression: `var t = [1, 2, 3]; t[0] = 5;` previously emitted
+    // `declare var t: {\n    : number[];` — invalid TypeScript, because
+    // the late-bound expando function path wrote the opening `: {` before
+    // checking whether the initializer was a function. For an array
+    // literal the function then bailed out, leaving a partial brace in
+    // the output. After the fix the initializer shape is probed first
+    // and the late-bound path is skipped entirely.
+    let output = emit_dts(
+        r#"
+var t = [1, 2, 3];
+t[0] = 5;
+"#,
+    );
+    assert!(
+        output.contains("declare var t: number[];"),
+        "Expected valid array type for var with index assignment, got: {output}"
+    );
+    assert!(
+        !output.contains(": {\n    : "),
+        "Did not expect partial broken object type in output: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect raw Array<> token: {output}"
+    );
+}
+
+#[test]
+fn test_var_array_initializer_with_property_assignment_emits_valid_array_type() {
+    // Same regression as above but for property-style assignment
+    // (`t.foo = 5`). Both element-access and property-access assignments
+    // were triggering `collect_ts_late_bound_assignment_members`, which
+    // in turn entered the broken `: {` write path.
+    let output = emit_dts(
+        r#"
+var t = [1, 2, 3];
+t.foo = 5;
+"#,
+    );
+    assert!(
+        output.contains("declare var t: number[];"),
+        "Expected valid array type for var with property assignment, got: {output}"
+    );
+    assert!(
+        !output.contains(": {\n    : "),
+        "Did not expect partial broken object type in output: {output}"
+    );
+}
+
+#[test]
+fn test_const_array_initializer_with_index_assignment_emits_valid_array_type() {
+    // Same as above for `const` declarations.
+    let output = emit_dts(
+        r#"
+const t = [1, 2, 3];
+t[0] = 5;
+"#,
+    );
+    assert!(
+        output.contains("declare const t"),
+        "Expected valid array type for const with index assignment, got: {output}"
+    );
+    assert!(
+        !output.contains(": {\n    : "),
+        "Did not expect partial broken object type in output: {output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_function_assignments_emit_namespace() {
     let source = r#"
 export function foo() {}

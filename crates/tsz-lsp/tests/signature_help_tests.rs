@@ -6,14 +6,18 @@ use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 use tsz_parser::syntax_kind_ext;
 use tsz_solver::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_signature_help_simple() {
     // function add(x: number, y: number): number { return x + y; }
     // add(1, 2|);
     let source = "function add(x: number, y: number): number { return x + y; }\nadd(1, 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -48,8 +52,7 @@ fn test_signature_help_simple() {
 #[test]
 fn test_signature_help_no_call() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -82,8 +85,7 @@ fn test_signature_help_first_arg() {
     // function foo(a: string): void {}
     // foo(|);
     let source = "function foo(a: string): void {}\nfoo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -117,8 +119,7 @@ fn test_signature_help_incomplete_call_eof() {
     // function add(a: number, b: number): number { return a + b; }
     // add(
     let source = "function add(a: number, b: number): number { return a + b; }\nadd(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -152,8 +153,7 @@ fn test_signature_help_incomplete_call_eof() {
 #[test]
 fn test_signature_help_incomplete_member_call() {
     let source = "interface Obj { method(a: number, b: string): void; }\ndeclare const obj: Obj;\nobj.method(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -184,8 +184,7 @@ fn test_signature_help_incomplete_member_call() {
 #[test]
 fn test_signature_help_incomplete_callable_interface_call() {
     let source = "interface C { (): number; }\ndeclare const c: C;\nc(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -224,8 +223,7 @@ fn test_signature_help_between_arguments() {
     // process(1, |2, 3);
     //          ^ cursor here should be on parameter 1
     let source = "function process(a: any, b: number, c: string): void {}\nprocess(1, 2, 3);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -277,8 +275,7 @@ fn test_signature_help_trailing_comma() {
     // function foo(a: number, b: string): void {}
     // foo(1, |);
     let source = "function foo(a: number, b: string): void {}\nfoo(1, );";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -313,8 +310,7 @@ fn test_signature_help_comment_comma_ignored() {
     // function foo(a: number, b: string): void {}
     // foo(1 /*,*/ |);
     let source = "function foo(a: number, b: string): void {}\nfoo(1 /*,*/ );";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -347,8 +343,7 @@ fn test_signature_help_comment_comma_ignored() {
 #[test]
 fn test_signature_help_overload_selection() {
     let source = "interface Fn {\n  (a: number): void;\n  (a: number, b: string): void;\n}\ndeclare const fn: Fn;\nfn(1);\nfn(1, \"x\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -398,8 +393,7 @@ fn test_signature_help_overload_selection() {
 #[test]
 fn test_signature_help_new_overload_selection() {
     let source = "interface Ctor {\n  new (a: number): Foo;\n  new (a: number, b: string): Foo;\n}\nclass Foo {}\ndeclare const Ctor: Ctor;\nnew Ctor(1);\nnew Ctor(1, \"x\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -459,8 +453,7 @@ fn test_signature_help_new_overload_selection() {
 #[test]
 fn test_signature_help_includes_jsdoc() {
     let source = "/** Adds two numbers. */\nfunction add(a: number, b: number): number { return a + b; }\nadd(1, 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -494,8 +487,7 @@ fn test_signature_help_includes_jsdoc() {
 #[test]
 fn test_signature_help_param_docs() {
     let source = "/**\n * Adds two numbers.\n * @param a First number.\n * @param b Second number.\n */\nfunction add(a: number, b: number): number { return a + b; }\nadd(1, 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -533,8 +525,7 @@ fn test_signature_help_param_docs() {
 #[test]
 fn test_signature_help_overload_jsdoc() {
     let source = "/** One arg */\nfunction foo(a: number): void;\n/** Two args */\nfunction foo(a: number, b: string): void;\nfunction foo(a: number, b?: string): void {}\nfoo(1);\nfoo(1, \"x\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -576,8 +567,7 @@ fn test_signature_help_overload_jsdoc() {
 #[test]
 fn test_signature_help_jsdoc_proximity() {
     let source = "/** First doc */\n/** Second doc */\nfunction foo(a: number): void {}\nfoo(1);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -609,8 +599,7 @@ fn test_signature_help_jsdoc_proximity() {
 #[test]
 fn test_signature_help_method_overload_jsdoc_this_rest() {
     let source = "class Greeter {\n  /** One arg.\n   * @param this The instance.\n   * @param name The name.\n   */\n  greet(this: Greeter, name: string): void;\n  /** Many args.\n   * @param this The instance.\n   * @param name The name.\n   * @param ...messages Extra messages.\n   */\n  greet(this: Greeter, name: string, ...messages: string[]): void;\n  greet(this: Greeter, name: string, ...messages: string[]) {}\n}\nconst g = new Greeter();\ng.greet(\"hi\");\ng.greet(\"hi\", \"there\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -729,8 +718,7 @@ fn test_signature_help_method_overload_jsdoc_this_rest() {
 #[test]
 fn test_signature_help_constructor_overload_jsdoc_rest() {
     let source = "class Widget {\n  /** One arg.\n   * @param name Name.\n   */\n  constructor(name: string);\n  /** Two args.\n   * @param name Name.\n   * @param ...tags Tags.\n   */\n  constructor(name: string, ...tags: string[]);\n  constructor(name: string, ...tags: string[]) {}\n}\nnew Widget(\"x\");\nnew Widget(\"x\", \"y\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -793,8 +781,7 @@ fn setup_provider(
     LineMap,
     tsz_parser::NodeIndex,
 ) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2087,8 +2074,7 @@ fn test_signature_help_string_argument_with_commas() {
 #[test]
 fn test_signature_help_no_args_function() {
     let source = "function noArgs(): void {}\nnoArgs();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2111,8 +2097,7 @@ fn test_signature_help_no_args_function() {
 #[test]
 fn test_signature_help_single_param() {
     let source = "function log(msg: string): void {}\nlog('hello');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2136,8 +2121,7 @@ fn test_signature_help_single_param() {
 #[test]
 fn test_signature_help_at_open_paren() {
     let source = "function f(a: number): void {}\nf(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2161,8 +2145,7 @@ fn test_signature_help_at_open_paren() {
 #[test]
 fn test_signature_help_class_constructor() {
     let source = "class Foo {\n  constructor(x: number, y: string) {}\n}\nnew Foo(1, 'a');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2186,8 +2169,7 @@ fn test_signature_help_class_constructor() {
 fn test_signature_help_arrow_function_call_with_age() {
     let source =
         "const greet = (name: string, age: number) => `Hello ${name}`;\ngreet('World', 25);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2210,8 +2192,7 @@ fn test_signature_help_arrow_function_call_with_age() {
 #[test]
 fn test_signature_help_outside_call() {
     let source = "function f() {}\nconst x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2236,8 +2217,7 @@ fn test_signature_help_outside_call() {
 #[test]
 fn test_signature_help_method_call_chain() {
     let source = "class Builder {\n  set(k: string, v: string): Builder { return this; }\n}\nconst b = new Builder();\nb.set('key', 'val');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2259,8 +2239,7 @@ fn test_signature_help_method_call_chain() {
 #[test]
 fn test_signature_help_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2281,8 +2260,7 @@ fn test_signature_help_empty_source() {
 #[test]
 fn test_signature_help_many_params() {
     let source = "function many(a: number, b: string, c: boolean, d: number[], e: object): void {}\nmany(1, 'x', true, [], {});";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();

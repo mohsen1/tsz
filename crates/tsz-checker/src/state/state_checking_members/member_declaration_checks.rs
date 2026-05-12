@@ -2,6 +2,9 @@
 
 use crate::context::TypingRequest;
 use crate::state::{CheckerState, MemberAccessLevel, MemberLookup};
+use crate::types_domain::unique_symbol_arena::{
+    is_unique_symbol_type_annotation_unwrapped, unwrap_parenthesized_type,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -521,6 +524,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.in_conditional_extends_depth += 1;
                     self.check_type_for_missing_names(cond.extends_type);
                     self.ctx.in_conditional_extends_depth -= 1;
+                    self.check_unique_symbol_in_conditional_extends(cond.extends_type);
 
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
@@ -1639,13 +1643,34 @@ impl<'a> CheckerState<'a> {
                             // TS1497: Check decorator expression grammar
                             self.check_grammar_decorator(decorator.expression);
 
-                            self.get_type_of_node(decorator.expression);
+                            let decorator_type = self.compute_type_of_node(decorator.expression);
 
                             // TS1308: Check for await expressions in decorator arguments.
                             // Decorator arguments are evaluated in the enclosing scope,
                             // not the decorated method's scope. An await in a non-async
                             // enclosing function should trigger TS1308.
                             self.check_await_expression(decorator.expression);
+
+                            // TS1239: Validate parameter decorator call signature.
+                            // The runtime invokes parameter decorators as
+                            // `decorator(target, key, parameterIndex)`. For
+                            // constructor parameters tsc passes `undefined` for
+                            // `key`; for method/accessor parameters tsc passes a
+                            // string (the method name). Decorators whose `key`
+                            // parameter type disagrees with the position are
+                            // rejected with TS1239. Only check under
+                            // `experimentalDecorators` since stage-3 decorators
+                            // (which use a different runtime ABI) are not yet a
+                            // supported configuration.
+                            if self.ctx.compiler_options.experimental_decorators {
+                                let is_constructor_parameter =
+                                    node.kind == syntax_kind_ext::CONSTRUCTOR;
+                                self.check_parameter_decorator_call_signature(
+                                    modifier_idx,
+                                    decorator_type,
+                                    is_constructor_parameter,
+                                );
+                            }
                         }
                     }
                 }
@@ -1737,6 +1762,18 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+        }
+    }
+
+    fn check_unique_symbol_in_conditional_extends(&mut self, extends_type: NodeIndex) {
+        if is_unique_symbol_type_annotation_unwrapped(self.ctx.arena, extends_type) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let type_idx = unwrap_parenthesized_type(self.ctx.arena, extends_type);
+            self.error_at_node(
+                type_idx,
+                diagnostic_messages::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE,
+                diagnostic_codes::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE,
+            );
         }
     }
 

@@ -23,9 +23,7 @@ use tsz_checker::test_utils::check_source_codes;
 /// contravariant `in T` is satisfied by bivariance, so no TS2636.
 #[test]
 fn in_annotation_with_method_param_only_no_ts2636() {
-    let diags = check_source_codes(
-        "interface Consumer<in T> { consume(value: T): void }\n",
-    );
+    let diags = check_source_codes("interface Consumer<in T> { consume(value: T): void }\n");
     assert!(
         !diags.contains(&2636),
         "interface Consumer<in T> {{ consume(T): void }} must not emit TS2636; got: {:?}",
@@ -37,9 +35,7 @@ fn in_annotation_with_method_param_only_no_ts2636() {
 /// not fire TS2636.
 #[test]
 fn out_annotation_with_method_param_only_no_ts2636() {
-    let diags = check_source_codes(
-        "interface Producer<out T> { produce(value: T): void }\n",
-    );
+    let diags = check_source_codes("interface Producer<out T> { produce(value: T): void }\n");
     assert!(
         !diags.contains(&2636),
         "interface Producer<out T> {{ produce(T): void }} must not emit TS2636; got: {:?}",
@@ -51,9 +47,7 @@ fn out_annotation_with_method_param_only_no_ts2636() {
 /// spelling of the interface or method.
 #[test]
 fn method_bivariance_independent_of_names() {
-    let diags = check_source_codes(
-        "interface Handler<in U> { handle(payload: U): void }\n",
-    );
+    let diags = check_source_codes("interface Handler<in U> { handle(payload: U): void }\n");
     assert!(
         !diags.contains(&2636),
         "Different names but same shape must also pass; got: {:?}",
@@ -69,9 +63,7 @@ fn method_bivariance_independent_of_names() {
 /// strict signal, TS2636 must fire.
 #[test]
 fn in_annotation_with_direct_covariant_property_emits_ts2636() {
-    let diags = check_source_codes(
-        "interface Bad<in T> { value: T }\n",
-    );
+    let diags = check_source_codes("interface Bad<in T> { value: T }\n");
     assert!(
         diags.contains(&2636),
         "interface Bad<in T> {{ value: T }} must still emit TS2636 (direct covariant position); got: {:?}",
@@ -84,9 +76,7 @@ fn in_annotation_with_direct_covariant_property_emits_ts2636() {
 /// signal, TS2636 must fire.
 #[test]
 fn out_annotation_with_direct_callback_param_emits_ts2636() {
-    let diags = check_source_codes(
-        "interface Bad<out T> { callback: (value: T) => void }\n",
-    );
+    let diags = check_source_codes("interface Bad<out T> { callback: (value: T) => void }\n");
     assert!(
         diags.contains(&2636),
         "interface Bad<out T> {{ callback: (T) => void }} must still emit TS2636 \
@@ -100,9 +90,7 @@ fn out_annotation_with_direct_callback_param_emits_ts2636() {
 /// signal pins the variance — TS2636 must fire.
 #[test]
 fn in_annotation_mixed_with_strict_property_emits_ts2636() {
-    let diags = check_source_codes(
-        "interface MixedBad<in T> { value: T; consume(v: T): void }\n",
-    );
+    let diags = check_source_codes("interface MixedBad<in T> { value: T; consume(v: T): void }\n");
     assert!(
         diags.contains(&2636),
         "interface MixedBad<in T> with strict-covariant `value: T` must still emit TS2636; got: {:?}",
@@ -113,9 +101,8 @@ fn in_annotation_mixed_with_strict_property_emits_ts2636() {
 /// `in out T` (invariant) is always valid regardless of position.
 #[test]
 fn invariant_annotation_always_ok() {
-    let diags = check_source_codes(
-        "interface AnyVariance<in out T> { value: T; consume(v: T): void }\n",
-    );
+    let diags =
+        check_source_codes("interface AnyVariance<in out T> { value: T; consume(v: T): void }\n");
     assert!(
         !diags.contains(&2636),
         "in out T must not emit TS2636; got: {:?}",
