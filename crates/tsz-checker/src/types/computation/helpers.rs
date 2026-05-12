@@ -10,6 +10,7 @@ use crate::query_boundaries::type_computation::core::{
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -1016,11 +1017,12 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // `const k = Symbol()` — infer unique symbol type.
-            // In TypeScript, const declarations initialized with Symbol() get
-            // a unique symbol type (typeof k), not the general `symbol` type.
-            if init_type == TypeId::SYMBOL
-                && self.is_symbol_call_initializer(var_decl.initializer)
+            // `const k = Symbol()` / `const k = Symbol.for(...)` — infer unique
+            // symbol type. In TypeScript, unannotated const declarations
+            // initialized with global symbol factory calls get a unique symbol
+            // type (typeof k), not the general `symbol` type.
+            if (self.is_symbol_call_initializer(var_decl.initializer)
+                || self.is_symbol_for_call_initializer(var_decl.initializer))
                 && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name)
             {
                 return self
@@ -1060,6 +1062,40 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         self.identifier_resolves_to_unshadowed_global(call.expression, "Symbol")
+    }
+
+    /// Check if an initializer expression is a `Symbol.for(...)` call where
+    /// `Symbol` resolves to the built-in global, not a same-named local.
+    pub(crate) fn is_symbol_for_call_initializer(&self, init_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_text(access.expression)
+            .is_some_and(|name| name == "Symbol")
+            && !self.known_global_value_has_local_shadow(access.expression, "Symbol")
+            && self
+                .ctx
+                .arena
+                .get_identifier_text(access.name_or_argument)
+                .is_some_and(|name| name == "for")
     }
 
     /// Get the binder SymbolId for a variable declaration's name node.

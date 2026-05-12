@@ -136,6 +136,27 @@ fn async_return_promise_resolve_unfolds_awaited_in_ts2322_source_display() {
     }
 }
 
+#[test]
+fn async_return_object_property_awaited_type_assigns_to_generic_interface() {
+    let source = format!(
+        "{AWAITED_AND_ASYNC_GEN_PRELUDE}\n\
+         interface Result<T, E = Error> {{\n\
+           ok: boolean;\n\
+           value?: T;\n\
+           error?: E;\n\
+         }}\n\
+         async function process<T extends Record<string, unknown>>(input: T): Promise<Result<T>> {{\n\
+           const result = await Promise.resolve(input);\n\
+           return {{ ok: true, value: result }};\n\
+         }}\n"
+    );
+    let diags = get_diagnostics(&source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "Awaited<T> nested in an object literal property must be assignable to T in async return checking. Got: {diags:#?}"
+    );
+}
+
 /// Same invariant as above, but with `AsyncIterator` and a different
 /// property/literal name choice — the unwrap path is shared, and the test
 /// guarantees the fix is not specific to one type-alias spelling or to

@@ -1,8 +1,4 @@
-use tsz_checker::test_utils::check_source_code_messages;
-
-fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source_code_messages(source)
-}
+use tsz_checker::test_utils::check_source_code_messages as diagnostics;
 
 #[test]
 fn interface_extends_typeof_alias_displays_target_type() {
