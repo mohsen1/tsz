@@ -2,6 +2,7 @@
 
 mod assignment_formatting;
 mod compound_assignment_context;
+mod computed_property_display;
 mod generic_source_display;
 mod literal_widening_policy;
 mod object_literal_targets;
@@ -829,12 +830,7 @@ impl<'a> CheckerState<'a> {
         (source_display == constructor_display).then_some(constructor_name)
     }
 
-    /// When a source expression is a property/element access whose value type
-    /// is `unique symbol` (e.g. `Symbol.toPrimitive`), tsc renders the
-    /// assignability source as `typeof <expr>` rather than widening to
-    /// `symbol`. Mirrors that behavior so diagnostics like
-    /// "Type 'typeof Symbol.toPrimitive' is not assignable to type 'object'"
-    /// match tsc.
+    /// Render `unique symbol` property/element access as `typeof <expr>` to match tsc.
     fn typeof_unique_symbol_source_display(&mut self, anchor_idx: NodeIndex) -> Option<String> {
         use tsz_parser::parser::syntax_kind_ext;
         let expr_idx = self.direct_diagnostic_source_expression(anchor_idx)?;
@@ -1111,83 +1107,10 @@ impl<'a> CheckerState<'a> {
 
         // First pass: identify computed properties that would fall back to raw expression
         // display (e.g., `[""+"foo"]`). tsc collapses these to index signatures.
-        let mut index_sig_value_types: Vec<TypeId> = Vec::new();
-        let mut index_sig_key_is_number = false;
-        let mut fallback_computed_indices: Vec<NodeIndex> = Vec::new();
-
-        for child_idx in literal.elements.nodes.iter().copied() {
-            let child = self.ctx.arena.get(child_idx);
-            let name_idx = if let Some(prop) = child.and_then(|c| {
-                if c.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                    self.ctx.arena.get_property_assignment(c)
-                } else {
-                    None
-                }
-            }) {
-                prop.name
-            } else if let Some(prop) = child.and_then(|c| {
-                if c.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                    self.ctx.arena.get_shorthand_property(c)
-                } else {
-                    None
-                }
-            }) {
-                prop.name
-            } else {
-                continue;
-            };
-
-            let name_node = match self.ctx.arena.get(name_idx) {
-                Some(n) if n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME => n,
-                _ => continue,
-            };
-
-            // Check if this computed property would fall back to raw expression display
-            if self.get_member_name_display_text(name_idx).is_none() {
-                // Determine key type from the expression
-                if let Some(computed) = self.ctx.arena.get_computed_property(name_node) {
-                    let expr_node = self.ctx.arena.get(computed.expression);
-                    // Unary plus expression like `+""` produces number keys
-                    let is_number_key = expr_node.is_some_and(|n| {
-                        n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                            && self.ctx.arena.get_unary_expr(n).is_some_and(|p| {
-                                p.operator == tsz_scanner::SyntaxKind::PlusToken as u16
-                            })
-                    });
-                    if is_number_key {
-                        index_sig_key_is_number = true;
-                    }
-                    fallback_computed_indices.push(child_idx);
-                }
-            }
-        }
-
-        // Collect value types for fallback computed properties
-        for &child_idx in &fallback_computed_indices {
-            let child = self.ctx.arena.get(child_idx);
-            let value_idx = if let Some(prop) = child.and_then(|c| {
-                if c.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                    self.ctx.arena.get_property_assignment(c)
-                } else {
-                    None
-                }
-            }) {
-                prop.initializer
-            } else {
-                continue;
-            };
-            let value_type = self.get_type_of_node(value_idx);
-            if value_type != TypeId::ERROR {
-                let widened = self.widen_type_for_display(value_type);
-                if !index_sig_value_types.contains(&widened) {
-                    index_sig_value_types.push(widened);
-                }
-            }
-        }
+        let (fallback_computed_indices, index_sig_value_types, index_sig_key_is_number) =
+            self.collect_fallback_computed_properties(literal);
 
         let mut parts = Vec::new();
-
-        // Add index signature if we have fallback computed properties
         if !index_sig_value_types.is_empty() {
             let key_kind = if index_sig_key_is_number {
                 "number"
@@ -1197,18 +1120,13 @@ impl<'a> CheckerState<'a> {
             let value_union = if index_sig_value_types.len() == 1 {
                 self.format_type_for_assignability_message(index_sig_value_types[0])
             } else {
-                let union_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .union(index_sig_value_types.clone());
+                let union_type = self.ctx.types.factory().union(index_sig_value_types);
                 self.format_type_for_assignability_message(union_type)
             };
             parts.push(format!("[x: {key_kind}]: {value_union}"));
         }
 
         for child_idx in literal.elements.nodes.iter().copied() {
-            // Skip fallback computed properties - they're rendered as index signature
             if fallback_computed_indices.contains(&child_idx) {
                 continue;
             }
@@ -2076,14 +1994,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-/// Strip file extensions from module specifiers for display.
-/// TSC usually omits TS-family extensions in `typeof import("mod")` output, but
-/// preserves JS-family extensions (`.js`, `.jsx`, `.mjs`, `.cjs`) so that
-/// `typeof import("X.js")` keeps the `.js` suffix when the imported module is a
-/// JS file (regression: `lateBoundAssignmentDeclarationSupport2.js`).
-///
-/// Element-access diagnostics for current-file `module.exports[...]` can opt into
-/// the raw namespace display name before this generic property-receiver path runs.
+/// Strip TS-family extensions from module specifiers; preserve JS-family extensions.
 pub(crate) fn strip_module_specifier_extension(module_name: &str) -> &str {
     tsz_common::file_extensions::strip_ts_extension(module_name)
 }
