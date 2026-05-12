@@ -1842,6 +1842,48 @@ module.exports = { x, b };
 }
 
 #[test]
+fn test_jsdoc_enum_object_literal_emits_type_and_namespace() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @enum {string} */
+export const Target = {
+    START: "start",
+    /** @type {number} */
+    OK_I_GUESS: 2
+};
+
+/** @enum {function(number): number} */
+export const Fs = {
+    ADD1: n => n + 1,
+    SUB1: n => n - 1
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export type Target = string;\nexport namespace Target {"),
+        "Expected JSDoc enum value to emit type plus namespace: {output}"
+    );
+    assert!(
+        output.contains("let START: string;"),
+        "Expected enum members to use the enum base type: {output}"
+    );
+    assert!(
+        output.contains("let OK_I_GUESS: number;"),
+        "Expected member @type to override the enum base type: {output}"
+    );
+    assert!(
+        output.contains("export type Fs = (arg0: number) => number;"),
+        "Expected function enum base type to normalize to arrow function syntax: {output}"
+    );
+    assert!(
+        output.contains("function ADD1(n: any): any;")
+            && output.contains("function SUB1(n: any): any;"),
+        "Expected function enum members to emit as namespace functions: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_default_function_export_is_renamed_to_default_alias() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

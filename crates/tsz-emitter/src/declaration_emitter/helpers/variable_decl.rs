@@ -28,6 +28,217 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(crate) fn parse_jsdoc_enum_type_text(jsdoc: &str) -> Option<String> {
+        let tag_pos = jsdoc.find("@enum")?;
+        let rest = jsdoc[tag_pos + "@enum".len()..].trim();
+        let raw_type = if rest.starts_with('{') {
+            let (type_expr, _) = Self::parse_jsdoc_braced_type_and_name(rest)?;
+            type_expr.to_string()
+        } else {
+            rest.lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_start_matches('*')
+                .trim()
+                .to_string()
+        };
+        let raw_type = raw_type.trim();
+        if raw_type.is_empty() {
+            return None;
+        }
+        Some(Self::normalize_jsdoc_enum_type_text(raw_type))
+    }
+
+    fn normalize_jsdoc_enum_type_text(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        let Some(params_and_return) = trimmed.strip_prefix("function(") else {
+            return trimmed.to_string();
+        };
+        let Some(params_end) = params_and_return.find(')') else {
+            return trimmed.to_string();
+        };
+        let params = &params_and_return[..params_end];
+        let rest = params_and_return[params_end + 1..].trim();
+        let return_type = rest.strip_prefix(':').map(str::trim).unwrap_or("any");
+        let params = params
+            .split(',')
+            .map(str::trim)
+            .filter(|param| !param.is_empty())
+            .enumerate()
+            .map(|(index, param)| format!("arg{index}: {param}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("({params}) => {return_type}")
+    }
+
+    pub(crate) fn emit_jsdoc_enum_variable_declaration_if_possible(
+        &mut self,
+        decl_idx: NodeIndex,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+        is_exported: bool,
+    ) -> bool {
+        if !self.source_is_js_file || !initializer.is_some() {
+            return false;
+        }
+        if self
+            .arena
+            .get(decl_name)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+        {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+        let Some(jsdoc) = self.function_like_jsdoc_for_node(decl_idx) else {
+            return false;
+        };
+        let Some(enum_type) = Self::parse_jsdoc_enum_type_text(&jsdoc) else {
+            return false;
+        };
+
+        self.suppress_current_statement_jsdoc_comments = true;
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
+        self.write("type ");
+        self.emit_node(decl_name);
+        self.write(" = ");
+        self.write(&enum_type);
+        self.write(";");
+        self.write_line();
+
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        } else if self.should_emit_declare_keyword(false) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
+        self.emit_node(decl_name);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        let enum_is_function = enum_type.contains("=>");
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if let Some(prop) = self.arena.get_property_assignment(member_node) {
+                if enum_is_function
+                    && self.emit_jsdoc_enum_function_member(prop.name, prop.initializer)
+                {
+                    continue;
+                }
+                let type_text = self
+                    .jsdoc_type_text_for_node(member_idx)
+                    .unwrap_or_else(|| enum_type.clone());
+                self.emit_js_namespace_value_member(prop.name, &type_text);
+            } else if let Some(method) = self.arena.get_method_decl(member_node) {
+                self.emit_js_namespace_function_member(
+                    method.name,
+                    method.type_parameters.as_ref(),
+                    &method.parameters,
+                    method.body,
+                    method.type_annotation,
+                );
+            } else if let Some(shorthand) = self.arena.get_shorthand_property(member_node) {
+                self.emit_js_namespace_value_member(shorthand.name, &enum_type);
+            }
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+        true
+    }
+
+    fn emit_jsdoc_enum_function_member(
+        &mut self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        self.write_indent();
+        self.write("function ");
+        self.emit_node(name_idx);
+        self.write("(");
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.write(")");
+        if func.type_annotation.is_some() {
+            self.write(": ");
+            self.emit_type(func.type_annotation);
+        } else if self.jsdoc_enum_function_member_return_is_any(func.body) {
+            self.write(": any");
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
+            && let Some(func_type_id) = cache
+                .node_types
+                .get(&initializer.0)
+                .copied()
+                .or_else(|| self.get_node_type_or_names(&[name_idx, initializer]))
+            && let Some(return_type_id) =
+                tsz_solver::type_queries::get_return_type(*interner, func_type_id)
+        {
+            self.write(": ");
+            self.write(&self.print_type_id(return_type_id));
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write(": void");
+        } else {
+            self.write(": any");
+        }
+        self.write(";");
+        self.write_line();
+        true
+    }
+
+    fn jsdoc_enum_function_member_return_is_any(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let return_expr = if body_node.kind == syntax_kind_ext::BLOCK {
+            let Some(return_expr) = self.function_body_single_return_expression(body_idx) else {
+                return false;
+            };
+            return_expr
+        } else {
+            body_idx
+        };
+        let Some(return_node) = self.arena.get(return_expr) else {
+            return false;
+        };
+        if return_node.kind == SyntaxKind::Identifier as u16 {
+            return true;
+        }
+        if return_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(return_node)
+        {
+            return binary.operator_token == SyntaxKind::PlusToken as u16;
+        }
+        false
+    }
+
     /// Emit type annotation (or literal initializer) for a single variable declaration.
     ///
     /// Handles: literal const initializers, explicit type annotations, unique symbol,
