@@ -11,6 +11,22 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn is_react_jsx_component_alias_application(&self, type_id: TypeId) -> bool {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+            .or_else(|| {
+                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                })
+            });
+        let Some(app) = app else {
+            return false;
+        };
+        matches!(
+            self.format_type(app.base).as_str(),
+            "React.ComponentType" | "ComponentType" | "React.ReactType" | "ReactType"
+        )
+    }
+
     fn jsx_class_component_props_alias_hint(&self, instance_type: TypeId) -> Option<TypeId> {
         let app = crate::query_boundaries::common::type_application(self.ctx.types, instance_type)
             .or_else(|| {
@@ -773,12 +789,9 @@ impl<'a> CheckerState<'a> {
 
         let mut any_checked = false;
         let mut all_valid = true;
-        let is_react_component_alias_union = is_union && {
-            let display = self.format_type(component_type);
-            display.contains("ComponentType") || display.contains("ReactType")
-        };
 
         for &member_type in &types_to_check {
+            let raw_member_type = member_type;
             let member_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
                 self.ctx.types,
                 member_type,
@@ -800,7 +813,8 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
-            if is_react_component_alias_union
+            if is_union
+                && self.is_react_jsx_component_alias_application(raw_member_type)
                 && self
                     .get_jsx_props_type_for_component_member(member_type, None)
                     .is_some()

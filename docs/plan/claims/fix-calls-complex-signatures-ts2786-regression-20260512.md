@@ -21,6 +21,12 @@ TS2786 for a JSX tag-name union case while tsc expects no diagnostics.
 - Add or update focused regression coverage in `tsz-checker` if the root cause is
   isolated.
 
+## Files Touched
+
+- `crates/tsz-checker/src/checkers/jsx/extraction.rs`
+- `crates/tsz-checker/src/checkers/jsx/tests.rs`
+- `docs/plan/claims/fix-calls-complex-signatures-ts2786-regression-20260512.md`
+
 ## Verification Plan
 
 - `./scripts/conformance/conformance.sh run --filter "callsOnComplexSignatures" --verbose`
