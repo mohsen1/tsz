@@ -92,3 +92,54 @@ jobs:
             echo "::error::CRITICAL: only ${online} runners online — CI is effectively down"
             exit 1
           fi
+
+  dns:
+    name: dns-health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check tsz.dev DNS records (A + AAAA)
+        run: |
+          set -euo pipefail
+          DOMAIN="tsz.dev"
+
+          if ! command -v dig >/dev/null 2>&1; then
+            echo "::error::dig is required for DNS health checks but was not found on the runner"
+            exit 1
+          fi
+
+          A_RECORDS=$(dig +short A "$DOMAIN" || true)
+          AAAA_RECORDS=$(dig +short AAAA "$DOMAIN" || true)
+
+          A_COUNT=$(echo "$A_RECORDS" | grep -c '[0-9]' || true)
+          AAAA_COUNT=$(echo "$AAAA_RECORDS" | grep -c ':' || true)
+
+          {
+            echo "## DNS Health — ${DOMAIN} — $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| Record | Status | Values |"
+            echo "|--------|--------|--------|"
+            if [[ "${A_COUNT}" -gt 0 ]]; then
+              echo "| A (IPv4) | ✅ ${A_COUNT} record(s) | $(echo "$A_RECORDS" | tr '\n' ' ') |"
+            else
+              echo "| A (IPv4) | ❌ missing | — |"
+            fi
+            if [[ "${AAAA_COUNT}" -gt 0 ]]; then
+              echo "| AAAA (IPv6) | ✅ ${AAAA_COUNT} record(s) | $(echo "$AAAA_RECORDS" | tr '\n' ' ') |"
+            else
+              echo "| AAAA (IPv6) | ⚠️ missing | — |"
+              echo ""
+              echo "> ⚠️ **No AAAA records found for ${DOMAIN}.**"
+              echo "> Add the following GitHub Pages IPv6 addresses in Cloudflare DNS:"
+              echo "> \`2606:50c0:8000::153\`, \`2606:50c0:8001::153\`, \`2606:50c0:8002::153\`, \`2606:50c0:8003::153\`"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "dns: A=${A_COUNT} AAAA=${AAAA_COUNT}"
+
+          if [[ "${A_COUNT}" -eq 0 ]]; then
+            echo "::error::CRITICAL: no A records for ${DOMAIN} — site is unreachable"
+            exit 1
+          fi
+          if [[ "${AAAA_COUNT}" -eq 0 ]]; then
+            echo "::warning::No AAAA records for ${DOMAIN} — IPv6 clients cannot reach the site (see issue #5098)"
+          fi
