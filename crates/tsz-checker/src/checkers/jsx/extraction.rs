@@ -832,7 +832,7 @@ impl<'a> CheckerState<'a> {
         returns
     }
 
-    fn jsx_construct_return_satisfies_element_class_render(
+    pub(super) fn jsx_construct_return_satisfies_element_class_render(
         &mut self,
         instance_type: TypeId,
         element_class_type: TypeId,
@@ -1057,9 +1057,8 @@ impl<'a> CheckerState<'a> {
                             };
                             self.is_assignable_to(check_ret, t)
                                 || (!is_call_sig
-                                    && self.jsx_construct_return_satisfies_element_class_render(
-                                        check_ret, t,
-                                    ))
+                                    && self
+                                        .jsx_construct_return_can_use_render_fallback(check_ret, t))
                         })
                     });
                     if any_concrete {
