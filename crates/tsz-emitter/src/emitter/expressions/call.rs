@@ -824,7 +824,19 @@ impl<'a> Printer<'a> {
         let Some(callee_node) = self.arena.get(callee) else {
             return false;
         };
-        let Some(open_paren) = self.find_call_open_paren_position(call_node, args) else {
+        // The `(` we want is the one that opens the call's argument list,
+        // which is *after* the callee. If the callee is itself a
+        // parenthesized expression — `(foo.m as any)?.()` — then
+        // `find_call_open_paren_position`'s naive "first `(` between
+        // call_node.pos and call_node.end" lands on the *callee's*
+        // open paren, not the argument-list `(`. The backward scan for
+        // `?.` from that wrong position finds nothing and the optional-
+        // call token is silently dropped, producing `foo.m()` instead of
+        // `foo.m?.()`. Pin the search start to right after the callee.
+        let scan_start = std::cmp::min(callee_node.end as usize, source.len());
+        let Some(open_paren) =
+            self.find_call_open_paren_position_after(call_node, args, scan_start as u32)
+        else {
             return false;
         };
 
@@ -891,15 +903,32 @@ impl<'a> Printer<'a> {
         call_node: &Node,
         args: Option<&tsz_parser::parser::NodeList>,
     ) -> Option<u32> {
+        self.find_call_open_paren_position_after(call_node, args, call_node.pos)
+    }
+
+    /// Variant of `find_call_open_paren_position` that begins the search
+    /// at an explicit offset, used by `has_optional_call_token` to skip
+    /// past a parenthesized or type-asserted callee whose own `(` would
+    /// otherwise be returned. The offset is clamped to the call node's
+    /// end and to the source length.
+    fn find_call_open_paren_position_after(
+        &self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+        start_after: u32,
+    ) -> Option<u32> {
         let text = self.source_text_for_map()?;
         let bytes = text.as_bytes();
-        let start = std::cmp::min(call_node.pos as usize, bytes.len());
+        let start = std::cmp::min(start_after as usize, bytes.len());
         let mut end = std::cmp::min(call_node.end as usize, bytes.len());
         if let Some(args) = args
             && let Some(first) = args.nodes.first()
             && let Some(first_node) = self.arena.get(*first)
         {
             end = std::cmp::min(first_node.pos as usize, end);
+        }
+        if start >= end {
+            return None;
         }
         (start..end)
             .position(|i| bytes[i] == b'(')
