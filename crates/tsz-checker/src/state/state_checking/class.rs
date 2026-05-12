@@ -1142,7 +1142,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a derived class (has base class)
         let summary = self.summarize_class_initialization(class_idx, class);
-        if summary.required_instance_fields.is_empty() {
+        if summary.ts2565_field_keys.is_empty() {
             return;
         }
 
@@ -1174,22 +1174,23 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Check for TS2565 (Property used before being assigned in constructor)
         if let Some(body_idx) = summary.constructor_body {
             check_constructor_property_use_before_assignment(
                 self,
                 body_idx,
-                &summary.required_instance_field_keys,
+                &summary.ts2565_field_keys,
                 summary.requires_super,
             );
         }
     }
 
-    pub(crate) fn property_requires_initialization(
+    /// Structural eligibility check shared by TS2564 and TS2565, without the TS2564 decorator
+    /// exemption. ES-decorated fields are **not** excluded; callers that implement the TS2564
+    /// exemption (ES decorators may provide an initial value) layer it on top.
+    pub(crate) fn property_needs_strict_check(
         &mut self,
         member_idx: NodeIndex,
         prop: &tsz_parser::parser::node::PropertyDeclData,
-        _is_derived_class: bool,
     ) -> bool {
         use tsz_scanner::SyntaxKind;
 
@@ -1201,26 +1202,6 @@ impl<'a> CheckerState<'a> {
             || self.has_declare_modifier(&prop.modifiers)
         {
             return false;
-        }
-
-        // Stage 3 (ES) decorated properties don't require initialization — the
-        // decorator can intercept the property definition and provide an initial
-        // value at runtime. TSC suppresses TS2564 for decorated properties when
-        // using ES decorators (experimentalDecorators is NOT enabled).
-        // With legacy experimentalDecorators, decorators are metadata-only and
-        // don't affect initialization, so TS2564 is still required.
-        if !self.ctx.compiler_options.experimental_decorators
-            && let Some(ref modifiers) = prop.modifiers
-        {
-            let has_decorator = modifiers.nodes.iter().any(|&mod_idx| {
-                self.ctx
-                    .arena
-                    .get(mod_idx)
-                    .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::DECORATOR)
-            });
-            if has_decorator {
-                return false;
-            }
         }
 
         // Properties with string or numeric literal names are not checked for strict property initialization
@@ -1263,24 +1244,10 @@ impl<'a> CheckerState<'a> {
             TypeId::ANY
         };
 
-        // Property initialization checking:
-        // 1. ANY/UNKNOWN types don't need initialization
-        // 2. Union types with undefined don't need initialization
-        // 3. Optional types don't need initialization
-        // 4. Type parameters (unconstrained or constrained to allow undefined)
-        if prop_type == TypeId::ANY || prop_type == TypeId::UNKNOWN {
+        if prop_type == TypeId::ANY || prop_type == TypeId::UNKNOWN || prop_type == TypeId::ERROR {
             return false;
         }
 
-        // ERROR types also don't need initialization - these indicate parsing/binding errors
-        if prop_type == TypeId::ERROR {
-            return false;
-        }
-
-        // Check if undefined is assignable to the property type.
-        // This handles: union types with undefined, type parameters with
-        // unconstrained or undefined-allowing constraints (mirrors tsc's
-        // `isTypeAssignableTo(undefinedType, type)` check for TS2564).
         !class_query::undefined_is_assignable_to(self.ctx.types, prop_type)
     }
 
